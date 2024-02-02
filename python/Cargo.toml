@@ -1,0 +1,21 @@
+[package]
+name = "pyontoenv"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "ontoenv"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.21.0-beta.0", features = ["extension-module"] }
+ontoenv.workspace = true
+anyhow.workspace = true
+oxigraph.workspace = true
+env_logger.workspace = true
+log.workspace = true
+
+[build-dependencies]
+pyo3-build-config = "0.21.0-beta.0"

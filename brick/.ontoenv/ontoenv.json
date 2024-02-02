@@ -1,0 +1,9 @@
+{
+  "root": "brick",
+  "search_directories": [],
+  "includes": [
+    "*.ttl"
+  ],
+  "excludes": [],
+  "require_ontology_names": false
+}

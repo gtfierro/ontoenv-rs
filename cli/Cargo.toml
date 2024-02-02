@@ -1,0 +1,20 @@
+[package]
+name = "ontoenv-cli"
+edition.workspace = true
+authors.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ontoenv"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ontoenv.workspace = true
+env_logger.workspace = true
+oxigraph.workspace = true
+chrono.workspace = true
