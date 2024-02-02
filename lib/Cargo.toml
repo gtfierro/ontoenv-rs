@@ -1,0 +1,26 @@
+[package]
+name = "ontoenv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+regex.workspace = true
+walkdir.workspace = true
+reqwest.workspace = true
+json-ld.workspace = true
+serde_json.workspace = true
+env_logger.workspace = true
+log.workspace = true
+serde_regex.workspace = true
+glob.workspace = true
+chrono.workspace = true
+petgraph.workspace = true
+clap.workspace = true
+derive_builder.workspace = true
+serde.workspace = true
+oxigraph.workspace = true
+lazy_static = "1.4.0"
+serde_with = "3.7.0"
+tempfile = "3.10.1"
+tempdir = "0.3.7"
