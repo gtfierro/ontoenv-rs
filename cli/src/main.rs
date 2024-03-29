@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use ontoenv::ontology::OntologyLocation;
+use ontoenv::ontology::{OntologyLocation, GraphIdentifier};
 use ontoenv::util::write_dataset_to_file;
 use ontoenv::{config::Config, OntoEnv};
 use oxigraph::model::NamedNode;
@@ -41,6 +41,10 @@ enum Commands {
         #[clap(long, short)]
         file: Option<String>,
     },
+    /// List the ontologies in the environment sorted by name
+    ListOntologies,
+    /// List the locations of the ontologies in the environment sorted by location
+    ListLocations,
     // TODO: dump all ontologies; nest by ontology name (sorted), w/n each ontology name list all
     // the places where that graph can be found. List basic stats: the metadata field in the
     // Ontology struct and # of triples in the graph; last updated; etc
@@ -123,6 +127,27 @@ fn main() -> Result<()> {
             };
 
             env.add(location)?;
+        }
+        Commands::ListOntologies => {
+            // load env from .ontoenv/ontoenv.json
+            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let env = OntoEnv::from_file(&path)?;
+            // print list of ontology URLs from env.onologies.values() sorted alphabetically
+            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
+            ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
+            for ont in ontologies {
+                println!("{}", ont.name());
+            }
+        }
+        Commands::ListLocations => {
+            // load env from .ontoenv/ontoenv.json
+            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let env = OntoEnv::from_file(&path)?;
+            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
+            ontologies.sort_by(|a, b| a.location().as_str().cmp(&b.location().as_str()));
+            for ont in ontologies {
+                println!("{}", ont.location().as_str());
+            }
         }
         Commands::Dump => {
             // load env from .ontoenv/ontoenv.json
