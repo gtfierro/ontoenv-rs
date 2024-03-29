@@ -82,6 +82,8 @@ impl OntoEnv {
         })
     }
 
+    pub fn close(self) {}
+
     pub fn num_graphs(&self) -> usize {
         self.ontologies.len()
     }
@@ -363,13 +365,6 @@ impl OntoEnv {
         Ok(format!("{:?}", dot))
     }
 
-    pub fn dump_ontologies(&self) {
-        // print all ontologies
-        for ontology in self.ontologies.values() {
-            info!("{}", ontology.dump());
-        }
-    }
-
     fn find_files(&self) -> Result<Vec<OntologyLocation>> {
         let mut files = vec![];
         for search_directory in &self.config.search_directories {
@@ -567,16 +562,27 @@ impl OntoEnv {
             for ontology in group {
                 let g = self.get_graph(ontology.id()).unwrap();
                 println!("├─ Location: {}", ontology.location().unwrap());
-                for (key, value) in ontology.version_properties().iter() {
-                    println!("│ ├─ {}: {}", key, value);
+                // sorted keys
+                let mut sorted_keys: Vec<NamedNode> = ontology.version_properties().keys().cloned().collect();
+                sorted_keys.sort_by(|a, b| a.cmp(b));
+                // print up until last key
+                for key in sorted_keys.iter().take(sorted_keys.len() - 1) {
+                    println!("│ ├─ {}: {}", key, ontology.version_properties().get(key).unwrap());
                 }
+                // print last key
+                println!("│ └─ {}: {}", sorted_keys.last().unwrap(), ontology.version_properties().get(sorted_keys.last().unwrap()).unwrap());
                 println!("│ ├─ Last updated: {}", ontology.last_updated.unwrap());
                 if ontology.imports.len() > 0 {
                     println!("│ ├─ Triples: {}", g.len());
                     println!("│ ├─ Imports:");
-                    for import in &ontology.imports {
+                    let mut sorted_imports: Vec<NamedNode> = ontology.imports.clone();
+                    sorted_imports.sort_by(|a, b| a.cmp(b));
+                    // print up until last import
+                    for import in sorted_imports.iter().take(sorted_imports.len() - 1) {
                         println!("│ │ ├─ {}", import);
                     }
+                    // print last import
+                    println!("│ │ └─ {}", sorted_imports.last().unwrap());
                 } else {
                     println!("│ └─ Triples: {}", g.len());
                 }
@@ -593,6 +599,7 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
     use tempdir::TempDir;
+    use oxigraph::model::{NamedNodeRef};
     use log::info;
 
     fn setup() -> TempDir {
@@ -659,6 +666,77 @@ mod tests {
         
         env.update().unwrap();
         assert_eq!(env.num_graphs(), 16);
+
+        // copy brickpatches.ttl back
+        let old_patches = Path::new("tests/data/support/brickpatches.ttl");
+        std::fs::copy(old_patches, dir.path().join("tests/data/support/brickpatches.ttl")).unwrap();
+        env.update().unwrap();
+        assert_eq!(env.num_graphs(), 17);
+
         teardown(dir);
+    }
+
+    #[test]
+    fn test_ontoenv_retrieval_by_name() {
+        let dir = setup();
+        let test_dir = dir.path().join("tests/data");
+        let cfg1 = Config::new(
+            dir.path().into(),
+            vec![test_dir.into()],
+            &["*.ttl"],
+            &[""],
+            false,
+        ).unwrap();
+        let mut env = OntoEnv::new(cfg1).unwrap();
+        env.update().unwrap();
+
+        let brick = NamedNodeRef::new("https://brickschema.org/schema/1.4-rc1/Brick").unwrap();
+        let ont = env.get_ontology_by_name(brick).unwrap();
+        assert_eq!(ont.imports.len(), 10);
+        assert!(ont.location().unwrap().is_file());
+    }
+
+    #[test]
+    fn test_ontoenv_retrieval_by_location() {
+        let dir = setup();
+        let test_dir = dir.path().join("tests/data");
+        let cfg1 = Config::new(
+            dir.path().into(),
+            vec![test_dir.clone().into()],
+            &["*.ttl"],
+            &[""],
+            false,
+        ).unwrap();
+        let mut env = OntoEnv::new(cfg1).unwrap();
+        env.update().unwrap();
+
+        let brick_path = test_dir.join("Brick.ttl");
+        let loc = OntologyLocation::from_str(brick_path.to_str().unwrap()).unwrap();
+        let ont = env.get_ontology_by_location(&loc).unwrap();
+        assert_eq!(ont.imports.len(), 10);
+        assert!(ont.location().unwrap().is_file());
+    }
+
+    #[test]
+    fn test_ontoenv_load() {
+        let dir = setup();
+        let test_dir = dir.path().join("tests/data");
+        let cfg1 = Config::new(
+            dir.path().into(),
+            vec![test_dir.into()],
+            &["*.ttl"],
+            &[""],
+            false,
+        ).unwrap();
+        let mut env = OntoEnv::new(cfg1).unwrap();
+        env.update().unwrap();
+        assert_eq!(env.num_graphs(), 17);
+        // drop env
+        env.close();
+
+        // reload env
+        let cfg_location = dir.path().join(".ontoenv").join("ontoenv.json");
+        let env2 = OntoEnv::from_file(cfg_location.as_path()).unwrap();
+        assert_eq!(env2.num_graphs(), 17);
     }
 }
