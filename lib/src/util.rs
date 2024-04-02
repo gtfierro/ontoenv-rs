@@ -1,6 +1,5 @@
 use anyhow::Result;
 
-use std::io::Write;
 use std::path::Path;
 
 use reqwest::header::CONTENT_TYPE;
@@ -91,7 +90,7 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxigraph::model::{Dataset, QuadRef, GraphNameRef, NamedNodeRef};
+    use oxigraph::model::{Dataset, GraphNameRef, NamedNodeRef, QuadRef};
 
     #[test]
     fn test_read_file() {
@@ -118,13 +117,13 @@ mod tests {
         // reading non-existent file should return an error
         let result = read_file(Path::new("tests/data/non-existent.ttl"));
         assert!(result.is_err());
-
-
     }
 
     #[test]
     fn test_read_url() {
-        let graph = read_url("https://github.com/BrickSchema/Brick/releases/download/v1.4.0-rc1/Brick.ttl").unwrap();
+        let graph =
+            read_url("https://github.com/BrickSchema/Brick/releases/download/v1.4.0-rc1/Brick.ttl")
+                .unwrap();
         assert_eq!(graph.len(), 53478);
 
         // reading non-existent url should return an error
@@ -137,17 +136,28 @@ mod tests {
         // create in-memory dataset
         let mut graph = Dataset::new();
         let model = read_file(Path::new("tests/data/model.ttl")).unwrap();
-        let model_name = GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/model").unwrap());
+        let model_name =
+            GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/model").unwrap());
         let brick = read_file(Path::new("tests/data/Brick.ttl")).unwrap();
-        let brick_name = GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/brick").unwrap());
+        let brick_name =
+            GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/brick").unwrap());
         for quad in model.iter() {
-            graph.insert(QuadRef::new(quad.subject, quad.predicate, quad.object, model_name.clone()));
+            graph.insert(QuadRef::new(
+                quad.subject,
+                quad.predicate,
+                quad.object,
+                model_name.clone(),
+            ));
         }
         for quad in brick.iter() {
-            graph.insert(QuadRef::new(quad.subject, quad.predicate, quad.object, brick_name.clone()));
+            graph.insert(QuadRef::new(
+                quad.subject,
+                quad.predicate,
+                quad.object,
+                brick_name.clone(),
+            ));
         }
 
         write_dataset_to_file(&graph, "model_out.ttl").unwrap();
     }
-
 }
