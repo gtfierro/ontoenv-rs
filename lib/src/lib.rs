@@ -3,6 +3,7 @@ extern crate derive_builder;
 pub mod config;
 pub mod consts;
 pub mod ontology;
+pub mod policy;
 #[macro_use]
 pub mod util;
 
@@ -75,7 +76,6 @@ impl OntoEnv {
             config,
             ontologies: HashMap::new(),
             dependency_graph: DiGraph::new(),
-            // TODO: load the store when the environment is created if it exists
             store,
         })
     }
@@ -89,6 +89,11 @@ impl OntoEnv {
     pub fn num_triples(&self) -> Result<usize> {
         // this construction coerces the error the the correct type
         Ok(self.store.len()?)
+    }
+
+    pub fn get_ontology_with_policy(&self, name: NamedNodeRef, policy: &dyn policy::ResolutionPolicy) -> Option<Ontology> {
+        let ontologies = self.ontologies.values().collect::<Vec<&Ontology>>();
+        policy.resolve(name.as_str(), &ontologies.as_slice()).map(|o| o.clone())
     }
 
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
@@ -564,22 +569,27 @@ impl OntoEnv {
                     ontology.version_properties().keys().cloned().collect();
                 sorted_keys.sort_by(|a, b| a.cmp(b));
                 // print up until last key
-                for key in sorted_keys.iter().take(sorted_keys.len() - 1) {
+                if sorted_keys.len() > 0 {
+                    println!("│ ├─ Version properties:");
+                    if sorted_keys.len() > 1 {
+                        for key in sorted_keys.iter().take(sorted_keys.len() - 1) {
+                            println!(
+                                "│ ├─ {}: {}",
+                                key,
+                                ontology.version_properties().get(key).unwrap()
+                            );
+                        }
+                    }
+                    // print last key
                     println!(
-                        "│ ├─ {}: {}",
-                        key,
-                        ontology.version_properties().get(key).unwrap()
+                        "│ └─ {}: {}",
+                        sorted_keys.last().unwrap(),
+                        ontology
+                            .version_properties()
+                            .get(sorted_keys.last().unwrap())
+                            .unwrap()
                     );
                 }
-                // print last key
-                println!(
-                    "│ └─ {}: {}",
-                    sorted_keys.last().unwrap(),
-                    ontology
-                        .version_properties()
-                        .get(sorted_keys.last().unwrap())
-                        .unwrap()
-                );
                 println!("│ ├─ Last updated: {}", ontology.last_updated.unwrap());
                 if ontology.imports.len() > 0 {
                     println!("│ ├─ Triples: {}", g.len());
