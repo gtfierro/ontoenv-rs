@@ -1,14 +1,13 @@
 use crate::consts::*;
+use crate::util::{read_file, read_url};
 use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, info, warn};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-#[macro_use]
-use serde_with::{serde_as, SerializeAs, DeserializeAs};
-use crate::util::{read_file, read_url};
 use oxigraph::model::{
     Graph as OxigraphGraph, GraphName, NamedNode, NamedNodeRef, Subject, SubjectRef, TermRef,
 };
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_with::{serde_as, DeserializeAs, SerializeAs};
 use std::collections::HashMap;
 use std::path::PathBuf;
 //
@@ -373,12 +372,12 @@ impl Ontology {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::read_file;
     use oxigraph::model::NamedNode;
     use std::collections::HashMap;
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
-    use crate::util::read_file;
 
     #[test]
     fn test_ontology_location() {
@@ -409,6 +408,9 @@ mod tests {
         let url_location = OntologyLocation::from_str(url).unwrap();
         let file_location = OntologyLocation::from_str(file).unwrap();
         assert_eq!(url_location.to_iri(), NamedNode::new(url).unwrap());
-        assert_eq!(file_location.to_iri(), NamedNode::new(format!("file://{}", file)).unwrap());
+        assert_eq!(
+            file_location.to_iri(),
+            NamedNode::new(format!("file://{}", file)).unwrap()
+        );
     }
 }

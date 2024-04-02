@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate derive_builder;
 
 pub mod config;
@@ -7,12 +6,11 @@ pub mod ontology;
 #[macro_use]
 pub mod util;
 
-use std::ffi::OsStr;
 use crate::config::Config;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
 use chrono::prelude::*;
-use log::{error, info, debug};
+use log::{debug, error, info};
 use oxigraph::model::{
     Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef,
 };
@@ -159,7 +157,7 @@ impl OntoEnv {
                 .ok_or(anyhow::anyhow!("Ontology not found"))?;
             let imports = &ont.imports.clone();
             for import in imports {
-                if let Some(imp) = self.get_ontology_by_name(import.into()) {
+                if let Some(_imp) = self.get_ontology_by_name(import.into()) {
                     continue;
                 }
                 info!("Adding import: {}", import);
@@ -298,7 +296,6 @@ impl OntoEnv {
                     }
                 }
             }
-
 
             // read the graph in the file and get a reference to the ontology record
             match self.add_or_update_ontology_from_location(file) {
@@ -563,14 +560,26 @@ impl OntoEnv {
                 let g = self.get_graph(ontology.id()).unwrap();
                 println!("├─ Location: {}", ontology.location().unwrap());
                 // sorted keys
-                let mut sorted_keys: Vec<NamedNode> = ontology.version_properties().keys().cloned().collect();
+                let mut sorted_keys: Vec<NamedNode> =
+                    ontology.version_properties().keys().cloned().collect();
                 sorted_keys.sort_by(|a, b| a.cmp(b));
                 // print up until last key
                 for key in sorted_keys.iter().take(sorted_keys.len() - 1) {
-                    println!("│ ├─ {}: {}", key, ontology.version_properties().get(key).unwrap());
+                    println!(
+                        "│ ├─ {}: {}",
+                        key,
+                        ontology.version_properties().get(key).unwrap()
+                    );
                 }
                 // print last key
-                println!("│ └─ {}: {}", sorted_keys.last().unwrap(), ontology.version_properties().get(sorted_keys.last().unwrap()).unwrap());
+                println!(
+                    "│ └─ {}: {}",
+                    sorted_keys.last().unwrap(),
+                    ontology
+                        .version_properties()
+                        .get(sorted_keys.last().unwrap())
+                        .unwrap()
+                );
                 println!("│ ├─ Last updated: {}", ontology.last_updated.unwrap());
                 if ontology.imports.len() > 0 {
                     println!("│ ├─ Triples: {}", g.len());
@@ -592,15 +601,12 @@ impl OntoEnv {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use std::path::{Path, PathBuf};
+    use std::ffi::OsStr;
     use tempdir::TempDir;
-    use oxigraph::model::{NamedNodeRef};
-    use log::info;
 
     fn setup() -> TempDir {
         // create a temp directory and put all the tests/data files in it
@@ -615,8 +621,8 @@ mod tests {
                 println!("Copying {:?} to {:?}", path, dest);
                 std::fs::copy(path, dest).unwrap();
             } else {
-               // create directory if it doesn't exist
-               std::fs::create_dir_all(dest).unwrap();
+                // create directory if it doesn't exist
+                std::fs::create_dir_all(dest).unwrap();
             }
         }
         dir
@@ -638,7 +644,8 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
-        ).unwrap();
+        )
+        .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
         assert_eq!(env.num_graphs(), 17);
@@ -656,20 +663,25 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
-        ).unwrap();
+        )
+        .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
         assert_eq!(env.num_graphs(), 17);
 
         // delete tempdir's brickpatches.ttl file
         std::fs::remove_file(dir.path().join("tests/data/support/brickpatches.ttl")).unwrap();
-        
+
         env.update().unwrap();
         assert_eq!(env.num_graphs(), 16);
 
         // copy brickpatches.ttl back
         let old_patches = Path::new("tests/data/support/brickpatches.ttl");
-        std::fs::copy(old_patches, dir.path().join("tests/data/support/brickpatches.ttl")).unwrap();
+        std::fs::copy(
+            old_patches,
+            dir.path().join("tests/data/support/brickpatches.ttl"),
+        )
+        .unwrap();
         env.update().unwrap();
         assert_eq!(env.num_graphs(), 17);
 
@@ -686,7 +698,8 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
-        ).unwrap();
+        )
+        .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
 
@@ -706,7 +719,8 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
-        ).unwrap();
+        )
+        .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
 
@@ -727,16 +741,20 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
-        ).unwrap();
+        )
+        .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
         assert_eq!(env.num_graphs(), 17);
+        env.save_to_directory().unwrap();
         // drop env
         env.close();
 
         // reload env
         let cfg_location = dir.path().join(".ontoenv").join("ontoenv.json");
-        let env2 = OntoEnv::from_file(cfg_location.as_path()).unwrap();
+        println!("Loading from: {:?}", cfg_location);
+        let env2 = OntoEnv::from_file(cfg_location.as_path())
+            .expect(format!("Failed to load from {:?}", cfg_location).as_str());
         assert_eq!(env2.num_graphs(), 17);
     }
 }

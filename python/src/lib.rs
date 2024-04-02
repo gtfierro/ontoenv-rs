@@ -1,18 +1,19 @@
 use ::ontoenv as ontoenvrs;
-use ::ontoenv::consts::{TYPE, ONTOLOGY};
-use log::{error, info, debug};
-use std::borrow::Borrow;
+use ::ontoenv::consts::{ONTOLOGY, TYPE};
+use ::ontoenv::ontology::OntologyLocation;
 use anyhow::Error;
 use oxigraph::model::{BlankNode, Literal, NamedNode, Term};
 use pyo3::{
     prelude::*,
     types::{PyBool, PyString, PyTuple},
 };
+use std::borrow::Borrow;
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
 }
 
+#[allow(dead_code)]
 struct MyTerm(Term);
 impl From<Result<&PyAny, pyo3::PyErr>> for MyTerm {
     fn from(s: Result<&PyAny, pyo3::PyErr>) -> Self {
@@ -55,7 +56,11 @@ impl From<Result<&PyAny, pyo3::PyErr>> for MyTerm {
     }
 }
 
-fn term_to_python<'a>(py: Python, rdflib: &'a PyModule, node: Term) -> PyResult<&'a PyAny> {
+fn term_to_python<'a>(
+    py: Python,
+    rdflib: &'a Bound<PyModule>,
+    node: Term,
+) -> PyResult<Bound<'a, PyAny>> {
     let dtype: Option<String> = match &node {
         Term::Literal(lit) => {
             let mut s = lit.datatype().to_string();
@@ -70,7 +75,7 @@ fn term_to_python<'a>(py: Python, rdflib: &'a PyModule, node: Term) -> PyResult<
         _ => None,
     };
 
-    let res: &PyAny = match &node {
+    let res: Bound<PyAny> = match &node {
         Term::NamedNode(uri) => {
             let mut uri = uri.to_string();
             uri.remove(0);
@@ -150,20 +155,24 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    fn new(py: Python, config: &Bound<'_, Config>) -> PyResult<Self> {
+    fn new(_py: Python, config: &Bound<'_, Config>) -> PyResult<Self> {
         env_logger::init();
-        let config_path = config.borrow().cfg.root.join(".ontoenv").join("ontoenv.json");
+        let config_path = config
+            .borrow()
+            .cfg
+            .root
+            .join(".ontoenv")
+            .join("ontoenv.json");
         // if config.root/.ontoenv/ontoenv.json exists, load ontoenv from there
         // else create a new OntoEnv
         let mut env: OntoEnv = if let Ok(env) = ontoenvrs::OntoEnv::from_file(&config_path) {
-            info!("Loaded OntoEnv from file");
-            OntoEnv { 
-                inner: env,
-            }
+            println!("Loaded OntoEnv from file");
+            OntoEnv { inner: env }
         } else {
-            info!("Creating new OntoEnv");
+            println!("Creating new OntoEnv");
             OntoEnv {
-                inner: ontoenvrs::OntoEnv::new(config.borrow().cfg.clone()).map_err(anyhow_to_pyerr)?,
+                inner: ontoenvrs::OntoEnv::new(config.borrow().cfg.clone())
+                    .map_err(anyhow_to_pyerr)?,
             }
         };
 
@@ -180,12 +189,20 @@ impl OntoEnv {
     // define __repr__ for OntoEnv. It prints out the # of graphs in the OntoEnv
     // and the total # of triples across all graphs
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("<OntoEnv: {} graphs, {} triples>", self.inner.num_graphs(), self.inner.num_triples().map_err(anyhow_to_pyerr)?))
+        Ok(format!(
+            "<OntoEnv: {} graphs, {} triples>",
+            self.inner.num_graphs(),
+            self.inner.num_triples().map_err(anyhow_to_pyerr)?
+        ))
     }
 
-
-    fn get_closure(&self, py: Python, uri: &str, destination_graph: &Bound<'_, PyAny>) -> PyResult<()> {
-        let rdflib = py.import("rdflib")?;
+    fn get_closure(
+        &self,
+        py: Python,
+        uri: &str,
+        destination_graph: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let rdflib = py.import_bound("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let ont = self
@@ -200,22 +217,25 @@ impl OntoEnv {
             .inner
             .get_union_graph(&closure)
             .map_err(anyhow_to_pyerr)?;
-            Python::with_gil(|py| {
-                for triple in graph.into_iter() {
-                    let s: Term = triple.subject.into();
-                    let p: Term = triple.predicate.into();
-                    let o: Term = triple.object.into();
+        Python::with_gil(|_py| {
+            for triple in graph.into_iter() {
+                let s: Term = triple.subject.into();
+                let p: Term = triple.predicate.into();
+                let o: Term = triple.object.into();
 
-                    let t = PyTuple::new_bound(destination_graph.py(), &[
-                        term_to_python(destination_graph.py(), rdflib, s)?,
-                        term_to_python(destination_graph.py(), rdflib, p)?,
-                        term_to_python(destination_graph.py(), rdflib, o)?,
-                    ]);
+                let t = PyTuple::new_bound(
+                    destination_graph.py(),
+                    &[
+                        term_to_python(destination_graph.py(), &rdflib, s)?,
+                        term_to_python(destination_graph.py(), &rdflib, p)?,
+                        term_to_python(destination_graph.py(), &rdflib, o)?,
+                    ],
+                );
 
-                    destination_graph.getattr("add")?.call1((t,))?;
-                }
-                Ok::<(), PyErr>(())
-            })?;
+                destination_graph.getattr("add")?.call1((t,))?;
+            }
+            Ok::<(), PyErr>(())
+        })?;
         Ok(())
     }
 
@@ -225,10 +245,10 @@ impl OntoEnv {
     }
 
     fn import_dependencies(&mut self, py: Python, graph: &Bound<'_, PyAny>) -> PyResult<()> {
-        let rdflib = py.import("rdflib")?;
+        let rdflib = py.import_bound("rdflib")?;
         // get the subject of rdf:type owl:Ontology from the provided rdflib graph
-        let py_rdf_type = term_to_python(py, rdflib, Term::NamedNode(TYPE.into()))?;
-        let py_ontology = term_to_python(py, rdflib, Term::NamedNode(ONTOLOGY.into()))?;
+        let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
+        let py_ontology = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into()))?;
         let value_fun: Py<PyAny> = graph.getattr("value")?.into();
         let ontology = value_fun.call1(py, (py_rdf_type, py_ontology))?;
 
@@ -243,11 +263,37 @@ impl OntoEnv {
 
         self.get_closure(py, &ontology, graph)
     }
+
+    fn add(&mut self, _py: Python, location: &Bound<'_, PyAny>) -> PyResult<()> {
+        let location =
+            OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
+        self.inner.add(location).map_err(anyhow_to_pyerr)?;
+        Ok(())
+    }
+
+    fn get_ontology_names(&self) -> PyResult<Vec<String>> {
+        let names: Vec<String> = self
+            .inner
+            .ontologies()
+            .keys()
+            .map(|k| k.name().to_string())
+            .collect();
+        Ok(names)
+    }
+
+    //fn get_ontology_by_name(&self, name: &str) -> PyResult<&GraphIdentifier> {
+    //    let name = NamedNode::new(name)
+    //        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+    //    let graph_id = self.inner
+    //        .get_ontology_by_name(name.as_ref())
+    //        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
+
+    //}
 }
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn ontoenv(_py: Python, m: &PyModule) -> PyResult<()> {
+fn ontoenv(_py: Python, m: Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Config>()?;
     m.add_class::<OntoEnv>()?;
     Ok(())

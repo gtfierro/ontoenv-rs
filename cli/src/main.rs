@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use ontoenv::ontology::{OntologyLocation, GraphIdentifier};
+use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
 use ontoenv::{config::Config, OntoEnv};
 use oxigraph::model::NamedNode;
@@ -51,9 +51,7 @@ enum Commands {
     /// Print out the current state of the ontology environment
     Dump,
     /// Generate a PDF of the dependency graph
-    DepGraph {
-        destination: Option<String>,
-    },
+    DepGraph { destination: Option<String> },
 }
 
 fn main() -> Result<()> {
@@ -169,6 +167,12 @@ fn main() -> Result<()> {
                 .arg("-o")
                 .arg(destination.unwrap_or("dep_graph.pdf".to_string()))
                 .output()?;
+            if !output.status.success() {
+                return Err(anyhow::anyhow!(
+                    "Failed to generate PDF: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
         }
     }
 
