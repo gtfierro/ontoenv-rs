@@ -75,7 +75,7 @@ impl Config {
             .map(|s| s.as_ref().to_owned())
             .collect();
         if includes.is_empty() {
-            config.includes.push(Pattern::new("*")?);
+            config.includes.push(Pattern::new("*.ttl")?);
         }
         for include in includes {
             let pat = Pattern::new(&include)?;
