@@ -334,18 +334,24 @@ impl OntoEnv {
 
     /// Returns the GraphViz dot representation of the dependency graph
     pub fn dep_graph_to_dot(&self) -> Result<String> {
-        let dot = petgraph::dot::Dot::with_config(&self.dependency_graph, &[]);
-        Ok(format!("{:?}", dot))
+        self.rooted_dep_graph_to_dot(self.ontologies.keys().cloned().collect())
     }
 
     /// Return the GraphViz dot representation of the dependency graph
     /// rooted at the given graph
-    pub fn rooted_dep_graph_to_dot(&self, root: &GraphIdentifier) -> Result<String> {
+    pub fn rooted_dep_graph_to_dot(&self, roots: Vec<GraphIdentifier>) -> Result<String> {
         let mut graph = DiGraph::new();
         let mut stack: VecDeque<GraphIdentifier> = VecDeque::new();
-        stack.push_back(root.clone());
+        let mut seen: HashSet<GraphIdentifier> = HashSet::new();
+        let mut indexes: HashMap<GraphIdentifier, NodeIndex> = HashMap::new();
+        let mut edges: HashSet<(NodeIndex, NodeIndex)> = HashSet::new();
+        for root in roots {
+            stack.push_back(root.clone());
+        }
         while let Some(ontology) = stack.pop_front() {
-            let index = graph.add_node(ontology.name().into_owned());
+            let index = *indexes.entry(ontology.clone()).or_insert_with(|| {
+                graph.add_node(ontology.name().into_owned())
+            });
             let ont = self
                 .ontologies
                 .get(&ontology)
@@ -359,10 +365,18 @@ impl OntoEnv {
                     }
                 };
                 let name: NamedNode = import.name().into_owned();
-                let import_index = graph.add_node(name);
-                stack.push_back(import.clone());
-                graph.add_edge(index, import_index, ());
+                let import_index = *indexes.entry(import.clone()).or_insert_with(|| {
+                    graph.add_node(name)
+                });
+                if !seen.contains(&import) {
+                    stack.push_back(import.clone());
+                }
+                if !edges.contains(&(index, import_index)) {
+                    graph.add_edge(index, import_index, ());
+                    edges.insert((index, import_index));
+                }
             }
+            seen.insert(ontology);
         }
         let dot = petgraph::dot::Dot::with_config(&graph, &[]);
         Ok(format!("{:?}", dot))
