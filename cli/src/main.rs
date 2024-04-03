@@ -14,9 +14,9 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    /// Verbose mode - sets the RUST_LOG level to info
+    /// Verbose mode - sets the RUST_LOG level to info, defaults to error level
     #[clap(long, action)]
-    verbose: bool,
+    verbose: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -61,8 +61,8 @@ enum Commands {
 fn main() -> Result<()> {
     let cmd = Cli::parse();
 
-    if cmd.verbose {
-        std::env::set_var("RUST_LOG", "info");
+    let log_level = cmd.verbose.unwrap_or_else(|| "error".to_string());
+    std::env::set_var("RUST_LOG", log_level);
     }
     env_logger::init();
 
