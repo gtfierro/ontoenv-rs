@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
 use ontoenv::{config::Config, OntoEnv};
-use oxigraph::model::NamedNode;
+use oxigraph::model::{NamedNode, NamedNodeRef};
 use std::env::current_dir;
 use std::path::PathBuf;
 
@@ -14,8 +14,8 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    /// Verbose mode - sets the RUST_LOG level to info, defaults to error level
-    #[clap(long, action)]
+    /// Verbose mode - sets the RUST_LOG level to info, defaults to warning level
+    #[clap(long, short, action)]
     verbose: Option<String>,
 }
 
@@ -55,17 +55,15 @@ enum Commands {
     /// Print out the current state of the ontology environment
     Dump,
     /// Generate a PDF of the dependency graph
-    DepGraph { destination: Option<String> },
+    DepGraph { roots: Option<Vec<String>>, destination: Option<String> },
 }
 
 fn main() -> Result<()> {
     let cmd = Cli::parse();
 
-    let log_level = cmd.verbose.unwrap_or_else(|| "error".to_string());
+    let log_level = cmd.verbose.unwrap_or_else(|| "warning".to_string());
     std::env::set_var("RUST_LOG", log_level);
-    }
     env_logger::init();
-
 
     match cmd.command {
         Commands::Init {
@@ -161,11 +159,19 @@ fn main() -> Result<()> {
             let env = OntoEnv::from_file(&path)?;
             env.dump();
         }
-        Commands::DepGraph { destination } => {
+        Commands::DepGraph { roots, destination } => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
             let env = OntoEnv::from_file(&path)?;
-            let dot = env.dep_graph_to_dot()?;
+            let dot = if let Some(roots) = roots {
+                let roots: Vec<GraphIdentifier> = roots
+                    .iter()
+                    .map(|iri| env.get_ontology_by_name(NamedNodeRef::new(iri).unwrap()).unwrap().id().clone())
+                    .collect();
+                env.rooted_dep_graph_to_dot(roots)?
+            } else {
+                env.dep_graph_to_dot()?
+            };
             // call graphviz to generate PDF
             let dot_path = current_dir()?.join("dep_graph.dot");
             std::fs::write(&dot_path, dot)?;
