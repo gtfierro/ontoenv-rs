@@ -163,7 +163,7 @@ fn main() -> Result<()> {
             let env = OntoEnv::from_file(&path)?;
             env.dump();
         }
-        Commands::DepGraph { roots, destination } => {
+        Commands::DepGraph { roots, output } => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
             let env = OntoEnv::from_file(&path)?;
