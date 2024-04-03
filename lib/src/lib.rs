@@ -345,7 +345,7 @@ impl OntoEnv {
         let mut stack: VecDeque<GraphIdentifier> = VecDeque::new();
         stack.push_back(root.clone());
         while let Some(ontology) = stack.pop_front() {
-            let index = graph.add_node(ontology.clone());
+            let index = graph.add_node(ontology.name().into_owned());
             let ont = self
                 .ontologies
                 .get(&ontology)
@@ -358,8 +358,9 @@ impl OntoEnv {
                         continue;
                     }
                 };
+                let name: NamedNode = import.name().into_owned();
+                let import_index = graph.add_node(name);
                 stack.push_back(import.clone());
-                let import_index = graph.add_node(import.clone());
                 graph.add_edge(index, import_index, ());
             }
         }
@@ -658,7 +659,7 @@ mod tests {
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
-        assert_eq!(env.num_graphs(), 17);
+        assert_eq!(env.num_graphs(), 18);
         teardown(dir);
     }
 
@@ -677,13 +678,13 @@ mod tests {
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
-        assert_eq!(env.num_graphs(), 17);
+        assert_eq!(env.num_graphs(), 18);
 
         // delete tempdir's brickpatches.ttl file
         std::fs::remove_file(dir.path().join("tests/data/support/brickpatches.ttl")).unwrap();
 
         env.update().unwrap();
-        assert_eq!(env.num_graphs(), 16);
+        assert_eq!(env.num_graphs(), 17);
 
         // copy brickpatches.ttl back
         let old_patches = Path::new("tests/data/support/brickpatches.ttl");
@@ -693,7 +694,7 @@ mod tests {
         )
         .unwrap();
         env.update().unwrap();
-        assert_eq!(env.num_graphs(), 17);
+        assert_eq!(env.num_graphs(), 18);
 
         teardown(dir);
     }
@@ -734,7 +735,7 @@ mod tests {
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
 
-        let brick_path = test_dir.join("Brick.ttl");
+        let brick_path = test_dir.join("Brick-1.4-rc1.ttl");
         let loc = OntologyLocation::from_str(brick_path.to_str().unwrap()).unwrap();
         let ont = env.get_ontology_by_location(&loc).unwrap();
         assert_eq!(ont.imports.len(), 10);
@@ -755,7 +756,7 @@ mod tests {
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
-        assert_eq!(env.num_graphs(), 17);
+        assert_eq!(env.num_graphs(), 18);
         env.save_to_directory().unwrap();
         // drop env
         env.close();
@@ -765,6 +766,6 @@ mod tests {
         println!("Loading from: {:?}", cfg_location);
         let env2 = OntoEnv::from_file(cfg_location.as_path())
             .expect(format!("Failed to load from {:?}", cfg_location).as_str());
-        assert_eq!(env2.num_graphs(), 17);
+        assert_eq!(env2.num_graphs(), 18);
     }
 }
