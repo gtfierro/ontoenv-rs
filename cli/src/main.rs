@@ -10,9 +10,13 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(name = "ontoenv")]
 #[command(about = "Ontology environment manager")]
+#[command(arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    /// Verbose mode - sets the RUST_LOG level to info
+    #[clap(long, action)]
+    verbose: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -55,9 +59,13 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    let cmd = Cli::parse();
+
+    if cmd.verbose {
+        std::env::set_var("RUST_LOG", "info");
+    }
     env_logger::init();
 
-    let cmd = Cli::parse();
 
     match cmd.command {
         Commands::Init {
