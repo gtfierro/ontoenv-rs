@@ -59,6 +59,12 @@ impl Config {
         J: IntoIterator,
         J::Item: AsRef<str>,
     {
+        // default search directories to root if empty
+        let search_directories = if search_directories.is_empty() {
+            vec![root.clone()]
+        } else {
+            search_directories
+        };
         let mut config = Config {
             root,
             search_directories,
