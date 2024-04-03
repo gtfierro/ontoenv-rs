@@ -55,7 +55,11 @@ enum Commands {
     /// Print out the current state of the ontology environment
     Dump,
     /// Generate a PDF of the dependency graph
-    DepGraph { roots: Option<Vec<String>>, destination: Option<String> },
+    DepGraph {
+        roots: Option<Vec<String>>,
+        #[clap(long, short)]
+        output: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -175,11 +179,9 @@ fn main() -> Result<()> {
             // call graphviz to generate PDF
             let dot_path = current_dir()?.join("dep_graph.dot");
             std::fs::write(&dot_path, dot)?;
+            let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
             let output = std::process::Command::new("dot")
-                .arg("-Tpdf")
-                .arg(dot_path)
-                .arg("-o")
-                .arg(destination.unwrap_or("dep_graph.pdf".to_string()))
+                .args(&["-Tpdf", dot_path.to_str().unwrap(), "-o", &output_path])
                 .output()?;
             if !output.status.success() {
                 return Err(anyhow::anyhow!(
