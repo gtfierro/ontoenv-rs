@@ -387,8 +387,10 @@ impl OntoEnv {
             }
             seen.insert(ontology);
         }
-        let dot = petgraph::dot::Dot::with_config(&graph, &[]);
-        Ok(format!("{:?}", dot))
+        let dot =
+            petgraph::dot::Dot::with_config(&graph, &[petgraph::dot::Config::GraphContentOnly]);
+
+        Ok(format!("digraph {{\nrankdir=LR;\n{:?}}}", dot))
     }
 
     fn find_files(&self) -> Result<Vec<OntologyLocation>> {
