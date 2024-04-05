@@ -9,7 +9,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 authors = ["Gabe Fierro <gtfierro@mines.edu>"]
-license = "BSD-3-clause"
+license = "BSD-3-Clause"
 edition = "2021"
 rust-version = "1.70"
 repository = "https://github.com/gtfierro/ontoenv-rs"
