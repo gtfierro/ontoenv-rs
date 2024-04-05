@@ -160,7 +160,7 @@ fn main() -> Result<()> {
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
             let env = OntoEnv::from_file(&path)?;
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
-            ontologies.sort_by(|a, b| a.location().as_str().cmp(&b.location().as_str()));
+            ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
             for ont in ontologies {
                 println!("{}", ont.location().as_str());
             }
@@ -194,7 +194,7 @@ fn main() -> Result<()> {
             std::fs::write(&dot_path, dot)?;
             let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
             let output = std::process::Command::new("dot")
-                .args(&["-Tpdf", dot_path.to_str().unwrap(), "-o", &output_path])
+                .args(["-Tpdf", dot_path.to_str().unwrap(), "-o", &output_path])
                 .output()?;
             if !output.status.success() {
                 return Err(anyhow::anyhow!(

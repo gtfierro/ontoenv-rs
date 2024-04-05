@@ -26,7 +26,7 @@ pub struct DefaultPolicy;
 
 impl ResolutionPolicy for DefaultPolicy {
     fn resolve<'a>(&self, name: &str, ontologies: &'a [&'a Ontology]) -> Option<&'a Ontology> {
-        ontologies.iter().find(|o| o.name() == name).map(|o| *o)
+        ontologies.iter().find(|o| o.name() == name).copied()
     }
 
     fn policy_name(&self) -> &'static str {
@@ -45,7 +45,7 @@ impl ResolutionPolicy for LatestPolicy {
             .iter()
             .filter(|o| o.name() == name)
             .max_by_key(|o| o.last_updated)
-            .map(|o| *o)
+            .copied()
     }
 
     fn policy_name(&self) -> &'static str {
@@ -90,7 +90,7 @@ impl ResolutionPolicy for VersionPolicy {
             .iter()
             .position(|v| v == max_version)
             .unwrap();
-        Some(&ontologies[max_index]).map(|o| *o)
+        Some(&ontologies[max_index]).copied()
     }
 
     fn policy_name(&self) -> &'static str {

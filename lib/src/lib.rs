@@ -9,7 +9,6 @@ pub mod policy;
 pub mod util;
 
 use crate::config::Config;
-use crate::consts::*;
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
@@ -74,7 +73,7 @@ impl OntoEnv {
         std::fs::create_dir_all(&ontoenv_dir)?;
 
         // create the store in the root/.ontoenv/store.db directory
-        let store = Store::open(&ontoenv_dir.join("store.db"))?;
+        let store = Store::open(ontoenv_dir.join("store.db"))?;
         Ok(Self {
             config,
             ontologies: HashMap::new(),
@@ -101,28 +100,22 @@ impl OntoEnv {
     ) -> Option<Ontology> {
         let ontologies = self.ontologies.values().collect::<Vec<&Ontology>>();
         policy
-            .resolve(name.as_str(), &ontologies.as_slice())
-            .map(|o| o.clone())
+            .resolve(name.as_str(), ontologies.as_slice())
+            .cloned()
     }
 
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
         // choose the first ontology with the given name
-        for ontology in self.ontologies.values() {
-            if ontology.name() == name {
-                return Some(ontology);
-            }
-        }
-        None
+        self.ontologies
+            .values()
+            .find(|&ontology| ontology.name() == name)
     }
 
     fn get_ontology_by_location(&self, location: &OntologyLocation) -> Option<&Ontology> {
         // choose the first ontology with the given location
-        for ontology in self.ontologies.values() {
-            if ontology.location() == Some(location) {
-                return Some(ontology);
-            }
-        }
-        None
+        self.ontologies
+            .values()
+            .find(|&ontology| ontology.location() == Some(location))
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
@@ -131,7 +124,7 @@ impl OntoEnv {
         let env: OntoEnv = serde_json::from_reader(reader)?;
         // load store from root/.ontoenv/store.db
         let ontoenv_dir = env.config.root.join(".ontoenv");
-        let store = Store::open(&ontoenv_dir.join("store.db"))?;
+        let store = Store::open(ontoenv_dir.join("store.db"))?;
         Ok(Self { store, ..env })
     }
 
@@ -244,7 +237,7 @@ impl OntoEnv {
         }
         for ontology in to_remove.iter() {
             info!("Removing ontology: {:?}", ontology);
-            self.ontologies.remove(&ontology);
+            self.ontologies.remove(ontology);
         }
         Ok(to_remove)
     }
@@ -326,7 +319,7 @@ impl OntoEnv {
 
         info!("Checking for updates");
         let updated_ids = self.check_for_updates()?;
-        if updated_ids.len() > 0 {
+        if !updated_ids.is_empty() {
             info!("Updating ontologies: {:?}", updated_ids);
         }
 
@@ -610,7 +603,7 @@ impl OntoEnv {
             groups.entry(name).or_default().push(ontology.clone());
         }
         let mut sorted_groups: Vec<NamedNode> = groups.keys().cloned().collect();
-        sorted_groups.sort_by(|a, b| a.cmp(b));
+        sorted_groups.sort();
         for name in sorted_groups {
             let group = groups.get(&name).unwrap();
             println!("┌ Ontology: {}", name);
@@ -620,9 +613,9 @@ impl OntoEnv {
                 // sorted keys
                 let mut sorted_keys: Vec<NamedNode> =
                     ontology.version_properties().keys().cloned().collect();
-                sorted_keys.sort_by(|a, b| a.cmp(b));
+                sorted_keys.sort();
                 // print up until last key
-                if sorted_keys.len() > 0 {
+                if !sorted_keys.is_empty() {
                     println!("│ ├─ Version properties:");
                     if sorted_keys.len() > 1 {
                         for key in sorted_keys.iter().take(sorted_keys.len() - 1) {
@@ -644,11 +637,11 @@ impl OntoEnv {
                     );
                 }
                 println!("│ ├─ Last updated: {}", ontology.last_updated.unwrap());
-                if ontology.imports.len() > 0 {
+                if !ontology.imports.is_empty() {
                     println!("│ ├─ Triples: {}", g.len());
                     println!("│ ├─ Imports:");
                     let mut sorted_imports: Vec<NamedNode> = ontology.imports.clone();
-                    sorted_imports.sort_by(|a, b| a.cmp(b));
+                    sorted_imports.sort();
                     // print up until last import
                     for import in sorted_imports.iter().take(sorted_imports.len() - 1) {
                         println!("│ │ ├─ {}", import);

@@ -19,6 +19,12 @@ pub struct Doctor {
     checks: Vec<Box<dyn EnvironmentCheck>>,
 }
 
+impl Default for Doctor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Doctor {
     pub fn new() -> Self {
         Self { checks: Vec::new() }
@@ -60,7 +66,7 @@ impl EnvironmentCheck for OntologyDeclaration {
             let decls: Vec<_> = g
                 .subjects_for_predicate_object(TYPE, ONTOLOGY)
                 .collect::<Vec<_>>();
-            if decls.len() == 0 {
+            if decls.is_empty() {
                 problems.push(OntologyProblem {
                     locations: vec![location.clone()],
                     message: "No ontology declaration found".to_string(),
