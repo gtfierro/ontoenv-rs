@@ -142,7 +142,7 @@ impl Config {
                     .map(|s| s.to_string())
                     .collect::<Vec<String>>(),
                 require_ontology_names.is_true(),
-                resolution_policy.to_string().into(),
+                resolution_policy.to_string(),
             )
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
         })
