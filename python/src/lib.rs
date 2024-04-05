@@ -124,6 +124,7 @@ impl Config {
         includes: Vec<Bound<'_, PyString>>,
         excludes: Vec<Bound<'_, PyString>>,
         require_ontology_names: Bound<'_, PyBool>,
+        resolution_policy: Bound<'_, PyString>,
     ) -> PyResult<Self> {
         Ok(Config {
             cfg: ontoenvrs::config::Config::new(
@@ -141,6 +142,7 @@ impl Config {
                     .map(|s| s.to_string())
                     .collect::<Vec<String>>(),
                 require_ontology_names.is_true(),
+                resolution_policy.to_string().into(),
             )
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
         })

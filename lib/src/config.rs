@@ -1,3 +1,4 @@
+use crate::policy::{DefaultPolicy, ResolutionPolicy};
 use anyhow::Result;
 use glob::{Pattern, PatternError};
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,8 @@ pub struct Config {
     excludes: Vec<Pattern>,
     // require ontology names?
     pub require_ontology_names: bool,
+    // resolution policy
+    pub resolution_policy: String,
 }
 
 impl Config {
@@ -52,6 +55,7 @@ impl Config {
         includes: I,
         excludes: J,
         require_ontology_names: bool,
+        resolution_policy: String,
     ) -> Result<Self>
     where
         I: IntoIterator,
@@ -71,6 +75,7 @@ impl Config {
             includes: vec![],
             excludes: vec![],
             require_ontology_names,
+            resolution_policy,
         };
         let includes: Vec<String> = includes
             .into_iter()
@@ -99,13 +104,14 @@ impl Config {
         search_directories: Vec<PathBuf>,
         require_ontology_names: bool,
     ) -> Result<Self> {
-        let includes = vec!["*/**/*.ttl", "*/**/*.xml", "*/**/*.n3"];
+        let includes = vec!["*.ttl", "*.xml", "*.n3"];
         self::Config::new::<Vec<&str>, Vec<&str>>(
             root,
             search_directories,
             includes,
             vec![],
             require_ontology_names,
+            DefaultPolicy::default().policy_name().to_string(),
         )
     }
 
