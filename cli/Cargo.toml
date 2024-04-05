@@ -1,10 +1,12 @@
 [package]
 name = "ontoenv-cli"
-edition.workspace = true
-authors.workspace = true
 version.workspace = true
+edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
+authors.workspace = true
+description = "Command line tool to manage ontologies and their imports in a local environment"
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "ontoenv"
