@@ -2,7 +2,7 @@
 name = "ontoenv"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 authors.workspace = true
 description = "Rust library for managing ontologies and their imports in a local environment."
 repository.workspace = true
