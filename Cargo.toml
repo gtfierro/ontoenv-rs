@@ -12,7 +12,8 @@ authors = ["Gabe Fierro <gtfierro@mines.edu>"]
 license = "bsd-3-clause"
 edition = "2021"
 rust-version = "1.70"
-repository = "https://github.com/gtfierro/ontoenv-rs/tree/main/cli"
+repository = "https://github.com/gtfierro/ontoenv-rs"
+homepage = "https://github.com/gtfierro/ontoenv-rs"
 description = "A tool for managing ontologies and their dependencies"
 
 [workspace.dependencies]
