@@ -7,6 +7,7 @@ cfg = Config(
     includes = [],
     excludes = [],
     require_ontology_names = True,
+    resolution_policy = 'default',
     )
 
 env = OntoEnv(cfg)

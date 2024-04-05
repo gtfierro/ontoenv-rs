@@ -2,12 +2,15 @@ extern crate derive_builder;
 
 pub mod config;
 pub mod consts;
+pub mod doctor;
 pub mod ontology;
 pub mod policy;
 #[macro_use]
 pub mod util;
 
 use crate::config::Config;
+use crate::consts::*;
+use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
 use chrono::prelude::*;
@@ -91,9 +94,15 @@ impl OntoEnv {
         Ok(self.store.len()?)
     }
 
-    pub fn get_ontology_with_policy(&self, name: NamedNodeRef, policy: &dyn policy::ResolutionPolicy) -> Option<Ontology> {
+    pub fn get_ontology_with_policy(
+        &self,
+        name: NamedNodeRef,
+        policy: &dyn policy::ResolutionPolicy,
+    ) -> Option<Ontology> {
         let ontologies = self.ontologies.values().collect::<Vec<&Ontology>>();
-        policy.resolve(name.as_str(), &ontologies.as_slice()).map(|o| o.clone())
+        policy
+            .resolve(name.as_str(), &ontologies.as_slice())
+            .map(|o| o.clone())
     }
 
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
@@ -349,9 +358,9 @@ impl OntoEnv {
             stack.push_back(root.clone());
         }
         while let Some(ontology) = stack.pop_front() {
-            let index = *indexes.entry(ontology.clone()).or_insert_with(|| {
-                graph.add_node(ontology.name().into_owned())
-            });
+            let index = *indexes
+                .entry(ontology.clone())
+                .or_insert_with(|| graph.add_node(ontology.name().into_owned()));
             let ont = self
                 .ontologies
                 .get(&ontology)
@@ -365,9 +374,9 @@ impl OntoEnv {
                     }
                 };
                 let name: NamedNode = import.name().into_owned();
-                let import_index = *indexes.entry(import.clone()).or_insert_with(|| {
-                    graph.add_node(name)
-                });
+                let import_index = *indexes
+                    .entry(import.clone())
+                    .or_insert_with(|| graph.add_node(name));
                 if !seen.contains(&import) {
                     stack.push_back(import.clone());
                 }
@@ -562,6 +571,33 @@ impl OntoEnv {
             //graph.insert_all(d.quads())?;
         }
         Ok(union)
+    }
+
+    /// Returns a list of issues with the environment
+    pub fn doctor(&self) {
+        let mut doctor = Doctor::new();
+        doctor.add_check(Box::new(DuplicateOntology {}));
+        doctor.add_check(Box::new(OntologyDeclaration {}));
+
+        let problems = doctor.run(self).unwrap();
+
+        // for each problem, print two columns. The first column is the message
+        // and the second column is a list of locations for that problem. The locations
+        // should be stacked on top of one another
+        let mut messages: HashMap<String, Vec<String>> = HashMap::new();
+        for problem in problems {
+            let message = problem.message;
+            let locations: Vec<String> = problem.locations.iter().map(|l| l.to_string()).collect();
+            messages.entry(message).or_default().extend(locations);
+        }
+
+        // print the messages
+        for (message, locations) in messages {
+            println!("Problem: {}", message);
+            for location in locations {
+                println!("  - {}", location);
+            }
+        }
     }
 
     pub fn dump(&self) {

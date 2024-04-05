@@ -15,8 +15,11 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
     /// Verbose mode - sets the RUST_LOG level to info, defaults to warning level
-    #[clap(long, short, action)]
-    verbose: Option<String>,
+    #[clap(long, short, action, default_value = "false")]
+    verbose: bool,
+    /// Resolution policy for determining which ontology to use when there are multiple with the same name
+    #[clap(long, short, default_value = "default")]
+    policy: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -60,14 +63,18 @@ enum Commands {
         #[clap(long, short)]
         output: Option<String>,
     },
+    /// Run the doctor to check the environment for issues
+    Doctor,
 }
 
 fn main() -> Result<()> {
     let cmd = Cli::parse();
 
-    let log_level = cmd.verbose.unwrap_or_else(|| "warning".to_string());
+    let log_level = if cmd.verbose { "info" } else { "warn" };
     std::env::set_var("RUST_LOG", log_level);
     env_logger::init();
+
+    let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
 
     match cmd.command {
         Commands::Init {
@@ -82,6 +89,7 @@ fn main() -> Result<()> {
                 &includes,
                 &excludes,
                 require_ontology_names,
+                policy,
             )?;
             let mut env = OntoEnv::new(config)?;
             env.update()?;
@@ -170,7 +178,12 @@ fn main() -> Result<()> {
             let dot = if let Some(roots) = roots {
                 let roots: Vec<GraphIdentifier> = roots
                     .iter()
-                    .map(|iri| env.get_ontology_by_name(NamedNodeRef::new(iri).unwrap()).unwrap().id().clone())
+                    .map(|iri| {
+                        env.get_ontology_by_name(NamedNodeRef::new(iri).unwrap())
+                            .unwrap()
+                            .id()
+                            .clone()
+                    })
                     .collect();
                 env.rooted_dep_graph_to_dot(roots)?
             } else {
@@ -189,6 +202,12 @@ fn main() -> Result<()> {
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
+        }
+        Commands::Doctor => {
+            // load env from .ontoenv/ontoenv.json
+            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let env = OntoEnv::from_file(&path)?;
+            env.doctor();
         }
     }
 
