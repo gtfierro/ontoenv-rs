@@ -51,13 +51,13 @@ impl GraphIdentifier {
     }
 
     pub fn to_filename(&self) -> String {
-        let name = self.name.as_str().replace(":", "+");
+        let name = self.name.as_str().replace(':', "+");
         let location = self.location.as_str().replace("file://", "");
-        format!("{}-{}", name, location).replace("/", "_")
+        format!("{}-{}", name, location).replace('/', "_")
     }
     pub fn graphname(&self) -> Result<GraphName> {
         // graphname is the self.name + URL-safe self.location
-        let name = self.name.as_str().replace(":", "+");
+        let name = self.name.as_str().replace(':', "+");
         let location = self.location.as_str().replace("file://", "");
         Ok(GraphName::NamedNode(NamedNode::new(format!(
             "urn://{}-{}",
@@ -189,7 +189,7 @@ impl std::fmt::Display for Ontology {
             self.id.location.as_str()
         )?;
         for (k, v) in self.version_properties.iter() {
-            write!(f, "  {}: {}\n", k, v)?;
+            writeln!(f, "  {}: {}", k, v)?;
         }
         Ok(())
     }
@@ -262,7 +262,7 @@ impl Ontology {
         // ontology_name is the subject of the first declaration
         let ontology_name: Subject = match decls.first() {
             Some(decl) => match decl {
-                SubjectRef::NamedNode(s) => Subject::NamedNode(s.clone().into()),
+                SubjectRef::NamedNode(s) => Subject::NamedNode((*s).into()),
                 _ => return Err(anyhow::anyhow!("Ontology name is not an IRI")),
             },
             None => {

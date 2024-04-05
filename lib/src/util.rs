@@ -25,9 +25,9 @@ pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
         GraphSerializer::from_format(GraphFormat::Turtle).triple_writer(&mut file)?;
     for quad in dataset.iter() {
         serializer.write(TripleRef {
-            subject: quad.subject.into(),
-            predicate: quad.predicate.into(),
-            object: quad.object.into(),
+            subject: quad.subject,
+            predicate: quad.predicate,
+            object: quad.object,
         })?;
     }
     serializer.finish()?;

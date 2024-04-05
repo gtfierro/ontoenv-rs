@@ -111,7 +111,7 @@ impl Config {
             includes,
             vec![],
             require_ontology_names,
-            DefaultPolicy::default().policy_name().to_string(),
+            DefaultPolicy.policy_name().to_string(),
         )
     }
 
