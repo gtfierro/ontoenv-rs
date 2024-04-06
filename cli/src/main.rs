@@ -39,6 +39,10 @@ enum Commands {
     /// Compute the owl:imports closure of an ontology and write it to a file
     GetClosure {
         ontology: String,
+        #[clap(long, short, action, default_value = "true")]
+        rewrite_sh_prefixes: Option<bool>,
+        #[clap(long, short, action, default_value = "true")]
+        remove_owl_imports: Option<bool>,
         destination: Option<String>,
     },
     /// Add an ontology to the environment
@@ -104,6 +108,8 @@ fn main() -> Result<()> {
         }
         Commands::GetClosure {
             ontology,
+            rewrite_sh_prefixes,
+            remove_owl_imports,
             destination,
         } => {
             // load env from .ontoenv/ontoenv.json
@@ -123,7 +129,7 @@ fn main() -> Result<()> {
                 .get_ontology_by_name(iri.as_ref())
                 .ok_or(anyhow::anyhow!("Ontology not found"))?;
             let closure = env.get_dependency_closure(ont.id())?;
-            let graph = env.get_union_graph(&closure)?;
+            let graph = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
             // write the graph to a file
             if let Some(destination) = destination {
                 write_dataset_to_file(&graph, &destination)?;
@@ -151,8 +157,9 @@ fn main() -> Result<()> {
             // print list of ontology URLs from env.onologies.values() sorted alphabetically
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
+            ontologies.dedup_by(|a, b| a.name() == b.name());
             for ont in ontologies {
-                println!("{}", ont.name());
+                println!("{}", ont.name().as_str());
             }
         }
         Commands::ListLocations => {

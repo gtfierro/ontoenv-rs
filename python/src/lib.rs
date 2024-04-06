@@ -203,6 +203,8 @@ impl OntoEnv {
         py: Python,
         uri: &str,
         destination_graph: &Bound<'_, PyAny>,
+        rewrite_sh_prefixes: bool,
+        remove_owl_imports: bool,
     ) -> PyResult<()> {
         let rdflib = py.import_bound("rdflib")?;
         let iri = NamedNode::new(uri)
@@ -217,7 +219,7 @@ impl OntoEnv {
             .map_err(anyhow_to_pyerr)?;
         let graph = self
             .inner
-            .get_union_graph(&closure)
+            .get_union_graph(&closure, Some(rewrite_sh_prefixes), Some(remove_owl_imports))
             .map_err(anyhow_to_pyerr)?;
         Python::with_gil(|_py| {
             for triple in graph.into_iter() {
@@ -263,7 +265,7 @@ impl OntoEnv {
         // turn ontology into a string
         let ontology = ontology.to_string();
 
-        self.get_closure(py, &ontology, graph)
+        self.get_closure(py, &ontology, graph, true, true)
     }
 
     fn add(&mut self, _py: Python, location: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -282,15 +284,6 @@ impl OntoEnv {
             .collect();
         Ok(names)
     }
-
-    //fn get_ontology_by_name(&self, name: &str) -> PyResult<&GraphIdentifier> {
-    //    let name = NamedNode::new(name)
-    //        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-    //    let graph_id = self.inner
-    //        .get_ontology_by_name(name.as_ref())
-    //        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
-
-    //}
 }
 
 /// A Python module implemented in Rust.
