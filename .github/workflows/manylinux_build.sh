@@ -13,7 +13,6 @@ python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.dev.txt
 maturin develop --release
-python generate_stubs.py ontoenv ontoenv.pyi --ruff
 maturin build --release --features abi3 --compatibility manylinux2014
 if [ %for_each_version% ]; then
   for VERSION in 8 9 10 11 12; do
