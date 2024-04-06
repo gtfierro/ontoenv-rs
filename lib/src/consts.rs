@@ -33,6 +33,9 @@ pub const HAS_GRAPH_METADATA: NamedNodeRef<'_> =
     NamedNodeRef::new_unchecked("http://www.linkedmodel.org/schema/vaem#hasGraphMetadata");
 pub const REVISION: NamedNodeRef<'_> =
     NamedNodeRef::new_unchecked("http://www.linkedmodel.org/schema/vaem#revision");
+// shacl
+pub const PREFIXES: NamedNodeRef<'_> =
+    NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefixes");
 
 pub const ONTOLOGY_VERSION_IRIS: [NamedNodeRef<'_>; 10] = [
     VERSION_INFO,

@@ -12,10 +12,11 @@ use crate::config::Config;
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
+use crate::consts::{PREFIXES, IMPORTS, ONTOLOGY};
 use chrono::prelude::*;
 use log::{debug, error, info};
 use oxigraph::model::{
-    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef,
+    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, SubjectRef, Quad
 };
 use oxigraph::store::Store;
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
@@ -142,10 +143,10 @@ impl OntoEnv {
         let mut file = std::fs::File::create(config_path)?;
         file.write_all(config_str.as_bytes())?;
         // save the dependency graph
-        let dep_graph_path = ontoenv_dir.join("dependency_graph.json");
-        let dep_graph_str = serde_json::to_string_pretty(&self.dependency_graph)?;
-        let mut file = std::fs::File::create(dep_graph_path)?;
-        file.write_all(dep_graph_str.as_bytes())?;
+        //let dep_graph_path = ontoenv_dir.join("dependency_graph.json");
+        //let dep_graph_str = serde_json::to_string_pretty(&self.dependency_graph)?;
+        //let mut file = std::fs::File::create(dep_graph_path)?;
+        //file.write_all(dep_graph_str.as_bytes())?;
         Ok(())
     }
 
@@ -539,11 +540,17 @@ impl OntoEnv {
                 }
             }
         }
-        Ok(closure.into_iter().collect())
+        // remove the original graph from the closure
+        closure.remove(id);
+        let mut closure: Vec<GraphIdentifier> = closure.into_iter().collect();
+        closure.insert(0, id.clone());
+        info!("Dependency closure for {:?}: {:?}", id, closure.len());
+        Ok(closure)
     }
 
     /// Returns a graph containing the union of all graphs_ids
-    pub fn get_union_graph(&self, graph_ids: &[GraphIdentifier]) -> Result<Dataset> {
+    pub fn get_union_graph(&self, graph_ids: &[GraphIdentifier], rewrite_sh_prefixes: Option<bool>, remove_owl_imports: Option<bool>) -> Result<Dataset> {
+        // TODO: remove the owl:imports statements
         let mut union: Dataset = Dataset::new();
         for id in graph_ids {
             let graphname: NamedOrBlankNode = match id.graphname()? {
@@ -555,15 +562,63 @@ impl OntoEnv {
                 return Err(anyhow::anyhow!("Graph not found: {:?}", id));
             }
 
+            let mut count = 0;
             for quad in
                 self.store
                     .quads_for_pattern(None, None, None, Some(id.graphname()?.as_ref()))
             {
+                count += 1;
                 union.insert(quad?.as_ref());
             }
+            info!("Added {} triples from graph: {:?}", count, id);
 
             //let d = g.into_dataset();
             //graph.insert_all(d.quads())?;
+        }
+        let first_id = graph_ids.first().ok_or(anyhow::anyhow!("No graphs found"))?;
+        let root_ontology: SubjectRef = SubjectRef::NamedNode(first_id.name());
+        // default to true if not specified
+        if let Some(true) = rewrite_sh_prefixes.or(Some(true)) {
+            // rewrite sh:prefixes
+            // the ontology is the first graph in the list
+            let mut to_remove: Vec<Quad> = vec![];
+            let mut to_add: Vec<Quad> = vec![];
+            info!("Rewriting sh:prefixes to point to: {:?}", root_ontology);
+            for quad in union.quads_for_predicate(PREFIXES) {
+                let s = quad.subject;
+                let g = quad.graph_name;
+                let new_quad = QuadRef::new(s, PREFIXES, root_ontology, g);
+                to_remove.push(quad.into());
+                to_add.push(new_quad.into());
+            }
+            for quad in to_remove {
+                union.remove(quad.as_ref());
+            }
+            for quad in to_add {
+                union.insert(quad.as_ref());
+            }
+        }
+        if let Some(true) = remove_owl_imports.or(Some(true)) {
+            // remove owl:imports
+            let mut to_remove: Vec<Quad> = vec![];
+            for quad in union.quads_for_predicate(IMPORTS) {
+                to_remove.push(quad.into());
+            }
+            for quad in to_remove {
+                union.remove(quad.as_ref());
+            }
+        }
+        // remove owl:Ontology declarations that are not the first graph
+        let mut to_remove: Vec<Quad> = vec![];
+        let root_graph: GraphName = GraphName::NamedNode(first_id.name().into());
+        for quad in union.quads_for_object(ONTOLOGY) {
+            let g = quad.graph_name;
+            if g != root_graph.as_ref() {
+                to_remove.push(quad.into());
+            }
+        }
+        for quad in to_remove {
+            union.remove(quad.as_ref());
         }
         Ok(union)
     }
@@ -700,6 +755,7 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
+            "default".to_string(),
         )
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
@@ -719,6 +775,7 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
+            "default".to_string(),
         )
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
@@ -754,6 +811,7 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
+            "default".to_string(),
         )
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
@@ -775,6 +833,7 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
+            "default".to_string(),
         )
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
@@ -797,6 +856,7 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
+            "default".to_string(),
         )
         .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
@@ -812,5 +872,27 @@ mod tests {
         let env2 = OntoEnv::from_file(cfg_location.as_path())
             .expect(format!("Failed to load from {:?}", cfg_location).as_str());
         assert_eq!(env2.num_graphs(), 18);
+    }
+
+    #[test]
+    fn test_ontoenv_add() {
+        let dir = setup();
+        let test_dir = dir.path().join("tests/data/support");
+        let cfg1 = Config::new(
+            dir.path().into(),
+            vec![test_dir.into()],
+            &["*.ttl"],
+            &[""],
+            false,
+            "default".to_string(),
+        ).unwrap();
+        let mut env = OntoEnv::new(cfg1).unwrap();
+        env.update().unwrap();
+        assert_eq!(env.num_graphs(), 15);
+
+        let brick_path = dir.path().join("tests/data/Brick-1.3.ttl");
+        let loc = OntologyLocation::from_str(brick_path.to_str().unwrap()).unwrap();
+        env.add(loc).unwrap();
+        assert_eq!(env.num_graphs(), 16);
     }
 }
