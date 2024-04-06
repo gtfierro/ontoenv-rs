@@ -728,7 +728,7 @@ mod tests {
             let path = entry.path();
             let dest = dir.path().join(path);
             // create os str
-            if path.is_file() && path.extension().unwrap_or(&OsStr::new("")) == "ttl" {
+            if path.is_file() && path.extension().unwrap_or(OsStr::new("")) == "ttl" {
                 println!("Copying {:?} to {:?}", path, dest);
                 std::fs::copy(path, dest).unwrap();
             } else {
@@ -751,7 +751,7 @@ mod tests {
         // the ontologies
         let cfg1 = Config::new(
             dir.path().into(),
-            vec![test_dir.into()],
+            vec![test_dir],
             &["*.ttl"],
             &[""],
             false,
@@ -771,7 +771,7 @@ mod tests {
         // test that the ontoenv can update the environment
         let cfg1 = Config::new(
             dir.path().into(),
-            vec![test_dir.into()],
+            vec![test_dir],
             &["*.ttl"],
             &[""],
             false,
@@ -807,7 +807,7 @@ mod tests {
         let test_dir = dir.path().join("tests/data");
         let cfg1 = Config::new(
             dir.path().into(),
-            vec![test_dir.into()],
+            vec![test_dir],
             &["*.ttl"],
             &[""],
             false,
@@ -829,7 +829,7 @@ mod tests {
         let test_dir = dir.path().join("tests/data");
         let cfg1 = Config::new(
             dir.path().into(),
-            vec![test_dir.clone().into()],
+            vec![test_dir.clone()],
             &["*.ttl"],
             &[""],
             false,
@@ -852,7 +852,7 @@ mod tests {
         let test_dir = dir.path().join("tests/data");
         let cfg1 = Config::new(
             dir.path().into(),
-            vec![test_dir.into()],
+            vec![test_dir],
             &["*.ttl"],
             &[""],
             false,
@@ -870,7 +870,7 @@ mod tests {
         let cfg_location = dir.path().join(".ontoenv").join("ontoenv.json");
         println!("Loading from: {:?}", cfg_location);
         let env2 = OntoEnv::from_file(cfg_location.as_path())
-            .expect(format!("Failed to load from {:?}", cfg_location).as_str());
+            .unwrap_or_else(|_| panic!("Failed to load from {:?}", cfg_location));
         assert_eq!(env2.num_graphs(), 18);
     }
 
@@ -880,7 +880,7 @@ mod tests {
         let test_dir = dir.path().join("tests/data/support");
         let cfg1 = Config::new(
             dir.path().into(),
-            vec![test_dir.into()],
+            vec![test_dir],
             &["*.ttl"],
             &[""],
             false,

@@ -146,7 +146,7 @@ mod tests {
                 quad.subject,
                 quad.predicate,
                 quad.object,
-                model_name.clone(),
+                model_name,
             ));
         }
         for quad in brick.iter() {
@@ -154,7 +154,7 @@ mod tests {
                 quad.subject,
                 quad.predicate,
                 quad.object,
-                brick_name.clone(),
+                brick_name,
             ));
         }
 

@@ -372,12 +372,12 @@ impl Ontology {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::read_file;
+    
     use oxigraph::model::NamedNode;
-    use std::collections::HashMap;
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::tempdir;
+    
+    
+    
+    
 
     #[test]
     fn test_ontology_location() {
@@ -385,10 +385,10 @@ mod tests {
         let file = "/tmp/ontology.ttl";
         let url_location = OntologyLocation::from_str(url).unwrap();
         let file_location = OntologyLocation::from_str(file).unwrap();
-        assert_eq!(url_location.is_url(), true);
-        assert_eq!(url_location.is_file(), false);
-        assert_eq!(file_location.is_url(), false);
-        assert_eq!(file_location.is_file(), true);
+        assert!(url_location.is_url());
+        assert!(!url_location.is_file());
+        assert!(!file_location.is_url());
+        assert!(file_location.is_file());
     }
 
     #[test]
