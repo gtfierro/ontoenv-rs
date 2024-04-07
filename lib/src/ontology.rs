@@ -372,12 +372,8 @@ impl Ontology {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use oxigraph::model::NamedNode;
-    
-    
-    
-    
 
     #[test]
     fn test_ontology_location() {

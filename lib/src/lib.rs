@@ -9,14 +9,14 @@ pub mod policy;
 pub mod util;
 
 use crate::config::Config;
+use crate::consts::{IMPORTS, ONTOLOGY, PREFIXES, TYPE};
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
-use crate::consts::{PREFIXES, IMPORTS, ONTOLOGY};
 use chrono::prelude::*;
 use log::{debug, error, info};
 use oxigraph::model::{
-    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, SubjectRef, Quad
+    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, SubjectRef,
 };
 use oxigraph::store::Store;
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
@@ -237,7 +237,7 @@ impl OntoEnv {
             }
         }
         for ontology in to_remove.iter() {
-            info!("Removing ontology: {:?}", ontology);
+            debug!("Removing ontology: {:?}", ontology);
             self.ontologies.remove(ontology);
         }
         Ok(to_remove)
@@ -549,8 +549,13 @@ impl OntoEnv {
     }
 
     /// Returns a graph containing the union of all graphs_ids
-    pub fn get_union_graph(&self, graph_ids: &[GraphIdentifier], rewrite_sh_prefixes: Option<bool>, remove_owl_imports: Option<bool>) -> Result<Dataset> {
-        // TODO: remove the owl:imports statements
+    pub fn get_union_graph(
+        &self,
+        graph_ids: &[GraphIdentifier],
+        rewrite_sh_prefixes: Option<bool>,
+        remove_owl_imports: Option<bool>,
+    ) -> Result<Dataset> {
+        // compute union of all graphs
         let mut union: Dataset = Dataset::new();
         for id in graph_ids {
             let graphname: NamedOrBlankNode = match id.graphname()? {
@@ -575,9 +580,13 @@ impl OntoEnv {
             //let d = g.into_dataset();
             //graph.insert_all(d.quads())?;
         }
-        let first_id = graph_ids.first().ok_or(anyhow::anyhow!("No graphs found"))?;
+        let first_id = graph_ids
+            .first()
+            .ok_or(anyhow::anyhow!("No graphs found"))?;
         let root_ontology: SubjectRef = SubjectRef::NamedNode(first_id.name());
-        // default to true if not specified
+
+        // Rewrite sh:prefixes
+        // defaults to true if not specified
         if let Some(true) = rewrite_sh_prefixes.or(Some(true)) {
             // rewrite sh:prefixes
             // the ontology is the first graph in the list
@@ -598,6 +607,7 @@ impl OntoEnv {
                 union.insert(quad.as_ref());
             }
         }
+        // remove owl:imports
         if let Some(true) = remove_owl_imports.or(Some(true)) {
             // remove owl:imports
             let mut to_remove: Vec<Quad> = vec![];
@@ -610,10 +620,11 @@ impl OntoEnv {
         }
         // remove owl:Ontology declarations that are not the first graph
         let mut to_remove: Vec<Quad> = vec![];
-        let root_graph: GraphName = GraphName::NamedNode(first_id.name().into());
         for quad in union.quads_for_object(ONTOLOGY) {
-            let g = quad.graph_name;
-            if g != root_graph.as_ref() {
+            let s = quad.subject;
+            let p = quad.predicate;
+            if p == TYPE && s != root_ontology.into() {
+                debug!("Removing ontology declaration: {:?}", s);
                 to_remove.push(quad.into());
             }
         }
@@ -885,7 +896,8 @@ mod tests {
             &[""],
             false,
             "default".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
         let mut env = OntoEnv::new(cfg1).unwrap();
         env.update().unwrap();
         assert_eq!(env.num_graphs(), 15);
