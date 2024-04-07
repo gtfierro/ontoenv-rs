@@ -219,7 +219,11 @@ impl OntoEnv {
             .map_err(anyhow_to_pyerr)?;
         let graph = self
             .inner
-            .get_union_graph(&closure, Some(rewrite_sh_prefixes), Some(remove_owl_imports))
+            .get_union_graph(
+                &closure,
+                Some(rewrite_sh_prefixes),
+                Some(remove_owl_imports),
+            )
             .map_err(anyhow_to_pyerr)?;
         Python::with_gil(|_py| {
             for triple in graph.into_iter() {
