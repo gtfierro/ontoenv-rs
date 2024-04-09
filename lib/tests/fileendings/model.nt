@@ -1,0 +1,5 @@
+<urn:bldg> <http://www.w3.org/2002/07/owl#imports> <https://brickschema.org/schema/1.4/Brick> .
+<urn:bldg/AHU_1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://brickschema.org/schema/Brick#AHU> .
+<urn:bldg/AHU_1> <https://brickschema.org/schema/Brick#hasPoint> <urn:bldg/AHU_1_Fan_Status> .
+<urn:bldg/AHU_1_Fan_Status> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://brickschema.org/schema/Brick#Fan_Status> .
+<urn:bldg> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .

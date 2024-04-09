@@ -8,6 +8,7 @@ use pyo3::{
     types::{PyBool, PyString, PyTuple},
 };
 use std::borrow::Borrow;
+use std::path::PathBuf;
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -129,10 +130,12 @@ impl Config {
         Ok(Config {
             cfg: ontoenvrs::config::Config::new(
                 root.to_string().into(),
-                search_directories
-                    .iter()
-                    .map(|s| s.to_string().into())
-                    .collect(),
+                Some(
+                    search_directories
+                        .iter()
+                        .map(|s| s.to_string().into())
+                        .collect::<Vec<PathBuf>>(),
+                ),
                 includes
                     .iter()
                     .map(|s| s.to_string())

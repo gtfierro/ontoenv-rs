@@ -49,9 +49,9 @@ pub struct Config {
 
 impl Config {
     // new constructor where includes and excludes accept iterators of &str
-    pub fn new<I, J>(
+    pub fn new<I, J, K>(
         root: PathBuf,
-        search_directories: Vec<PathBuf>,
+        search_directories: Option<K>,
         includes: I,
         excludes: J,
         require_ontology_names: bool,
@@ -62,13 +62,13 @@ impl Config {
         I::Item: AsRef<str>,
         J: IntoIterator,
         J::Item: AsRef<str>,
+        K: IntoIterator<Item = PathBuf>,
     {
-        // default search directories to root if empty
-        let search_directories = if search_directories.is_empty() {
-            vec![root.clone()]
-        } else {
-            search_directories
-        };
+        // if search directories are empty, add the root. Otherwise, use the provided search directories
+        let search_directories = search_directories
+            .map(|dirs| dirs.into_iter().collect())
+            .unwrap_or_else(|| vec![root.clone()]);
+
         let mut config = Config {
             root,
             search_directories,
@@ -99,15 +99,18 @@ impl Config {
         Ok(config)
     }
 
-    pub fn new_with_default_matches(
+    pub fn new_with_default_matches<K>(
         root: PathBuf,
-        search_directories: Vec<PathBuf>,
+        search_directories: Option<K>,
         require_ontology_names: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self>
+    where
+        K: IntoIterator<Item = PathBuf>,
+    {
         let includes = vec!["*.ttl", "*.xml", "*.n3"];
-        self::Config::new::<Vec<&str>, Vec<&str>>(
+        self::Config::new::<Vec<&str>, Vec<&str>, Vec<PathBuf>>(
             root,
-            search_directories,
+            search_directories.map(|dirs| dirs.into_iter().collect()),
             includes,
             vec![],
             require_ontology_names,

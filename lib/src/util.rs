@@ -138,7 +138,7 @@ mod tests {
         let model = read_file(Path::new("tests/data/model.ttl")).unwrap();
         let model_name =
             GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/model").unwrap());
-        let brick = read_file(Path::new("tests/data/Brick-1.4-rc1.ttl")).unwrap();
+        let brick = read_file(Path::new("tests/data/Brick-1.3.ttl")).unwrap();
         let brick_name =
             GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/brick").unwrap());
         for quad in model.iter() {
