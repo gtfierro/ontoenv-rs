@@ -89,7 +89,7 @@ fn main() -> Result<()> {
         } => {
             let config = Config::new(
                 current_dir()?,
-                search_directories,
+                Some(search_directories),
                 &includes,
                 &excludes,
                 require_ontology_names,

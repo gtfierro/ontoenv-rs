@@ -1,0 +1,12 @@
+@prefix : <urn:bldg/> .
+@prefix brick: <https://brickschema.org/schema/Brick#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+<urn:bldg> a owl:Ontology ;
+    owl:imports <https://brickschema.org/schema/1.4/Brick> .
+
+:AHU_1 a brick:AHU ;
+    brick:hasPoint :AHU_1_Fan_Status .
+
+:AHU_1_Fan_Status a brick:Fan_Status .
+

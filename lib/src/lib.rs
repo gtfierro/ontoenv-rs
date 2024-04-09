@@ -85,6 +85,8 @@ impl OntoEnv {
 
     pub fn close(self) {}
 
+    //TODO: add import_graph which imports a single graph into a given graph
+
     pub fn num_graphs(&self) -> usize {
         self.ontologies.len()
     }
@@ -730,181 +732,236 @@ mod tests {
     use std::ffi::OsStr;
     use tempdir::TempDir;
 
-    fn setup() -> TempDir {
-        // create a temp directory and put all the tests/data files in it
-        let dir = TempDir::new("ontoenv").unwrap();
-        let data_dir = Path::new("tests/data");
-        for entry in walkdir::WalkDir::new(data_dir) {
-            let entry = entry.unwrap();
+    fn setup(dir: &str) -> Result<TempDir> {
+        // copy all files from tests/ to a temp directory and return the temp directory
+        let test_dir = TempDir::new("ontoenv")?;
+        // where test files are located
+        let base_dir = Path::new("tests/").join(&dir);
+        println!("Copying files from {:?} to {:?}", base_dir, test_dir.path());
+        // destination directory
+        for entry in walkdir::WalkDir::new(&base_dir) {
+            let entry = entry?;
             let path = entry.path();
-            let dest = dir.path().join(path);
-            // create os str
-            if path.is_file() && path.extension().unwrap_or(OsStr::new("")) == "ttl" {
-                println!("Copying {:?} to {:?}", path, dest);
-                std::fs::copy(path, dest).unwrap();
-            } else {
-                // create directory if it doesn't exist
-                std::fs::create_dir_all(dest).unwrap();
-            }
+            let dest = test_dir.path().join(path.strip_prefix(&base_dir)?);
+            copy_file(&path.to_path_buf(), &dest)?;
         }
-        dir
+        Ok(test_dir)
     }
 
-    fn teardown(dir: TempDir) {
-        dir.close().unwrap();
+    fn copy_file(path: &PathBuf, dest: &PathBuf) -> Result<()> {
+        println!("Copying {:?} to {:?}", path, dest);
+        if path.is_file() {
+            std::fs::copy(path, dest)?;
+        } else {
+            std::fs::create_dir_all(dest)?;
+        }
+        Ok(())
     }
 
-    #[test]
-    fn test_ontoenv_scans() {
-        let dir = setup();
-        let test_dir = dir.path().join("tests/data");
-        // test that the ontoenv can scan the search directories and find all
-        // the ontologies
-        let cfg1 = Config::new(
+    fn default_config(dir: &TempDir) -> Config {
+        Config::new(
             dir.path().into(),
-            vec![test_dir],
+            Some(vec![dir.path().into()]),
             &["*.ttl"],
             &[""],
             false,
             "default".to_string(),
         )
-        .unwrap();
-        let mut env = OntoEnv::new(cfg1).unwrap();
-        env.update().unwrap();
-        assert_eq!(env.num_graphs(), 18);
+        .unwrap()
+    }
+
+    fn default_config_with_subdir(dir: &TempDir, path: &str) -> Config {
+        Config::new(
+            dir.path().into(),
+            Some(vec![dir.path().join(path).into()]),
+            &["*.ttl"],
+            &[""],
+            false,
+            "default".to_string(),
+        )
+        .unwrap()
+    }
+
+    // we don't care about errors when cleaning up the TempDir so
+    // we just drop the TempDir (looking at this doc:
+    // https://docs.rs/tempdir/latest/tempdir/struct.TempDir.html#method.close)
+    fn teardown(_dir: TempDir) {}
+
+    #[test]
+    fn test_ontoenv_scans() -> Result<()> {
+        let dir = setup("data2")?;
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg)?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
         teardown(dir);
+        Ok(())
     }
 
     #[test]
-    fn test_ontoenv_update() {
-        let dir = setup();
-        let test_dir = dir.path().join("tests/data");
-        // test that the ontoenv can update the environment
+    fn test_ontoenv_scans_default() -> Result<()> {
+        let dir = setup("data2")?;
+        let cfg =
+            Config::new_with_default_matches(dir.path().into(), Some([dir.path().into()]), false)?;
+        let mut env = OntoEnv::new(cfg)?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
+        teardown(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ontoenv_num_triples() -> Result<()> {
+        let dir = setup("fileendings")?;
         let cfg1 = Config::new(
             dir.path().into(),
-            vec![test_dir],
-            &["*.ttl"],
+            Some(vec![dir.path().into()]),
+            &["*.n3"],
             &[""],
             false,
             "default".to_string(),
-        )
-        .unwrap();
-        let mut env = OntoEnv::new(cfg1).unwrap();
-        env.update().unwrap();
-        assert_eq!(env.num_graphs(), 18);
+        )?;
+        let mut env = OntoEnv::new(cfg1)?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 1);
+        assert_eq!(env.num_triples()?, 5);
+        teardown(dir);
+        Ok(())
+    }
 
-        // delete tempdir's brickpatches.ttl file
-        std::fs::remove_file(dir.path().join("tests/data/support/brickpatches.ttl")).unwrap();
+    #[test]
+    fn test_ontoenv_update() -> Result<()> {
+        let dir = setup("data2")?;
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg)?;
+        env.update()?;
+        let old_num_triples = env.num_triples()?;
+        assert_eq!(env.num_graphs(), 4);
 
-        env.update().unwrap();
-        assert_eq!(env.num_graphs(), 17);
+        // updating again shouldn't add anything
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
+        assert_eq!(env.num_triples()?, old_num_triples);
 
-        // copy brickpatches.ttl back
-        let old_patches = Path::new("tests/data/support/brickpatches.ttl");
-        std::fs::copy(
-            old_patches,
-            dir.path().join("tests/data/support/brickpatches.ttl"),
-        )
-        .unwrap();
-        env.update().unwrap();
-        assert_eq!(env.num_graphs(), 18);
+        // remove file
+        std::fs::remove_file(dir.path().join("ont4.ttl"))?;
+
+        env.update()?;
+        assert_eq!(env.num_graphs(), 3);
+
+        // copy ont4.ttl back
+        let base_dir = Path::new("tests/").join("data2");
+        std::fs::copy(base_dir.join("ont4.ttl"), dir.path().join("ont4.ttl"))?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
 
         teardown(dir);
+        Ok(())
     }
 
     #[test]
-    fn test_ontoenv_retrieval_by_name() {
-        let dir = setup();
-        let test_dir = dir.path().join("tests/data");
-        let cfg1 = Config::new(
-            dir.path().into(),
-            vec![test_dir],
-            &["*.ttl"],
-            &[""],
-            false,
-            "default".to_string(),
-        )
-        .unwrap();
-        let mut env = OntoEnv::new(cfg1).unwrap();
-        env.update().unwrap();
+    fn test_ontoenv_retrieval_by_name() -> Result<()> {
+        let dir = setup("data2")?;
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg)?;
+        env.update()?;
 
-        let brick = NamedNodeRef::new("https://brickschema.org/schema/1.4-rc1/Brick").unwrap();
-        let ont = env.get_ontology_by_name(brick).unwrap();
-        assert_eq!(ont.imports.len(), 10);
+        let ont1 = NamedNodeRef::new("urn:ont1")?;
+        let ont = env
+            .get_ontology_by_name(ont1)
+            .ok_or(anyhow::anyhow!("Ontology not found"))?;
+        assert_eq!(ont.imports.len(), 2);
         assert!(ont.location().unwrap().is_file());
+        teardown(dir);
+        Ok(())
     }
 
     #[test]
-    fn test_ontoenv_retrieval_by_location() {
-        let dir = setup();
-        let test_dir = dir.path().join("tests/data");
-        let cfg1 = Config::new(
-            dir.path().into(),
-            vec![test_dir.clone()],
-            &["*.ttl"],
-            &[""],
-            false,
-            "default".to_string(),
-        )
-        .unwrap();
-        let mut env = OntoEnv::new(cfg1).unwrap();
-        env.update().unwrap();
+    fn test_ontoenv_retrieval_by_location() -> Result<()> {
+        let dir = setup("data2")?;
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg)?;
+        env.update()?;
 
-        let brick_path = test_dir.join("Brick-1.4-rc1.ttl");
-        let loc = OntologyLocation::from_str(brick_path.to_str().unwrap()).unwrap();
-        let ont = env.get_ontology_by_location(&loc).unwrap();
-        assert_eq!(ont.imports.len(), 10);
-        assert!(ont.location().unwrap().is_file());
+        let ont1_path = dir.path().join("ont1.ttl");
+        let loc = OntologyLocation::from_str(
+            ont1_path
+                .to_str()
+                .ok_or(anyhow::anyhow!("Failed to convert to string"))?,
+        )?;
+        let ont = env
+            .get_ontology_by_location(&loc)
+            .ok_or(anyhow::anyhow!("Ontology not found"))?;
+        assert_eq!(ont.imports.len(), 2);
+        assert!(ont
+            .location()
+            .ok_or(anyhow::anyhow!("Location not found"))?
+            .is_file());
+        teardown(dir);
+        Ok(())
     }
 
     #[test]
-    fn test_ontoenv_load() {
-        let dir = setup();
-        let test_dir = dir.path().join("tests/data");
-        let cfg1 = Config::new(
-            dir.path().into(),
-            vec![test_dir],
-            &["*.ttl"],
-            &[""],
-            false,
-            "default".to_string(),
-        )
-        .unwrap();
-        let mut env = OntoEnv::new(cfg1).unwrap();
-        env.update().unwrap();
-        assert_eq!(env.num_graphs(), 18);
-        env.save_to_directory().unwrap();
+    fn test_ontoenv_load() -> Result<()> {
+        let dir = setup("data2")?;
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg)?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
+        env.save_to_directory()?;
         // drop env
         env.close();
 
         // reload env
         let cfg_location = dir.path().join(".ontoenv").join("ontoenv.json");
-        println!("Loading from: {:?}", cfg_location);
-        let env2 = OntoEnv::from_file(cfg_location.as_path())
-            .unwrap_or_else(|_| panic!("Failed to load from {:?}", cfg_location));
-        assert_eq!(env2.num_graphs(), 18);
+        let env2 = OntoEnv::from_file(cfg_location.as_path())?;
+        assert_eq!(env2.num_graphs(), 4);
+        teardown(dir);
+        Ok(())
     }
 
     #[test]
-    fn test_ontoenv_add() {
-        let dir = setup();
-        let test_dir = dir.path().join("tests/data/support");
-        let cfg1 = Config::new(
-            dir.path().into(),
-            vec![test_dir],
-            &["*.ttl"],
-            &[""],
-            false,
-            "default".to_string(),
-        )
-        .unwrap();
-        let mut env = OntoEnv::new(cfg1).unwrap();
-        env.update().unwrap();
-        assert_eq!(env.num_graphs(), 15);
+    fn test_ontoenv_add() -> Result<()> {
+        let dir = setup("updates")?;
+        let cfg1 = default_config_with_subdir(&dir, "v1");
+        let mut env = OntoEnv::new(cfg1)?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
 
-        let brick_path = dir.path().join("tests/data/Brick-1.3.ttl");
-        let loc = OntologyLocation::from_str(brick_path.to_str().unwrap()).unwrap();
-        env.add(loc).unwrap();
-        assert_eq!(env.num_graphs(), 16);
+        let ont_path = dir.path().join("v2/ont5.ttl");
+        let loc = OntologyLocation::from_str(
+            ont_path
+                .to_str()
+                .ok_or(anyhow::anyhow!("Failed to convert to string"))?,
+        )?;
+        env.add(loc)?;
+        assert_eq!(env.num_graphs(), 5);
+        teardown(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ontoenv_detect_updates() -> Result<()> {
+        let dir = setup("updates")?;
+        let cfg1 = default_config_with_subdir(&dir, "v1");
+        let mut env = OntoEnv::new(cfg1)?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
+
+        // copy files from dir/v2 to dir/v1
+        let base_dir = Path::new("tests/").join("updates").join("v2");
+        for entry in walkdir::WalkDir::new(&base_dir) {
+            let entry = entry?;
+            let path = entry.path();
+            let dest = dir.path().join("v1").join(path.strip_prefix(&base_dir)?);
+            println!("Copying {:?} without {:?} to {:?}", path, base_dir, dest);
+            copy_file(&path.to_path_buf(), &dest)?;
+        }
+
+        env.update()?;
+
+        assert_eq!(env.num_graphs(), 5);
+        teardown(dir);
+        Ok(())
     }
 }
