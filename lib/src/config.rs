@@ -43,6 +43,8 @@ pub struct Config {
     excludes: Vec<Pattern>,
     // require ontology names?
     pub require_ontology_names: bool,
+    // strict mode (does not allow for any errors in the ontology files)
+    pub strict: bool,
     // resolution policy
     pub resolution_policy: String,
 }
@@ -55,6 +57,7 @@ impl Config {
         includes: I,
         excludes: J,
         require_ontology_names: bool,
+        strict: bool,
         resolution_policy: String,
     ) -> Result<Self>
     where
@@ -75,6 +78,7 @@ impl Config {
             includes: vec![],
             excludes: vec![],
             require_ontology_names,
+            strict,
             resolution_policy,
         };
         let includes: Vec<String> = includes
@@ -103,6 +107,7 @@ impl Config {
         root: PathBuf,
         search_directories: Option<K>,
         require_ontology_names: bool,
+        strict: bool,
     ) -> Result<Self>
     where
         K: IntoIterator<Item = PathBuf>,
@@ -114,6 +119,7 @@ impl Config {
             includes,
             vec![],
             require_ontology_names,
+            strict,
             DefaultPolicy.policy_name().to_string(),
         )
     }

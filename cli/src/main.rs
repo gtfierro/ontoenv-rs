@@ -29,6 +29,8 @@ enum Commands {
         search_directories: Vec<PathBuf>,
         #[clap(long, short, action)]
         require_ontology_names: bool,
+        #[clap(long, short, action, default_value = "false")]
+        strict: bool,
         #[clap(long, short, num_args = 1..)]
         includes: Vec<String>,
         #[clap(long, short, num_args = 1..)]
@@ -84,6 +86,7 @@ fn main() -> Result<()> {
         Commands::Init {
             search_directories,
             require_ontology_names,
+            strict,
             includes,
             excludes,
         } => {
@@ -93,6 +96,7 @@ fn main() -> Result<()> {
                 &includes,
                 &excludes,
                 require_ontology_names,
+                strict,
                 policy,
             )?;
             let mut env = OntoEnv::new(config)?;
