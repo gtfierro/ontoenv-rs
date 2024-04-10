@@ -143,6 +143,13 @@ impl OntologyLocation {
             OntologyLocation::Url(u) => NamedNode::new(u.clone()).unwrap(),
         }
     }
+
+    pub fn as_path(&self) -> Option<&PathBuf> {
+        match self {
+            OntologyLocation::File(p) => Some(p),
+            OntologyLocation::Url(_) => None,
+        }
+    }
 }
 
 struct LocalType;
