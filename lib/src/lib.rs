@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
 use std::io::{BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 
 // custom derive for ontologies field as vec of Ontology
 fn ontologies_ser<S>(
@@ -159,6 +159,8 @@ impl OntoEnv {
             None => self.ontologies.keys().cloned().collect(),
         };
 
+        println!("Using # updated ids: {:?}", stack.len());
+
         while let Some(ontology) = stack.pop_front() {
             info!("Building dependency graph for: {:?}", ontology);
             let ont = self
@@ -245,21 +247,64 @@ impl OntoEnv {
         Ok(to_remove)
     }
 
-    fn check_for_updates(&self) -> Result<Vec<GraphIdentifier>> {
+    /// Returns a list of all files in the internal index that have been updated
+    fn get_updated_indexed_files(&self) -> Result<Vec<GraphIdentifier>> {
         let mut updates = vec![];
         for (id, ontology) in self.ontologies.iter() {
             if let Some(location) = ontology.location() {
                 if let OntologyLocation::File(f) = location {
                     let path = f.to_path_buf();
                     let metadata = std::fs::metadata(&path)?;
+
                     let last_updated: chrono::DateTime<Utc> = metadata.modified()?.into();
-                    if last_updated > ontology.last_updated.unwrap() {
+
+                    println!(
+                        "Ontology: {:?}, last updated: {:?}; current: {:?}",
+                        id, ontology.last_updated, last_updated
+                    );
+                    if last_updated >= ontology.last_updated.unwrap() {
                         updates.push(id.clone());
                     }
                 }
             }
         }
+        //
         Ok(updates)
+    }
+
+    /// Returns a list of all files in the environment which have been updated (added or changed)
+    /// Does not return files that have been removed
+    pub fn get_updated_files(&self) -> Result<Vec<OntologyLocation>> {
+        // make a cache of all files in the ontologies property
+        let mut existing_files: HashSet<OntologyLocation> = HashSet::new();
+        for ontology in self.ontologies.values() {
+            if let Some(location) = ontology.location() {
+                if let OntologyLocation::File(_) = location {
+                    existing_files.insert(location.clone());
+                }
+            }
+        }
+        let new_files: HashSet<OntologyLocation> = self
+            .find_files()?
+            .into_iter()
+            .filter(|file| !existing_files.contains(file))
+            .collect();
+        let updated_ids = self.get_updated_indexed_files()?;
+        if !updated_ids.is_empty() {
+            info!("Updating ontologies: {:?}", updated_ids);
+        }
+        let mut updated_files: HashSet<OntologyLocation> = updated_ids
+            .iter()
+            .filter_map(|id| {
+                self.ontologies
+                    .get(id)
+                    .and_then(|ont| ont.location().cloned())
+            })
+            .collect::<HashSet<OntologyLocation>>();
+
+        // compute the union of new_files and updated_files
+        updated_files.extend(new_files);
+        Ok(updated_files.into_iter().collect())
     }
 
     fn get_environment_update_time(&self) -> Result<Option<chrono::DateTime<Utc>>> {
@@ -271,62 +316,45 @@ impl OntoEnv {
         Ok(Some(ontoenv_metadata.modified()?.into()))
     }
 
-    /// Load all graphs from the search directories
+    /// Load all graphs from the search directories. There are several things that can happen:
+    ///
+    /// 1. files have been added from the search directories
+    /// 2. files have been removed from the search directories
+    /// 3. files have been updated in the search directories
+    ///
+    /// OntoEnv tries to do the least amount of work possible.
+    ///
+    /// First, it removes all ontologies which no longer appear in the search directories; it uses
+    /// its internal index of ontologies to do this search.
+    ///
+    /// Next, it determines what new files have been added to the search directories. These are
+    /// files whose locations do not appear in the internal ontology index. It also finds the files
+    /// in the internal ontology index have been updated. It does this by comparing the last
+    /// updated time of the file with the last updated time of the ontology in the index.
+    ///
+    /// Then, it reads all the new and updated files and adds them to the environment.
+    ///
+    /// Finally, it updates the dependency graph for all the updated ontologies.
     pub fn update(&mut self) -> Result<()> {
-        // get the date of modification for ontoenv.json
-        let ontoenv_last_updated = self.get_environment_update_time()?;
-
-        debug!("Building file cache");
-        // make a cache of all files in the ontologies property
-        let mut existing_files: HashSet<PathBuf> = HashSet::new();
-        for ontology in self.ontologies.values() {
-            if let Some(location) = ontology.location() {
-                if let OntologyLocation::File(f) = location {
-                    existing_files.insert(f.to_owned());
-                }
-            }
-        }
-
-        debug!("Finding new updates and files");
-        // find all files in the search directories
-        let files = self.find_files()?;
-        for file in files {
-            debug!("Reading file: {}", file.as_str());
-
-            // if the file is in the cache and is older than the last update time, skip it
-            if let OntologyLocation::File(f) = &file {
-                if existing_files.contains(f) {
-                    let metadata = std::fs::metadata(f)?;
-                    let last_updated: chrono::DateTime<Utc> = metadata.modified()?.into();
-                    if let Some(ontoenv_updated) = ontoenv_last_updated {
-                        if last_updated < ontoenv_updated {
-                            debug!("Skipping file: {}", f.display());
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            // read the graph in the file and get a reference to the ontology record
-            match self.add_or_update_ontology_from_location(file) {
-                Ok(_) => continue,
-                Err(e) => {
-                    error!("Failed to read ontology file: {}", e);
-                    continue;
-                }
-            };
-        }
-
-        // remove all ontologies that are no longer in the search directories
+        // Step one: remove all ontologies that are no longer in the search directories
         self.remove_old_ontologies()?;
 
         info!("Checking for updates");
-        let updated_ids = self.check_for_updates()?;
-        if !updated_ids.is_empty() {
-            info!("Updating ontologies: {:?}", updated_ids);
-        }
+        // Step two: find all new and updated files
+        let updated_files = self.get_updated_files()?;
 
-        // update the dependency graph for the remaining ontologies
+        // Step three: add or update the ontologies from the new and updated files
+        let updated_ids: Result<Vec<GraphIdentifier>> = updated_files
+            .into_iter()
+            .map(|file| self.add_or_update_ontology_from_location(file.clone()))
+            .collect();
+        // handle error reporting
+        let updated_ids = updated_ids.map_err(|e| {
+            error!("Failed to read ontology file: {}", e);
+            e
+        })?;
+
+        // Step four: update the dependency graph for all updated ontologies
         info!("Updating dependency graphs for updated ontologies");
         self.update_dependency_graph(Some(updated_ids))?;
 
@@ -436,6 +464,11 @@ impl OntoEnv {
         let mut ontology =
             Ontology::from_graph(&graph, location, self.config.require_ontology_names)?;
         ontology.with_last_updated(Utc::now());
+        println!(
+            "Adding ontology: {:?} updated: {:?}",
+            ontology.id(),
+            ontology.last_updated
+        );
         let id = ontology.id().clone();
         self.ontologies.insert(id.clone(), ontology);
 
@@ -625,7 +658,7 @@ impl OntoEnv {
         for quad in union.quads_for_object(ONTOLOGY) {
             let s = quad.subject;
             let p = quad.predicate;
-            if p == TYPE && s != root_ontology.into() {
+            if p == TYPE && s != root_ontology {
                 debug!("Removing ontology declaration: {:?}", s);
                 to_remove.push(quad.into());
             }
@@ -961,6 +994,30 @@ mod tests {
         env.update()?;
 
         assert_eq!(env.num_graphs(), 5);
+        teardown(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_for_updates() -> Result<()> {
+        let dir = setup("updates")?;
+        let cfg1 = default_config_with_subdir(&dir, "v1");
+        let mut env = OntoEnv::new(cfg1)?;
+        env.update()?;
+        assert_eq!(env.num_graphs(), 4);
+
+        // copy files from dir/v2 to dir/v1
+        let base_dir = Path::new("tests/").join("updates").join("v2");
+        for entry in walkdir::WalkDir::new(&base_dir) {
+            let entry = entry?;
+            let path = entry.path();
+            let dest = dir.path().join("v1").join(path.strip_prefix(&base_dir)?);
+            println!("Copying {:?} without {:?} to {:?}", path, base_dir, dest);
+            copy_file(&path.to_path_buf(), &dest)?;
+        }
+
+        let updates = env.get_updated_files()?;
+        assert_eq!(updates.len(), 1);
         teardown(dir);
         Ok(())
     }
