@@ -344,15 +344,24 @@ impl OntoEnv {
         let updated_files = self.get_updated_files()?;
 
         // Step three: add or update the ontologies from the new and updated files
-        let updated_ids: Result<Vec<GraphIdentifier>> = updated_files
-            .into_iter()
-            .map(|file| self.add_or_update_ontology_from_location(file.clone()))
-            .collect();
-        // handle error reporting
-        let updated_ids = updated_ids.map_err(|e| {
-            error!("Failed to read ontology file: {}", e);
-            e
-        })?;
+
+        let updated_ids: Vec<GraphIdentifier> = if self.config.strict {
+            let updated_ids: Result<Vec<GraphIdentifier>> = updated_files
+                .into_iter()
+                .map(|file| self.add_or_update_ontology_from_location(file.clone()))
+                .collect();
+            // handle error reporting
+            updated_ids.map_err(|e| {
+                error!("Failed to read ontology file: {}", e);
+                e
+            })?
+        } else {
+            updated_files
+                .into_iter()
+                .map(|file| self.add_or_update_ontology_from_location(file.clone()))
+                .filter_map(|r| r.ok())
+                .collect()
+        };
 
         // Step four: update the dependency graph for all updated ontologies
         info!("Updating dependency graphs for updated ontologies");
@@ -456,7 +465,7 @@ impl OntoEnv {
         let graph = match location.graph() {
             Ok(graph) => graph,
             Err(e) => {
-                error!("Failed to read ontology {:?} location: {}", location, e);
+                error!("Failed to read ontology {:?}: {}", location, e);
                 return Err(e);
             }
         };
