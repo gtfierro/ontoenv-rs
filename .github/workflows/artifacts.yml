@@ -24,37 +24,36 @@ jobs:
         with:
           target: aarch64-unknown-linux-gnu
       - run: |
-          sudo dpkg --add-architecture aarch64
           sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu libssl-dev
           mkdir .cargo
           echo -e "[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"" >> .cargo/config.toml
       - run: cargo build --release --no-default-features
         working-directory: ./cli
       - run: find /usr
-      - run: cargo build --release --target aarch64-unknown-linux-gnu --no-default-features
-        working-directory: ./cli
-        env:
-          BINDGEN_EXTRA_CLANG_ARGS: --sysroot /usr/aarch64-linux-gnu
-          PKG_CONFIG_LIBDIR: $SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig
-          PKG_CONFIG_SYSROOT_DIR: $SYSROOT
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+        #- run: cargo build --release --target aarch64-unknown-linux-gnu --no-default-features
+        #  working-directory: ./cli
+        #  env:
+        #    BINDGEN_EXTRA_CLANG_ARGS: --sysroot /usr/aarch64-linux-gnu
+        #    PKG_CONFIG_LIBDIR: $SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig
+        #    PKG_CONFIG_SYSROOT_DIR: $SYSROOT
+        #    PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
       - uses: actions/upload-artifact@v4
         with:
           name: ontoenv_x86_64_linux_gnu
           path: target/release/ontoenv
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ontoenv_aarch64_linux_gnu
-          path: target/aarch64-unknown-linux-gnu/release/ontoenv
+            #- uses: actions/upload-artifact@v4
+            #  with:
+            #    name: ontoenv_aarch64_linux_gnu
+            #    path: target/aarch64-unknown-linux-gnu/release/ontoenv
       - run: mv target/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_x86_64_linux_gnu
         if: github.event_name == 'release'
-      - run: mv target/aarch64-unknown-linux-gnu/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_aarch64_linux_gnu
-        if: github.event_name == 'release'
+          #- run: mv target/aarch64-unknown-linux-gnu/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_aarch64_linux_gnu
+          #  if: github.event_name == 'release'
       - uses: softprops/action-gh-release@v1
         with:
           files: |
             ontoenv_${{ github.event.release.tag_name }}_x86_64_linux_gnu
-            ontoenv_${{ github.event.release.tag_name }}_aarch64_linux_gnu
+            #ontoenv_${{ github.event.release.tag_name }}_aarch64_linux_gnu
         if: github.event_name == 'release'
   binary_mac:
     runs-on: macos-latest
@@ -139,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        architecture: [ "x86_64", "aarch64" ]
+        architecture: [ "x86_64"] #, "aarch64" ]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v3
