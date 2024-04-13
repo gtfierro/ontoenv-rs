@@ -17,30 +17,27 @@ jobs:
   binary_linux:
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - uses: ./.github/actions/setup-rust
         with:
           target: aarch64-unknown-linux-gnu
       - run: |
-          sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu libssl-dev pkg-config
-      - run: cargo build --release
+          sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu
+          mkdir .cargo
+          echo -e "[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"" >> .cargo/config.toml
+      - run: cargo build --release --no-default-features --features rustls-native
         working-directory: ./cli
-      - run: |
-          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
-          export PKG_CONFIG_ALLOW_CROSS=1
-          export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu
-          export OPENSSL_DIR=/usr/aarch64-linux-gnu
-          cargo build --release --target aarch64-unknown-linux-gnu
+      - run: cargo build --release --target aarch64-unknown-linux-gnu --no-default-features --features rustls-native
         working-directory: ./cli
         env:
-          BINDGEN_EXTRA_CLANG_ARGS: --sysroot=/usr/aarch64-linux-gnu
-      - uses: actions/upload-artifact@v3
+          BINDGEN_EXTRA_CLANG_ARGS: --sysroot /usr/aarch64-linux-gnu
+      - uses: actions/upload-artifact@v4
         with:
           name: ontoenv_x86_64_linux_gnu
           path: target/release/ontoenv
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ontoenv_aarch64_linux_gnu
           path: target/aarch64-unknown-linux-gnu/release/ontoenv
@@ -54,7 +51,6 @@ jobs:
             ontoenv_${{ github.event.release.tag_name }}_x86_64_linux_gnu
             ontoenv_${{ github.event.release.tag_name }}_aarch64_linux_gnu
         if: github.event_name == 'release'
-
   binary_mac:
     runs-on: macos-latest
     env:
