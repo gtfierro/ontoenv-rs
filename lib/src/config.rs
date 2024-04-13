@@ -45,6 +45,8 @@ pub struct Config {
     pub require_ontology_names: bool,
     // strict mode (does not allow for any errors in the ontology files)
     pub strict: bool,
+    // offline mode (does not fetch remote ontologies)
+    pub offline: bool,
     // resolution policy
     pub resolution_policy: String,
 }
@@ -58,6 +60,7 @@ impl Config {
         excludes: J,
         require_ontology_names: bool,
         strict: bool,
+        offline: bool,
         resolution_policy: String,
     ) -> Result<Self>
     where
@@ -79,6 +82,7 @@ impl Config {
             excludes: vec![],
             require_ontology_names,
             strict,
+            offline,
             resolution_policy,
         };
         let includes: Vec<String> = includes
@@ -108,6 +112,7 @@ impl Config {
         search_directories: Option<K>,
         require_ontology_names: bool,
         strict: bool,
+        offline: bool,
     ) -> Result<Self>
     where
         K: IntoIterator<Item = PathBuf>,
@@ -120,6 +125,7 @@ impl Config {
             vec![],
             require_ontology_names,
             strict,
+            offline,
             DefaultPolicy.policy_name().to_string(),
         )
     }

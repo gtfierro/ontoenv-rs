@@ -126,6 +126,7 @@ impl Config {
         excludes: Vec<Bound<'_, PyString>>,
         require_ontology_names: Bound<'_, PyBool>,
         strict: Bound<'_, PyBool>,
+        offline: Bound<'_, PyBool>,
         resolution_policy: Bound<'_, PyString>,
     ) -> PyResult<Self> {
         Ok(Config {
@@ -147,6 +148,7 @@ impl Config {
                     .collect::<Vec<String>>(),
                 require_ontology_names.is_true(),
                 strict.is_true(),
+                offline.is_true(),
                 resolution_policy.to_string(),
             )
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,

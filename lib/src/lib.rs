@@ -14,7 +14,7 @@ use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
 use chrono::prelude::*;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use oxigraph::model::{
     Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, SubjectRef,
 };
@@ -460,6 +460,13 @@ impl OntoEnv {
         //    info!("Found ontology with the same name: {:?}", ontology);
         //    return Ok(ontology.id().clone());
         //}
+
+        // if location is a Url and we are in offline mode, skip adding the ontology
+        // and raise a warning
+        if location.is_url() && self.config.offline {
+            warn!("Offline mode is enabled, skipping URL: {:?}", location);
+            return Err(anyhow::anyhow!("Offline mode is enabled"));
+        }
 
         // if one is not found and the location is a URL then add the ontology to the environment
         let graph = match location.graph() {

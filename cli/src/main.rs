@@ -31,6 +31,8 @@ enum Commands {
         require_ontology_names: bool,
         #[clap(long, short, action, default_value = "false")]
         strict: bool,
+        #[clap(long, short, action, default_value = "false")]
+        offline: bool,
         #[clap(long, short, num_args = 1..)]
         includes: Vec<String>,
         #[clap(long, short, num_args = 1..)]
@@ -87,6 +89,7 @@ fn main() -> Result<()> {
             search_directories,
             require_ontology_names,
             strict,
+            offline,
             includes,
             excludes,
         } => {
@@ -97,6 +100,7 @@ fn main() -> Result<()> {
                 &excludes,
                 require_ontology_names,
                 strict,
+                offline,
                 policy,
             )?;
             let mut env = OntoEnv::new(config)?;
