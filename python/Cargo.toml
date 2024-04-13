@@ -1,7 +1,12 @@
 [package]
 name = "pyontoenv"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Command line tool to manage ontologies and their imports in a local environment"
+repository.workspace = true
+homepage.workspace = true
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

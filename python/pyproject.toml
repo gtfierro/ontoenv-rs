@@ -3,8 +3,8 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "ontoenv"
-requires-python = ">=3.8"
+name = "pyontoenv"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -12,13 +12,15 @@ classifiers = [
 ]
 dynamic = ["version"]
 
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 
 [tool.poetry]
 name = "ontoenv"
-version = "0.1.0"
-description = ""
+version = "0.1.2"
+description = "Python bindings for the OntoEnv Rust library. Manages ontology-based environments for building knowledge graphs."
+license = "bsd-3-clause"
 authors = ["Gabe Fierro <gtfierro@mines.edu>"]
 readme = "README.md"
 
