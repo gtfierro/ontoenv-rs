@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
 use std::io::{BufReader, Write};
-use std::path::{Path};
+use std::path::Path;
 
 // custom derive for ontologies field as vec of Ontology
 fn ontologies_ser<S>(
@@ -112,6 +112,13 @@ impl OntoEnv {
         self.ontologies
             .values()
             .find(|&ontology| ontology.name() == name)
+    }
+
+    pub fn get_graph_by_name(&self, name: NamedNodeRef) -> Result<Graph> {
+        let ontology = self
+            .get_ontology_by_name(name)
+            .ok_or(anyhow::anyhow!("Ontology not found"))?;
+        self.get_graph(ontology.id())
     }
 
     fn get_ontology_by_location(&self, location: &OntologyLocation) -> Option<&Ontology> {
