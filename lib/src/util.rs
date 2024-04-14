@@ -12,10 +12,10 @@ use oxigraph::model::TripleRef;
 
 use std::io::BufReader;
 
-use log::debug;
+use log::{debug, info};
 
 pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
-    println!(
+    info!(
         "Writing dataset to file: {} with length {}",
         file,
         dataset.len()
@@ -59,10 +59,11 @@ pub fn read_file(file: &Path) -> Result<OxigraphGraph> {
 
 pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     debug!("Reading url: {}", file);
+
     let client = reqwest::blocking::Client::new();
     let resp = client
         .get(file)
-        .header(CONTENT_TYPE, "text/turtle")
+        .header(CONTENT_TYPE, "application/x-turtle")
         .send()?;
     if !resp.status().is_success() {
         return Err(anyhow::anyhow!("Failed to fetch ontology from {}", file));
@@ -71,20 +72,52 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     let content: BufReader<_> = BufReader::new(reqwest::blocking::get(file)?);
     let content_type = content_type.and_then(|ct| ct.to_str().ok());
     let content_type = content_type.and_then(|ext| match ext {
-        "ttl" => Some(GraphFormat::Turtle),
-        "xml" => Some(GraphFormat::RdfXml),
-        "n3" => Some(GraphFormat::NTriples),
-        "nt" => Some(GraphFormat::NTriples),
-        _ => None,
+        "application/x-turtle" => Some(GraphFormat::Turtle),
+        "application/rdf+xml" => Some(GraphFormat::RdfXml),
+        "text/plain" => Some(GraphFormat::NTriples),
+        "text/rdf+n3" => Some(GraphFormat::NTriples),
+        _ => {
+            debug!("Unknown content type: {}", ext);
+            None
+        }
     });
-    let parser = GraphParser::from_format(content_type.unwrap_or(GraphFormat::Turtle));
-    let mut graph = OxigraphGraph::new();
-    let triples = parser.read_triples(content)?;
-    for triple in triples {
-        graph.insert(&triple?);
+
+    // if content type is known, use it to parse the graph
+    if let Some(format) = content_type {
+        let parser = GraphParser::from_format(format);
+        let mut graph = OxigraphGraph::new();
+        let triples = parser.read_triples(content)?;
+        for triple in triples {
+            graph.insert(&triple?);
+        }
+        return Ok(graph);
     }
 
-    Ok(graph)
+    // if content  type is unknown, try all formats. Requires us to make a copy of the content
+    // since we can't rewind the reader
+    let content = content.buffer().to_vec();
+
+    for format in [content_type.unwrap_or(GraphFormat::Turtle),
+        GraphFormat::Turtle,
+        GraphFormat::RdfXml,
+        GraphFormat::NTriples] {
+        let parser = GraphParser::from_format(format);
+        let mut graph = OxigraphGraph::new();
+
+        // make bufreader from the copied content
+        let content = std::io::Cursor::new(content.clone());
+
+        // if there's an error on parser.read_triples, try the next format
+        let triples = parser.read_triples(content);
+        if triples.is_err() {
+            continue;
+        }
+        for triple in triples.unwrap() {
+            graph.insert(&triple?);
+        }
+        return Ok(graph);
+    }
+    Err(anyhow::anyhow!("Failed to parse graph from {}", file))
 }
 
 #[cfg(test)]
