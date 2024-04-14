@@ -119,15 +119,16 @@ struct Config {
 #[pymethods]
 impl Config {
     #[new]
+    #[pyo3(signature = (root, search_directories, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), includes=vec![], excludes=vec![]))]
     fn new(
-        root: Bound<'_, PyString>,
-        search_directories: Vec<Bound<'_, PyString>>,
-        includes: Vec<Bound<'_, PyString>>,
-        excludes: Vec<Bound<'_, PyString>>,
-        require_ontology_names: Bound<'_, PyBool>,
-        strict: Bound<'_, PyBool>,
-        offline: Bound<'_, PyBool>,
-        resolution_policy: Bound<'_, PyString>,
+        root: String,
+        search_directories: Vec<String>,
+        require_ontology_names: bool,
+        strict: bool,
+        offline: bool,
+        resolution_policy: String,
+        includes: Option<Vec<String>>,
+        excludes: Option<Vec<String>>,
     ) -> PyResult<Self> {
         Ok(Config {
             cfg: ontoenvrs::config::Config::new(
@@ -138,17 +139,11 @@ impl Config {
                         .map(|s| s.to_string().into())
                         .collect::<Vec<PathBuf>>(),
                 ),
-                includes
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>(),
-                excludes
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>(),
-                require_ontology_names.is_true(),
-                strict.is_true(),
-                offline.is_true(),
+                includes.unwrap_or_else(|| vec![]).iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                excludes.unwrap_or_else(|| vec![]).iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                require_ontology_names,
+                strict,
+                offline,
                 resolution_policy.to_string(),
             )
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
@@ -205,6 +200,7 @@ impl OntoEnv {
         ))
     }
 
+    #[pyo3(signature = (uri, destination_graph, rewrite_sh_prefixes=false, remove_owl_imports=false))]
     fn get_closure(
         &self,
         py: Python,

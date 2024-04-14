@@ -1,14 +1,7 @@
 from ontoenv import Config, OntoEnv
 from rdflib import Graph
 
-cfg = Config(
-    root=".",
-    search_directories=["../brick"],
-    includes = [],
-    excludes = [],
-    require_ontology_names = True,
-    resolution_policy = 'default',
-    )
+cfg = Config(".", ["../brick"])
 
 env = OntoEnv(cfg)
 print(env)
