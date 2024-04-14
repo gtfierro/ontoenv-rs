@@ -240,6 +240,13 @@ impl Ontology {
         self.location.as_ref()
     }
 
+    pub fn graph(&self) -> Result<OxigraphGraph> {
+        if let Some(location) = &self.location {
+            return location.graph();
+        }
+        return OntologyLocation::from_str(self.name.as_str()).and_then(|loc| loc.graph());
+    }
+
     ///// Returns the graph for this ontology from the OntoEnv
     //pub fn graph(&self, env: &OntoEnv) -> Result<LightGraph> {
     //    if let Some(location) = &self.location {

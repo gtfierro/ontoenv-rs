@@ -26,15 +26,21 @@ struct Cli {
 enum Commands {
     /// Create a new ontology environment
     Init {
-        search_directories: Vec<PathBuf>,
+        /// Directories to search for ontologies. If not provided, the current directory is used.
+        search_directories: Option<Vec<PathBuf>>,
+        /// Require ontology names to be unique; will raise an error if multiple ontologies have the same name
         #[clap(long, short, action)]
         require_ontology_names: bool,
+        /// Strict mode - will raise an error if an ontology is not found
         #[clap(long, short, action, default_value = "false")]
         strict: bool,
+        /// Offline mode - will not attempt to fetch ontologies from the web
         #[clap(long, short, action, default_value = "false")]
         offline: bool,
+        /// Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']
         #[clap(long, short, num_args = 1..)]
         includes: Vec<String>,
+        /// Glob patterns for which files to exclude, defaults to []
         #[clap(long, short, num_args = 1..)]
         excludes: Vec<String>,
     },
@@ -42,17 +48,23 @@ enum Commands {
     Refresh,
     /// Compute the owl:imports closure of an ontology and write it to a file
     GetClosure {
+        /// The name (URI) of the ontology to compute the closure for
         ontology: String,
+        /// Rewrite the sh:prefixes declarations to point to the chosen ontology, defaults to true
         #[clap(long, short, action, default_value = "true")]
         rewrite_sh_prefixes: Option<bool>,
+        /// Remove owl:imports statements from the closure, defaults to true
         #[clap(long, short, action, default_value = "true")]
         remove_owl_imports: Option<bool>,
+        /// The file to write the closure to, defaults to 'output.ttl'
         destination: Option<String>,
     },
     /// Add an ontology to the environment
     Add {
+        /// The URL of the ontology to add
         #[clap(long, short)]
         url: Option<String>,
+        /// The path to the file to add
         #[clap(long, short)]
         file: Option<String>,
     },
@@ -67,7 +79,9 @@ enum Commands {
     Dump,
     /// Generate a PDF of the dependency graph
     DepGraph {
+        /// The root ontologies to start the graph from. Given by name (URI)
         roots: Option<Vec<String>>,
+        /// The output file to write the PDF to, defaults to 'dep_graph.pdf'
         #[clap(long, short)]
         output: Option<String>,
     },
@@ -93,9 +107,10 @@ fn main() -> Result<()> {
             includes,
             excludes,
         } => {
+            // if search_directories is empty, use the current directory
             let config = Config::new(
                 current_dir()?,
-                Some(search_directories),
+                search_directories,
                 &includes,
                 &excludes,
                 require_ontology_names,
