@@ -3,6 +3,7 @@ extern crate derive_builder;
 pub mod config;
 pub mod consts;
 pub mod doctor;
+pub mod errors;
 pub mod ontology;
 pub mod policy;
 #[macro_use]
@@ -785,24 +786,8 @@ impl OntoEnv {
 mod tests {
 
     use super::*;
-    use std::ffi::OsStr;
+    use std::path::PathBuf;
     use tempdir::TempDir;
-
-    fn setup(dir: &str) -> Result<TempDir> {
-        // copy all files from tests/ to a temp directory and return the temp directory
-        let test_dir = TempDir::new("ontoenv")?;
-        // where test files are located
-        let base_dir = Path::new("tests/").join(&dir);
-        println!("Copying files from {:?} to {:?}", base_dir, test_dir.path());
-        // destination directory
-        for entry in walkdir::WalkDir::new(&base_dir) {
-            let entry = entry?;
-            let path = entry.path();
-            let dest = test_dir.path().join(path.strip_prefix(&base_dir)?);
-            copy_file(&path.to_path_buf(), &dest)?;
-        }
-        Ok(test_dir)
-    }
 
     fn copy_file(path: &PathBuf, dest: &PathBuf) -> Result<()> {
         println!("Copying {:?} to {:?}", path, dest);
@@ -814,6 +799,22 @@ mod tests {
         Ok(())
     }
 
+    fn setup(dir: &str) -> Result<TempDir> {
+        // copy all files from tests/ to a temp directory and return the temp directory
+        let test_dir = TempDir::new("ontoenv")?;
+        // where test files are located
+        let base_dir = Path::new("tests/").join(dir);
+        println!("Copying files from {:?} to {:?}", base_dir, test_dir.path());
+        // destination directory
+        for entry in walkdir::WalkDir::new(&base_dir) {
+            let entry = entry?;
+            let path = entry.path();
+            let dest = test_dir.path().join(path.strip_prefix(&base_dir)?);
+            copy_file(&path.into(), &dest)?;
+        }
+        Ok(test_dir)
+    }
+
     fn default_config(dir: &TempDir) -> Config {
         Config::new(
             dir.path().into(),
@@ -821,6 +822,8 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
+            false,
+            true,
             "default".to_string(),
         )
         .unwrap()
@@ -829,10 +832,12 @@ mod tests {
     fn default_config_with_subdir(dir: &TempDir, path: &str) -> Config {
         Config::new(
             dir.path().into(),
-            Some(vec![dir.path().join(path).into()]),
+            Some(vec![dir.path().join(path)]),
             &["*.ttl"],
             &[""],
             false,
+            false,
+            true,
             "default".to_string(),
         )
         .unwrap()
@@ -857,8 +862,13 @@ mod tests {
     #[test]
     fn test_ontoenv_scans_default() -> Result<()> {
         let dir = setup("data2")?;
-        let cfg =
-            Config::new_with_default_matches(dir.path().into(), Some([dir.path().into()]), false)?;
+        let cfg = Config::new_with_default_matches(
+            dir.path().into(),
+            Some([dir.path().into()]),
+            false,
+            false,
+            true,
+        )?;
         let mut env = OntoEnv::new(cfg)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
@@ -875,6 +885,8 @@ mod tests {
             &["*.n3"],
             &[""],
             false,
+            false,
+            true,
             "default".to_string(),
         )?;
         let mut env = OntoEnv::new(cfg1)?;

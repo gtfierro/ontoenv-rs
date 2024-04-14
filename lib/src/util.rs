@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use std::io::Read;
 use std::path::Path;
 
 use reqwest::header::CONTENT_TYPE;
@@ -69,18 +70,18 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
         return Err(anyhow::anyhow!("Failed to fetch ontology from {}", file));
     }
     let content_type = resp.headers().get("Content-Type");
-    let content: BufReader<_> = BufReader::new(reqwest::blocking::get(file)?);
     let content_type = content_type.and_then(|ct| ct.to_str().ok());
     let content_type = content_type.and_then(|ext| match ext {
         "application/x-turtle" => Some(GraphFormat::Turtle),
         "application/rdf+xml" => Some(GraphFormat::RdfXml),
-        "text/plain" => Some(GraphFormat::NTriples),
         "text/rdf+n3" => Some(GraphFormat::NTriples),
         _ => {
             debug!("Unknown content type: {}", ext);
             None
         }
     });
+
+    let content: BufReader<_> = BufReader::new(std::io::Cursor::new(resp.bytes()?));
 
     // if content type is known, use it to parse the graph
     if let Some(format) = content_type {
@@ -95,20 +96,20 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
 
     // if content  type is unknown, try all formats. Requires us to make a copy of the content
     // since we can't rewind the reader
-    let content = content.buffer().to_vec();
+    let content_vec: Vec<u8> = content.bytes().map(|b| b.unwrap()).collect();
 
-    for format in [content_type.unwrap_or(GraphFormat::Turtle),
+    for format in [
         GraphFormat::Turtle,
         GraphFormat::RdfXml,
-        GraphFormat::NTriples] {
+        GraphFormat::NTriples,
+    ] {
+        let vcontent = BufReader::new(std::io::Cursor::new(&content_vec));
         let parser = GraphParser::from_format(format);
         let mut graph = OxigraphGraph::new();
 
-        // make bufreader from the copied content
-        let content = std::io::Cursor::new(content.clone());
-
         // if there's an error on parser.read_triples, try the next format
-        let triples = parser.read_triples(content);
+
+        let triples = parser.read_triples(vcontent);
         if triples.is_err() {
             continue;
         }
