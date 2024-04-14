@@ -126,12 +126,12 @@ jobs:
           cache-dependency-path: '**/requirements.dev.txt'
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build -m python/Cargo.toml
-      - run: pip install --no-index --find-links=target/wheels/ ontoenv
+      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin sdist -m python/Cargo.toml
       - uses: actions/upload-artifact@v3
         with:
-          name: ontoenv_dist
+          name: pyontoenv_dist
           path: target/wheels/*.tar.gz
 
   wheel_linux:
@@ -154,7 +154,7 @@ jobs:
         if: github.event_name == 'release' || matrix.architecture == 'x86_64'
       - uses: actions/upload-artifact@v3
         with:
-          name: ontoenv_dist
+          name: pyontoenv_dist
           path: target/wheels/*.whl
 
             #wheel_linux_musl:
@@ -177,7 +177,7 @@ jobs:
             #      if: github.event_name == 'release' || matrix.architecture == 'x86_64'
             #    - uses: actions/upload-artifact@v3
             #      with:
-            #        name: ontoenv_dist
+            #        name: pyontoenv_dist
             #        path: target/wheels/*.whl
 
   wheel_mac:
@@ -201,7 +201,7 @@ jobs:
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build --release --features abi3
         working-directory: ./python
-      - run: pip install --no-index --find-links=target/wheels/ ontoenv
+      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin build --release --target universal2-apple-darwin --features abi3
         working-directory: ./python
@@ -213,7 +213,7 @@ jobs:
         if: github.event_name == 'release'
       - uses: actions/upload-artifact@v3
         with:
-          name: ontoenv_dist
+          name: pyontoenv_dist
           path: target/wheels/*.whl
 
   wheel_windows:
@@ -232,12 +232,12 @@ jobs:
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build --release --features abi3
         working-directory: ./python
-      - run: pip install --no-index --find-links=target/wheels/ ontoenv
+      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin build --release -m python/Cargo.toml --features abi3
       - uses: actions/upload-artifact@v3
         with:
-          name: ontoenv_dist
+          name: pyontoenv_dist
           path: target/wheels/*.whl
 
   publish_pypi:
@@ -245,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/ontoenv
+      url: https://pypi.org/p/pyontoenv
     permissions:
       id-token: write
     needs:
@@ -257,7 +257,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v3
         with:
-          name: ontoenv_dist
+          name: pyontoenv_dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
