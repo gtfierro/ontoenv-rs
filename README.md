@@ -101,7 +101,7 @@ Options:
 
 `onotoenv list-ontologies` will display a list of ontology names in the workspace.
 
-`ontoenv dump` will print out an alphabetized [list](list.md) of all ontologies in the workspace, their imports, number of triples, and other metadata.
+`ontoenv dump` will print out an alphabetized list of all ontologies in the workspace, their imports, number of triples, and other metadata.
 
 If GraphViz is installed, `ontoenv dep-graph` will output a PDF graph representation of the imports closure.
 
