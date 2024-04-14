@@ -263,6 +263,7 @@ jobs:
         with:
           packages-dir: dist
           skip-existing: true
+          password: ${{ secrets.PYPI_TOKEN }}
 
   publish_crates:
     if: github.event_name == 'release'
