@@ -2,7 +2,8 @@ use ::ontoenv as ontoenvrs;
 use ::ontoenv::consts::{ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
 use anyhow::Error;
-use oxigraph::model::{BlankNode, Literal, NamedNode, Term};
+use oxigraph::model::{BlankNode, Literal, NamedNode, Term, NamedNodeRef};
+use std::sync::Once;
 use pyo3::{
     prelude::*,
     types::{PyBool, PyString, PyTuple},
@@ -160,7 +161,11 @@ struct OntoEnv {
 impl OntoEnv {
     #[new]
     fn new(_py: Python, config: &Bound<'_, Config>) -> PyResult<Self> {
-        env_logger::init();
+        // wrap env_logger::init() in a Once to ensure it's only called once. This can 
+        // happen if a user script creates multiple OntoEnv instances
+        Once::new().call_once(|| {
+            env_logger::init();
+        });
         let config_path = config
             .borrow()
             .cfg
@@ -280,6 +285,35 @@ impl OntoEnv {
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
         self.inner.add(location).map_err(anyhow_to_pyerr)?;
         Ok(())
+    }
+
+    #[pyo3(signature = (uri))]
+    fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
+        let rdflib = py.import_bound("rdflib")?;
+        let iri = NamedNode::new(uri.to_string())
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let graph = self
+            .inner
+            .get_graph_by_name(iri.as_ref())
+            .map_err(anyhow_to_pyerr)?;
+        let res = rdflib.getattr("Graph")?.call0()?;
+        for triple in graph.into_iter() {
+            let s: Term = triple.subject.into();
+            let p: Term = triple.predicate.into();
+            let o: Term = triple.object.into();
+
+            let t = PyTuple::new_bound(
+                py,
+                &[
+                    term_to_python(py, &rdflib, s)?,
+                    term_to_python(py, &rdflib, p)?,
+                    term_to_python(py, &rdflib, o)?,
+                ],
+            );
+
+            res.getattr("add")?.call1((t,))?;
+        }
+        Ok(res.unbind())
     }
 
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
