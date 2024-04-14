@@ -107,6 +107,13 @@ impl Config {
         Ok(config)
     }
 
+    pub fn default_offline<K>(root: PathBuf, search_directories: Option<K>) -> Result<Self>
+    where
+        K: IntoIterator<Item = PathBuf>,
+    {
+        Self::new_with_default_matches(root, search_directories, false, false, true)
+    }
+
     pub fn new_with_default_matches<K>(
         root: PathBuf,
         search_directories: Option<K>,
