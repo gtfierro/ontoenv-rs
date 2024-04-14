@@ -17,6 +17,9 @@ struct Cli {
     /// Verbose mode - sets the RUST_LOG level to info, defaults to warning level
     #[clap(long, short, action, default_value = "false")]
     verbose: bool,
+    /// Debug mode - sets the RUST_LOG level to debug, defaults to warning level
+    #[clap(long, action, default_value = "false")]
+    debug: bool,
     /// Resolution policy for determining which ontology to use when there are multiple with the same name
     #[clap(long, short, default_value = "default")]
     policy: Option<String>,
@@ -93,6 +96,7 @@ fn main() -> Result<()> {
     let cmd = Cli::parse();
 
     let log_level = if cmd.verbose { "info" } else { "warn" };
+    let log_level = if cmd.debug { "debug" } else { log_level };
     std::env::set_var("RUST_LOG", log_level);
     env_logger::init();
 

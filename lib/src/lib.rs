@@ -166,7 +166,7 @@ impl OntoEnv {
             None => self.ontologies.keys().cloned().collect(),
         };
 
-        println!("Using # updated ids: {:?}", stack.len());
+        info!("Using # updated ids: {:?}", stack.len());
 
         while let Some(ontology) = stack.pop_front() {
             info!("Building dependency graph for: {:?}", ontology);
@@ -265,7 +265,7 @@ impl OntoEnv {
 
                     let last_updated: chrono::DateTime<Utc> = metadata.modified()?.into();
 
-                    println!(
+                    info!(
                         "Ontology: {:?}, last updated: {:?}; current: {:?}",
                         id, ontology.last_updated, last_updated
                     );
@@ -487,7 +487,7 @@ impl OntoEnv {
         let mut ontology =
             Ontology::from_graph(&graph, location, self.config.require_ontology_names)?;
         ontology.with_last_updated(Utc::now());
-        println!(
+        info!(
             "Adding ontology: {:?} updated: {:?}",
             ontology.id(),
             ontology.last_updated
