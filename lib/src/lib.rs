@@ -268,9 +268,10 @@ impl OntoEnv {
                 .ok_or(anyhow::anyhow!("Ontology not found"))?
                 .location();
             if let Some(location) = location {
-                // if location is a file and the file does not exist, remove the ontology
+                // if location is a file and the file does not exist or it is no longer in the set
+                // of included paths, remove the ontology
                 if let OntologyLocation::File(path) = location {
-                    if !path.exists() {
+                    if !path.exists() || !self.config.is_included(path) {
                         to_remove.push(ontology.clone());
                     }
                 }
