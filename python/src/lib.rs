@@ -2,14 +2,16 @@ use ::ontoenv as ontoenvrs;
 use ::ontoenv::consts::{ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
 use anyhow::Error;
-use oxigraph::model::{BlankNode, Literal, NamedNode, Term, NamedNodeRef};
-use std::sync::Once;
+use oxigraph::model::{BlankNode, Literal, NamedNode, NamedNodeRef, Term};
 use pyo3::{
     prelude::*,
     types::{PyBool, PyString, PyTuple},
 };
 use std::borrow::Borrow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Once;
+
+static INIT: Once = Once::new();
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -140,8 +142,16 @@ impl Config {
                         .map(|s| s.to_string().into())
                         .collect::<Vec<PathBuf>>(),
                 ),
-                includes.unwrap_or_else(|| vec![]).iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-                excludes.unwrap_or_else(|| vec![]).iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                includes
+                    .unwrap_or_else(|| vec![])
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>(),
+                excludes
+                    .unwrap_or_else(|| vec![])
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>(),
                 require_ontology_names,
                 strict,
                 offline,
@@ -160,27 +170,33 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    fn new(_py: Python, config: &Bound<'_, Config>) -> PyResult<Self> {
-        // wrap env_logger::init() in a Once to ensure it's only called once. This can 
+    #[pyo3(signature = (config=None, path=Path::new(".").to_owned()))]
+    fn new(
+        _py: Python,
+        config: Option<&Bound<'_, Config>>,
+        path: Option<PathBuf>,
+    ) -> PyResult<Self> {
+        // wrap env_logger::init() in a Once to ensure it's only called once. This can
         // happen if a user script creates multiple OntoEnv instances
-        Once::new().call_once(|| {
+        INIT.call_once(|| {
             env_logger::init();
         });
-        let config_path = config
-            .borrow()
-            .cfg
-            .root
-            .join(".ontoenv")
-            .join("ontoenv.json");
-        // if config.root/.ontoenv/ontoenv.json exists, load ontoenv from there
-        // else create a new OntoEnv
-        let mut env: OntoEnv = if let Ok(env) = ontoenvrs::OntoEnv::from_file(&config_path) {
-            println!("Loaded OntoEnv from file");
-            OntoEnv { inner: env }
+
+        let mut env = if let Some(p) = path {
+            let config_path = p.join(".ontoenv").join("ontoenv.json");
+            if let Ok(e) = ontoenvrs::OntoEnv::from_file(&config_path) {
+                println!("Loaded OntoEnv from file");
+                OntoEnv { inner: e }
+            } else {
+                println!("Creating new OntoEnv");
+                OntoEnv {
+                    inner: ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone())
+                        .map_err(anyhow_to_pyerr)?,
+                }
+            }
         } else {
-            println!("Creating new OntoEnv");
             OntoEnv {
-                inner: ontoenvrs::OntoEnv::new(config.borrow().cfg.clone())
+                inner: ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone())
                     .map_err(anyhow_to_pyerr)?,
             }
         };
@@ -284,6 +300,11 @@ impl OntoEnv {
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
         self.inner.add(location).map_err(anyhow_to_pyerr)?;
+        Ok(())
+    }
+
+    fn refresh(&mut self) -> PyResult<()> {
+        self.inner.update().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
