@@ -8,6 +8,7 @@ pub mod ontology;
 pub mod policy;
 #[macro_use]
 pub mod util;
+pub mod transform;
 
 use crate::config::Config;
 use crate::consts::{IMPORTS, ONTOLOGY, PREFIXES, TYPE};
@@ -63,6 +64,8 @@ pub struct OntoEnv {
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
     #[serde(skip, default = "default_store")]
     store: Store,
+    #[serde(skip)]
+    read_only: bool,
 }
 
 // probably need some graph "identifier" that incorporates location and version..
@@ -81,6 +84,19 @@ impl OntoEnv {
             ontologies: HashMap::new(),
             dependency_graph: DiGraph::new(),
             store,
+            read_only: false,
+        })
+    }
+
+    pub fn new_readonly(config: Config) -> Result<Self> {
+        // create the store in the root/.ontoenv/store.db directory
+        let store = Store::open_secondary(config.root.join(".ontoenv/store.db"))?;
+        Ok(Self {
+            config,
+            ontologies: HashMap::new(),
+            dependency_graph: DiGraph::new(),
+            store,
+            read_only: true,
         })
     }
 
@@ -136,7 +152,24 @@ impl OntoEnv {
         // load store from root/.ontoenv/store.db
         let ontoenv_dir = env.config.root.join(".ontoenv");
         let store = Store::open(ontoenv_dir.join("store.db"))?;
-        Ok(Self { store, ..env })
+        Ok(Self {
+            store,
+            read_only: false,
+            ..env
+        })
+    }
+
+    pub fn from_file_readonly(path: &Path) -> Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        let env: OntoEnv = serde_json::from_reader(reader)?;
+        // load store from root/.ontoenv/store.db
+        let store = Store::open_secondary(env.config.root.join(".ontoenv/store.db"))?;
+        Ok(Self {
+            store,
+            read_only: true,
+            ..env
+        })
     }
 
     /// creates a new directory called .ontoenv in self.root and saves:
@@ -152,11 +185,6 @@ impl OntoEnv {
         let config_str = serde_json::to_string_pretty(&self)?;
         let mut file = std::fs::File::create(config_path)?;
         file.write_all(config_str.as_bytes())?;
-        // save the dependency graph
-        //let dep_graph_path = ontoenv_dir.join("dependency_graph.json");
-        //let dep_graph_str = serde_json::to_string_pretty(&self.dependency_graph)?;
-        //let mut file = std::fs::File::create(dep_graph_path)?;
-        //file.write_all(dep_graph_str.as_bytes())?;
         Ok(())
     }
 
@@ -376,8 +404,10 @@ impl OntoEnv {
         self.update_dependency_graph(Some(updated_ids))?;
 
         // optimize the store for storage + queries
-        info!("Optimizing store");
-        self.store.optimize()?;
+        if !self.read_only {
+            info!("Optimizing store");
+            self.store.optimize()?;
+        }
 
         Ok(())
     }
@@ -635,9 +665,6 @@ impl OntoEnv {
                 union.insert(quad?.as_ref());
             }
             info!("Added {} triples from graph: {:?}", count, id);
-
-            //let d = g.into_dataset();
-            //graph.insert_all(d.quads())?;
         }
         let first_id = graph_ids
             .first()
@@ -647,49 +674,13 @@ impl OntoEnv {
         // Rewrite sh:prefixes
         // defaults to true if not specified
         if let Some(true) = rewrite_sh_prefixes.or(Some(true)) {
-            // rewrite sh:prefixes
-            // the ontology is the first graph in the list
-            let mut to_remove: Vec<Quad> = vec![];
-            let mut to_add: Vec<Quad> = vec![];
-            info!("Rewriting sh:prefixes to point to: {:?}", root_ontology);
-            for quad in union.quads_for_predicate(PREFIXES) {
-                let s = quad.subject;
-                let g = quad.graph_name;
-                let new_quad = QuadRef::new(s, PREFIXES, root_ontology, g);
-                to_remove.push(quad.into());
-                to_add.push(new_quad.into());
-            }
-            for quad in to_remove {
-                union.remove(quad.as_ref());
-            }
-            for quad in to_add {
-                union.insert(quad.as_ref());
-            }
+            transform::rewrite_sh_prefixes(&mut union, root_ontology);
         }
         // remove owl:imports
         if let Some(true) = remove_owl_imports.or(Some(true)) {
-            // remove owl:imports
-            let mut to_remove: Vec<Quad> = vec![];
-            for quad in union.quads_for_predicate(IMPORTS) {
-                to_remove.push(quad.into());
-            }
-            for quad in to_remove {
-                union.remove(quad.as_ref());
-            }
+            transform::remove_owl_imports(&mut union)
         }
-        // remove owl:Ontology declarations that are not the first graph
-        let mut to_remove: Vec<Quad> = vec![];
-        for quad in union.quads_for_object(ONTOLOGY) {
-            let s = quad.subject;
-            let p = quad.predicate;
-            if p == TYPE && s != root_ontology {
-                debug!("Removing ontology declaration: {:?}", s);
-                to_remove.push(quad.into());
-            }
-        }
-        for quad in to_remove {
-            union.remove(quad.as_ref());
-        }
+        transform::remove_ontology_declarations(&mut union, root_ontology);
         Ok(union)
     }
 
