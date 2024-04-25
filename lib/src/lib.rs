@@ -62,8 +62,6 @@ pub struct OntoEnv {
     #[serde(serialize_with = "ontologies_ser", deserialize_with = "ontologies_de")]
     ontologies: HashMap<GraphIdentifier, Ontology>,
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
-    #[serde(skip, default = "default_store")]
-    store: Store,
     #[serde(skip)]
     read_only: bool,
 }
@@ -78,14 +76,19 @@ impl OntoEnv {
         std::fs::create_dir_all(&ontoenv_dir)?;
 
         // create the store in the root/.ontoenv/store.db directory
-        let store = Store::open(ontoenv_dir.join("store.db"))?;
         Ok(Self {
             config,
             ontologies: HashMap::new(),
             dependency_graph: DiGraph::new(),
-            store,
             read_only: false,
         })
+    }
+
+    fn store(&self) -> Result<Store> {
+        let ontoenv_dir = self.config.root.join(".ontoenv");
+        std::fs::create_dir_all(&ontoenv_dir)?;
+        Store::open(ontoenv_dir.join("store.db"))
+            .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
     }
 
     pub fn new_readonly(config: Config) -> Result<Self> {
@@ -95,7 +98,6 @@ impl OntoEnv {
             config,
             ontologies: HashMap::new(),
             dependency_graph: DiGraph::new(),
-            store,
             read_only: true,
         })
     }
@@ -110,7 +112,7 @@ impl OntoEnv {
 
     pub fn num_triples(&self) -> Result<usize> {
         // this construction coerces the error the the correct type
-        Ok(self.store.len()?)
+        Ok(self.store()?.len()?)
     }
 
     pub fn get_ontology_with_policy(
@@ -149,25 +151,8 @@ impl OntoEnv {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
         let env: OntoEnv = serde_json::from_reader(reader)?;
-        // load store from root/.ontoenv/store.db
-        let ontoenv_dir = env.config.root.join(".ontoenv");
-        let store = Store::open(ontoenv_dir.join("store.db"))?;
         Ok(Self {
-            store,
             read_only: false,
-            ..env
-        })
-    }
-
-    pub fn from_file_readonly(path: &Path) -> Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let reader = BufReader::new(file);
-        let env: OntoEnv = serde_json::from_reader(reader)?;
-        // load store from root/.ontoenv/store.db
-        let store = Store::open_secondary(env.config.root.join(".ontoenv/store.db"))?;
-        Ok(Self {
-            store,
-            read_only: true,
             ..env
         })
     }
@@ -405,10 +390,8 @@ impl OntoEnv {
         self.update_dependency_graph(Some(updated_ids))?;
 
         // optimize the store for storage + queries
-        if !self.read_only {
-            info!("Optimizing store");
-            self.store.optimize()?;
-        }
+        info!("Optimizing store");
+        self.store()?.optimize()?;
 
         Ok(())
     }
@@ -533,8 +516,10 @@ impl OntoEnv {
             _ => return Err(anyhow::anyhow!("Graph name not found")),
         };
 
-        if self.store.contains_named_graph(graphname.as_ref())? {
-            self.store.remove_named_graph(graphname.as_ref())?;
+        let store = self.store()?;
+
+        if store.contains_named_graph(graphname.as_ref())? {
+            store.remove_named_graph(graphname.as_ref())?;
         }
 
         info!("Adding graph to store: {:?}", graphname);
@@ -545,7 +530,7 @@ impl OntoEnv {
                 triple.object,
                 graphname.as_ref(),
             );
-            self.store.insert(q)?;
+            store.insert(q)?;
         }
 
         Ok(id)
@@ -574,10 +559,8 @@ impl OntoEnv {
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let mut graph = Graph::new();
         let name = id.graphname()?;
-        for quad in self
-            .store
-            .quads_for_pattern(None, None, None, Some(name.as_ref()))
-        {
+        let store = self.store()?;
+        for quad in store.quads_for_pattern(None, None, None, Some(name.as_ref())) {
             graph.insert(quad?.as_ref());
         }
         Ok(graph)
@@ -647,21 +630,19 @@ impl OntoEnv {
     ) -> Result<Dataset> {
         // compute union of all graphs
         let mut union: Dataset = Dataset::new();
+        let store = self.store()?;
         for id in graph_ids {
             let graphname: NamedOrBlankNode = match id.graphname()? {
                 GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
                 _ => continue,
             };
 
-            if !self.store.contains_named_graph(graphname.as_ref())? {
+            if !store.contains_named_graph(graphname.as_ref())? {
                 return Err(anyhow::anyhow!("Graph not found: {:?}", id));
             }
 
             let mut count = 0;
-            for quad in
-                self.store
-                    .quads_for_pattern(None, None, None, Some(id.graphname()?.as_ref()))
-            {
+            for quad in store.quads_for_pattern(None, None, None, Some(id.graphname()?.as_ref())) {
                 count += 1;
                 union.insert(quad?.as_ref());
             }
