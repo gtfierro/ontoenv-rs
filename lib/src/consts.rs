@@ -36,6 +36,8 @@ pub const REVISION: NamedNodeRef<'_> =
 // shacl
 pub const PREFIXES: NamedNodeRef<'_> =
     NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefixes");
+pub const DECLARE: NamedNodeRef<'_> =
+    NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#declare");
 
 pub const ONTOLOGY_VERSION_IRIS: [NamedNodeRef<'_>; 10] = [
     VERSION_INFO,
