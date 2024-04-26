@@ -3,10 +3,10 @@ use ::ontoenv::consts::{ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
 use ::ontoenv::transform;
 use anyhow::Error;
-use oxigraph::model::{BlankNode, Literal, NamedNode, NamedNodeRef, Term};
+use oxigraph::model::{BlankNode, Literal, NamedNode, NamedNodeRef, Term, SubjectRef};
 use pyo3::{
     prelude::*,
-    types::{PyBool, PyString, PyTuple},
+    types::{PyBool, PyString, PyTuple, IntoPyDict},
 };
 use std::borrow::Borrow;
 use std::path::{Path, PathBuf};
@@ -230,8 +230,26 @@ impl OntoEnv {
             .inner
             .get_ontology_by_name(iri.as_ref())
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
-        let graph = ont.graph().map_err(anyhow_to_pyerr)?;
-        // TODO: do the transforms
+        let mut graph = ont.graph().map_err(anyhow_to_pyerr)?;
+
+        // get the owl:Ontology IRI from the destination_graph
+        // call value with TYPE and ONTOLOGY
+        let uriref_constructor = rdflib.getattr("URIRef")?;
+        let type_uri = uriref_constructor.call1((TYPE.as_str(),))?;
+        let ontology_uri = uriref_constructor.call1((ONTOLOGY.as_str(),))?;
+        let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict_bound(py);
+        let result = destination_graph.call_method("value", (), Some(&kwargs))?;
+        if !result.is_none() {
+            // extract the IRI from the result, turn into a SubjectRef
+            let ontology = NamedNode::new(result.extract::<String>()?).map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let base_ontology: SubjectRef = SubjectRef::NamedNode(ontology.as_ref());
+
+            // apply the transforms to make the graph compatible with the destination graph
+            transform::rewrite_sh_prefixes_graph(&mut graph, base_ontology);
+            transform::remove_ontology_declarations_graph(&mut graph, base_ontology);
+        }
+        transform::remove_owl_imports_graph(&mut graph);
+
         Python::with_gil(|_py| {
             for triple in graph.into_iter() {
                 let s: Term = triple.subject.into();
