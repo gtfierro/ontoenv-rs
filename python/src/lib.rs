@@ -1,6 +1,7 @@
 use ::ontoenv as ontoenvrs;
 use ::ontoenv::consts::{ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
+use ::ontoenv::transform;
 use anyhow::Error;
 use oxigraph::model::{BlankNode, Literal, NamedNode, NamedNodeRef, Term};
 use pyo3::{
@@ -122,14 +123,14 @@ struct Config {
 #[pymethods]
 impl Config {
     #[new]
-    #[pyo3(signature = (root, search_directories, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), includes=vec![], excludes=vec![]))]
+    #[pyo3(signature = (search_directories, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=vec![], excludes=vec![]))]
     fn new(
-        root: String,
         search_directories: Vec<String>,
         require_ontology_names: bool,
         strict: bool,
         offline: bool,
         resolution_policy: String,
+        root: String,
         includes: Option<Vec<String>>,
         excludes: Option<Vec<String>>,
     ) -> PyResult<Self> {
@@ -219,6 +220,38 @@ impl OntoEnv {
             self.inner.num_graphs(),
             self.inner.num_triples().map_err(anyhow_to_pyerr)?
         ))
+    }
+
+    fn import_graph(&self, py: Python, destination_graph: &Bound<'_, PyAny>, uri: &str) -> PyResult<()> {
+        let rdflib = py.import_bound("rdflib")?;
+        let iri = NamedNode::new(uri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let ont = self
+            .inner
+            .get_ontology_by_name(iri.as_ref())
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
+        let graph = ont.graph().map_err(anyhow_to_pyerr)?;
+        // TODO: do the transforms
+        Python::with_gil(|_py| {
+            for triple in graph.into_iter() {
+                let s: Term = triple.subject.into();
+                let p: Term = triple.predicate.into();
+                let o: Term = triple.object.into();
+
+                let t = PyTuple::new_bound(
+                    destination_graph.py(),
+                    &[
+                        term_to_python(destination_graph.py(), &rdflib, s)?,
+                        term_to_python(destination_graph.py(), &rdflib, p)?,
+                        term_to_python(destination_graph.py(), &rdflib, o)?,
+                    ],
+                );
+
+                destination_graph.getattr("add")?.call1((t,))?;
+            }
+            Ok::<(), PyErr>(())
+        })?;
+        Ok(())
     }
 
     #[pyo3(signature = (uri, destination_graph, rewrite_sh_prefixes=false, remove_owl_imports=false))]
