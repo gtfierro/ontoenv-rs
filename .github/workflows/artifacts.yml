@@ -218,7 +218,7 @@ jobs:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: publish
       url: https://pypi.org/p/pyontoenv
     permissions:
       id-token: write
@@ -242,6 +242,7 @@ jobs:
   publish_crates:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    environment: publish
     steps:
       - uses: actions/checkout@v3
         with:
