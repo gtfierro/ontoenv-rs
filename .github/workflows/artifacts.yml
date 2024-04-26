@@ -247,7 +247,9 @@ jobs:
         with:
           submodules: true
       - run: rustup update
-      - run: cargo login $CRATES_IO_TOKEN
+      - shell: bash
+        run: |
+          cargo login $CRATES_IO_TOKEN
         env:
           CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
       - run: cargo publish
