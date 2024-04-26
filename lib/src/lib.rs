@@ -84,6 +84,7 @@ impl OntoEnv {
         })
     }
 
+    // TODO: add a read-only version? make this thread-safe?
     fn store(&self) -> Result<Store> {
         let ontoenv_dir = self.config.root.join(".ontoenv");
         std::fs::create_dir_all(&ontoenv_dir)?;
@@ -198,7 +199,7 @@ impl OntoEnv {
                 let imp = match self.add_or_update_ontology_from_location(location) {
                     Ok(imp) => imp,
                     Err(e) => {
-                        error!("Failed to read ontology file: {}", e);
+                        error!("Failed to read ontology file {}: {}", import.as_str(), e);
                         continue;
                     }
                 };
