@@ -1,7 +1,7 @@
 from ontoenv import Config, OntoEnv
 from rdflib import Graph
 
-cfg = Config(".", ["../brick"], strict=False, offline=True)
+cfg = Config(["../brick"], strict=False, offline=True)
 
 print("Make env")
 env = OntoEnv(cfg)
@@ -24,3 +24,8 @@ env2 = OntoEnv()
 print("get brick again")
 brick = env2.get_graph("https://brickschema.org/schema/1.4-rc1/Brick")
 print(len(brick))
+print(brick)
+print(type(brick))
+
+env2.import_graph(brick, "https://w3id.org/rec")
+brick.serialize("test.ttl", format="turtle")
