@@ -15,6 +15,7 @@ rust-version = "1.70"
 repository = "https://github.com/gtfierro/ontoenv-rs"
 homepage = "https://github.com/gtfierro/ontoenv-rs"
 description = "A tool for managing ontologies and their dependencies"
+readme = "README.md"
 
 [workspace.dependencies]
 anyhow = "1.0.79"
