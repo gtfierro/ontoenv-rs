@@ -69,10 +69,19 @@ pub struct OntoEnv {
 // probably need some graph "identifier" that incorporates location and version..
 
 impl OntoEnv {
-    pub fn new(config: Config) -> Result<Self> {
+    pub fn new(config: Config, recreate: bool) -> Result<Self> {
         // create the config.root/.ontoenv directory so it exists before the store
         // is created
         let ontoenv_dir = config.root.join(".ontoenv");
+
+        // if recreate is False, raise an error if the directory already exists
+        if ontoenv_dir.exists() && !recreate {
+            return Err(anyhow::anyhow!(
+                "OntoEnv directory already exists: {:?}. Run 'refresh' or use the --recreate flag to recreate the environment.",
+                ontoenv_dir
+            ));
+        }
+
         std::fs::create_dir_all(&ontoenv_dir)?;
 
         // create the store in the root/.ontoenv/store.db directory

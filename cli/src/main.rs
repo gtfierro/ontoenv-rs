@@ -46,6 +46,8 @@ enum Commands {
         /// Glob patterns for which files to exclude, defaults to []
         #[clap(long, short, num_args = 1..)]
         excludes: Vec<String>,
+        #[clap(long, short, default_value = "false")]
+        recreate: bool,
     },
     /// Update the ontology environment
     Refresh,
@@ -110,6 +112,7 @@ fn main() -> Result<()> {
             offline,
             includes,
             excludes,
+            recreate,
         } => {
             // if search_directories is empty, use the current directory
             let config = Config::new(
@@ -122,7 +125,7 @@ fn main() -> Result<()> {
                 offline,
                 policy,
             )?;
-            let mut env = OntoEnv::new(config)?;
+            let mut env = OntoEnv::new(config, recreate)?;
             env.update()?;
             env.save_to_directory()?;
         }

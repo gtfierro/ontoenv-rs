@@ -171,11 +171,12 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (config=None, path=Path::new(".").to_owned()))]
+    #[pyo3(signature = (config=None, path=Path::new(".").to_owned(), recreate=false))]
     fn new(
         _py: Python,
         config: Option<&Bound<'_, Config>>,
         path: Option<PathBuf>,
+        recreate: bool,
     ) -> PyResult<Self> {
         // wrap env_logger::init() in a Once to ensure it's only called once. This can
         // happen if a user script creates multiple OntoEnv instances
@@ -191,13 +192,13 @@ impl OntoEnv {
             } else {
                 println!("Creating new OntoEnv");
                 OntoEnv {
-                    inner: ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone())
+                    inner: ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone(), recreate)
                         .map_err(anyhow_to_pyerr)?,
                 }
             }
         } else {
             OntoEnv {
-                inner: ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone())
+                inner: ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone(), recreate)
                     .map_err(anyhow_to_pyerr)?,
             }
         };
