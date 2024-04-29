@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        architecture: [ "x86_64"] #, "aarch64" ]
+        architecture: [ "x86_64", "aarch64" ]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v3
@@ -177,8 +177,8 @@ jobs:
         working-directory: ./python
       - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
-      #- run: maturin build --release --target universal2-apple-darwin --features abi3
-      #  working-directory: ./python
+      - run: maturin build --release --target universal2-apple-darwin --features abi3
+        working-directory: ./python
       - run: maturin build --release --features abi3
         working-directory: ./python
         if: github.event_name == 'release'
@@ -227,7 +227,7 @@ jobs:
       - wheel_windows
       - wheel_mac
       - wheel_linux
-        #- wheel_linux_musl
+      - wheel_linux_musl
     steps:
       - uses: actions/download-artifact@v3
         with:
