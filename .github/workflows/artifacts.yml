@@ -201,6 +201,10 @@ jobs:
       - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin build --release --target universal2-apple-darwin --features abi3
+        env:
+          DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer'
+          SDKROOT: '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
+          MACOSX_DEPLOYMENT_TARGET: '10.13'
         working-directory: ./python
       - run: maturin build --release --features abi3
         working-directory: ./python
