@@ -190,6 +190,9 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           target: aarch64-apple-darwin
+      - uses: ./.github/actions/setup-rust
+        with:
+          target: x86_64-apple-darwin
       - uses: actions/setup-python@v4
         with:
           python-version: "3.12"
