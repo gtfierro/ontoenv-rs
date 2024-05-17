@@ -3,10 +3,10 @@ use ::ontoenv::consts::{ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
 use ::ontoenv::transform;
 use anyhow::Error;
-use oxigraph::model::{BlankNode, Literal, NamedNode, NamedNodeRef, Term, SubjectRef};
+use oxigraph::model::{BlankNode, Literal, NamedNode, Term, SubjectRef};
 use pyo3::{
     prelude::*,
-    types::{PyBool, PyString, PyTuple, IntoPyDict},
+    types::{PyString, PyTuple, IntoPyDict},
 };
 use std::borrow::Borrow;
 use std::path::{Path, PathBuf};
@@ -144,12 +144,12 @@ impl Config {
                         .collect::<Vec<PathBuf>>(),
                 ),
                 includes
-                    .unwrap_or_else(|| vec![])
+                    .unwrap_or_default()
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>(),
                 excludes
-                    .unwrap_or_else(|| vec![])
+                    .unwrap_or_default()
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>(),

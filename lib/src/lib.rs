@@ -11,14 +11,13 @@ pub mod util;
 pub mod transform;
 
 use crate::config::Config;
-use crate::consts::{IMPORTS, ONTOLOGY, PREFIXES, TYPE};
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, error, info, warn};
 use oxigraph::model::{
-    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, SubjectRef,
+    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, SubjectRef,
 };
 use oxigraph::store::Store;
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
