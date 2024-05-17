@@ -835,7 +835,7 @@ mod tests {
     fn test_ontoenv_scans() -> Result<()> {
         let dir = setup("data2")?;
         let cfg = default_config(&dir);
-        let mut env = OntoEnv::new(cfg)?;
+        let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
         teardown(dir);
@@ -852,7 +852,7 @@ mod tests {
             false,
             true,
         )?;
-        let mut env = OntoEnv::new(cfg)?;
+        let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
         teardown(dir);
@@ -872,7 +872,7 @@ mod tests {
             true,
             "default".to_string(),
         )?;
-        let mut env = OntoEnv::new(cfg1)?;
+        let mut env = OntoEnv::new(cfg1, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 1);
         assert_eq!(env.num_triples()?, 5);
@@ -884,7 +884,7 @@ mod tests {
     fn test_ontoenv_update() -> Result<()> {
         let dir = setup("data2")?;
         let cfg = default_config(&dir);
-        let mut env = OntoEnv::new(cfg)?;
+        let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
         let old_num_triples = env.num_triples()?;
         assert_eq!(env.num_graphs(), 4);
@@ -914,7 +914,7 @@ mod tests {
     fn test_ontoenv_retrieval_by_name() -> Result<()> {
         let dir = setup("data2")?;
         let cfg = default_config(&dir);
-        let mut env = OntoEnv::new(cfg)?;
+        let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
 
         let ont1 = NamedNodeRef::new("urn:ont1")?;
@@ -931,7 +931,7 @@ mod tests {
     fn test_ontoenv_retrieval_by_location() -> Result<()> {
         let dir = setup("data2")?;
         let cfg = default_config(&dir);
-        let mut env = OntoEnv::new(cfg)?;
+        let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
 
         let ont1_path = dir.path().join("ont1.ttl");
@@ -956,7 +956,7 @@ mod tests {
     fn test_ontoenv_load() -> Result<()> {
         let dir = setup("data2")?;
         let cfg = default_config(&dir);
-        let mut env = OntoEnv::new(cfg)?;
+        let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
         env.save_to_directory()?;
@@ -975,7 +975,7 @@ mod tests {
     fn test_ontoenv_add() -> Result<()> {
         let dir = setup("updates")?;
         let cfg1 = default_config_with_subdir(&dir, "v1");
-        let mut env = OntoEnv::new(cfg1)?;
+        let mut env = OntoEnv::new(cfg1, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
 
@@ -995,7 +995,7 @@ mod tests {
     fn test_ontoenv_detect_updates() -> Result<()> {
         let dir = setup("updates")?;
         let cfg1 = default_config_with_subdir(&dir, "v1");
-        let mut env = OntoEnv::new(cfg1)?;
+        let mut env = OntoEnv::new(cfg1, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
 
@@ -1020,7 +1020,7 @@ mod tests {
     fn test_check_for_updates() -> Result<()> {
         let dir = setup("updates")?;
         let cfg1 = default_config_with_subdir(&dir, "v1");
-        let mut env = OntoEnv::new(cfg1)?;
+        let mut env = OntoEnv::new(cfg1, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
 
