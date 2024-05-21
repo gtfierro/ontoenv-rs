@@ -97,6 +97,7 @@ impl OntoEnv {
         let ontoenv_dir = self.config.root.join(".ontoenv");
         std::fs::create_dir_all(&ontoenv_dir)?;
         Store::open(ontoenv_dir.join("store.db"))
+            .or_else(|_| Store::open_read_only(ontoenv_dir.join("store.db")))
             .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
     }
 
