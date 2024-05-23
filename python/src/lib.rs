@@ -172,12 +172,13 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (config=None, path=Path::new(".").to_owned(), recreate=false))]
+    #[pyo3(signature = (config=None, path=Path::new(".").to_owned(), recreate=false, read_only=false))]
     fn new(
         _py: Python,
         config: Option<&Config>,
         path: Option<PathBuf>,
         recreate: bool,
+        read_only: bool,
     ) -> PyResult<Self> {
         // wrap env_logger::init() in a Once to ensure it's only called once. This can
         // happen if a user script creates multiple OntoEnv instances
@@ -188,7 +189,7 @@ impl OntoEnv {
         let env = ONTOENV_SINGLETON.get_or_init(|| {
             let inner = if let Some(p) = path {
                 let config_path = p.join(".ontoenv").join("ontoenv.json");
-                if let Ok(env) = ontoenvrs::OntoEnv::from_file(&config_path) {
+                if let Ok(env) = ontoenvrs::OntoEnv::from_file(&config_path, read_only) {
                     println!("Loaded OntoEnv from file");
                     env
                 } else {
