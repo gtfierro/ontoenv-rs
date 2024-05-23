@@ -96,6 +96,10 @@ impl OntoEnv {
     fn store(&self) -> Result<Store> {
         let ontoenv_dir = self.config.root.join(".ontoenv");
         std::fs::create_dir_all(&ontoenv_dir)?;
+        if self.read_only {
+            return Store::open_read_only(ontoenv_dir.join("store.db"))
+                .map_err(|e| anyhow::anyhow!("Could not open store: {}", e));
+        }
         Store::open(ontoenv_dir.join("store.db"))
             .or_else(|_| Store::open_read_only(ontoenv_dir.join("store.db")))
             .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
@@ -157,12 +161,12 @@ impl OntoEnv {
             .find(|&ontology| ontology.location() == Some(location))
     }
 
-    pub fn from_file(path: &Path) -> Result<Self> {
+    pub fn from_file(path: &Path, read_only: bool) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
         let env: OntoEnv = serde_json::from_reader(reader)?;
         Ok(Self {
-            read_only: false,
+            read_only,
             ..env
         })
     }
@@ -400,8 +404,9 @@ impl OntoEnv {
         self.update_dependency_graph(Some(updated_ids))?;
 
         // optimize the store for storage + queries
-        info!("Optimizing store");
-        self.store()?.optimize()?;
+        if !self.read_only {
+            self.store()?.optimize()?;
+        }
 
         Ok(())
     }
@@ -965,7 +970,7 @@ mod tests {
 
         // reload env
         let cfg_location = dir.path().join(".ontoenv").join("ontoenv.json");
-        let env2 = OntoEnv::from_file(cfg_location.as_path())?;
+        let env2 = OntoEnv::from_file(cfg_location.as_path(), true)?;
         assert_eq!(env2.num_graphs(), 4);
         teardown(dir);
         Ok(())

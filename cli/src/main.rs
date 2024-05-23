@@ -132,7 +132,7 @@ fn main() -> Result<()> {
         Commands::Refresh => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let mut env = OntoEnv::from_file(&path)?;
+            let mut env = OntoEnv::from_file(&path, false)?;
             env.update()?;
             env.save_to_directory()?;
         }
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
                     "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
                 ));
             }
-            let env = OntoEnv::from_file(&path)?;
+            let env = OntoEnv::from_file(&path, true)?;
 
             // make ontology an IRI
             let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -170,7 +170,7 @@ fn main() -> Result<()> {
         Commands::Add { url, file } => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let mut env = OntoEnv::from_file(&path)?;
+            let mut env = OntoEnv::from_file(&path, false)?;
 
             let location: OntologyLocation = match (url, file) {
                 (Some(url), None) => OntologyLocation::Url(url),
@@ -183,7 +183,7 @@ fn main() -> Result<()> {
         Commands::ListOntologies => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path)?;
+            let env = OntoEnv::from_file(&path, true)?;
             // print list of ontology URLs from env.onologies.values() sorted alphabetically
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
@@ -195,7 +195,7 @@ fn main() -> Result<()> {
         Commands::ListLocations => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path)?;
+            let env = OntoEnv::from_file(&path, true)?;
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
             for ont in ontologies {
@@ -205,13 +205,13 @@ fn main() -> Result<()> {
         Commands::Dump => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path)?;
+            let env = OntoEnv::from_file(&path, true)?;
             env.dump();
         }
         Commands::DepGraph { roots, output } => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path)?;
+            let env = OntoEnv::from_file(&path, true)?;
             let dot = if let Some(roots) = roots {
                 let roots: Vec<GraphIdentifier> = roots
                     .iter()
@@ -243,7 +243,7 @@ fn main() -> Result<()> {
         Commands::Doctor => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path)?;
+            let env = OntoEnv::from_file(&path, true)?;
             env.doctor();
         }
     }
