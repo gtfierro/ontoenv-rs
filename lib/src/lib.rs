@@ -108,7 +108,8 @@ impl OntoEnv {
 
     pub fn new_readonly(config: Config) -> Result<Self> {
         // create the store in the root/.ontoenv/store.db directory
-        let store = Store::open_secondary(config.root.join(".ontoenv/store.db"))?;
+        let ontoenv_dir = config.root.join(".ontoenv");
+        let store = Store::open_read_only(ontoenv_dir.join("store.db"))?;
         Ok(Self {
             config,
             ontologies: HashMap::new(),
@@ -831,28 +832,10 @@ mod tests {
 
     fn copy_file(src_path: &PathBuf, dst_path: &PathBuf) -> Result<(), std::io::Error> {
         if let Some(parent) = dst_path.parent() {
-            println!("Creating parent directories: {:?}", parent);
             std::fs::create_dir_all(parent)?;
         }
-
-        println!("Copying {:?} to {:?}", src_path, dst_path);
         std::fs::copy(src_path, dst_path)?;
         Ok(())
-    }
-    fn setup(dir: &str) -> Result<TempDir> {
-        // copy all files from tests/ to a temp directory and return the temp directory
-        let test_dir = TempDir::new("ontoenv")?;
-        // where test files are located
-        let base_dir = Path::new("tests/").join(dir);
-        println!("Copying files from {:?} to {:?}", base_dir, test_dir.path());
-        // destination directory
-        for entry in walkdir::WalkDir::new(&base_dir) {
-            let entry = entry?;
-            let path = entry.path();
-            let dest = test_dir.path().join(path.strip_prefix(&base_dir)?);
-            copy_file(&path.into(), &dest)?;
-        }
-        Ok(test_dir)
     }
 
     fn default_config(dir: &TempDir) -> Config {
@@ -992,6 +975,45 @@ mod tests {
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
 
+        teardown(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_recreate() -> Result<()> {
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg, false)?;
+        // create a new env, like above, but make sure it raises an error
+        let cfg = default_config(&dir);
+        let env = OntoEnv::new(cfg, false);
+        assert!(env.is_err());
+
+        let cfg = default_config(&dir);
+        let env = OntoEnv::new(cfg, true)?;
+
+        teardown(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ontoenv_readonly() -> Result<()> {
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg, false)?;
+        env.update()?;
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new_readonly(cfg)?;
+        assert_eq!(env.num_graphs(), 4);
+        assert!(env.read_only);
         teardown(dir);
         Ok(())
     }
