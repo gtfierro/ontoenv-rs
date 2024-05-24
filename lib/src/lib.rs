@@ -26,7 +26,6 @@ use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 // custom derive for ontologies field as vec of Ontology
