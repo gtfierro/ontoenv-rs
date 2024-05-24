@@ -3,14 +3,14 @@ use ::ontoenv::consts::{ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
 use ::ontoenv::transform;
 use anyhow::Error;
-use std::sync::{Arc, Mutex, Once, OnceLock};
-use oxigraph::model::{BlankNode, Literal, NamedNode, Term, SubjectRef};
+use oxigraph::model::{BlankNode, Literal, NamedNode, SubjectRef, Term};
 use pyo3::{
     prelude::*,
-    types::{PyString, PyTuple, IntoPyDict},
+    types::{IntoPyDict, PyString, PyTuple},
 };
 use std::borrow::Borrow;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, Once, OnceLock};
 
 static INIT: Once = Once::new();
 static ONTOENV_SINGLETON: OnceLock<Arc<Mutex<ontoenvrs::OntoEnv>>> = OnceLock::new();
@@ -210,9 +210,7 @@ impl OntoEnv {
             env.save_to_directory().map_err(anyhow_to_pyerr)?;
         }
 
-        Ok(OntoEnv {
-            inner: env.clone(),
-        })
+        Ok(OntoEnv { inner: env.clone() })
     }
 
     fn update(&self) -> PyResult<()> {
@@ -232,7 +230,12 @@ impl OntoEnv {
 
     // The following methods will now access the inner OntoEnv in a thread-safe manner:
 
-    fn import_graph(&self, py: Python, destination_graph: &Bound<'_, PyAny>, uri: &str) -> PyResult<()> {
+    fn import_graph(
+        &self,
+        py: Python,
+        destination_graph: &Bound<'_, PyAny>,
+        uri: &str,
+    ) -> PyResult<()> {
         let inner = self.inner.lock().unwrap();
         let rdflib = py.import_bound("rdflib")?;
         let iri = NamedNode::new(uri)
@@ -248,7 +251,8 @@ impl OntoEnv {
         let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict_bound(py);
         let result = destination_graph.call_method("value", (), Some(&kwargs))?;
         if !result.is_none() {
-            let ontology = NamedNode::new(result.extract::<String>()?).map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let ontology = NamedNode::new(result.extract::<String>()?)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let base_ontology: SubjectRef = SubjectRef::NamedNode(ontology.as_ref());
 
             transform::rewrite_sh_prefixes_graph(&mut graph, base_ontology);
