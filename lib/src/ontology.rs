@@ -56,6 +56,11 @@ impl GraphIdentifier {
         format!("{}-{}", name, location).replace('/', "_")
     }
     pub fn graphname(&self) -> Result<GraphName> {
+        // if self.name is a URL, use that as the graphname
+        if self.name.as_str().starts_with("http") {
+            return Ok(GraphName::NamedNode(self.name.clone()));
+        }
+
         // graphname is the self.name + URL-safe self.location
         let name = self.name.as_str().replace(':', "+");
         let location = self.location.as_str().replace("file://", "");

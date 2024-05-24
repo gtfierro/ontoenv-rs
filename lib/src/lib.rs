@@ -24,7 +24,9 @@ use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
+use std::fs;
 use std::io::{BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 // custom derive for ontologies field as vec of Ontology
@@ -165,10 +167,7 @@ impl OntoEnv {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
         let env: OntoEnv = serde_json::from_reader(reader)?;
-        Ok(Self {
-            read_only,
-            ..env
-        })
+        Ok(Self { read_only, ..env })
     }
 
     /// creates a new directory called .ontoenv in self.root and saves:
@@ -777,16 +776,70 @@ mod tests {
     use std::path::PathBuf;
     use tempdir::TempDir;
 
-    fn copy_file(path: &PathBuf, dest: &PathBuf) -> Result<()> {
-        println!("Copying {:?} to {:?}", path, dest);
-        if path.is_file() {
-            std::fs::copy(path, dest)?;
-        } else {
-            std::fs::create_dir_all(dest)?;
-        }
-        Ok(())
+    // the tests directory contains a number of test files that are used to test the OntoEnv.
+    // Each has a unique name and they all exist in a flat folder.
+    // This is a macro which takes a list of strings describing the directory structure of a
+    // test directory and creates a temporary directory with the given structure. The strings
+    // in the test directory might be nested in different directories. The macro copies the
+    // files to the temporary directory and returns the temporary directory.
+    macro_rules! setup {
+        ($temp_dir:expr, { $($from:expr => $to:expr),* $(,)? }) => {{
+            use std::collections::HashSet;
+            use std::path::PathBuf;
+            use std::fs;
+
+            // Assign the temporary directory
+            let dir = $temp_dir;
+
+            // Create a HashSet of the destination files
+            let provided_files: HashSet<&str> = {
+                let mut set = HashSet::new();
+                $( set.insert($to); )*
+                set
+            };
+
+            // Copy each specified file to the temporary directory
+            $(
+                let source_path: PathBuf = PathBuf::from($from);
+                let dest_path: PathBuf = dir.path().join($to);
+                if !dest_path.exists() {
+                    // Ensure the parent directories exist
+                    if let Some(parent) = dest_path.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent).expect("Failed to create parent directories");
+                        }
+                    }
+
+                    // 'copy_file' is assumed to be a custom function in the user's project
+                    // If not, consider using std::fs::copy for basic file copying
+                    copy_file(&source_path, &dest_path).expect("Failed to copy file");
+                }
+            )*
+
+            // Check the contents of the temporary directory
+            for entry in fs::read_dir(dir.path()).expect("Failed to read directory") {
+                let entry = entry.expect("Failed to read entry");
+                let file_name = entry.file_name().into_string().expect("Failed to convert filename to string");
+
+                if !provided_files.contains(file_name.as_str()) && entry.file_type().expect("Failed to get file type").is_file() {
+                    println!("Warning: extra file {} found in directory", file_name);
+                    // remove it
+                    fs::remove_file(entry.path()).expect("Failed to remove file");
+                }
+            }
+        }};
     }
 
+    fn copy_file(src_path: &PathBuf, dst_path: &PathBuf) -> Result<(), std::io::Error> {
+        if let Some(parent) = dst_path.parent() {
+            println!("Creating parent directories: {:?}", parent);
+            std::fs::create_dir_all(parent)?;
+        }
+
+        println!("Copying {:?} to {:?}", src_path, dst_path);
+        std::fs::copy(src_path, dst_path)?;
+        Ok(())
+    }
     fn setup(dir: &str) -> Result<TempDir> {
         // copy all files from tests/ to a temp directory and return the temp directory
         let test_dir = TempDir::new("ontoenv")?;
@@ -838,8 +891,20 @@ mod tests {
 
     #[test]
     fn test_ontoenv_scans() -> Result<()> {
-        let dir = setup("data2")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
+        // print the files in dir
+        println!("listing files");
+        for entry in std::fs::read_dir(dir.path())? {
+            let entry = entry?;
+            println!("inside> {:?}", entry.file_name());
+        }
+
         let cfg = default_config(&dir);
+        println!("config: {:?}", cfg);
         let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
@@ -849,7 +914,11 @@ mod tests {
 
     #[test]
     fn test_ontoenv_scans_default() -> Result<()> {
-        let dir = setup("data2")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
         let cfg = Config::new_with_default_matches(
             dir.path().into(),
             Some([dir.path().into()]),
@@ -866,7 +935,12 @@ mod tests {
 
     #[test]
     fn test_ontoenv_num_triples() -> Result<()> {
-        let dir = setup("fileendings")?;
+        let dir = TempDir::new("fileendings")?;
+        setup!(&dir, {"tests/fileendings/model" => "model", 
+                      "tests/fileendings/model.n3" => "model.n3",
+                      "tests/fileendings/model.nt" => "model.nt",
+                      "tests/fileendings/model.ttl" => "model.ttl",
+                      "tests/fileendings/model.xml" => "model.xml"});
         let cfg1 = Config::new(
             dir.path().into(),
             Some(vec![dir.path().into()]),
@@ -887,7 +961,11 @@ mod tests {
 
     #[test]
     fn test_ontoenv_update() -> Result<()> {
-        let dir = setup("data2")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
         let cfg = default_config(&dir);
         let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
@@ -899,15 +977,19 @@ mod tests {
         assert_eq!(env.num_graphs(), 4);
         assert_eq!(env.num_triples()?, old_num_triples);
 
-        // remove file
-        std::fs::remove_file(dir.path().join("ont4.ttl"))?;
+        // remove ont4.ttl
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl"});
 
         env.update()?;
         assert_eq!(env.num_graphs(), 3);
 
         // copy ont4.ttl back
-        let base_dir = Path::new("tests/").join("data2");
-        std::fs::copy(base_dir.join("ont4.ttl"), dir.path().join("ont4.ttl"))?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
 
@@ -917,7 +999,11 @@ mod tests {
 
     #[test]
     fn test_ontoenv_retrieval_by_name() -> Result<()> {
-        let dir = setup("data2")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
         let cfg = default_config(&dir);
         let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
@@ -934,7 +1020,11 @@ mod tests {
 
     #[test]
     fn test_ontoenv_retrieval_by_location() -> Result<()> {
-        let dir = setup("data2")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
         let cfg = default_config(&dir);
         let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
@@ -959,7 +1049,11 @@ mod tests {
 
     #[test]
     fn test_ontoenv_load() -> Result<()> {
-        let dir = setup("data2")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
+                       "tests/ont2.ttl" => "ont2.ttl",
+                       "tests/ont3.ttl" => "ont3.ttl",
+                       "tests/ont4.ttl" => "ont4.ttl" });
         let cfg = default_config(&dir);
         let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
@@ -978,7 +1072,14 @@ mod tests {
 
     #[test]
     fn test_ontoenv_add() -> Result<()> {
-        let dir = setup("updates")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, {"tests/updates/v1/ont1.ttl" => "v1/ont1.ttl",
+                      "tests/updates/v1/ont2.ttl" => "v1/ont2.ttl",
+                      "tests/updates/v1/ont3.ttl" => "v1/ont3.ttl",
+                      "tests/updates/v1/ont4.ttl" => "v1/ont4.ttl",
+                      "tests/updates/v2/ont5.ttl" => "v2/ont5.ttl"
+        });
+
         let cfg1 = default_config_with_subdir(&dir, "v1");
         let mut env = OntoEnv::new(cfg1, false)?;
         env.update()?;
@@ -998,22 +1099,24 @@ mod tests {
 
     #[test]
     fn test_ontoenv_detect_updates() -> Result<()> {
-        let dir = setup("updates")?;
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, {"tests/updates/v1/ont1.ttl" => "v1/ont1.ttl",
+                      "tests/updates/v1/ont2.ttl" => "v1/ont2.ttl",
+                      "tests/updates/v1/ont3.ttl" => "v1/ont3.ttl",
+                      "tests/updates/v1/ont4.ttl" => "v1/ont4.ttl",
+        });
         let cfg1 = default_config_with_subdir(&dir, "v1");
         let mut env = OntoEnv::new(cfg1, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
 
         // copy files from dir/v2 to dir/v1
-        let base_dir = Path::new("tests/").join("updates").join("v2");
-        for entry in walkdir::WalkDir::new(&base_dir) {
-            let entry = entry?;
-            let path = entry.path();
-            let dest = dir.path().join("v1").join(path.strip_prefix(&base_dir)?);
-            println!("Copying {:?} without {:?} to {:?}", path, base_dir, dest);
-            copy_file(&path.to_path_buf(), &dest)?;
-        }
-
+        setup!(&dir, {"tests/updates/v1/ont1.ttl" => "v1/ont1.ttl",
+                      "tests/updates/v1/ont2.ttl" => "v1/ont2.ttl",
+                      "tests/updates/v1/ont4.ttl" => "v1/ont4.ttl",
+                      "tests/updates/v2/ont3.ttl" => "v1/ont3.ttl",
+                      "tests/updates/v2/ont5.ttl" => "v1/ont5.ttl",
+        });
         env.update()?;
 
         assert_eq!(env.num_graphs(), 5);
@@ -1023,21 +1126,23 @@ mod tests {
 
     #[test]
     fn test_check_for_updates() -> Result<()> {
-        let dir = setup("updates")?;
+        let dir = TempDir::new("ontoenv")?;
         let cfg1 = default_config_with_subdir(&dir, "v1");
+        setup!(&dir, {"tests/updates/v1/ont1.ttl" => "v1/ont1.ttl",
+                      "tests/updates/v1/ont2.ttl" => "v1/ont2.ttl",
+                      "tests/updates/v1/ont3.ttl" => "v1/ont3.ttl",
+                      "tests/updates/v1/ont4.ttl" => "v1/ont4.ttl" });
         let mut env = OntoEnv::new(cfg1, false)?;
         env.update()?;
         assert_eq!(env.num_graphs(), 4);
 
         // copy files from dir/v2 to dir/v1
-        let base_dir = Path::new("tests/").join("updates").join("v2");
-        for entry in walkdir::WalkDir::new(&base_dir) {
-            let entry = entry?;
-            let path = entry.path();
-            let dest = dir.path().join("v1").join(path.strip_prefix(&base_dir)?);
-            println!("Copying {:?} without {:?} to {:?}", path, base_dir, dest);
-            copy_file(&path.to_path_buf(), &dest)?;
-        }
+        setup!(&dir, {"tests/updates/v1/ont1.ttl" => "v1/ont1.ttl",
+                      "tests/updates/v1/ont2.ttl" => "v1/ont2.ttl",
+                      "tests/updates/v1/ont4.ttl" => "v1/ont4.ttl",
+                      "tests/updates/v2/ont3.ttl" => "v1/ont3.ttl",
+                      "tests/updates/v2/ont5.ttl" => "v1/ont5.ttl",
+        });
 
         let updates = env.get_updated_files()?;
         assert_eq!(updates.len(), 1);
