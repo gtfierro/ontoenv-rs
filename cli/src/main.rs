@@ -179,6 +179,7 @@ fn main() -> Result<()> {
             };
 
             env.add(location)?;
+            env.save_to_directory()?;
         }
         Commands::ListOntologies => {
             // load env from .ontoenv/ontoenv.json

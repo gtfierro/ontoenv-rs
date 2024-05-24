@@ -464,6 +464,7 @@ impl OntoEnv {
     }
 
     pub fn add(&mut self, location: OntologyLocation) -> Result<GraphIdentifier> {
+        info!("Adding ontology from location: {:?}", location);
         self.add_or_update_ontology_from_location(location)
     }
 
