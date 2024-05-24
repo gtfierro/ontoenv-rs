@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
+use std::io;
 use std::io::{BufReader, Write};
 use std::path::Path;
 
@@ -104,18 +105,6 @@ impl OntoEnv {
         Store::open(ontoenv_dir.join("store.db"))
             .or_else(|_| Store::open_read_only(ontoenv_dir.join("store.db")))
             .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
-    }
-
-    pub fn new_readonly(config: Config) -> Result<Self> {
-        // create the store in the root/.ontoenv/store.db directory
-        let ontoenv_dir = config.root.join(".ontoenv");
-        let store = Store::open_read_only(ontoenv_dir.join("store.db"))?;
-        Ok(Self {
-            config,
-            ontologies: HashMap::new(),
-            dependency_graph: DiGraph::new(),
-            read_only: true,
-        })
     }
 
     pub fn close(self) {}
@@ -787,49 +776,92 @@ mod tests {
             use std::collections::HashSet;
             use std::path::PathBuf;
             use std::fs;
+            use std::io;
+
+            fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Path>) -> io::Result<()> {
+                fs::create_dir_all(&dst)?;
+                for entry in fs::read_dir(src)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    let dest_path = dst.as_ref().join(entry.file_name());
+                    if path.is_dir() {
+                        copy_dir_all(&path, &dest_path)?;
+                    } else {
+                        fs::copy(&path, &dest_path)?;
+                    }
+                }
+                Ok(())
+            }
 
             // Assign the temporary directory
             let dir = $temp_dir;
-
             // Create a HashSet of the destination files
             let provided_files: HashSet<&str> = {
                 let mut set = HashSet::new();
                 $( set.insert($to); )*
                 set
             };
-
             // Copy each specified file to the temporary directory
             $(
                 let source_path: PathBuf = PathBuf::from($from);
                 let dest_path: PathBuf = dir.path().join($to);
-                if !dest_path.exists() {
+
+                if source_path.is_dir() {
+                    // Source is a directory, so copy all files within this directory
+                    copy_dir_all(&source_path, &dest_path).expect("Failed to copy directory");
+                } else {
                     // Ensure the parent directories exist
                     if let Some(parent) = dest_path.parent() {
-                        if !parent.exists() {
-                            fs::create_dir_all(parent).expect("Failed to create parent directories");
-                        }
+                        fs::create_dir_all(parent).expect("Failed to create parent directories");
                     }
-
-                    // 'copy_file' is assumed to be a custom function in the user's project
-                    // If not, consider using std::fs::copy for basic file copying
-                    copy_file(&source_path, &dest_path).expect("Failed to copy file");
+                    // Copy the file
+                    fs::copy(&source_path, &dest_path).expect("Failed to copy file");
                 }
             )*
-
-            // Check the contents of the temporary directory
-            for entry in fs::read_dir(dir.path()).expect("Failed to read directory") {
+            // if there are any files in the temporary directory that were not provided, remove them
+            println!("provided_files: {:?}", provided_files);
+            for entry in fs::read_dir(dir.path()).expect("Failed to read temporary directory") {
                 let entry = entry.expect("Failed to read entry");
-                let file_name = entry.file_name().into_string().expect("Failed to convert filename to string");
-
-                if !provided_files.contains(file_name.as_str()) && entry.file_type().expect("Failed to get file type").is_file() {
-                    println!("Warning: extra file {} found in directory", file_name);
-                    // remove it
-                    fs::remove_file(entry.path()).expect("Failed to remove file");
+                let path = entry.path();
+                if path.is_file() {
+                    // path_str is the basename of the file
+                    let path_str = path.file_name().expect("Failed to get file name").to_str().expect("Failed to convert to string");
+                    println!("path_str: {} will be removed? {:?}", path_str, !provided_files.contains(path_str));
+                    if !provided_files.contains(path_str) {
+                        fs::remove_file(path).expect("Failed to remove file");
+                    }
                 }
             }
         }};
     }
+    fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+        // Ensure the source path exists and is a directory
+        if !src.as_ref().is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Source must be a directory",
+            ));
+        }
 
+        // Create the destination directory if it doesn't exist
+        fs::create_dir_all(&dst)?;
+
+        // Iterate through directory entries in the source directory
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest_path = dst.as_ref().join(entry.file_name());
+
+            if path.is_dir() {
+                // Recursively copy a nested directory
+                copy_dir_all(&path, &dest_path)?;
+            } else {
+                // Copy a file
+                fs::copy(&path, &dest_path)?;
+            }
+        }
+        Ok(())
+    }
     fn copy_file(src_path: &PathBuf, dst_path: &PathBuf) -> Result<(), std::io::Error> {
         if let Some(parent) = dst_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -1001,24 +1033,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ontoenv_readonly() -> Result<()> {
-        let dir = TempDir::new("ontoenv")?;
-        setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
-                       "tests/ont2.ttl" => "ont2.ttl",
-                       "tests/ont3.ttl" => "ont3.ttl",
-                       "tests/ont4.ttl" => "ont4.ttl" });
-        let cfg = default_config(&dir);
-        let mut env = OntoEnv::new(cfg, false)?;
-        env.update()?;
-        let cfg = default_config(&dir);
-        let mut env = OntoEnv::new_readonly(cfg)?;
-        assert_eq!(env.num_graphs(), 4);
-        assert!(env.read_only);
-        teardown(dir);
-        Ok(())
-    }
-
-    #[test]
     fn test_ontoenv_retrieval_by_name() -> Result<()> {
         let dir = TempDir::new("ontoenv")?;
         setup!(&dir, { "tests/ont1.ttl" => "ont1.ttl", 
@@ -1167,6 +1181,22 @@ mod tests {
 
         let updates = env.get_updated_files()?;
         assert_eq!(updates.len(), 1);
+        teardown(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ontoenv_dependency_closure() -> Result<()> {
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, {"tests/brick-stuff/" => "."});
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg, false)?;
+        env.update()?;
+
+        let ont1 = NamedNodeRef::new("https://brickschema.org/schema/1.4-rc1/Brick")?;
+        let ont_graph = env.get_ontology_by_name(ont1).unwrap();
+        let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+        assert_eq!(closure.len(), 14);
         teardown(dir);
         Ok(())
     }
