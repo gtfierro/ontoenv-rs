@@ -180,27 +180,45 @@ impl OntoEnv {
             Some(ids) => ids.into(),
             None => self.ontologies.keys().cloned().collect(),
         };
+        let mut seen: HashSet<GraphIdentifier> = HashSet::new();
 
         info!("Using # updated ids: {:?}", stack.len());
 
+        // print all ontology names
+        for ontology in self.ontologies.keys() {
+        }
+
         while let Some(ontology) = stack.pop_front() {
             info!("Building dependency graph for: {:?}", ontology);
+            if seen.contains(&ontology) {
+                continue;
+            }
+            seen.insert(ontology.clone());
             let ont = self
                 .ontologies
                 .get(&ontology)
                 .ok_or(anyhow::anyhow!("Ontology not found"))?;
             let imports = &ont.imports.clone();
             for import in imports {
-                if let Some(_imp) = self.get_ontology_by_name(import.into()) {
-                    continue;
+                // check to see if we have a file defining this ontology first
+                if let Some(imp) = self.get_ontology_by_name(import.into()) {
+                    // if we have already re-visited it, skip
+                    if seen.contains(imp.id()) || stack.contains(imp.id()) {
+                        continue;
+                    }
                 }
-                info!("Adding import: {}", import);
+
+                // otherwise, try to find the ontology by location
                 let location = OntologyLocation::from_str(import.as_str())?;
                 let imp = match self.add_or_update_ontology_from_location(location) {
                     Ok(imp) => imp,
                     Err(e) => {
-                        error!("Failed to read ontology file {}: {}", import.as_str(), e);
-                        continue;
+                        if self.config.strict {
+                            return Err(e);
+                        } else {
+                            error!("Failed to read ontology file {}: {}", import.as_str(), e);
+                            continue;
+                        }
                     }
                 };
                 stack.push_back(imp);
@@ -485,12 +503,15 @@ impl OntoEnv {
         //    info!("Found ontology with the same name: {:?}", ontology);
         //    return Ok(ontology.id().clone());
         //}
+        
 
         // if location is a Url and we are in offline mode, skip adding the ontology
         // and raise a warning
         if location.is_url() && self.config.offline {
             warn!("Offline mode is enabled, skipping URL: {:?}", location);
-            return Err(anyhow::anyhow!("Offline mode is enabled"));
+            if self.config.strict {
+                return Err(anyhow::anyhow!("Offline mode is enabled"));
+            }
         }
 
         // if one is not found and the location is a URL then add the ontology to the environment
@@ -834,7 +855,7 @@ mod tests {
             &["*.ttl"],
             &[""],
             false,
-            false,
+            true,
             true,
             "default".to_string(),
         )
@@ -1165,11 +1186,66 @@ mod tests {
         let mut env = OntoEnv::new(cfg, false)?;
         env.update()?;
 
+        assert_eq!(env.num_graphs(), 16);
+
         let ont1 = NamedNodeRef::new("https://brickschema.org/schema/1.4-rc1/Brick")?;
         let ont_graph = env.get_ontology_by_name(ont1).unwrap();
         let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
         assert_eq!(closure.len(), 14);
         teardown(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ontoenv_dag_structure() -> Result<()> {
+        let dir = TempDir::new("ontoenv")?;
+        setup!(&dir, {"tests/rdftest/ontology1.ttl" => "ontology1.ttl",
+                      "tests/rdftest/ontology2.ttl" => "ontology2.ttl",
+                      "tests/rdftest/ontology3.ttl" => "ontology3.ttl",
+                      "tests/rdftest/ontology4.ttl" => "ontology4.ttl",
+                      "tests/rdftest/ontology5.ttl" => "ontology5.ttl",
+                      "tests/rdftest/ontology6.ttl" => "ontology6.ttl"});
+
+        let cfg = default_config(&dir);
+        let mut env = OntoEnv::new(cfg, false)?;
+        env.update()?;
+
+        // should have 6 ontologies in the environment
+        assert_eq!(env.num_graphs(), 6);
+
+        // ont2 => {ont2, ont1}
+
+        // get the graph for ontology2
+        let ont2 = NamedNodeRef::new("http://example.org/ontology2")?;
+        let ont_graph = env.get_ontology_by_name(ont2).unwrap();
+        let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+        assert_eq!(closure.len(), 2);
+        let union = env.get_union_graph(&closure, None, None)?;
+        assert_eq!(union.len(), 4);
+        let union = env.get_union_graph(&closure, None, Some(false))?;
+        assert_eq!(union.len(), 5);
+
+        // ont3 => {ont3, ont2, ont1}
+        let ont3 = NamedNodeRef::new("http://example.org/ontology3")?;
+        let ont_graph = env.get_ontology_by_name(ont3).unwrap();
+        let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+        assert_eq!(closure.len(), 3);
+        let union = env.get_union_graph(&closure, None, None)?;
+        assert_eq!(union.len(), 5);
+        let union = env.get_union_graph(&closure, None, Some(false))?;
+        assert_eq!(union.len(), 8);
+
+        // ont5 => {ont5, ont4, ont3, ont2, ont1}
+        let ont5 = NamedNodeRef::new("http://example.org/ontology5")?;
+        let ont_graph = env.get_ontology_by_name(ont5).unwrap();
+        let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+        assert_eq!(closure.len(), 5);
+        let union = env.get_union_graph(&closure, None, None)?;
+        assert_eq!(union.len(), 7);
+        let union = env.get_union_graph(&closure, None, Some(false))?;
+        // print the union
+        assert_eq!(union.len(), 14);
+
         Ok(())
     }
 }
