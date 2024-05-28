@@ -1,0 +1,452 @@
+<?xml version="1.0"?>
+<rdf:RDF
+    xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns:dcterms="http://purl.org/dc/terms/"
+    xmlns:voag="http://voag.linkedmodel.org/voag#"
+    xmlns:vaem="http://www.linkedmodel.org/schema/vaem#"
+    xmlns:dtype="http://www.linkedmodel.org/schema/dtype#"
+    xmlns:owl="http://www.w3.org/2002/07/owl#"
+    xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+  xml:base="http://www.linkedmodel.org/schema/dtype" > 
+  <rdf:Description rdf:about="#dateUnion">
+    <owl:equivalentClass rdf:nodeID="A0"/>
+    <rdfs:subClassOf rdf:resource="http://www.w3.org/2000/01/rdf-schema#Resource"/>
+    <rdfs:label>date union</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>A datatype that is the union of date datatypes.</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2000/01/rdf-schema#Datatype"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A1">
+    <rdf:rest rdf:nodeID="A2"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#float"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A3">
+    <owl:onProperty rdf:resource="#hasMember"/>
+    <owl:allValuesFrom rdf:resource="#EnumeratedValue"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A4">
+    <owl:onProperty rdf:resource="#hasMember"/>
+    <owl:allValuesFrom rdf:resource="#ValueReference"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#literal">
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+    <rdfs:label>literal</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <rdfs:comment></rdfs:comment>
+    <dcterms:description>
+A general purpose property for holding string literals as a machine-readable string for how the 
+enumerated value can be referred to. 
+This can be used when the code value is numeric, as an alternative to using a code. 
+Literal is not the same as label which is intended for human readable display. 
+For example, a code for January may be 1, the literal may be 'J' or 'jan' and the label 'January'.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#defaultObjectValue">
+    <rdfs:label>default object value</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+The property "dtype:defaultValue" is a general property for specifying an object value in situations where 
+none is specified.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A5">
+    <rdf:rest rdf:nodeID="A6"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#gMonth"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A7">
+    <owl:onProperty rdf:resource="#order"/>
+    <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:maxCardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.org/dc/terms/author">
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+    <rdfs:label>author</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource="http://purl.org/dc/terms/"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AnnotationProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A8">
+    <owl:onProperty rdf:resource="#objectValue"/>
+    <owl:minCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:minCardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A9">
+    <owl:onProperty rdf:resource="#objectValue"/>
+    <owl:allValuesFrom rdf:resource="#EnumeratedValue"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#value">
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#anySimpleType"/>
+    <rdfs:label>value</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+The property "dtype:value" is a general property for specifying a literal value in situations where 
+none is specified.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#type">
+    <rdfs:label>datatype</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#code">
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#anySimpleType"/>
+    <rdfs:label>code</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <rdfs:comment>A unique value that is assigned to an enumeration member.</rdfs:comment>
+    <dcterms:description>
+A property for expressing a unique value for a member of an enumeration. 
+The range has been set to "xsd:anySimpleType" to allow for any scalar datatype.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A6">
+    <rdf:rest rdf:nodeID="A10"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#gMonthDay"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#GMD_DTYPE">
+    <vaem:usesNonImportedResource rdf:resource="http://purl.org/dc/terms/abstract"/>
+    <vaem:latestPublishedVersion rdf:datatype="http://www.w3.org/2001/XMLSchema#anyURI">http://www.linkedmodel.org/doc/2023/SCHEMA_dtype</vaem:latestPublishedVersion>
+    <dcterms:modified rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2023-11-14</dcterms:modified>
+    <vaem:usesNonImportedResource rdf:resource="http://purl.org/dc/terms/modified"/>
+    <vaem:title>Datatype Schema (DTYPE) - Version 2.1</vaem:title>
+    <dcterms:title>DTYPE Version 2.1 Metadata</dcterms:title>
+    <vaem:namespace rdf:datatype="http://www.w3.org/2001/XMLSchema#anyURI">http://www.linkedmodel.org/schema/dtype#</vaem:namespace>
+    <vaem:releaseDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2023-11-14</vaem:releaseDate>
+    <vaem:hasLicenseType rdf:resource="http://voag.linkedmodel.org/voag/CC-SHAREALIKE_3PT0-US"/>
+    <vaem:hasSteward rdf:resource="http://www.linkedmodel.org/schema/vaem#TopQuadrant"/>
+    <vaem:hasGraphRole rdf:resource="http://www.linkedmodel.org/schema/vaem#SchemaGraph"/>
+    <vaem:description>
+The ontology "dtype" provides a specification of simple data types such as enumerations and codelists. 
+These are needed in support of the conversion of XML Schemas and UML Models to OWL. 
+The purpose of "dtype" is to provide a foundation for expressing rich data types. 
+These data types are typically needed when dealing with OWL representations of data structures derived from XML Schema.
+</vaem:description>
+    <vaem:name>DTYPE</vaem:name>
+    <vaem:previousPublishedVersion rdf:datatype="http://www.w3.org/2001/XMLSchema#anyURI">http://www.linkedmodel.org/doc/2015/SCHEMA_dtype-v1.2</vaem:previousPublishedVersion>
+    <vaem:usesNonImportedResource rdf:resource="http://voag.linkedmodel.org/voag/CC-SHAREALIKE_3PT0-US"/>
+    <vaem:usesNonImportedResource rdf:resource="http://purl.org/dc/terms/title"/>
+    <vaem:logo rdf:datatype="http://www.w3.org/2001/XMLSchema#anyURI">http://www.linkedmodel.org/lib/lm/images/logos/dtype_logo-300x110.png</vaem:logo>
+    <vaem:intent>The purpose of DTYPE is to provide, by import, a foundation for  data types.</vaem:intent>
+    <vaem:withAttributionTo>DTYPE is issued under a Creative Commons Attribution Share Alike 3.0 United States License.</vaem:withAttributionTo>
+    <vaem:usesNonImportedResource rdf:resource="http://purl.org/dc/terms/created"/>
+    <vaem:hasOwner rdf:resource="http://www.linkedmodel.org/schema/vaem#TopQuadrant"/>
+    <rdfs:label>DTYPE Schema Version 2.1 Metadata</rdfs:label>
+    <vaem:revision>2.1</vaem:revision>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:created rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2011-05-29</dcterms:created>
+    <vaem:usesNonImportedResource rdf:resource="http://purl.org/dc/terms/author"/>
+    <rdf:type rdf:resource="http://www.linkedmodel.org/schema/vaem#GraphMetaData"/>
+    <vaem:owner>LinkedModel.org</vaem:owner>
+    <vaem:turtleFileURL rdf:datatype="http://www.w3.org/2001/XMLSchema#anyURI">http://www.linkedmodel.org/dtype/schema/SCHEMA_dtype.ttl</vaem:turtleFileURL>
+    <vaem:namespacePrefix>dtype</vaem:namespacePrefix>
+  </rdf:Description>
+  <rdf:Description rdf:about="#refersTo">
+    <rdfs:label>refers to</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+An indirection pointer for relating a slot in am occurrence data structure, such as "dtype:ValueReference" with another resource.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A11">
+    <owl:onProperty rdf:resource="#value"/>
+    <owl:cardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:cardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#numericUnion">
+    <owl:equivalentClass rdf:nodeID="A12"/>
+    <rdfs:subClassOf rdf:resource="http://www.w3.org/2000/01/rdf-schema#Resource"/>
+    <rdfs:label>numeric union</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+A datatype that is the union of numeric xsd data types.
+"dtype:numericUnion" is equivalent to the xsd specification that uses an xsd:union of 
+memberTypes="xsd:decimal xsd:double xsd:float xsd:integer".
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2000/01/rdf-schema#Datatype"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#Enumeration">
+    <rdfs:subClassOf rdf:nodeID="A13"/>
+    <rdfs:subClassOf rdf:nodeID="A14"/>
+    <dcterms:description>
+A type that serves as a container for the enumerated values of an enumeration. 
+This enables the enumeration itself to be referenceable. 
+One need for this is in determing the default value of an enumeration.
+Another need is in the management of sub-enumerations and composite enumerations.
+</dcterms:description>
+    <rdfs:subClassOf rdf:nodeID="A8"/>
+    <rdfs:label>DTYPE Enumeration</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:subClassOf rdf:nodeID="A15"/>
+    <rdfs:subClassOf rdf:nodeID="A9"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A16">
+    <owl:onProperty rdf:resource="#derivedFrom"/>
+    <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:maxCardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A17">
+    <owl:onProperty rdf:resource="#refersTo"/>
+    <owl:allValuesFrom rdf:resource="#EnumeratedValue"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#hasMember">
+    <rdfs:label>has member</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>A property for specifying how member elements make up a data structure.</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A18">
+    <rdf:rest rdf:nodeID="A19"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A13">
+    <owl:onProperty rdf:resource="#objectValue"/>
+    <owl:allValuesFrom rdf:resource="#EnumeratedValue"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#compositeOf">
+    <rdfs:label>composite of</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>A property for constructing composite data structures</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A10">
+    <rdf:rest rdf:nodeID="A20"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#gYearMonth"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A21">
+    <rdf:rest rdf:nodeID="A22"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#dateTime"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A20">
+    <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#gDay"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#defaultValue">
+    <rdfs:label>default value</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+The property "dtype:defaultValue" is a general property for specifying a literal value in situations where 
+none is specified.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A2">
+    <rdf:rest rdf:nodeID="A18"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#ValueReference">
+    <rdfs:subClassOf rdf:nodeID="A7"/>
+    <rdfs:subClassOf rdf:nodeID="A23"/>
+    <rdfs:subClassOf rdf:nodeID="A17"/>
+    <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+    <rdfs:label>Value Reference</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+A value reference is a pointer to an Enumerated Value. 
+The original order of the value can be overridden by the "order" attribute.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#objectValue">
+    <rdfs:label>object value</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+The property "dtype:objectValue" is a general property for specifying an object value in situations where 
+none is specified.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A14">
+    <owl:onProperty rdf:resource="#defaultObjectValue"/>
+    <owl:allValuesFrom rdf:resource="#EnumeratedValue"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A22">
+    <rdf:rest rdf:nodeID="A5"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#gYear"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#isInvalid">
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#boolean"/>
+    <rdfs:label>is invalid</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>A boolean flag to state that a value is invalid with respect to its type.</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="">
+    <owl:versionIRI rdf:resource=""/>
+    <owl:imports rdf:resource="http://www.linkedmodel.org/schema/vaem"/>
+    <rdfs:label>Datatype Ontology</rdfs:label>
+    <vaem:hasGraphMetadata rdf:resource="#GMD_DTYPE"/>
+    <dcterms:title>Datatype Ontology</dcterms:title>
+    <dcterms:subject>Datatype Schema</dcterms:subject>
+    <dcterms:author>Ralph Hodgson</dcterms:author>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Ontology"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A12">
+    <owl:unionOf rdf:nodeID="A1"/>
+    <rdf:type rdf:resource="http://www.w3.org/2000/01/rdf-schema#Datatype"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#order">
+    <rdfs:seeAlso rdf:resource="#orderIndex"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+    <rdfs:label>order</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+The property "dtype:order" provides a means to specify a precedence. 
+One use of order is in specifying ordered enumerations such as "voag:ConfidentialityLevel".
+A similar property, but with an important type difference, is "vaem:orderIndex".
+This is for use on property occurrences in class axioms where it can be placed on a restriction 
+to specify how that property may be transformed into other representations where ordering has some 
+importance, for example, in XML Schema sequences. 
+Whereas "vaem:order" is a datatype property, "vaem:orderIndex" is an annotation property.
+The "order" property specifies a value that can establish precedence and ordinality. 
+One use of order is in make an enumeration an ordinal type. 
+For example "RiskLevel" might have the values "very low", "low", "medium", "high" and "very high".
+A query that asks for all risks that are greater than "medium" would use the ordinal values and return 
+those resources that have “medium”, “high” and “very high” ordinality.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#CodeList">
+    <rdfs:subClassOf rdf:resource="#Enumeration"/>
+    <rdfs:label>Codelist</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+A codelist is a controlled vocabulary of terms that are used to represent permissible values of a 
+variable in information systems. 
+The representaiton of codes in "dtype" has been influenced by CCTS and UBL.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#DerivedCodeList">
+    <rdfs:subClassOf rdf:nodeID="A4"/>
+    <owl:disjointWith rdf:resource="#SimpleCodeList"/>
+    <rdfs:subClassOf rdf:resource="#CodeList"/>
+    <dcterms:description>
+A derived codelist is a sublist of another codelist. 
+The members that it has must be members of the source list.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <rdfs:subClassOf rdf:nodeID="A16"/>
+    <rdfs:label>Derived Code List</rdfs:label>
+    <owl:disjointWith rdf:resource="#CompositeCodeList"/>
+    <rdfs:subClassOf rdf:nodeID="A24"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A25">
+    <owl:onProperty rdf:resource="#compositeOf"/>
+    <owl:allValuesFrom rdf:resource="#CodeList"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#CompositeCodeList">
+    <owl:disjointWith rdf:resource="#SimpleCodeList"/>
+    <owl:disjointWith rdf:resource="#DerivedCodeList"/>
+    <rdfs:subClassOf rdf:nodeID="A25"/>
+    <rdfs:subClassOf rdf:resource="#CodeList"/>
+    <rdfs:label>Composite Code List</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+A composite codelist is a codelist made up of other codelists. 
+It does not introduce any new codes.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A19">
+    <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#double"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#EnumeratedValue">
+    <rdfs:subClassOf rdf:nodeID="A26"/>
+    <rdfs:subClassOf rdf:nodeID="A27"/>
+    <rdfs:subClassOf rdf:nodeID="A28"/>
+    <rdfs:subClassOf rdf:nodeID="A11"/>
+    <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+    <rdfs:label>DTYPE Enumerated Value</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+The base class for datatypes that have values that are restriced to a set of literals or tokens. 
+The members of the restriction may themselves be restriced by facets that apply to scalar data types.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A23">
+    <owl:onProperty rdf:resource="#refersTo"/>
+    <owl:cardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:cardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A26">
+    <owl:onProperty rdf:resource="#order"/>
+    <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:maxCardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A0">
+    <owl:unionOf rdf:nodeID="A29"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A28">
+    <owl:onProperty rdf:resource="#code"/>
+    <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:maxCardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A29">
+    <rdf:rest rdf:nodeID="A21"/>
+    <rdf:first rdf:resource="http://www.w3.org/2001/XMLSchema#date"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A15">
+    <owl:onProperty rdf:resource="#defaultObjectValue"/>
+    <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:maxCardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A27">
+    <owl:onProperty rdf:resource="#literal"/>
+    <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</owl:maxCardinality>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#orderIndex">
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+    <rdfs:label>order index</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>
+The property "dtype:orderIndex" is an annotation property to specify a position that some value or 
+structure will have. 
+One use is to specify the place that a resource has in a sequence.
+Another use is on property occurrences in class axioms, where "vaem:orderIndex" is placed on a 
+restriction to specify how that property may be transformed into a representation where ordering has 
+some importance, for example, in XML Schema sequences.
+</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AnnotationProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#SimpleCodeList">
+    <owl:disjointWith rdf:resource="#DerivedCodeList"/>
+    <owl:disjointWith rdf:resource="#CompositeCodeList"/>
+    <rdfs:subClassOf rdf:nodeID="A3"/>
+    <rdfs:subClassOf rdf:resource="#CodeList"/>
+    <rdfs:label>Simple Code List</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>A simple codelist is one made up only of enumerated values.</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="#derivedFrom">
+    <rdfs:label>derived from</rdfs:label>
+    <rdfs:isDefinedBy rdf:resource=""/>
+    <dcterms:description>A property for specifying a derivation relationship.</dcterms:description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="A24">
+    <owl:onProperty rdf:resource="#derivedFrom"/>
+    <owl:allValuesFrom rdf:resource="#CodeList"/>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+  </rdf:Description>
+</rdf:RDF>
+
+<!-- Created with TopBraid -->

@@ -129,27 +129,27 @@ mod tests {
     #[test]
     fn test_read_file() {
         // testing turtle file
-        let graph = read_file(Path::new("tests/fileendings/model.ttl")).unwrap();
+        let graph = read_file(Path::new("fixtures/fileendings/model.ttl")).unwrap();
         assert_eq!(graph.len(), 5);
 
         // testing ntriples file
-        let graph = read_file(Path::new("tests/fileendings/model.nt")).unwrap();
+        let graph = read_file(Path::new("fixtures/fileendings/model.nt")).unwrap();
         assert_eq!(graph.len(), 5);
 
         // testing n3 file
-        let graph = read_file(Path::new("tests/fileendings/model.n3")).unwrap();
+        let graph = read_file(Path::new("fixtures/fileendings/model.n3")).unwrap();
         assert_eq!(graph.len(), 5);
         //
         // testing xml file
-        let graph = read_file(Path::new("tests/fileendings/model.xml")).unwrap();
+        let graph = read_file(Path::new("fixtures/fileendings/model.xml")).unwrap();
         assert_eq!(graph.len(), 5);
 
         // testing default turtle file
-        let graph = read_file(Path::new("tests/fileendings/model")).unwrap();
+        let graph = read_file(Path::new("fixtures/fileendings/model")).unwrap();
         assert_eq!(graph.len(), 5);
 
         // reading non-existent file should return an error
-        let result = read_file(Path::new("tests/data/non-existent.ttl"));
+        let result = read_file(Path::new("fixtures/data/non-existent.ttl"));
         assert!(result.is_err());
     }
 
@@ -169,10 +169,10 @@ mod tests {
     fn test_write_dataset_to_file() {
         // create in-memory dataset
         let mut graph = Dataset::new();
-        let model = read_file(Path::new("tests/fileendings/model.ttl")).unwrap();
+        let model = read_file(Path::new("fixtures/fileendings/model.ttl")).unwrap();
         let model_name =
             GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/model").unwrap());
-        let brick = read_file(Path::new("tests/brick-stuff/Brick-1.3.ttl")).unwrap();
+        let brick = read_file(Path::new("fixtures/brick-stuff/Brick-1.3.ttl")).unwrap();
         let brick_name =
             GraphNameRef::NamedNode(NamedNodeRef::new("http://example.org/brick").unwrap());
         for quad in model.iter() {
