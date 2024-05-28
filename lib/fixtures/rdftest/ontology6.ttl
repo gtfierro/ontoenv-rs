@@ -1,0 +1,10 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ex: <http://example.org#> .
+@base <http://example.org/ontology6> .
+
+<http://example.org/ontology6> rdf:type owl:Ontology ;
+    owl:imports <http://example.org/ontology3> ;
+    owl:imports <http://example.org/ontology4> .
+
+ex:Class7 rdf:type owl:Class .
