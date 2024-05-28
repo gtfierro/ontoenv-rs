@@ -10,6 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::hash::Hash;
 //
 // custom derive for NamedNode
 fn namednode_ser<S>(namednode: &NamedNode, serializer: S) -> Result<S::Ok, S::Error>
@@ -27,7 +28,7 @@ where
     NamedNode::new(s).map_err(serde::de::Error::custom)
 }
 
-#[derive(Serialize, Deserialize, Eq, Debug, Clone, Hash)]
+#[derive(Serialize, Deserialize, Eq, Debug, Clone)]
 pub struct GraphIdentifier {
     location: OntologyLocation,
     #[serde(serialize_with = "namednode_ser", deserialize_with = "namednode_de")]
@@ -38,6 +39,13 @@ pub struct GraphIdentifier {
 impl PartialEq for GraphIdentifier {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name && self.location == other.location
+    }
+}
+
+impl Hash for GraphIdentifier {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.location.hash(state);
     }
 }
 

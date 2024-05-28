@@ -1,21 +1,8 @@
 use anyhow::Result;
-use chrono::prelude::*;
-use log::{debug, error, info, warn};
 use ontoenv::config::Config;
-use ontoenv::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
-use ontoenv::ontology::{GraphIdentifier, Ontology, OntologyLocation};
+use ontoenv::ontology::OntologyLocation;
 use ontoenv::OntoEnv;
-use oxigraph::model::{
-    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, SubjectRef,
-};
-use oxigraph::store::Store;
-use petgraph::graph::{Graph as DiGraph, NodeIndex};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::collections::{HashSet, VecDeque};
-use std::fs;
-use std::io::{BufReader, Write};
-use std::path::Path;
+use oxigraph::model::NamedNodeRef;
 use std::path::PathBuf;
 use tempdir::TempDir;
 
@@ -230,7 +217,7 @@ fn test_recreate() -> Result<()> {
                    "fixtures/ont3.ttl" => "ont3.ttl",
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let env = OntoEnv::new(cfg, false)?;
     // create a new env, like above, but make sure it raises an error
     let cfg = default_config(&dir);
     let env = OntoEnv::new(cfg, false);
@@ -428,7 +415,7 @@ fn test_ontoenv_dependency_closure() -> Result<()> {
 
     let ont1 = NamedNodeRef::new("https://brickschema.org/schema/1.3/Brick")?;
     let ont_graph = env.get_ontology_by_name(ont1).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+    let closure = env.get_dependency_closure(ont_graph.id()).unwrap();
     assert_eq!(closure.len(), 19);
     teardown(dir);
     Ok(())
@@ -456,7 +443,7 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     // get the graph for ontology2
     let ont2 = NamedNodeRef::new("http://example.org/ontology2")?;
     let ont_graph = env.get_ontology_by_name(ont2).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+    let closure = env.get_dependency_closure(ont_graph.id()).unwrap();
     assert_eq!(closure.len(), 2);
     let union = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 4);
@@ -466,7 +453,7 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     // ont3 => {ont3, ont2, ont1}
     let ont3 = NamedNodeRef::new("http://example.org/ontology3")?;
     let ont_graph = env.get_ontology_by_name(ont3).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+    let closure = env.get_dependency_closure(ont_graph.id()).unwrap();
     assert_eq!(closure.len(), 3);
     let union = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 5);
@@ -476,7 +463,7 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     // ont5 => {ont5, ont4, ont3, ont2, ont1}
     let ont5 = NamedNodeRef::new("http://example.org/ontology5")?;
     let ont_graph = env.get_ontology_by_name(ont5).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph.id()).unwrap();
+    let closure = env.get_dependency_closure(ont_graph.id()).unwrap();
     assert_eq!(closure.len(), 5);
     let union = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 7);
