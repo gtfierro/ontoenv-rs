@@ -185,8 +185,7 @@ impl OntoEnv {
         info!("Using # updated ids: {:?}", stack.len());
 
         // print all ontology names
-        for ontology in self.ontologies.keys() {
-        }
+        for ontology in self.ontologies.keys() {}
 
         while let Some(ontology) = stack.pop_front() {
             info!("Building dependency graph for: {:?}", ontology);
@@ -505,14 +504,16 @@ impl OntoEnv {
         //    info!("Found ontology with the same name: {:?}", ontology);
         //    return Ok(ontology.id().clone());
         //}
-        
 
         // if location is a Url and we are in offline mode, skip adding the ontology
         // and raise a warning
         if location.is_url() && self.config.offline {
             warn!("Offline mode is enabled, skipping URL: {:?}", location);
             if self.config.strict {
-                return Err(anyhow::anyhow!("Offline mode is enabled. Cannot fetch {}", location.as_str()));
+                return Err(anyhow::anyhow!(
+                    "Offline mode is enabled. Cannot fetch {}",
+                    location.as_str()
+                ));
             }
         }
 
