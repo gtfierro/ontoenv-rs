@@ -1,12 +1,10 @@
-use ontoenv::OntoEnv;
-use std::path::PathBuf;
-use tempdir::TempDir;
-use ontoenv::config::Config;
-use ontoenv::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
-use ontoenv::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, error, info, warn};
+use ontoenv::config::Config;
+use ontoenv::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
+use ontoenv::ontology::{GraphIdentifier, Ontology, OntologyLocation};
+use ontoenv::OntoEnv;
 use oxigraph::model::{
     Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, SubjectRef,
 };
@@ -18,6 +16,8 @@ use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{BufReader, Write};
 use std::path::Path;
+use std::path::PathBuf;
+use tempdir::TempDir;
 
 // the tests directory contains a number of test files that are used to test the OntoEnv.
 // Each has a unique name and they all exist in a flat folder.
@@ -486,4 +486,3 @@ fn test_ontoenv_dag_structure() -> Result<()> {
 
     Ok(())
 }
-
