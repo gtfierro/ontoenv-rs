@@ -328,7 +328,6 @@ impl OntoEnv {
             .into_iter()
             .filter(|file| !existing_files.contains(file))
             .collect();
-        println!("New files: {:?}", new_files);
         let updated_ids = self.get_updated_indexed_files()?;
         if !updated_ids.is_empty() {
             info!("Updating ontologies: {:?}", updated_ids);
@@ -491,7 +490,6 @@ impl OntoEnv {
         &mut self,
         location: OntologyLocation,
     ) -> Result<GraphIdentifier> {
-        println!("Adding or updating ontology from location: {:?}", location);
         // find an entry in self.ontologies with the same Location
         if let Some(ontology) = self.get_ontology_by_location(&location) {
             info!("Found ontology with the same location: {:?}", ontology);
