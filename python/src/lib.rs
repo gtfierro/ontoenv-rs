@@ -216,6 +216,7 @@ impl OntoEnv {
     fn update(&self) -> PyResult<()> {
         let mut inner = self.inner.lock().unwrap();
         inner.update().map_err(anyhow_to_pyerr)?;
+        inner.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
@@ -358,12 +359,14 @@ impl OntoEnv {
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
         inner.add(location).map_err(anyhow_to_pyerr)?;
+        inner.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
     fn refresh(&self) -> PyResult<()> {
         let mut inner = self.inner.lock().unwrap();
         inner.update().map_err(anyhow_to_pyerr)?;
+        inner.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
