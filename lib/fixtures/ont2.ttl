@@ -21,6 +21,6 @@
 @prefix : <urn:ont2/> .
 
 <urn:ont2> a owl:Ontology ;
-    owl:imports <urn:ont4> .
+    owl:imports <urn:ont3>, <urn:ont4> .
 
 :Sensor a owl:Class .
