@@ -52,7 +52,6 @@ macro_rules! setup {
             let file_name = entry.file_name().into_string().expect("Failed to convert filename to string");
 
             if !provided_files.contains(file_name.as_str()) && entry.file_type().expect("Failed to get file type").is_file() {
-                println!("Warning: extra file {} found in directory", file_name);
                 // remove it
                 fs::remove_file(entry.path()).expect("Failed to remove file");
             }
@@ -109,14 +108,7 @@ fn test_ontoenv_scans() -> Result<()> {
                    "fixtures/ont3.ttl" => "ont3.ttl",
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     // print the files in dir
-    println!("listing files");
-    for entry in std::fs::read_dir(dir.path())? {
-        let entry = entry?;
-        println!("inside> {:?}", entry.file_name());
-    }
-
     let cfg = default_config(&dir);
-    println!("config: {:?}", cfg);
     let mut env = OntoEnv::new(cfg, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
@@ -189,10 +181,10 @@ fn test_ontoenv_update() -> Result<()> {
     assert_eq!(env.num_graphs(), 4);
     assert_eq!(env.num_triples()?, old_num_triples);
 
-    // remove ont4.ttl
+    // remove ont2.ttl
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
-                   "fixtures/ont2.ttl" => "ont2.ttl",
-                   "fixtures/ont3.ttl" => "ont3.ttl"});
+                   "fixtures/ont3.ttl" => "ont3.ttl",
+                   "fixtures/ont4.ttl" => "ont4.ttl"});
 
     env.update()?;
     assert_eq!(env.num_graphs(), 3);
@@ -245,6 +237,13 @@ fn test_ontoenv_retrieval_by_name() -> Result<()> {
     let ont = env
         .get_ontology_by_name(ont1)
         .ok_or(anyhow::anyhow!("Ontology not found"))?;
+    assert_eq!(ont.imports.len(), 1);
+    assert!(ont.location().unwrap().is_file());
+
+    let ont2 = NamedNodeRef::new("urn:ont2")?;
+    let ont = env
+        .get_ontology_by_name(ont2)
+        .ok_or(anyhow::anyhow!("Ontology not found"))?;
     assert_eq!(ont.imports.len(), 2);
     assert!(ont.location().unwrap().is_file());
     teardown(dir);
@@ -271,7 +270,7 @@ fn test_ontoenv_retrieval_by_location() -> Result<()> {
     let ont = env
         .get_ontology_by_location(&loc)
         .ok_or(anyhow::anyhow!("Ontology not found"))?;
-    assert_eq!(ont.imports.len(), 2);
+    assert_eq!(ont.imports.len(), 1);
     assert!(ont
         .location()
         .ok_or(anyhow::anyhow!("Location not found"))?

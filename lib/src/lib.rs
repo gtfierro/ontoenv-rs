@@ -210,15 +210,16 @@ impl OntoEnv {
             let imports = &ont.imports.clone();
             for import in imports {
                 // check to see if we have a file defining this ontology first
-                if let Some(imp) = self.get_ontology_by_name(import.into()) {
+                let location = if let Some(imp) = self.get_ontology_by_name(import.into()) {
                     // if we have already re-visited it, skip
                     if seen.contains(imp.id()) || stack.contains(imp.id()) {
                         continue;
                     }
-                }
-
-                // otherwise, try to find the ontology by location
-                let location = OntologyLocation::from_str(import.as_str())?;
+                    imp.location().ok_or(anyhow::anyhow!("Ontology location not found"))?.clone()
+                } else {
+                    // otherwise, try to find the ontology by location
+                    OntologyLocation::from_str(import.as_str())?
+                };
                 let imp = match self.add_or_update_ontology_from_location(location) {
                     Ok(imp) => imp,
                     Err(e) => {
@@ -233,6 +234,9 @@ impl OntoEnv {
                 stack.push_back(imp);
             }
         }
+
+        // what are the current ontologies in the environment?
+        let current_ontologies: HashSet<GraphIdentifier> = self.ontologies.keys().cloned().collect();
 
         // put the dependency graph into self.dependency_graph
         let mut indexes: HashMap<GraphIdentifier, NodeIndex> = HashMap::new();
