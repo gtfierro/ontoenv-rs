@@ -68,6 +68,8 @@ pub struct OntoEnv {
 // probably need some graph "identifier" that incorporates location and version..
 
 impl OntoEnv {
+    /// Create a new OntoEnv with the given configuration. Will error if the
+    /// environment already exists and recreate is false.
     pub fn new(config: Config, recreate: bool) -> Result<Self> {
         // create the config.root/.ontoenv directory so it exists before the store
         // is created
@@ -105,19 +107,24 @@ impl OntoEnv {
             .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
     }
 
+    /// Close the environment and release any resources
     pub fn close(self) {}
 
     //TODO: add import_graph which imports a single graph into a given graph
 
+    /// Returns the number of graphs in the environment
     pub fn num_graphs(&self) -> usize {
         self.ontologies.len()
     }
 
+    /// Returns the number of triples in the environment
     pub fn num_triples(&self) -> Result<usize> {
         // this construction coerces the error the the correct type
         Ok(self.store()?.len()?)
     }
 
+    /// Returns an Ontology with the given name. Uses the provided policy to resolve
+    /// the ontology if there are multiple ontologies with the same name.
     pub fn get_ontology_with_policy(
         &self,
         name: NamedNodeRef,
@@ -129,6 +136,7 @@ impl OntoEnv {
             .cloned()
     }
 
+    /// Returns the first ontology with the given name
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
         // choose the first ontology with the given name
         self.ontologies
@@ -136,6 +144,7 @@ impl OntoEnv {
             .find(|&ontology| ontology.name() == name)
     }
 
+    /// Returns the first graph with the given name
     pub fn get_graph_by_name(&self, name: NamedNodeRef) -> Result<Graph> {
         let ontology = self
             .get_ontology_by_name(name)
@@ -143,6 +152,7 @@ impl OntoEnv {
         self.get_graph(ontology.id())
     }
 
+    /// Returns the first ontology with the given location
     pub fn get_ontology_by_location(&self, location: &OntologyLocation) -> Option<&Ontology> {
         // choose the first ontology with the given location
         self.ontologies
@@ -150,6 +160,7 @@ impl OntoEnv {
             .find(|&ontology| ontology.location() == Some(location))
     }
 
+    /// Load an OntoEnv from the given path
     pub fn from_file(path: &Path, read_only: bool) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
@@ -479,6 +490,8 @@ impl OntoEnv {
         Ok(files)
     }
 
+    /// Add the ontology from the given location to the environment. If the ontology
+    /// already exists in the environment, it is overwritten.
     pub fn add(&mut self, location: OntologyLocation) -> Result<GraphIdentifier> {
         info!("Adding ontology from location: {:?}", location);
         self.add_or_update_ontology_from_location(location)
@@ -560,10 +573,12 @@ impl OntoEnv {
         Ok(id)
     }
 
+    /// Return a list of all graph identifiers in the environment
     pub fn graph_ids(&self) -> Vec<GraphIdentifier> {
         self.ontologies.keys().cloned().collect()
     }
 
+    /// Return a list of all ontologies in the environment
     pub fn ontologies(&self) -> &HashMap<GraphIdentifier, Ontology> {
         &self.ontologies
     }
@@ -580,6 +595,7 @@ impl OntoEnv {
         graphs
     }
 
+    /// Returns the graph for the given graph identifier
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let mut graph = Graph::new();
         let name = id.graphname()?;
@@ -717,6 +733,8 @@ impl OntoEnv {
         }
     }
 
+    /// Outputs a human-readable dump of the environment, including all ontologies
+    /// and their metadata and imports
     pub fn dump(&self) {
         let mut ontologies = self.ontologies.clone();
         let mut groups: HashMap<NamedNode, Vec<Ontology>> = HashMap::new();
