@@ -21,7 +21,7 @@
 @prefix : <urn:ont1/> .
 
 <urn:ont1> a owl:Ontology ;
-    owl:imports <urn:ont2>, <urn:ont3> .
+    owl:imports <urn:ont3> .
 
 :VAV a owl:Class .
 :AHU a owl:Class .

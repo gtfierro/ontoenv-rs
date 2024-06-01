@@ -18,7 +18,7 @@
 @prefix unit: <http://qudt.org/vocab/unit/> .
 @prefix vcard: <http://www.w3.org/2006/vcard/ns#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix : <urn:ont3/> .
+@prefix : <urn:ont4/> .
 
 <urn:ont4> a owl:Ontology .
 
