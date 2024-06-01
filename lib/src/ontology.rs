@@ -9,8 +9,8 @@ use oxigraph::model::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::hash::Hash;
+use std::path::PathBuf;
 //
 // custom derive for NamedNode
 fn namednode_ser<S>(namednode: &NamedNode, serializer: S) -> Result<S::Ok, S::Error>
