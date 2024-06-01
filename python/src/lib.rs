@@ -342,7 +342,7 @@ impl OntoEnv {
         let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
         let py_ontology = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into()))?;
         let value_fun: Py<PyAny> = graph.getattr("value")?.into();
-        let kwargs =  [("predicate", py_rdf_type), ("object", py_ontology)].into_py_dict_bound(py);
+        let kwargs = [("predicate", py_rdf_type), ("object", py_ontology)].into_py_dict_bound(py);
         let ontology = value_fun.call_bound(py, (), Some(&kwargs))?;
 
         if ontology.is_none(py) {

@@ -256,7 +256,10 @@ impl OntoEnv {
                 let graph_id = match self.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id(),
                     None => {
-                        error!("Import not found: {}", import);
+                        if self.config.strict {
+                            return Err(anyhow::anyhow!("Import not found: {}", import));
+                        }
+                        warn!("Import not found: {}", import);
                         continue;
                     }
                 };
@@ -644,7 +647,10 @@ impl OntoEnv {
                 let import = match self.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),
                     None => {
-                        error!("Import not found: {}", import);
+                        if self.config.strict {
+                            return Err(anyhow::anyhow!("Import not found: {}", import));
+                        }
+                        warn!("Import not found: {}", import);
                         continue;
                     }
                 };
