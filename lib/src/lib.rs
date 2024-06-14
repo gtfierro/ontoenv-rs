@@ -51,10 +51,6 @@ where
     Ok(map)
 }
 
-fn default_store() -> Store {
-    Store::new().unwrap()
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct OntoEnv {
     config: Config,
@@ -194,9 +190,6 @@ impl OntoEnv {
 
         info!("Using # updated ids: {:?}", stack.len());
 
-        // print all ontology names
-        for ontology in self.ontologies.keys() {}
-
         while let Some(ontology) = stack.pop_front() {
             info!("Building dependency graph for: {:?}", ontology);
             if seen.contains(&ontology) {
@@ -234,9 +227,6 @@ impl OntoEnv {
                 stack.push_back(imp);
             }
         }
-
-        // what are the current ontologies in the environment?
-        let current_ontologies: HashSet<GraphIdentifier> = self.ontologies.keys().cloned().collect();
 
         // put the dependency graph into self.dependency_graph
         let mut indexes: HashMap<GraphIdentifier, NodeIndex> = HashMap::new();
@@ -362,15 +352,6 @@ impl OntoEnv {
         // compute the union of new_files and updated_files
         updated_files.extend(new_files);
         Ok(updated_files.into_iter().collect())
-    }
-
-    fn get_environment_update_time(&self) -> Result<Option<chrono::DateTime<Utc>>> {
-        let ontoenv_path = self.config.root.join(".ontoenv/ontoenv.json");
-        if !ontoenv_path.exists() {
-            return Ok(None);
-        }
-        let ontoenv_metadata = std::fs::metadata(&ontoenv_path)?;
-        Ok(Some(ontoenv_metadata.modified()?.into()))
     }
 
     /// Load all graphs from the search directories. There are several things that can happen:
