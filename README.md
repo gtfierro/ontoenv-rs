@@ -107,6 +107,34 @@ If GraphViz is installed, `ontoenv dep-graph` will output a PDF graph representa
 
 ## Python Library
 
+```python
+from ontoenv import Config, OntoEnv
+from rdflib import Graph
+
+# create config object
+cfg = Config(["brick"], strict=False, offline=True)
+# make the environment
+env = OntoEnv(cfg)
+
+# compute closure for a given ontology and insert it into a graph
+g = Graph()
+env.get_closure("https://brickschema.org/schema/1.4/Brick", g)
+
+# import all dependencies from a graph
+brick = Graph()
+brick.parse("brick/Brick.ttl", format="turtle")
+env.import_dependencies(brick)
+
+# get a graph by IRI
+rec = env.get_graph("https://w3id.org/rec")
+
+# add an ontology to a graph by IRI
+env.import_graph(brick, "https://w3id.org/rec")
+
+# get an rdflib.Dataset
+ds = env.to_rdflib()
+```
+
 ## Rust Library
 
 [Docs](https://docs.rs/crate/ontoenv)
