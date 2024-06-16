@@ -28,4 +28,7 @@ print(brick)
 print(type(brick))
 
 env2.import_graph(brick, "https://w3id.org/rec")
+dataset = env2.to_rdflib()
+print(len(dataset))
+
 brick.serialize("test.ttl", format="turtle")

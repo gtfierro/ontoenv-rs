@@ -103,6 +103,11 @@ impl OntoEnv {
             .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
     }
 
+    pub fn store_path(&self) -> Result<String> {
+        let ontoenv_dir = self.config.root.join(".ontoenv");
+        Ok(ontoenv_dir.join("store.db").to_string_lossy().to_string())
+    }
+
     /// Close the environment and release any resources
     pub fn close(self) {}
 
