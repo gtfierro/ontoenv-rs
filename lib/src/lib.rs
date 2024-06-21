@@ -726,7 +726,7 @@ impl OntoEnv {
 
     /// Outputs a human-readable dump of the environment, including all ontologies
     /// and their metadata and imports
-    pub fn dump(&self) {
+    pub fn dump(&self, contains: Option<&str>) {
         let mut ontologies = self.ontologies.clone();
         let mut groups: HashMap<NamedNode, Vec<Ontology>> = HashMap::new();
         for ontology in ontologies.values_mut() {
@@ -736,6 +736,11 @@ impl OntoEnv {
         let mut sorted_groups: Vec<NamedNode> = groups.keys().cloned().collect();
         sorted_groups.sort();
         for name in sorted_groups {
+            if let Some(contains) = contains {
+                if !name.to_string().contains(contains) {
+                    continue;
+                }
+            }
             let group = groups.get(&name).unwrap();
             println!("┌ Ontology: {}", name);
             for ontology in group {

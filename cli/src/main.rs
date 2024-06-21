@@ -81,7 +81,9 @@ enum Commands {
     // the places where that graph can be found. List basic stats: the metadata field in the
     // Ontology struct and # of triples in the graph; last updated; etc
     /// Print out the current state of the ontology environment
-    Dump,
+    Dump {
+        contains: Option<String>
+    },
     /// Generate a PDF of the dependency graph
     DepGraph {
         /// The root ontologies to start the graph from. Given by name (URI)
@@ -203,11 +205,11 @@ fn main() -> Result<()> {
                 println!("{}", ont.location().as_str());
             }
         }
-        Commands::Dump => {
+        Commands::Dump { contains } => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
             let env = OntoEnv::from_file(&path, true)?;
-            env.dump();
+            env.dump(contains.as_deref());
         }
         Commands::DepGraph { roots, output } => {
             // load env from .ontoenv/ontoenv.json
