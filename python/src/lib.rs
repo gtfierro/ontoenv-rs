@@ -243,7 +243,7 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let ont = inner
             .get_ontology_by_name(iri.as_ref())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
         let mut graph = ont.graph().map_err(anyhow_to_pyerr)?;
 
         let uriref_constructor = rdflib.getattr("URIRef")?;
@@ -298,7 +298,7 @@ impl OntoEnv {
         let inner = self.inner.lock().unwrap();
         let ont = inner
             .get_ontology_by_name(iri.as_ref())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
         let closure = inner
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
@@ -335,9 +335,10 @@ impl OntoEnv {
         Ok(())
     }
 
-    fn dump(&self) -> PyResult<()> {
+    #[pyo3(signature = (includes=None))]
+    fn dump(&self, py: Python, includes: Option<String>) -> PyResult<()> {
         let inner = self.inner.lock().unwrap();
-        inner.dump();
+        inner.dump(includes.as_deref());
         Ok(())
     }
 
