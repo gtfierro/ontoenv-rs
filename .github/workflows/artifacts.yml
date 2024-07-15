@@ -261,8 +261,9 @@ jobs:
     steps:
       - uses: actions/download-artifact@v3
         with:
-          name: pyontoenv_dist
+          name: pyontoenv_*
           path: dist
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
