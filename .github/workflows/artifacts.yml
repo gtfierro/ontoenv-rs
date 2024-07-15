@@ -72,6 +72,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: install gcc
+        run: sudo apt install -y g++-aarch64-linux-gnu g++-arm-linux-gnueabi
+        if: ${{ matrix.platform.target == 'aarch64' || matrix.platform.target == 'armv7' }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -146,7 +149,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: --out dist
+          args: --out dist -m python/Cargo.toml
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
