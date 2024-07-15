@@ -259,9 +259,9 @@ jobs:
       - wheel_linux
       - wheel_linux_musl
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
-          name: pyontoenv_*
+          pattern: pyontoenv_*
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
