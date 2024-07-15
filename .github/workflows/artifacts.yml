@@ -218,7 +218,7 @@ jobs:
         if: github.event_name == 'release'
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_dist
+          name: pyontoenv_macos
           path: target/wheels/*.whl
 
   wheel_windows:
@@ -242,7 +242,7 @@ jobs:
       - run: maturin build --release -m python/Cargo.toml --features abi3
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_dist
+          name: pyontoenv_windows
           path: target/wheels/*.whl
 
   publish_pypi:
