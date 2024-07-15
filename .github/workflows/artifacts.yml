@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        architecture: [ "x86_64" ] #, "aarch64" ]
+        architecture: [ "x86_64", "aarch64" ]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v3
@@ -194,7 +194,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           target: x86_64-apple-darwin
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
@@ -205,12 +205,8 @@ jobs:
       - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin build --release --target universal2-apple-darwin --features abi3
-        env:
-          DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer'
-          SDKROOT: '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
-          MACOSX_DEPLOYMENT_TARGET: '10.13'
         working-directory: ./python
-      - run: maturin build --release --features abi3
+      - run: maturin build --release --target x86_64-apple-darwin --features abi3
         working-directory: ./python
         if: github.event_name == 'release'
       - run: maturin build --release --target aarch64-apple-darwin --features abi3
