@@ -117,25 +117,31 @@ If GraphViz is installed, `ontoenv dep-graph` will output a PDF graph representa
 from ontoenv import Config, OntoEnv
 from rdflib import Graph
 
-cfg = Config(["../brick"], strict=False, offline=True)
-
-# make environment
+# create config object
+cfg = Config(["brick"], strict=False, offline=True)
+# make the environment
 env = OntoEnv(cfg)
 
+# compute closure for a given ontology and insert it into a graph
 g = Graph()
-# get the transitive owl:imports closure into 'g'
-env.get_closure("https://brickschema.org/schema/1.4-rc1/Brick", g)
+env.get_closure("https://brickschema.org/schema/1.4/Brick", g)
 
+# import all dependencies from a graph
 brick = Graph()
-brick.parse("Brick.ttl", format="turtle")
-# transitively import dependencies into the 'brick' graph, using the owl:imports declarations
+brick.parse("brick/Brick.ttl", format="turtle")
 env.import_dependencies(brick)
 
-# pull Brick graph out of environment
-brick = env.get_graph("https://brickschema.org/schema/1.4-rc1/Brick")
+# get a graph by IRI
+rec = env.get_graph("https://w3id.org/rec")
 
-# import graphs by name
+# add an ontology to a graph by IRI
 env.import_graph(brick, "https://w3id.org/rec")
+
+# get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
+ds = env.to_rdflib_dataset()
+for graphname in ds.graphs():
+    graph = ds.graph(graphname)
+    print(f"Graph {graphname} has {len(graph)} triples")
 ```
 
 ## Rust Library
