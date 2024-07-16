@@ -413,6 +413,21 @@ impl OntoEnv {
             .collect();
         Ok(names)
     }
+
+    /// Convert the OntoEnv to an rdflib.Dataset
+    fn to_rdflib_dataset(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // rdflib.ConjunctiveGraph(store="Oxigraph")
+        let inner = self.inner.lock().unwrap();
+        let rdflib = py.import_bound("rdflib")?;
+        let dataset = rdflib.getattr("Dataset")?;
+
+        // call Dataset(store="Oxigraph")
+        let kwargs = [("store", "Oxigraph")].into_py_dict_bound(py);
+        let store = dataset.call((), Some(&kwargs))?;
+        let path = inner.store_path().map_err(anyhow_to_pyerr)?.to_string();
+        store.getattr("open")?.call1((path,))?;
+        Ok(store.into())
+    }
 }
 
 #[pymodule]
