@@ -149,7 +149,7 @@ impl OntoEnv {
     pub fn get_graph_by_name(&self, name: NamedNodeRef) -> Result<Graph> {
         let ontology = self
             .get_ontology_by_name(name)
-            .ok_or(anyhow::anyhow!("Ontology not found"))?;
+            .ok_or(anyhow::anyhow!(format!("Ontology {} not found", name)))?;
         self.get_graph(ontology.id())
     }
 
@@ -201,10 +201,19 @@ impl OntoEnv {
                 continue;
             }
             seen.insert(ontology.clone());
-            let ont = self
-                .ontologies
-                .get(&ontology)
-                .ok_or(anyhow::anyhow!("Ontology not found"))?;
+            let ont = match self.ontologies.get(&ontology) {
+                Some(ont) => ont,
+                None => {
+                    let msg = format!("Update graph: Ontology {} not found", ontology);
+                    if self.config.strict {
+                        error!("{}", msg);
+                        return Err(anyhow::anyhow!(msg));
+                    } else {
+                        warn!("{}", msg);
+                    continue;
+                    }
+                }
+            };
             let imports = &ont.imports.clone();
             for import in imports {
                 // check to see if we have a file defining this ontology first
@@ -213,7 +222,7 @@ impl OntoEnv {
                     if seen.contains(imp.id()) || stack.contains(imp.id()) {
                         continue;
                     }
-                    imp.location().ok_or(anyhow::anyhow!("Ontology location not found"))?.clone()
+                    imp.location().ok_or(anyhow::anyhow!(format!("Parsing imports: Ontology {} location not found", imp)))?.clone()
                 } else {
                     // otherwise, try to find the ontology by location
                     OntologyLocation::from_str(import.as_str())?
@@ -280,7 +289,7 @@ impl OntoEnv {
             let location = self
                 .ontologies
                 .get(ontology)
-                .ok_or(anyhow::anyhow!("Ontology not found"))?
+                .ok_or(anyhow::anyhow!(format!("Remove ontology: Ontology {} not found", ontology)))?
                 .location();
             if let Some(location) = location {
                 // if location is a file and the file does not exist or it is no longer in the set
@@ -387,7 +396,6 @@ impl OntoEnv {
         let updated_files = self.get_updated_files()?;
 
         // Step three: add or update the ontologies from the new and updated files
-
         let updated_ids: Vec<GraphIdentifier> = if self.config.strict {
             let updated_ids: Result<Vec<GraphIdentifier>> = updated_files
                 .into_iter()
@@ -441,7 +449,7 @@ impl OntoEnv {
             let ont = self
                 .ontologies
                 .get(&ontology)
-                .ok_or(anyhow::anyhow!("Ontology not found"))?;
+                .ok_or(anyhow::anyhow!(format!("Listing ontologies: Ontology {} not found", ontology)))?;
             for import in &ont.imports {
                 let import = match self.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),
@@ -502,12 +510,6 @@ impl OntoEnv {
             return Ok(ontology.id().clone());
         }
 
-        //// if one is not found, find a ontology with the same name
-        //if let Some(ontology) = self.get_ontology_by_name(location.to_iri().as_ref()) {
-        //    info!("Found ontology with the same name: {:?}", ontology);
-        //    return Ok(ontology.id().clone());
-        //}
-
         // if location is a Url and we are in offline mode, skip adding the ontology
         // and raise a warning
         if location.is_url() && self.config.offline {
@@ -518,6 +520,7 @@ impl OntoEnv {
                     location.as_str()
                 ));
             }
+            return Ok(GraphIdentifier::new(location.to_iri().as_ref()));
         }
 
         // if one is not found and the location is a URL then add the ontology to the environment
@@ -625,6 +628,9 @@ impl OntoEnv {
     pub fn get_dependency_closure(&self, id: &GraphIdentifier) -> Result<Vec<GraphIdentifier>> {
         let mut closure: HashSet<GraphIdentifier> = HashSet::new();
         let mut stack: VecDeque<GraphIdentifier> = VecDeque::new();
+
+        // TODO: how to handle a graph which is not in the environment?
+
         stack.push_back(id.clone());
         while let Some(graph) = stack.pop_front() {
             closure.insert(graph.clone());
@@ -731,7 +737,7 @@ impl OntoEnv {
 
     /// Outputs a human-readable dump of the environment, including all ontologies
     /// and their metadata and imports
-    pub fn dump(&self) {
+    pub fn dump(&self, contains: Option<&str>) {
         let mut ontologies = self.ontologies.clone();
         let mut groups: HashMap<NamedNode, Vec<Ontology>> = HashMap::new();
         for ontology in ontologies.values_mut() {
@@ -741,6 +747,11 @@ impl OntoEnv {
         let mut sorted_groups: Vec<NamedNode> = groups.keys().cloned().collect();
         sorted_groups.sort();
         for name in sorted_groups {
+            if let Some(contains) = contains {
+                if !name.to_string().contains(contains) {
+                    continue;
+                }
+            }
             let group = groups.get(&name).unwrap();
             println!("┌ Ontology: {}", name);
             for ontology in group {

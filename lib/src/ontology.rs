@@ -49,7 +49,20 @@ impl Hash for GraphIdentifier {
     }
 }
 
+impl std::fmt::Display for GraphIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} @ {}", self.name, self.location)
+    }
+}
+
 impl GraphIdentifier {
+    pub fn new(name: NamedNodeRef) -> Self {
+        // location is same as name
+        GraphIdentifier {
+            location: OntologyLocation::from_str(name.as_str()).unwrap(),
+            name: name.into(),
+        }
+    }
     pub fn location(&self) -> &OntologyLocation {
         &self.location
     }
@@ -132,7 +145,7 @@ impl OntologyLocation {
     }
 
     pub fn from_str(s: &str) -> Result<Self> {
-        if s.starts_with("http") {
+        if s.starts_with("http") || s.starts_with("<http") {
             Ok(OntologyLocation::Url(s.to_string()))
         } else {
             // remove any leading file://

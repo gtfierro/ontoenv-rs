@@ -28,7 +28,10 @@ print(brick)
 print(type(brick))
 
 env2.import_graph(brick, "https://w3id.org/rec")
-dataset = env2.to_rdflib()
-print(len(dataset))
-
 brick.serialize("test.ttl", format="turtle")
+
+# get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
+ds = env2.to_rdflib_dataset()
+for graphname in ds.graphs():
+    graph = ds.graph(graphname)
+    print(f"Graph {graphname} has {len(graph)} triples")

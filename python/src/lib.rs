@@ -243,7 +243,7 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let ont = inner
             .get_ontology_by_name(iri.as_ref())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
         let mut graph = ont.graph().map_err(anyhow_to_pyerr)?;
 
         let uriref_constructor = rdflib.getattr("URIRef")?;
@@ -298,10 +298,14 @@ impl OntoEnv {
         let inner = self.inner.lock().unwrap();
         let ont = inner
             .get_ontology_by_name(iri.as_ref())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Ontology not found"))?;
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
         let closure = inner
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
+        // print all closure ontologies
+        for ont in closure.iter() {
+            println!("Closure: {}", ont.name());
+        }
         let graph = inner
             .get_union_graph(
                 &closure,
@@ -331,9 +335,10 @@ impl OntoEnv {
         Ok(())
     }
 
-    fn dump(&self) -> PyResult<()> {
+    #[pyo3(signature = (includes=None))]
+    fn dump(&self, py: Python, includes: Option<String>) -> PyResult<()> {
         let inner = self.inner.lock().unwrap();
-        inner.dump();
+        inner.dump(includes.as_deref());
         Ok(())
     }
 
@@ -350,6 +355,7 @@ impl OntoEnv {
         }
 
         let ontology = ontology.to_string();
+        println!("Importing dependencies for ontology: {}", ontology);
 
         self.get_closure(py, &ontology, graph, true, true)
     }
@@ -408,16 +414,16 @@ impl OntoEnv {
         Ok(names)
     }
 
-    /// Convert the OntoEnv to an rdflib.ConjunctiveGraph
-    fn to_rdflib(&self, py: Python) -> PyResult<Py<PyAny>> {
+    /// Convert the OntoEnv to an rdflib.Dataset
+    fn to_rdflib_dataset(&self, py: Python) -> PyResult<Py<PyAny>> {
         // rdflib.ConjunctiveGraph(store="Oxigraph")
         let inner = self.inner.lock().unwrap();
         let rdflib = py.import_bound("rdflib")?;
-        let conjunctive_graph = rdflib.getattr("ConjunctiveGraph")?;
+        let dataset = rdflib.getattr("Dataset")?;
 
-        // call ConjunctiveGraph(store="Oxigraph")
+        // call Dataset(store="Oxigraph")
         let kwargs = [("store", "Oxigraph")].into_py_dict_bound(py);
-        let store = conjunctive_graph.call((), Some(&kwargs))?;
+        let store = dataset.call((), Some(&kwargs))?;
         let path = inner.store_path().map_err(anyhow_to_pyerr)?.to_string();
         store.getattr("open")?.call1((path,))?;
         Ok(store.into())
