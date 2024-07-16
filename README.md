@@ -107,6 +107,12 @@ If GraphViz is installed, `ontoenv dep-graph` will output a PDF graph representa
 
 ## Python Library
 
+##### Installation
+
+`pip install pyontoenv`
+
+#### Usage
+
 ```python
 from ontoenv import Config, OntoEnv
 from rdflib import Graph
@@ -131,8 +137,11 @@ rec = env.get_graph("https://w3id.org/rec")
 # add an ontology to a graph by IRI
 env.import_graph(brick, "https://w3id.org/rec")
 
-# get an rdflib.Dataset
-ds = env.to_rdflib()
+# get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
+ds = env.to_rdflib_dataset()
+for graphname in ds.graphs():
+    graph = ds.graph(graphname)
+    print(f"Graph {graphname} has {len(graph)} triples")
 ```
 
 ## Rust Library

@@ -69,11 +69,11 @@ jobs:
         working-directory: ./cli
       - run: cargo build --release --target aarch64-apple-darwin
         working-directory: ./cli
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ontoenv_x86_64_apple
           path: target/release/ontoenv
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ontoenv_aarch64_apple
           path: target/aarch64-apple-darwin/release/ontoenv
@@ -98,7 +98,7 @@ jobs:
       - run: Remove-Item -LiteralPath "C:\msys64\" -Force -Recurse
       - run: cargo build --release
         working-directory: ./cli
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ontoenv_x86_64_windows_msvc
           path: target/release/ontoenv.exe
@@ -126,7 +126,7 @@ jobs:
       - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin sdist -m python/Cargo.toml
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: pyontoenv_dist
           path: target/wheels/*.tar.gz
@@ -149,9 +149,9 @@ jobs:
       - run: sed 's/%arch%/${{ matrix.architecture }}/g' .github/workflows/manylinux_build.sh | sed 's/%for_each_version%/${{ github.event_name == 'release' || '' }}/g' > .github/workflows/manylinux_build_script.sh
       - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/manylinux2014_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/manylinux_build_script.sh
         if: github.event_name == 'release' || matrix.architecture == 'x86_64'
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv__${{ matrix.architecture }}_linux_gnu
+          name: pyontoenv_${{ matrix.architecture }}_linux_gnu
           path: target/wheels/*.whl
 
   wheel_linux_musl:
@@ -172,6 +172,7 @@ jobs:
       - run: sed 's/%arch%/${{ matrix.architecture }}/g' .github/workflows/musllinux_build.sh | sed 's/%for_each_version%/${{ github.event_name == 'release' || '' }}/g' > .github/workflows/musllinux_build_script.sh
       - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/musllinux_1_2_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/musllinux_build_script.sh
         if: github.event_name == 'release' || matrix.architecture == 'x86_64'
+      - run: find .
       - uses: actions/upload-artifact@v4
         with:
           name: pyontoenv_${{ matrix.architecture }}_linux_musl
@@ -193,7 +194,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           target: x86_64-apple-darwin
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
@@ -204,20 +205,16 @@ jobs:
       - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin build --release --target universal2-apple-darwin --features abi3
-        env:
-          DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer'
-          SDKROOT: '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
-          MACOSX_DEPLOYMENT_TARGET: '10.13'
         working-directory: ./python
-      - run: maturin build --release --features abi3
+      - run: maturin build --release --target x86_64-apple-darwin --features abi3
         working-directory: ./python
         if: github.event_name == 'release'
       - run: maturin build --release --target aarch64-apple-darwin --features abi3
         working-directory: ./python
         if: github.event_name == 'release'
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_dist
+          name: pyontoenv_macos
           path: target/wheels/*.whl
 
   wheel_windows:
@@ -239,9 +236,9 @@ jobs:
       - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
       - run: maturin build --release -m python/Cargo.toml --features abi3
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_dist
+          name: pyontoenv_windows
           path: target/wheels/*.whl
 
   publish_pypi:
@@ -259,10 +256,11 @@ jobs:
       - wheel_linux
       - wheel_linux_musl
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
-          name: pyontoenv_dist
+          pattern: pyontoenv_*
           path: dist
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
