@@ -23,7 +23,7 @@ pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
     );
     let mut file = std::fs::File::create(file)?;
     let mut serializer =
-        GraphSerializer::from_format(GraphFormat::Turtle).triple_writer(&mut file)?;
+        GraphSerializer::from_format(GraphFormat::Turtle).triple_writer(&mut file);
     for quad in dataset.iter() {
         serializer.write(TripleRef {
             subject: quad.subject,
@@ -50,7 +50,7 @@ pub fn read_file(file: &Path) -> Result<OxigraphGraph> {
     });
     let parser = GraphParser::from_format(content_type.unwrap_or(GraphFormat::Turtle));
     let mut graph = OxigraphGraph::new();
-    let triples = parser.read_triples(content)?;
+    let triples = parser.read_triples(content);
     for triple in triples {
         graph.insert(&triple?);
     }
@@ -87,7 +87,7 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     if let Some(format) = content_type {
         let parser = GraphParser::from_format(format);
         let mut graph = OxigraphGraph::new();
-        let triples = parser.read_triples(content)?;
+        let triples = parser.read_triples(content);
         for triple in triples {
             graph.insert(&triple?);
         }
@@ -109,11 +109,7 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
 
         // if there's an error on parser.read_triples, try the next format
 
-        let triples = parser.read_triples(vcontent);
-        if triples.is_err() {
-            continue;
-        }
-        for triple in triples.unwrap() {
+        for triple in parser.read_triples(vcontent) {
             graph.insert(&triple?);
         }
         return Ok(graph);
