@@ -302,10 +302,6 @@ impl OntoEnv {
         let closure = inner
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
-        // print all closure ontologies
-        for ont in closure.iter() {
-            println!("Closure: {}", ont.name());
-        }
         let graph = inner
             .get_union_graph(
                 &closure,
@@ -355,7 +351,6 @@ impl OntoEnv {
         }
 
         let ontology = ontology.to_string();
-        println!("Importing dependencies for ontology: {}", ontology);
 
         self.get_closure(py, &ontology, graph, true, true)
     }
