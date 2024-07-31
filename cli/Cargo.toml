@@ -20,3 +20,4 @@ ontoenv.workspace = true
 env_logger.workspace = true
 oxigraph.workspace = true
 chrono.workspace = true
+walkdir.workspace = true
