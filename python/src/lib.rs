@@ -283,6 +283,28 @@ impl OntoEnv {
         Ok(())
     }
 
+    #[pyo3(signature = (uri))]
+    fn list_closure(
+        &self,
+        py: Python,
+        uri: &str,
+    ) -> PyResult<Vec<String>> {
+        let iri = NamedNode::new(uri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let inner = self.inner.lock().unwrap();
+        let ont = inner
+            .get_ontology_by_name(iri.as_ref())
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
+        let closure = inner
+            .get_dependency_closure(ont.id())
+            .map_err(anyhow_to_pyerr)?;
+        let names: Vec<String> = closure
+            .iter()
+            .map(|ont| ont.name().to_string())
+            .collect();
+        Ok(names)
+    }
+
     #[pyo3(signature = (uri, destination_graph, rewrite_sh_prefixes=false, remove_owl_imports=false))]
     fn get_closure(
         &self,

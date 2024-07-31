@@ -27,6 +27,8 @@ print(len(brick))
 print(brick)
 print(type(brick))
 
+print(env2.list_closure("https://brickschema.org/schema/1.4-rc1/Brick"))
+
 env2.import_graph(brick, "https://w3id.org/rec")
 brick.serialize("test.ttl", format="turtle")
 
