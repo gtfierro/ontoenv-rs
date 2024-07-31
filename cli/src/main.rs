@@ -49,6 +49,10 @@ enum Commands {
         #[clap(long, short, default_value = "false")]
         recreate: bool,
     },
+    /// Prints the version of the ontoenv binary
+    Version,
+    /// Prints the status of the ontology environment
+    Status,
     /// Update the ontology environment
     Refresh,
     /// Compute the owl:imports closure of an ontology and write it to a file
@@ -84,7 +88,7 @@ enum Commands {
     Dump {
         /// Filter the output to only include ontologies that contain the given string in their
         /// name
-        contains: Option<String>
+        contains: Option<String>,
     },
     /// Generate a PDF of the dependency graph
     DepGraph {
@@ -132,6 +136,17 @@ fn main() -> Result<()> {
             let mut env = OntoEnv::new(config, recreate)?;
             env.update()?;
             env.save_to_directory()?;
+        }
+        Commands::Version => {
+            println!("ontoenv {}", env!("CARGO_PKG_VERSION"));
+        }
+        Commands::Status => {
+            // load env from .ontoenv/ontoenv.json
+            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let env = OntoEnv::from_file(&path, true)?;
+            let status = env.status()?;
+            // pretty print the status
+            println!("{}", status);
         }
         Commands::Refresh => {
             // load env from .ontoenv/ontoenv.json

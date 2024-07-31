@@ -21,11 +21,14 @@ use oxigraph::model::{
 };
 use oxigraph::store::Store;
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
+use pretty_bytes::converter::convert as pretty_bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
+use std::fs;
 use std::io::{BufReader, Write};
 use std::path::Path;
+use walkdir::WalkDir;
 
 // custom derive for ontologies field as vec of Ontology
 fn ontologies_ser<S>(
@@ -49,6 +52,44 @@ where
         map.insert(ontology.id().clone(), ontology);
     }
     Ok(map)
+}
+
+pub struct EnvironmentStatus {
+    // true if there is an environment that ontoenv can find
+    exists: bool,
+    // number of ontologies in the environment
+    num_ontologies: usize,
+    // last time the environment was updated
+    last_updated: Option<DateTime<Utc>>,
+    // size of the oxigraph store, in bytes
+    store_size: u64,
+}
+
+// impl Display pretty print for EnvironmentStatus
+impl std::fmt::Display for EnvironmentStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let exists = if self.exists { "Yes" } else { "No" };
+        // convert last_updated to local timestamp, or display N/A if
+        // it is None
+        let last_updated = match self.last_updated {
+            Some(last_updated) => last_updated
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M:%S %Z")
+                .to_string(),
+            None => "N/A".to_string(),
+        };
+        write!(
+            f,
+            "Environment Status\n\
+            Number of Ontologies: {}\n\
+            Last Updated: {}\n\
+            Store Size: {} bytes",
+            exists,
+            self.num_ontologies,
+            last_updated,
+            pretty_bytes(self.store_size as f64),
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -101,6 +142,36 @@ impl OntoEnv {
         Store::open(ontoenv_dir.join("store.db"))
             .or_else(|_| Store::open_read_only(ontoenv_dir.join("store.db")))
             .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
+    }
+
+    fn get_store_size(&self) -> Result<u64> {
+        let mut size = 0;
+        for entry in WalkDir::new(self.store_path()?) {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if entry.file_type().is_file() {
+                size += entry.path().metadata().unwrap().len();
+            }
+        }
+        Ok(size)
+    }
+
+    /// Calculates and returns the environment status
+    pub fn status(&self) -> Result<EnvironmentStatus> {
+        let store = self.store()?;
+        // get time modified of the self.store_path() directory
+        let last_updated: DateTime<Utc> = std::fs::metadata(self.store_path()?)?.modified()?.into();
+        // get the size of the .ontoenv directory on disk
+        let size = self.get_store_size()?;
+        let num_ontologies = self.ontologies.len();
+        Ok(EnvironmentStatus {
+            exists: true,
+            num_ontologies,
+            last_updated: Some(last_updated),
+            store_size: size,
+        })
     }
 
     pub fn store_path(&self) -> Result<String> {
@@ -210,7 +281,7 @@ impl OntoEnv {
                         return Err(anyhow::anyhow!(msg));
                     } else {
                         warn!("{}", msg);
-                    continue;
+                        continue;
                     }
                 }
             };
@@ -222,7 +293,12 @@ impl OntoEnv {
                     if seen.contains(imp.id()) || stack.contains(imp.id()) {
                         continue;
                     }
-                    imp.location().ok_or(anyhow::anyhow!(format!("Parsing imports: Ontology {} location not found", imp)))?.clone()
+                    imp.location()
+                        .ok_or(anyhow::anyhow!(format!(
+                            "Parsing imports: Ontology {} location not found",
+                            imp
+                        )))?
+                        .clone()
                 } else {
                     // otherwise, try to find the ontology by location
                     OntologyLocation::from_str(import.as_str())?
@@ -289,7 +365,10 @@ impl OntoEnv {
             let location = self
                 .ontologies
                 .get(ontology)
-                .ok_or(anyhow::anyhow!(format!("Remove ontology: Ontology {} not found", ontology)))?
+                .ok_or(anyhow::anyhow!(format!(
+                    "Remove ontology: Ontology {} not found",
+                    ontology
+                )))?
                 .location();
             if let Some(location) = location {
                 // if location is a file and the file does not exist or it is no longer in the set
@@ -449,7 +528,10 @@ impl OntoEnv {
             let ont = self
                 .ontologies
                 .get(&ontology)
-                .ok_or(anyhow::anyhow!(format!("Listing ontologies: Ontology {} not found", ontology)))?;
+                .ok_or(anyhow::anyhow!(format!(
+                    "Listing ontologies: Ontology {} not found",
+                    ontology
+                )))?;
             for import in &ont.imports {
                 let import = match self.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),
