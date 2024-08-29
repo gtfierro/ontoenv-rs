@@ -7,6 +7,7 @@ authors.workspace = true
 description = "Command line tool to manage ontologies and their imports in a local environment"
 repository.workspace = true
 homepage.workspace = true
+build = "build.rs"
 
 [[bin]]
 name = "ontoenv"
