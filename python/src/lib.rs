@@ -305,15 +305,15 @@ impl OntoEnv {
         Ok(names)
     }
 
-    #[pyo3(signature = (uri, destination_graph, rewrite_sh_prefixes=false, remove_owl_imports=false))]
-    fn get_closure(
+    #[pyo3(signature = (uri, destination_graph=None, rewrite_sh_prefixes=false, remove_owl_imports=false))]
+    fn get_closure<'a>(
         &self,
-        py: Python,
+        py: Python<'a>,
         uri: &str,
-        destination_graph: &Bound<'_, PyAny>,
+        destination_graph: Option<&Bound<'a, PyAny>>,
         rewrite_sh_prefixes: bool,
         remove_owl_imports: bool,
-    ) -> PyResult<()> {
+    ) -> PyResult<Bound<'a, PyAny>> {
         let rdflib = py.import_bound("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -324,6 +324,11 @@ impl OntoEnv {
         let closure = inner
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
+        // if destination_graph is null, create a new rdflib.Graph()
+        let destination_graph = match destination_graph {
+            Some(g) => g.clone(),
+            None => rdflib.getattr("Graph")?.call0()?,
+        };
         let graph = inner
             .get_union_graph(
                 &closure,
@@ -345,12 +350,10 @@ impl OntoEnv {
                         term_to_python(py, &rdflib, o)?,
                     ],
                 );
-
                 destination_graph.getattr("add")?.call1((t,))?;
             }
-            Ok::<(), PyErr>(())
-        })?;
-        Ok(())
+            return Ok::<Bound<'_, PyAny>, PyErr>(destination_graph);
+        })
     }
 
     #[pyo3(signature = (includes=None))]
@@ -360,7 +363,7 @@ impl OntoEnv {
         Ok(())
     }
 
-    fn import_dependencies(&self, py: Python, graph: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn import_dependencies<'a>(&self, py: Python<'a>, graph: &Bound<'a, PyAny>) -> PyResult<Bound<'a, PyAny>> {
         let rdflib = py.import_bound("rdflib")?;
         let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
         let py_ontology = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into()))?;
@@ -369,12 +372,12 @@ impl OntoEnv {
         let ontology = value_fun.call_bound(py, (), Some(&kwargs))?;
 
         if ontology.is_none(py) {
-            return Ok(());
+            return Ok(graph.clone());
         }
 
         let ontology = ontology.to_string();
 
-        self.get_closure(py, &ontology, graph, true, true)
+        self.get_closure(py, &ontology, Some(graph), true, true)
     }
 
     fn add(&self, location: &Bound<'_, PyAny>) -> PyResult<()> {
