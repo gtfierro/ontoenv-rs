@@ -16,8 +16,11 @@ cfg = Config(["../brick"], strict=False, offline=True)
 env = OntoEnv(cfg)
 
 g = Graph()
-# get the transitive owl:imports closure into 'g'
+# put the transitive owl:imports closure into 'g'
 env.get_closure("https://brickschema.org/schema/1.4-rc1/Brick", g)
+
+# or, get the graph directly
+g = env.get_closure("https://brickschema.org/schema/1.4-rc1/Brick")
 
 brick = Graph()
 brick.parse("Brick.ttl", format="turtle")
