@@ -138,12 +138,11 @@ impl Config {
         Ok(Config {
             cfg: ontoenvrs::config::Config::new(
                 root.to_string().into(),
-                Some(
-                    search_directories
-                        .iter()
+                search_directories.map(|dirs| {
+                    dirs.iter()
                         .map(|s| s.to_string().into())
-                        .collect::<Vec<PathBuf>>(),
-                ),
+                        .collect::<Vec<PathBuf>>()
+                }),
                 includes
                     .unwrap_or_default()
                     .iter()
