@@ -28,6 +28,7 @@ where
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub root: PathBuf,
+    #[serde(default)]
     pub search_directories: Vec<PathBuf>,
     // include regex patterns
     #[serde(
@@ -125,7 +126,7 @@ impl Config {
         K: IntoIterator<Item = PathBuf>,
     {
         let includes = vec!["*.ttl", "*.xml", "*.n3"];
-        self::Config::new::<Vec<&str>, Vec<&str>, Vec<PathBuf>>(
+        Self::new::<Vec<&str>, Vec<&str>, Vec<PathBuf>>(
             root,
             search_directories.map(|dirs| dirs.into_iter().collect()),
             includes,
@@ -163,7 +164,11 @@ impl Config {
     pub fn from_file(file: &Path) -> Result<Self> {
         let file = std::fs::File::open(file)?;
         let reader = BufReader::new(file);
-        let config = serde_json::from_reader(reader)?;
+        let mut config: Config = serde_json::from_reader(reader)?;
+        
+        if config.search_directories.is_empty() {
+            config.search_directories = vec![config.root.clone()];
+        }
         Ok(config)
     }
 }
