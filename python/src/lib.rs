@@ -241,9 +241,9 @@ impl OntoEnv {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let ont = inner
-            .get_ontology_by_name(iri.as_ref())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
+        let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
+        })?;
         let mut graph = ont.graph().map_err(anyhow_to_pyerr)?;
 
         let uriref_constructor = rdflib.getattr("URIRef")?;
@@ -284,24 +284,17 @@ impl OntoEnv {
     }
 
     #[pyo3(signature = (uri))]
-    fn list_closure(
-        &self,
-        py: Python,
-        uri: &str,
-    ) -> PyResult<Vec<String>> {
+    fn list_closure(&self, py: Python, uri: &str) -> PyResult<Vec<String>> {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.lock().unwrap();
-        let ont = inner
-            .get_ontology_by_name(iri.as_ref())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
+        let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
+        })?;
         let closure = inner
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
-        let names: Vec<String> = closure
-            .iter()
-            .map(|ont| ont.name().to_string())
-            .collect();
+        let names: Vec<String> = closure.iter().map(|ont| ont.name().to_string()).collect();
         Ok(names)
     }
 
@@ -318,9 +311,9 @@ impl OntoEnv {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.lock().unwrap();
-        let ont = inner
-            .get_ontology_by_name(iri.as_ref())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri)))?;
+        let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
+        })?;
         let closure = inner
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
@@ -363,7 +356,11 @@ impl OntoEnv {
         Ok(())
     }
 
-    fn import_dependencies<'a>(&self, py: Python<'a>, graph: &Bound<'a, PyAny>) -> PyResult<Bound<'a, PyAny>> {
+    fn import_dependencies<'a>(
+        &self,
+        py: Python<'a>,
+        graph: &Bound<'a, PyAny>,
+    ) -> PyResult<Bound<'a, PyAny>> {
         let rdflib = py.import("rdflib")?;
         let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
         let py_ontology = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into()))?;
