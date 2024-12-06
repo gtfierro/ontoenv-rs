@@ -21,8 +21,8 @@ fn anyhow_to_pyerr(e: Error) -> PyErr {
 
 #[allow(dead_code)]
 struct MyTerm(Term);
-impl From<Result<&PyAny, pyo3::PyErr>> for MyTerm {
-    fn from(s: Result<&PyAny, pyo3::PyErr>) -> Self {
+impl From<Result<Bound<'_, PyAny>, pyo3::PyErr>> for MyTerm {
+    fn from(s: Result<Bound<'_, PyAny>, pyo3::PyErr>) -> Self {
         let s = s.unwrap();
         let typestr = s.get_type().name().unwrap();
         let typestr = typestr.to_string();
@@ -238,7 +238,7 @@ impl OntoEnv {
         uri: &str,
     ) -> PyResult<()> {
         let inner = self.inner.lock().unwrap();
-        let rdflib = py.import_bound("rdflib")?;
+        let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let ont = inner
@@ -249,7 +249,7 @@ impl OntoEnv {
         let uriref_constructor = rdflib.getattr("URIRef")?;
         let type_uri = uriref_constructor.call1((TYPE.as_str(),))?;
         let ontology_uri = uriref_constructor.call1((ONTOLOGY.as_str(),))?;
-        let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict_bound(py);
+        let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict(py)?;
         let result = destination_graph.call_method("value", (), Some(&kwargs))?;
         if !result.is_none() {
             let ontology = NamedNode::new(result.extract::<String>()?)
@@ -267,14 +267,14 @@ impl OntoEnv {
                 let p: Term = triple.predicate.into();
                 let o: Term = triple.object.into();
 
-                let t = PyTuple::new_bound(
+                let t = PyTuple::new(
                     py,
                     &[
                         term_to_python(py, &rdflib, s)?,
                         term_to_python(py, &rdflib, p)?,
                         term_to_python(py, &rdflib, o)?,
                     ],
-                );
+                )?;
 
                 destination_graph.getattr("add")?.call1((t,))?;
             }
@@ -314,7 +314,7 @@ impl OntoEnv {
         rewrite_sh_prefixes: bool,
         remove_owl_imports: bool,
     ) -> PyResult<Bound<'a, PyAny>> {
-        let rdflib = py.import_bound("rdflib")?;
+        let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.lock().unwrap();
@@ -342,14 +342,14 @@ impl OntoEnv {
                 let p: Term = triple.predicate.into();
                 let o: Term = triple.object.into();
 
-                let t = PyTuple::new_bound(
+                let t = PyTuple::new(
                     py,
                     &[
                         term_to_python(py, &rdflib, s)?,
                         term_to_python(py, &rdflib, p)?,
                         term_to_python(py, &rdflib, o)?,
                     ],
-                );
+                )?;
                 destination_graph.getattr("add")?.call1((t,))?;
             }
             return Ok::<Bound<'_, PyAny>, PyErr>(destination_graph);
@@ -364,12 +364,12 @@ impl OntoEnv {
     }
 
     fn import_dependencies<'a>(&self, py: Python<'a>, graph: &Bound<'a, PyAny>) -> PyResult<Bound<'a, PyAny>> {
-        let rdflib = py.import_bound("rdflib")?;
+        let rdflib = py.import("rdflib")?;
         let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
         let py_ontology = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into()))?;
         let value_fun: Py<PyAny> = graph.getattr("value")?.into();
-        let kwargs = [("predicate", py_rdf_type), ("object", py_ontology)].into_py_dict_bound(py);
-        let ontology = value_fun.call_bound(py, (), Some(&kwargs))?;
+        let kwargs = [("predicate", py_rdf_type), ("object", py_ontology)].into_py_dict(py)?;
+        let ontology = value_fun.call(py, (), Some(&kwargs))?;
 
         if ontology.is_none(py) {
             return Ok(graph.clone());
@@ -397,7 +397,7 @@ impl OntoEnv {
     }
 
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
-        let rdflib = py.import_bound("rdflib")?;
+        let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri.to_string())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.lock().unwrap();
@@ -410,14 +410,14 @@ impl OntoEnv {
             let p: Term = triple.predicate.into();
             let o: Term = triple.object.into();
 
-            let t = PyTuple::new_bound(
+            let t = PyTuple::new(
                 py,
                 &[
                     term_to_python(py, &rdflib, s)?,
                     term_to_python(py, &rdflib, p)?,
                     term_to_python(py, &rdflib, o)?,
                 ],
-            );
+            )?;
 
             res.getattr("add")?.call1((t,))?;
         }
@@ -438,11 +438,11 @@ impl OntoEnv {
     fn to_rdflib_dataset(&self, py: Python) -> PyResult<Py<PyAny>> {
         // rdflib.ConjunctiveGraph(store="Oxigraph")
         let inner = self.inner.lock().unwrap();
-        let rdflib = py.import_bound("rdflib")?;
+        let rdflib = py.import("rdflib")?;
         let dataset = rdflib.getattr("Dataset")?;
 
         // call Dataset(store="Oxigraph")
-        let kwargs = [("store", "Oxigraph")].into_py_dict_bound(py);
+        let kwargs = [("store", "Oxigraph")].into_py_dict(py)?;
         let store = dataset.call((), Some(&kwargs))?;
         let path = inner.store_path().map_err(anyhow_to_pyerr)?.to_string();
         store.getattr("open")?.call1((path,))?;
