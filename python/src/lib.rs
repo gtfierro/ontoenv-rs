@@ -126,7 +126,7 @@ impl Config {
     #[new]
     #[pyo3(signature = (search_directories, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=vec![], excludes=vec![]))]
     fn new(
-        search_directories: Vec<String>,
+        search_directories: Option<Vec<String>>,
         require_ontology_names: bool,
         strict: bool,
         offline: bool,
