@@ -18,7 +18,7 @@ features = ["pyo3/extension-module"]
 
 [tool.poetry]
 name = "ontoenv"
-version = "0.1.10a1"
+version = "0.1.10a2"
 description = "Python bindings for the OntoEnv Rust library. Manages ontology-based environments for building knowledge graphs."
 license = "bsd-3-clause"
 authors = ["Gabe Fierro <gtfierro@mines.edu>"]
