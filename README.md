@@ -99,7 +99,7 @@ Options:
 
 #### Listing Ontologies
 
-`onotoenv list-ontologies` will display a list of ontology names in the workspace.
+`ontoenv list-ontologies` will display a list of ontology names in the workspace.
 
 `ontoenv dump` will print out an alphabetized list of all ontologies in the workspace, their imports, number of triples, and other metadata.
 
@@ -117,8 +117,11 @@ If GraphViz is installed, `ontoenv dep-graph` will output a PDF graph representa
 from ontoenv import Config, OntoEnv
 from rdflib import Graph
 
-# create config object
+# create config object. This assumes you have a 'brick' folder locally storing some ontologies
 cfg = Config(["brick"], strict=False, offline=True)
+# can also create an 'empty' config object if there are no local ontologies
+# cfg = Config(strict=False, offline=True)
+
 # make the environment
 env = OntoEnv(cfg)
 
