@@ -1,3 +1,4 @@
+#![feature(once_cell_try)]
 use ::ontoenv as ontoenvrs;
 use ::ontoenv::consts::{ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
@@ -124,7 +125,7 @@ struct Config {
 #[pymethods]
 impl Config {
     #[new]
-    #[pyo3(signature = (search_directories, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=vec![], excludes=vec![]))]
+    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=vec![], excludes=vec![]))]
     fn new(
         search_directories: Option<Vec<String>>,
         require_ontology_names: bool,
@@ -185,23 +186,34 @@ impl OntoEnv {
             env_logger::init();
         });
 
-        let env = ONTOENV_SINGLETON.get_or_init(|| {
-            let inner = if let Some(p) = path {
-                let config_path = p.join(".ontoenv").join("ontoenv.json");
-                if let Ok(env) = ontoenvrs::OntoEnv::from_file(&config_path, read_only) {
+        let config_path = path
+            .as_ref()
+            .map(|p| p.join(".ontoenv").join("ontoenv.json"));
+        println!("Config path: {:?}", config_path);
+
+        let env = ONTOENV_SINGLETON.get_or_try_init(|| {
+            // if no Config provided, but there is a path, load the OntoEnv from file
+            // otherwise, create a new OntoEnv
+            if config.is_none() && config_path.is_some() && config_path.as_ref().unwrap().exists(){
+                if let Ok(env) = ontoenvrs::OntoEnv::from_file(&config_path.unwrap(), read_only) {
                     println!("Loaded OntoEnv from file");
-                    env
-                } else {
-                    println!("Creating new OntoEnv");
-                    ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone(), recreate)
-                        .expect("Failed to create OntoEnv")
+                    return Ok(Arc::new(Mutex::new(env)));
                 }
-            } else {
-                ontoenvrs::OntoEnv::new(config.unwrap().borrow().cfg.clone(), recreate)
-                    .expect("Failed to create OntoEnv")
-            };
-            Arc::new(Mutex::new(inner))
-        });
+            }
+
+            // if config is provided, create a new OntoEnv with the provided config
+            if let Some(c) = config {
+                println!("Creating new OntoEnv with provided config");
+                let inner = ontoenvrs::OntoEnv::new(c.cfg.clone(), recreate)
+                    .map_err(anyhow_to_pyerr)?;
+                return Ok(Arc::new(Mutex::new(inner)));
+            }
+
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Either a Config or a path must be provided. If path provided, there must be a valid OntoEnv directory at the path",
+            ))
+
+        })?;
 
         {
             let mut env = env.lock().unwrap();
