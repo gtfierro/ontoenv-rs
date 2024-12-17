@@ -110,14 +110,35 @@ impl OntoEnv {
         // create the config.root/.ontoenv directory so it exists before the store
         // is created
         let ontoenv_dir = config.root.join(".ontoenv");
+        let config_path = ontoenv_dir.join("ontoenv.json");
+
+        // test if the config in the ontoenv_dir is different from the current config.
+        // If it is, replace the config with the current config and turn 'recreate' on
+        if ontoenv_dir.exists() && config_path.exists() {
+            println!(
+                "OntoEnv directory exists: {:?}. Checking config",
+                ontoenv_dir
+            );
+            let file = std::fs::File::open(&config_path)?;
+            let reader = BufReader::new(file);
+            let env: OntoEnv = serde_json::from_reader(reader)?;
+            // print old and new config
+            println!("Old config: {:?}", env.config);
+            println!("New config: {:?}", config);
+            if env.config != config {
+                info!("OntoEnv configuration has changed. Recreating environment.");
+                fs::remove_dir_all(&ontoenv_dir)?;
+                return Self::new(config, true);
+            }
+        }
 
         // if recreate is False, raise an error if the directory already exists
-        if ontoenv_dir.exists() && !recreate {
-            return Err(anyhow::anyhow!(
-                "OntoEnv directory already exists: {:?}. Run 'refresh' or use the --recreate flag to recreate the environment.",
-                ontoenv_dir
-            ));
-        }
+        //if ontoenv_dir.exists() && !recreate {
+        //    return Err(anyhow::anyhow!(
+        //        "OntoEnv directory already exists: {:?}. Run 'refresh' or use the --recreate flag to recreate the environment.",
+        //        ontoenv_dir
+        //    ));
+        //}
 
         std::fs::create_dir_all(&ontoenv_dir)?;
 

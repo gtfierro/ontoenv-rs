@@ -138,7 +138,11 @@ fn main() -> Result<()> {
             env.save_to_directory()?;
         }
         Commands::Version => {
-            println!("ontoenv {} @ {}", env!("CARGO_PKG_VERSION"), env!("GIT_HASH"));
+            println!(
+                "ontoenv {} @ {}",
+                env!("CARGO_PKG_VERSION"),
+                env!("GIT_HASH")
+            );
         }
         Commands::Status => {
             // load env from .ontoenv/ontoenv.json

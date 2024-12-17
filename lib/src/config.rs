@@ -25,7 +25,7 @@ where
     patterns.map_err(serde::de::Error::custom)
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Config {
     pub root: PathBuf,
     #[serde(default)]
@@ -165,7 +165,7 @@ impl Config {
         let file = std::fs::File::open(file)?;
         let reader = BufReader::new(file);
         let mut config: Config = serde_json::from_reader(reader)?;
-        
+
         if config.search_directories.is_empty() {
             config.search_directories = vec![config.root.clone()];
         }
