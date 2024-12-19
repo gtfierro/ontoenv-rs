@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ontoenv::config::Config;
+use ontoenv::config::{Config, HowCreated};
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::OntoEnv;
 use oxigraph::model::NamedNodeRef;
@@ -72,6 +72,20 @@ fn default_config(dir: &TempDir) -> Config {
         dir.path().into(),
         Some(vec![dir.path().into()]),
         &["*.ttl", "*.xml"],
+        &[""],
+        false,
+        true,
+        true,
+        "default".to_string(),
+    )
+    .unwrap()
+}
+
+fn default_config_ttl_only(dir: &TempDir) -> Config {
+    Config::new(
+        dir.path().into(),
+        Some(vec![dir.path().into()]),
+        &["*.ttl"],
         &[""],
         false,
         true,
@@ -210,13 +224,23 @@ fn test_recreate() -> Result<()> {
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     let cfg = default_config(&dir);
     let env = OntoEnv::new(cfg, false)?;
-    // create a new env, like above, but make sure it raises an error
+    env.save_to_directory()?;
+    assert_eq!(env.get_how_created(), HowCreated::New);
+    // create a new env with the same config. This should still work.
     let cfg = default_config(&dir);
-    let env = OntoEnv::new(cfg, false);
-    assert!(env.is_err());
-
+    let env = OntoEnv::new(cfg, false)?;
+    env.save_to_directory()?;
+    assert_eq!(env.get_how_created(), HowCreated::SameConfig);
+    // change the config; this should trigger a recreation of the environment
+    let cfg = default_config_ttl_only(&dir);
+    let env = OntoEnv::new(cfg, false)?;
+    env.save_to_directory()?;
+    assert_eq!(env.get_how_created(), HowCreated::RecreatedDifferentConfig);
+    // now try to recreate the env with the same config but with recreate set to true
     let cfg = default_config(&dir);
     let env = OntoEnv::new(cfg, true)?;
+    env.save_to_directory()?;
+    assert_eq!(env.get_how_created(), HowCreated::RecreatedFlag);
 
     teardown(dir);
     Ok(())
