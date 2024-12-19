@@ -172,3 +172,24 @@ impl Config {
         Ok(config)
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum HowCreated {
+    New,
+    SameConfig,
+    RecreatedDifferentConfig,
+    RecreatedFlag,
+}
+
+impl std::fmt::Display for HowCreated {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            HowCreated::New => write!(f, "New Environment"),
+            HowCreated::SameConfig => write!(f, "Same Config. Reusing existing environment."),
+            HowCreated::RecreatedDifferentConfig => {
+                write!(f, "Recreated environment due to different config")
+            }
+            HowCreated::RecreatedFlag => write!(f, "Recreated environment due to 'recreate' flag"),
+        }
+    }
+}

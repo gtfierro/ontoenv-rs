@@ -10,7 +10,7 @@ pub mod policy;
 pub mod util;
 pub mod transform;
 
-use crate::config::Config;
+use crate::config::{Config, HowCreated};
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
@@ -63,6 +63,8 @@ pub struct EnvironmentStatus {
     last_updated: Option<DateTime<Utc>>,
     // size of the oxigraph store, in bytes
     store_size: u64,
+    // how this environment was last created
+    how_created: HowCreated,
 }
 
 // impl Display pretty print for EnvironmentStatus
@@ -81,9 +83,11 @@ impl std::fmt::Display for EnvironmentStatus {
         write!(
             f,
             "Environment Status\n\
+            How Created: {}\n\
             Number of Ontologies: {}\n\
             Last Updated: {}\n\
             Store Size: {} bytes",
+            self.how_created,
             self.num_ontologies,
             last_updated,
             pretty_bytes(self.store_size as f64),
@@ -99,6 +103,7 @@ pub struct OntoEnv {
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
     #[serde(skip)]
     read_only: bool,
+    how_created: HowCreated,
 }
 
 // probably need some graph "identifier" that incorporates location and version..
@@ -111,25 +116,36 @@ impl OntoEnv {
         // is created
         let ontoenv_dir = config.root.join(".ontoenv");
         let config_path = ontoenv_dir.join("ontoenv.json");
+        let mut how_created = HowCreated::New;
+        info!("Creating OntoEnv with config: {:?}", config);
 
         // test if the config in the ontoenv_dir is different from the current config.
         // If it is, replace the config with the current config and turn 'recreate' on
-        if ontoenv_dir.exists() && config_path.exists() {
-            println!(
+        if ontoenv_dir.exists() && config_path.exists() && !recreate {
+            info!(
                 "OntoEnv directory exists: {:?}. Checking config",
                 ontoenv_dir
             );
+            how_created = HowCreated::SameConfig;
             let file = std::fs::File::open(&config_path)?;
             let reader = BufReader::new(file);
-            let env: OntoEnv = serde_json::from_reader(reader)?;
+            let mut env: OntoEnv = serde_json::from_reader(reader)?;
             // print old and new config
-            println!("Old config: {:?}", env.config);
-            println!("New config: {:?}", config);
             if env.config != config {
                 info!("OntoEnv configuration has changed. Recreating environment.");
                 fs::remove_dir_all(&ontoenv_dir)?;
-                return Self::new(config, true);
+                env = Self::new(config, true)?;
+                env.how_created = HowCreated::RecreatedDifferentConfig;
+                return Ok(env);
             }
+        }
+
+        if recreate {
+            info!("Recreating environment");
+            if ontoenv_dir.exists() {
+                fs::remove_dir_all(&ontoenv_dir)?;
+            }
+            how_created = HowCreated::RecreatedFlag;
         }
 
         // if recreate is False, raise an error if the directory already exists
@@ -148,6 +164,7 @@ impl OntoEnv {
             ontologies: HashMap::new(),
             dependency_graph: DiGraph::new(),
             read_only: false,
+            how_created,
         })
     }
 
@@ -178,6 +195,10 @@ impl OntoEnv {
         Ok(size)
     }
 
+    pub fn get_how_created(&self) -> HowCreated {
+        self.how_created.clone()
+    }
+
     /// Calculates and returns the environment status
     pub fn status(&self) -> Result<EnvironmentStatus> {
         let store = self.store()?;
@@ -191,6 +212,7 @@ impl OntoEnv {
             num_ontologies,
             last_updated: Some(last_updated),
             store_size: size,
+            how_created: self.how_created.clone(),
         })
     }
 
