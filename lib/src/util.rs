@@ -5,11 +5,10 @@ use std::path::Path;
 
 use reqwest::header::CONTENT_TYPE;
 
-use oxigraph::io::write::GraphSerializer;
-use oxigraph::io::{GraphFormat, GraphParser};
+use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::graph::Graph as OxigraphGraph;
 use oxigraph::model::Dataset;
-use oxigraph::model::TripleRef;
+use oxigraph::model::{Triple, TripleRef};
 
 use std::io::BufReader;
 
@@ -22,10 +21,9 @@ pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
         dataset.len()
     );
     let mut file = std::fs::File::create(file)?;
-    let mut serializer =
-        GraphSerializer::from_format(GraphFormat::Turtle).triple_writer(&mut file)?;
+    let mut serializer = RdfSerializer::from_format(RdfFormat::Turtle).for_writer(&mut file);
     for quad in dataset.iter() {
-        serializer.write(TripleRef {
+        serializer.serialize_triple(TripleRef {
             subject: quad.subject,
             predicate: quad.predicate,
             object: quad.object,
@@ -42,17 +40,19 @@ pub fn read_file(file: &Path) -> Result<OxigraphGraph> {
     let content: BufReader<_> = BufReader::new(file);
     let content_type = filename.extension().and_then(|ext| ext.to_str());
     let content_type = content_type.and_then(|ext| match ext {
-        "ttl" => Some(GraphFormat::Turtle),
-        "xml" => Some(GraphFormat::RdfXml),
-        "n3" => Some(GraphFormat::Turtle),
-        "nt" => Some(GraphFormat::NTriples),
+        "ttl" => Some(RdfFormat::Turtle),
+        "xml" => Some(RdfFormat::RdfXml),
+        "n3" => Some(RdfFormat::Turtle),
+        "nt" => Some(RdfFormat::NTriples),
         _ => None,
     });
-    let parser = GraphParser::from_format(content_type.unwrap_or(GraphFormat::Turtle));
+    let parser = RdfParser::from_format(content_type.unwrap_or(RdfFormat::Turtle));
     let mut graph = OxigraphGraph::new();
-    let triples = parser.read_triples(content)?;
-    for triple in triples {
-        graph.insert(&triple?);
+    let parser = parser.for_reader(content);
+    for quad in parser {
+        let quad = quad?;
+        let triple = Triple::new(quad.subject, quad.predicate, quad.object);
+        graph.insert(&triple);
     }
 
     Ok(graph)
@@ -72,9 +72,9 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     let content_type = resp.headers().get("Content-Type");
     let content_type = content_type.and_then(|ct| ct.to_str().ok());
     let content_type = content_type.and_then(|ext| match ext {
-        "application/x-turtle" => Some(GraphFormat::Turtle),
-        "application/rdf+xml" => Some(GraphFormat::RdfXml),
-        "text/rdf+n3" => Some(GraphFormat::NTriples),
+        "application/x-turtle" => Some(RdfFormat::Turtle),
+        "application/rdf+xml" => Some(RdfFormat::RdfXml),
+        "text/rdf+n3" => Some(RdfFormat::NTriples),
         _ => {
             debug!("Unknown content type: {}", ext);
             None
@@ -85,11 +85,13 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
 
     // if content type is known, use it to parse the graph
     if let Some(format) = content_type {
-        let parser = GraphParser::from_format(format);
+        let parser = RdfParser::from_format(format);
         let mut graph = OxigraphGraph::new();
-        let triples = parser.read_triples(content)?;
-        for triple in triples {
-            graph.insert(&triple?);
+        let parser = parser.for_reader(content);
+        for quad in parser {
+            let quad = quad?;
+            let triple = Triple::new(quad.subject, quad.predicate, quad.object);
+            graph.insert(&triple);
         }
         return Ok(graph);
     }
@@ -98,23 +100,17 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     // since we can't rewind the reader
     let content_vec: Vec<u8> = content.bytes().map(|b| b.unwrap()).collect();
 
-    for format in [
-        GraphFormat::Turtle,
-        GraphFormat::RdfXml,
-        GraphFormat::NTriples,
-    ] {
+    for format in [RdfFormat::Turtle, RdfFormat::RdfXml, RdfFormat::NTriples] {
         let vcontent = BufReader::new(std::io::Cursor::new(&content_vec));
-        let parser = GraphParser::from_format(format);
+        let parser = RdfParser::from_format(format);
         let mut graph = OxigraphGraph::new();
 
-        // if there's an error on parser.read_triples, try the next format
-
-        let triples = parser.read_triples(vcontent);
-        if triples.is_err() {
-            continue;
-        }
-        for triple in triples.unwrap() {
-            graph.insert(&triple?);
+        // TODO: if there's an error on parser.read_triples, try the next format
+        let parser = parser.for_reader(vcontent);
+        for quad in parser {
+            let quad = quad?;
+            let triple = Triple::new(quad.subject, quad.predicate, quad.object);
+            graph.insert(&triple);
         }
         return Ok(graph);
     }
