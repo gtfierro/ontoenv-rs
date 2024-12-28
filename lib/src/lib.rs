@@ -2,6 +2,7 @@ extern crate derive_builder;
 
 pub mod config;
 pub mod consts;
+pub mod environment_config;
 pub mod doctor;
 pub mod errors;
 pub mod ontology;
