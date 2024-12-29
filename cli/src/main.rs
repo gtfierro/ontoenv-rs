@@ -49,6 +49,12 @@ enum Commands {
         #[clap(long, short, default_value = "false")]
         recreate: bool,
     },
+    /// Fetch all ontologies and their dependencies from a configuration file
+    Fetch {
+        /// Path to the environment JSON configuration file
+        #[clap(long, short)]
+        config_file: PathBuf,
+    },
     /// Prints the version of the ontoenv binary
     Version,
     /// Prints the status of the ontology environment
@@ -271,6 +277,19 @@ fn main() -> Result<()> {
             env.doctor();
         }
     }
+        Commands::Fetch { config_file } => {
+            // Load the configuration from the specified JSON file
+            let config = Config::from_file(&config_file)?;
+
+            // Create a new OntoEnv with the loaded configuration
+            let mut env = OntoEnv::new(config, false)?;
+
+            // Update the environment to fetch dependencies
+            env.update()?;
+
+            // Save the updated environment
+            env.save_to_directory()?;
+        }
 
     Ok(())
 }
