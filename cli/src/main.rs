@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
-use ontoenv::{config::Config, OntoEnv};
+use ontoenv::{config::Config, OntoEnv, ontology_config::{OntologyConfig, OntologyLocation}};
 use oxigraph::model::{NamedNode, NamedNodeRef};
 use std::env::current_dir;
 use std::path::PathBuf;
@@ -278,10 +278,19 @@ fn main() -> Result<()> {
         }
         Commands::Fetch { config_file } => {
             // Load the configuration from the specified JSON file
-            let config = Config::from_file(&config_file)?;
+            let config: EnvironmentConfig = serde_json::from_reader(std::fs::File::open(&config_file)?)?;
 
-            // Create a new OntoEnv with the loaded configuration
-            let mut env = OntoEnv::new(config, false)?;
+            // Create a new OntoEnv with the default configuration
+            let mut env = OntoEnv::new(Config::default(), false)?;
+
+            // Iterate over each ontology in the configuration and add it to the environment
+            for ontology in config.ontologies {
+                let location = match ontology.location {
+                    OntologyLocation::File { file } => OntologyLocation::File(file),
+                    OntologyLocation::Uri { uri } => OntologyLocation::Url(uri),
+                };
+                env.add(location)?;
+            }
 
             // Update the environment to fetch dependencies
             env.update()?;
