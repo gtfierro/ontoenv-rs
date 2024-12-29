@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OntologyConfig {
+    #[serde(flatten)]
     pub location: OntologyLocation,
     pub version: Option<String>,
 }
