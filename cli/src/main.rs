@@ -276,7 +276,6 @@ fn main() -> Result<()> {
             let env = OntoEnv::from_file(&path, true)?;
             env.doctor();
         }
-    }
         Commands::Fetch { config_file } => {
             // Load the configuration from the specified JSON file
             let config = Config::from_file(&config_file)?;
@@ -290,6 +289,7 @@ fn main() -> Result<()> {
             // Save the updated environment
             env.save_to_directory()?;
         }
+    }
 
     Ok(())
 }
