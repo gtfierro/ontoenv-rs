@@ -94,7 +94,9 @@ impl GraphIdentifier {
 
 #[derive(Serialize, Deserialize, Hash, Clone, Eq, PartialEq, Debug)]
 pub enum OntologyLocation {
+    #[serde(rename = "file")]
     File(PathBuf),
+    #[serde(rename = "url")]
     Url(String),
 }
 

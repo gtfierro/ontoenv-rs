@@ -1,3 +1,4 @@
+use crate::ontology::OntologyLocation;
 use crate::policy::{DefaultPolicy, ResolutionPolicy};
 use anyhow::Result;
 use glob::{Pattern, PatternError};
@@ -23,6 +24,18 @@ where
     let patterns: Result<Vec<Pattern>, PatternError> =
         patterns.iter().map(|p| Pattern::new(p)).collect();
     patterns.map_err(serde::de::Error::custom)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EnvironmentConfig {
+    pub ontologies: Vec<OntologyConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct OntologyConfig {
+    #[serde(flatten)]
+    pub location: OntologyLocation,
+    pub version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -63,6 +76,7 @@ impl Config {
         strict: bool,
         offline: bool,
         resolution_policy: String,
+        no_search: bool,
     ) -> Result<Self>
     where
         I: IntoIterator,
@@ -72,9 +86,16 @@ impl Config {
         K: IntoIterator<Item = PathBuf>,
     {
         // if search directories are empty, add the root. Otherwise, use the provided search directories
+        // if no_search is true, then do not default to the root directory
         let search_directories = search_directories
             .map(|dirs| dirs.into_iter().collect())
-            .unwrap_or_else(|| vec![root.clone()]);
+            .unwrap_or_else(|| {
+                if no_search {
+                    vec![]
+                } else {
+                    vec![root.clone()]
+                }
+            });
 
         let mut config = Config {
             root,
@@ -135,6 +156,7 @@ impl Config {
             strict,
             offline,
             DefaultPolicy.policy_name().to_string(),
+            false,
         )
     }
 
