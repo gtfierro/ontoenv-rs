@@ -1,10 +1,13 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use ontoenv::config::{Config, EnvironmentConfig};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
-use ontoenv::{config::Config, OntoEnv, ontology_config::{OntologyConfig, OntologyLocation}};
+use ontoenv::OntoEnv;
 use oxigraph::model::{NamedNode, NamedNodeRef};
+use serde_json;
 use std::env::current_dir;
+use std::fs::File;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -46,14 +49,15 @@ enum Commands {
         /// Glob patterns for which files to exclude, defaults to []
         #[clap(long, short, num_args = 1..)]
         excludes: Vec<String>,
+        /// Recreate the environment if it already exists
         #[clap(long, short, default_value = "false")]
         recreate: bool,
-    },
-    /// Fetch all ontologies and their dependencies from a configuration file
-    Fetch {
-        /// Path to the environment JSON configuration file
-        #[clap(long, short)]
-        config_file: PathBuf,
+        /// A JSON file containing a list of ontologies to add to the environment
+        #[clap(long = "list", short = 'l')]
+        ontology_list_file: Option<String>,
+        /// Do not search for ontologies in the search directories
+        #[clap(long = "no-search", short = 'n', action)]
+        no_search: bool,
     },
     /// Prints the version of the ontoenv binary
     Version,
@@ -106,6 +110,8 @@ enum Commands {
     },
     /// Run the doctor to check the environment for issues
     Doctor,
+    /// Reset the ontology environment by removing the .ontoenv directory
+    Reset,
 }
 
 fn main() -> Result<()> {
@@ -127,8 +133,11 @@ fn main() -> Result<()> {
             includes,
             excludes,
             recreate,
+            ontology_list_file,
+            no_search,
         } => {
             // if search_directories is empty, use the current directory
+            println!("no search? {}", no_search);
             let config = Config::new(
                 current_dir()?,
                 search_directories,
@@ -138,8 +147,19 @@ fn main() -> Result<()> {
                 strict,
                 offline,
                 policy,
+                no_search,
             )?;
             let mut env = OntoEnv::new(config, recreate)?;
+
+            // if an ontology config file is provided, load it and add the ontologies
+            if let Some(file) = ontology_list_file {
+                let file = File::open(file)?;
+                let config: EnvironmentConfig = serde_json::from_reader(file)?;
+                for ont in config.ontologies {
+                    env.add(ont.location)?;
+                }
+            }
+
             env.update()?;
             env.save_to_directory()?;
         }
@@ -276,27 +296,12 @@ fn main() -> Result<()> {
             let env = OntoEnv::from_file(&path, true)?;
             env.doctor();
         }
-        Commands::Fetch { config_file } => {
-            // Load the configuration from the specified JSON file
-            let config: EnvironmentConfig = serde_json::from_reader(std::fs::File::open(&config_file)?)?;
-
-            // Create a new OntoEnv with the default configuration
-            let mut env = OntoEnv::new(Config::default(), false)?;
-
-            // Iterate over each ontology in the configuration and add it to the environment
-            for ontology in config.ontologies {
-                let location = match ontology.location {
-                    OntologyLocation::File { file } => OntologyLocation::File(file),
-                    OntologyLocation::Uri { uri } => OntologyLocation::Url(uri),
-                };
-                env.add(location)?;
+        Commands::Reset => {
+            // remove .ontoenv directory
+            let path = current_dir()?.join(".ontoenv");
+            if path.exists() {
+                std::fs::remove_dir_all(path)?;
             }
-
-            // Update the environment to fetch dependencies
-            env.update()?;
-
-            // Save the updated environment
-            env.save_to_directory()?;
         }
     }
 

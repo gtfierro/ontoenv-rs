@@ -2,7 +2,6 @@ extern crate derive_builder;
 
 pub mod config;
 pub mod consts;
-pub mod environment_config;
 pub mod doctor;
 pub mod errors;
 pub mod ontology;
@@ -71,7 +70,9 @@ pub struct EnvironmentStatus {
 // impl Display pretty print for EnvironmentStatus
 impl std::fmt::Display for EnvironmentStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let exists = if self.exists { "Yes" } else { "No" };
+        if !self.exists {
+            return write!(f, "No environment found");
+        }
         // convert last_updated to local timestamp, or display N/A if
         // it is None
         let last_updated = match self.last_updated {
@@ -202,7 +203,6 @@ impl OntoEnv {
 
     /// Calculates and returns the environment status
     pub fn status(&self) -> Result<EnvironmentStatus> {
-        let store = self.store()?;
         // get time modified of the self.store_path() directory
         let last_updated: DateTime<Utc> = std::fs::metadata(self.store_path()?)?.modified()?.into();
         // get the size of the .ontoenv directory on disk
@@ -277,6 +277,14 @@ impl OntoEnv {
 
     /// Load an OntoEnv from the given path
     pub fn from_file(path: &Path, read_only: bool) -> Result<Self> {
+        // if path does not exist, return an error
+        if !path.exists() {
+            return Err(anyhow::anyhow!(
+                "OntoEnv environment not found at: {:?}",
+                path
+            ));
+        }
+
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
         let env: OntoEnv = serde_json::from_reader(reader)?;
