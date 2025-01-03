@@ -8,7 +8,7 @@ use reqwest::header::CONTENT_TYPE;
 use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::graph::Graph as OxigraphGraph;
 use oxigraph::model::Dataset;
-use oxigraph::model::{Triple, TripleRef};
+use oxigraph::model::{GraphNameRef, Quad, QuadRef, Triple, TripleRef};
 
 use std::io::BufReader;
 
@@ -115,6 +115,17 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
         return Ok(graph);
     }
     Err(anyhow::anyhow!("Failed to parse graph from {}", file))
+}
+
+// return a "impl IntoIterator<Item = impl Into<Quad>>" for a graph. Iter through
+// the input Graph and create a Quad for each Triple in the Graph using the given GraphName
+pub fn graph_to_quads<'a>(
+    graph: &'a OxigraphGraph,
+    graph_name: GraphNameRef<'a>,
+) -> impl IntoIterator<Item = impl Into<Quad> + use<'a>> {
+    graph
+        .into_iter()
+        .map(move |triple| triple.in_graph(graph_name))
 }
 
 #[cfg(test)]
