@@ -2,9 +2,36 @@
 
 `ontoenv` is an environment manager for ontology management. It eventually wants to be a package manager for RDF ontologies and graphs.
 
+- A CLI tool (`cargo install ontoenv-cli`)
+- `ontoenv`, a [Rust library](https://docs.rs/ontoenv/latest/ontoenv/)
+- `pyontoenv`, a [Python library](https://pypi.org/project/pyontoenv/)
+
 ## Overview
 
-Imagine you have an RDF graph which imports 
+Imagine you have an RDF graph which imports some ontologies in order to use those concepts.
+Those ontologies might in import other ontologies, and so on.
+
+The design goals of this project are:
+- **be lightweight**:  big fancy ontology tools will handle ontology imports automatically, but do so within a heavyweight GUI and usually without an easy-to-use API; I wanted something that could be used in a Python library or a command line tool
+- **configurable**: when doing ontology development, I want to refer to some files locally, and others on the web; I want to be able to control which files are included and which are not.
+- **fast**: I want to be able to quickly refresh my workspace when I make changes to local files.
+
+## How does it work?
+
+Specifically, `ontoenv` looks for patterns like the following inside local ontology files:
+
+```ttl
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix : <urn:my_ontology/> .
+
+<urn:my_ontology> rdf:type owl:Ontology ;
+    owl:imports <https://brickschema.org/schema/1.4/Brick>,
+                <http://qudt.org/2.1/vocab/quantitykind> .
+```
+
+When initialized, `ontoenv` searches for all local files defining ontologies, identifies their dependencies, and then recursively pulls in those dependencies, *their* dependencies, and so on.
+It saves this in a local [Oxigraph](https://github.com/oxigraph/oxigraph) database inside the local `.ontoenv`.
 
 ## Command Line Interface
 
@@ -23,21 +50,7 @@ Begin by initializing an `ontoenv` workspace in a directory containing some onto
 ontoenv init
 ```
 
-This may take a couple minutes. `ontoenv` searches for all local files defining ontologies, identifies their dependencies, and then recursively pulls in those dependencies, *their* dependencies, and so on.
-
-Specifically, `ontoenv` looks for patterns like the following inside local ontology files:
-
-```ttl
-@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix : <urn:my_ontology/> .
-
-<urn:my_ontology> rdf:type owl:Ontology ;
-    owl:imports <https://brickschema.org/schema/1.4/Brick>,
-                <http://qudt.org/2.1/vocab/quantitykind> .
-```
-
-It is possible to adjust which directories `ontoenv` searches for, which files it traverses, and whether it pulls ontologies from the web.
+This may take a couple minutes. `ontoenv` searches for all local files defining ontologies, identifies their dependencies, and then recursively pulls in those dependencies, *their* dependencies, and so on. It is possible to adjust which directories `ontoenv` searches for, which files it traverses, and whether it pulls ontologies from the web.
 
 ```
 $ ontoenv init -h
