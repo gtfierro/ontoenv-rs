@@ -690,22 +690,23 @@ impl OntoEnv {
             _ => return Err(anyhow::anyhow!("Graph name not found")),
         };
 
-        let store = self.store()?;
-
         if store.contains_named_graph(graphname.as_ref())? {
             store.remove_named_graph(graphname.as_ref())?;
         }
 
         info!("Adding graph to store: {:?}", graphname);
-        for triple in graph.into_iter() {
-            let q: QuadRef = QuadRef::new(
-                triple.subject,
-                triple.predicate,
-                triple.object,
-                graphname.as_ref(),
-            );
-            store.insert(q)?;
-        }
+        store
+            .bulk_loader()
+            .load_quads(util::graph_to_quads(&graph, graphname.as_ref().into()))?;
+        //for triple in graph.into_iter() {
+        //    let q: QuadRef = QuadRef::new(
+        //        triple.subject,
+        //        triple.predicate,
+        //        triple.object,
+        //        graphname.as_ref(),
+        //    );
+        //    store.insert(q)?;
+        //}
 
         Ok(id)
     }
