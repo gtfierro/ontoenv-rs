@@ -314,6 +314,7 @@ impl OntoEnv {
             None => self.ontologies.keys().cloned().collect(),
         };
         let mut seen: HashSet<GraphIdentifier> = HashSet::new();
+        let store = self.store()?;
 
         info!("Using # updated ids: {:?}", stack.len());
 
@@ -354,7 +355,7 @@ impl OntoEnv {
                     // otherwise, try to find the ontology by location
                     OntologyLocation::from_str(import.as_str())?
                 };
-                let imp = match self.add_or_update_ontology_from_location(location) {
+                let imp = match self.add_or_update_ontology_from_location(location, &store) {
                     Ok(imp) => imp,
                     Err(e) => {
                         if self.config.strict {
@@ -368,6 +369,7 @@ impl OntoEnv {
                 stack.push_back(imp);
             }
         }
+        drop(store); // drop the store so we can optimize it later
 
         // put the dependency graph into self.dependency_graph
         let mut indexes: HashMap<GraphIdentifier, NodeIndex> = HashMap::new();
@@ -525,11 +527,13 @@ impl OntoEnv {
         // Step two: find all new and updated files
         let updated_files = self.get_updated_files()?;
 
+        let store = self.store()?;
+
         // Step three: add or update the ontologies from the new and updated files
         let updated_ids: Vec<GraphIdentifier> = if self.config.strict {
             let updated_ids: Result<Vec<GraphIdentifier>> = updated_files
                 .into_iter()
-                .map(|file| self.add_or_update_ontology_from_location(file.clone()))
+                .map(|file| self.add_or_update_ontology_from_location(file.clone(), &store))
                 .collect();
             // handle error reporting
             updated_ids.map_err(|e| {
@@ -539,19 +543,21 @@ impl OntoEnv {
         } else {
             updated_files
                 .into_iter()
-                .map(|file| self.add_or_update_ontology_from_location(file.clone()))
+                .map(|file| self.add_or_update_ontology_from_location(file.clone(), &store))
                 .filter_map(|r| r.ok())
                 .collect()
         };
+
+        drop(store); // drop the store so we can optimize it later
 
         // Step four: update the dependency graph for all updated ontologies
         info!("Updating dependency graphs for updated ontologies");
         self.update_dependency_graph(Some(updated_ids))?;
 
         // optimize the store for storage + queries
-        if !self.read_only {
-            self.store()?.optimize()?;
-        }
+        //if !self.read_only {
+        //    self.store()?.optimize()?;
+        //}
 
         Ok(())
     }
@@ -627,8 +633,9 @@ impl OntoEnv {
     /// Add the ontology from the given location to the environment. If the ontology
     /// already exists in the environment, it is overwritten.
     pub fn add(&mut self, location: OntologyLocation) -> Result<GraphIdentifier> {
+        let store = self.store()?;
         info!("Adding ontology from location: {:?}", location);
-        self.add_or_update_ontology_from_location(location)
+        self.add_or_update_ontology_from_location(location, &store)
     }
 
     /// Add or update the ontology from the given location. Overwrites the ontology
@@ -636,6 +643,7 @@ impl OntoEnv {
     fn add_or_update_ontology_from_location(
         &mut self,
         location: OntologyLocation,
+        store: &Store,
     ) -> Result<GraphIdentifier> {
         // find an entry in self.ontologies with the same Location
         if let Some(ontology) = self.get_ontology_by_location(&location) {
