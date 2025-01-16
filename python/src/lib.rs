@@ -205,7 +205,7 @@ impl OntoEnv {
             // if config is provided, create a new OntoEnv with the provided config
             if let Some(c) = config {
                 println!("Creating new OntoEnv with provided config");
-                let inner = ontoenvrs::OntoEnv::new(c.cfg.clone(), recreate)
+                let inner = ontoenvrs::OntoEnv::new(c.cfg.clone(), recreate, read_only)
                     .map_err(anyhow_to_pyerr)?;
                 return Ok(Arc::new(Mutex::new(inner)));
             }
@@ -409,10 +409,13 @@ impl OntoEnv {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri.to_string())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        println!("Locking inner");
         let inner = self.inner.lock().unwrap();
+        println!("Getting graph by name");
         let graph = inner
             .get_graph_by_name(iri.as_ref())
             .map_err(anyhow_to_pyerr)?;
+        println!("Got graph by name");
         let res = rdflib.getattr("Graph")?.call0()?;
         for triple in graph.into_iter() {
             let s: Term = triple.subject.into();
@@ -430,6 +433,7 @@ impl OntoEnv {
 
             res.getattr("add")?.call1((t,))?;
         }
+        println!("Returning graph");
         Ok(res.into())
     }
 
@@ -456,6 +460,12 @@ impl OntoEnv {
         let path = inner.store_path().map_err(anyhow_to_pyerr)?.to_string();
         store.getattr("open")?.call1((path,))?;
         Ok(store.into())
+    }
+
+    fn to_read_only(&self) -> PyResult<()> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.to_read_only();
+        Ok(())
     }
 }
 
