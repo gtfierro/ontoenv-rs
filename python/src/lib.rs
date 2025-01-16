@@ -205,7 +205,7 @@ impl OntoEnv {
             // if config is provided, create a new OntoEnv with the provided config
             if let Some(c) = config {
                 println!("Creating new OntoEnv with provided config");
-                let inner = ontoenvrs::OntoEnv::new(c.cfg.clone(), recreate, read_only)
+                let inner = ontoenvrs::OntoEnv::new(c.cfg.clone(), recreate)
                     .map_err(anyhow_to_pyerr)?;
                 return Ok(Arc::new(Mutex::new(inner)));
             }
@@ -229,8 +229,8 @@ impl OntoEnv {
     fn update(&self) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut env = inner.lock().unwrap();
-        inner.update().map_err(anyhow_to_pyerr)?;
-        inner.save_to_directory().map_err(anyhow_to_pyerr)?;
+        env.update().map_err(anyhow_to_pyerr)?;
+        env.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
@@ -239,8 +239,8 @@ impl OntoEnv {
         let env = inner.lock().unwrap();
         Ok(format!(
             "<OntoEnv: {} graphs, {} triples>",
-            inner.num_graphs(),
-            inner.num_triples().map_err(anyhow_to_pyerr)?
+            env.num_graphs(),
+            env.num_triples().map_err(anyhow_to_pyerr)?
         ))
     }
 
@@ -257,7 +257,7 @@ impl OntoEnv {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
+        let ont = env.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
         let mut graph = ont.graph().map_err(anyhow_to_pyerr)?;
@@ -305,10 +305,10 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
+        let ont = env.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
-        let closure = inner
+        let closure = env
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
         let names: Vec<String> = closure.iter().map(|ont| ont.name().to_string()).collect();
@@ -329,10 +329,10 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
+        let ont = env.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
-        let closure = inner
+        let closure = env
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
         // if destination_graph is null, create a new rdflib.Graph()
@@ -340,7 +340,7 @@ impl OntoEnv {
             Some(g) => g.clone(),
             None => rdflib.getattr("Graph")?.call0()?,
         };
-        let graph = inner
+        let graph = env
             .get_union_graph(
                 &closure,
                 Some(rewrite_sh_prefixes),
@@ -371,7 +371,7 @@ impl OntoEnv {
     fn dump(&self, py: Python, includes: Option<String>) -> PyResult<()> {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        inner.dump(includes.as_deref());
+        env.dump(includes.as_deref());
         Ok(())
     }
 
@@ -401,16 +401,16 @@ impl OntoEnv {
         let mut env = inner.lock().unwrap();
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
-        inner.add(location).map_err(anyhow_to_pyerr)?;
-        inner.save_to_directory().map_err(anyhow_to_pyerr)?;
+        env.add(location).map_err(anyhow_to_pyerr)?;
+        env.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
     fn refresh(&self) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut env = inner.lock().unwrap();
-        inner.update().map_err(anyhow_to_pyerr)?;
-        inner.save_to_directory().map_err(anyhow_to_pyerr)?;
+        env.update().map_err(anyhow_to_pyerr)?;
+        env.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
@@ -422,7 +422,7 @@ impl OntoEnv {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
         println!("Getting graph by name");
-        let graph = inner
+        let graph = env
             .get_graph_by_name(iri.as_ref())
             .map_err(anyhow_to_pyerr)?;
         println!("Got graph by name");
@@ -450,7 +450,7 @@ impl OntoEnv {
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        let names: Vec<String> = inner
+        let names: Vec<String> = env
             .ontologies()
             .keys()
             .map(|k| k.name().to_string())
@@ -461,23 +461,17 @@ impl OntoEnv {
     /// Convert the OntoEnv to an rdflib.Dataset
     fn to_rdflib_dataset(&self, py: Python) -> PyResult<Py<PyAny>> {
         // rdflib.ConjunctiveGraph(store="Oxigraph")
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         let rdflib = py.import("rdflib")?;
         let dataset = rdflib.getattr("Dataset")?;
 
         // call Dataset(store="Oxigraph")
         let kwargs = [("store", "Oxigraph")].into_py_dict(py)?;
         let store = dataset.call((), Some(&kwargs))?;
-        let path = inner.store_path().map_err(anyhow_to_pyerr)?.to_string();
+        let path = env.store_path().map_err(anyhow_to_pyerr)?.to_string();
         store.getattr("open")?.call1((path,))?;
         Ok(store.into())
-    }
-
-    fn to_read_only(&self) -> PyResult<()> {
-        let inner = self.inner.clone();
-        let mut env = inner.lock().unwrap();
-        inner.to_read_only();
-        Ok(())
     }
 }
 
