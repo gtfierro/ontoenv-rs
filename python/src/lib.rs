@@ -190,7 +190,6 @@ impl OntoEnv {
         let config_path = path
             .as_ref()
             .map(|p| p.join(".ontoenv").join("ontoenv.json"));
-        println!("Config path: {:?}", config_path);
 
         let env = ONTOENV_SINGLETON.get_or_try_init(|| {
             // if no Config provided, but there is a path, load the OntoEnv from file
@@ -418,15 +417,12 @@ impl OntoEnv {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri.to_string())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        println!("Locking inner");
         let graph = {
             let inner = self.inner.clone();
             let env = inner.lock().unwrap();
-            println!("Getting graph by name");
             let graph = env
                 .get_graph_by_name(iri.as_ref())
                 .map_err(anyhow_to_pyerr)?;
-            println!("Got graph by name");
             graph
         };
         let res = rdflib.getattr("Graph")?.call0()?;
@@ -446,7 +442,6 @@ impl OntoEnv {
 
             res.getattr("add")?.call1((t,))?;
         }
-        println!("Returning graph");
         Ok(res.into())
     }
 

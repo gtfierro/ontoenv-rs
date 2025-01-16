@@ -97,7 +97,7 @@ impl std::fmt::Display for EnvironmentStatus {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct OntoEnv {
     config: Config,
     #[serde(serialize_with = "ontologies_ser", deserialize_with = "ontologies_de")]
