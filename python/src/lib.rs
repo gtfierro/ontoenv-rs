@@ -419,13 +419,16 @@ impl OntoEnv {
         let iri = NamedNode::new(uri.to_string())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         println!("Locking inner");
-        let inner = self.inner.clone();
-        let env = inner.lock().unwrap();
-        println!("Getting graph by name");
-        let graph = env
-            .get_graph_by_name(iri.as_ref())
-            .map_err(anyhow_to_pyerr)?;
-        println!("Got graph by name");
+        let graph = {
+            let inner = self.inner.clone();
+            let env = inner.lock().unwrap();
+            println!("Getting graph by name");
+            let graph = env
+                .get_graph_by_name(iri.as_ref())
+                .map_err(anyhow_to_pyerr)?;
+            println!("Got graph by name");
+            graph
+        };
         let res = rdflib.getattr("Graph")?.call0()?;
         for triple in graph.into_iter() {
             let s: Term = triple.subject.into();
