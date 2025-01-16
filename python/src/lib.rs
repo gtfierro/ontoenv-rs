@@ -217,7 +217,8 @@ impl OntoEnv {
         })?;
 
         {
-            let mut env = env.lock().unwrap();
+            let inner = env.clone();
+            let mut env = inner.lock().unwrap();
             env.update().map_err(anyhow_to_pyerr)?;
             env.save_to_directory().map_err(anyhow_to_pyerr)?;
         }
@@ -226,14 +227,16 @@ impl OntoEnv {
     }
 
     fn update(&self) -> PyResult<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let mut env = inner.lock().unwrap();
         inner.update().map_err(anyhow_to_pyerr)?;
         inner.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         Ok(format!(
             "<OntoEnv: {} graphs, {} triples>",
             inner.num_graphs(),
@@ -249,7 +252,8 @@ impl OntoEnv {
         destination_graph: &Bound<'_, PyAny>,
         uri: &str,
     ) -> PyResult<()> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -299,7 +303,8 @@ impl OntoEnv {
     fn list_closure(&self, py: Python, uri: &str) -> PyResult<Vec<String>> {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
@@ -322,7 +327,8 @@ impl OntoEnv {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         let ont = inner.get_ontology_by_name(iri.as_ref()).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
@@ -363,7 +369,8 @@ impl OntoEnv {
 
     #[pyo3(signature = (includes=None))]
     fn dump(&self, py: Python, includes: Option<String>) -> PyResult<()> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         inner.dump(includes.as_deref());
         Ok(())
     }
@@ -390,7 +397,8 @@ impl OntoEnv {
     }
 
     fn add(&self, location: &Bound<'_, PyAny>) -> PyResult<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let mut env = inner.lock().unwrap();
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
         inner.add(location).map_err(anyhow_to_pyerr)?;
@@ -399,7 +407,8 @@ impl OntoEnv {
     }
 
     fn refresh(&self) -> PyResult<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let mut env = inner.lock().unwrap();
         inner.update().map_err(anyhow_to_pyerr)?;
         inner.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
@@ -410,7 +419,8 @@ impl OntoEnv {
         let iri = NamedNode::new(uri.to_string())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         println!("Locking inner");
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         println!("Getting graph by name");
         let graph = inner
             .get_graph_by_name(iri.as_ref())
@@ -438,7 +448,8 @@ impl OntoEnv {
     }
 
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
         let names: Vec<String> = inner
             .ontologies()
             .keys()
@@ -463,7 +474,8 @@ impl OntoEnv {
     }
 
     fn to_read_only(&self) -> PyResult<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let inner = self.inner.clone();
+        let mut env = inner.lock().unwrap();
         inner.to_read_only();
         Ok(())
     }
