@@ -29,6 +29,7 @@ use std::fs;
 use std::io::{BufReader, Write};
 use std::path::Path;
 use walkdir::WalkDir;
+use std::fmt;
 
 // custom derive for ontologies field as vec of Ontology
 fn ontologies_ser<S>(
@@ -97,7 +98,7 @@ impl std::fmt::Display for EnvironmentStatus {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct OntoEnv {
     config: Config,
     #[serde(serialize_with = "ontologies_ser", deserialize_with = "ontologies_de")]
@@ -106,9 +107,22 @@ pub struct OntoEnv {
     #[serde(skip)]
     read_only: bool,
     how_created: HowCreated,
+    #[serde(skip)]
+    inner_store: Option<Store>,
 }
 
 // probably need some graph "identifier" that incorporates location and version..
+
+// format everything EXCEPT inner_store
+impl fmt::Debug for OntoEnv {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "OntoEnv {{ config: {:?}, ontologies: {:?}, dependency_graph: {:?}, read_only: {:?}, how_created: {:?} }}",
+            self.config, self.ontologies, self.dependency_graph, self.read_only, self.how_created
+        )
+    }
+}
 
 impl OntoEnv {
     /// Create a new OntoEnv with the given configuration. Will error if the
@@ -161,17 +175,29 @@ impl OntoEnv {
         std::fs::create_dir_all(&ontoenv_dir)?;
 
         // create the store in the root/.ontoenv/store.db directory
-        Ok(Self {
+        let mut env = Self {
             config,
             ontologies: HashMap::new(),
             dependency_graph: DiGraph::new(),
             read_only: false,
             how_created,
-        })
+            inner_store: None,
+        };
+        env.inner_store = Some(env.get_store()?);
+        Ok(env)
+    }
+
+    /// Returns if the ontoenv instance is configured as read-only
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    fn store(&self) -> Store {
+        self.inner_store.clone().unwrap()
     }
 
     // TODO: add a read-only version? make this thread-safe?
-    fn store(&self) -> Result<Store> {
+    fn get_store(&self) -> Result<Store> {
         let ontoenv_dir = self.config.root.join(".ontoenv");
         std::fs::create_dir_all(&ontoenv_dir)?;
         if self.read_only {
@@ -179,7 +205,6 @@ impl OntoEnv {
                 .map_err(|e| anyhow::anyhow!("Could not open store: {}", e));
         }
         Store::open(ontoenv_dir.join("store.db"))
-            .or_else(|_| Store::open_read_only(ontoenv_dir.join("store.db")))
             .map_err(|e| anyhow::anyhow!("Could not open store: {}", e))
     }
 
@@ -235,7 +260,7 @@ impl OntoEnv {
     /// Returns the number of triples in the environment
     pub fn num_triples(&self) -> Result<usize> {
         // this construction coerces the error the the correct type
-        Ok(self.store()?.len()?)
+        Ok(self.store().len()?)
     }
 
     /// Returns an Ontology with the given name. Uses the provided policy to resolve
@@ -314,7 +339,7 @@ impl OntoEnv {
             None => self.ontologies.keys().cloned().collect(),
         };
         let mut seen: HashSet<GraphIdentifier> = HashSet::new();
-        let store = self.store()?;
+        let store = self.store();
 
         info!("Using # updated ids: {:?}", stack.len());
 
@@ -527,7 +552,7 @@ impl OntoEnv {
         // Step two: find all new and updated files
         let updated_files = self.get_updated_files()?;
 
-        let store = self.store()?;
+        let store = self.store();
 
         // Step three: add or update the ontologies from the new and updated files
         let updated_ids: Vec<GraphIdentifier> = if self.config.strict {
@@ -556,7 +581,7 @@ impl OntoEnv {
 
         // optimize the store for storage + queries
         //if !self.read_only {
-        //    self.store()?.optimize()?;
+        //    self.store().optimize()?;
         //}
 
         Ok(())
@@ -633,7 +658,7 @@ impl OntoEnv {
     /// Add the ontology from the given location to the environment. If the ontology
     /// already exists in the environment, it is overwritten.
     pub fn add(&mut self, location: OntologyLocation) -> Result<GraphIdentifier> {
-        let store = self.store()?;
+        let store = self.store();
         info!("Adding ontology from location: {:?}", location);
         self.add_or_update_ontology_from_location(location, &store)
     }
@@ -737,7 +762,7 @@ impl OntoEnv {
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let mut graph = Graph::new();
         let name = id.graphname()?;
-        let store = self.store()?;
+        let store = self.store();
         for quad in store.quads_for_pattern(None, None, None, Some(name.as_ref())) {
             graph.insert(quad?.as_ref());
         }
@@ -814,7 +839,7 @@ impl OntoEnv {
     ) -> Result<Dataset> {
         // compute union of all graphs
         let mut union: Dataset = Dataset::new();
-        let store = self.store()?;
+        let store = self.store();
         for id in graph_ids {
             let graphname: NamedOrBlankNode = match id.graphname()? {
                 GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
