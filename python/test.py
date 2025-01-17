@@ -16,6 +16,7 @@ brick = Graph()
 brick.parse("../brick/Brick.ttl", format="turtle")
 env.import_dependencies(brick)
 print(len(brick))
+env.add("https://brickschema.org/schema/1.4/Brick.ttl")
 
 
 print("new env")

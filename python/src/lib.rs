@@ -233,6 +233,12 @@ impl OntoEnv {
         Ok(())
     }
 
+    fn is_read_only(&self) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
+        Ok(env.is_read_only())
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
