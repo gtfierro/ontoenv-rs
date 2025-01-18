@@ -13,11 +13,12 @@ pub mod transform;
 use crate::config::{Config, HowCreated};
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
+use crate::consts::{TYPE, ONTOLOGY};
 use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, error, info, warn};
 use oxigraph::model::{
-    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, SubjectRef,
+    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, SubjectRef, Subject
 };
 use oxigraph::store::Store;
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
@@ -386,7 +387,7 @@ impl OntoEnv {
                         if self.config.strict {
                             return Err(e);
                         } else {
-                            error!("Failed to read ontology file {}: {}", import.as_str(), e);
+                            warn!("Failed to read ontology file {}: {}", import.as_str(), e);
                             continue;
                         }
                     }
@@ -836,6 +837,7 @@ impl OntoEnv {
         graph_ids: &[GraphIdentifier],
         rewrite_sh_prefixes: Option<bool>,
         remove_owl_imports: Option<bool>,
+        // TODO: remove_ontology_declarations
     ) -> Result<Dataset> {
         // compute union of all graphs
         let mut union: Dataset = Dataset::new();
@@ -855,6 +857,36 @@ impl OntoEnv {
                 count += 1;
                 union.insert(quad?.as_ref());
             }
+            // get the Ontology declaration: this is the triple ?name rdf:type
+            // owl:Ontology inside the 'id.graphname()' graph
+            let mut ontology: Option<Subject> = None;
+            for quad in store.quads_for_pattern(
+                None,
+                Some(TYPE),
+                Some(ONTOLOGY.into()),
+                None,
+            ) {
+                let quad = quad?;
+                ontology = Some(quad.subject.clone());
+                break;
+            }
+
+            // remove the ontology declaration from the 'union' graph
+            if let Some(ontology) = ontology {
+                let ontology_ref = ontology.as_ref();
+                let graphname = id.graphname()?;
+                let to_remove = QuadRef::new(
+                    ontology_ref,
+                    TYPE,
+                    ONTOLOGY,
+                    graphname.as_ref(),
+                );
+                if !union.remove(to_remove) {
+                    error!("Failed to remove ontology declaration: {:?}", to_remove);
+                }
+            }
+
+
             info!("Added {} triples from graph: {:?}", count, id);
         }
         let first_id = graph_ids
