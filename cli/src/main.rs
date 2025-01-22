@@ -35,7 +35,7 @@ enum Commands {
         /// Directories to search for ontologies. If not provided, the current directory is used.
         search_directories: Option<Vec<PathBuf>>,
         /// Require ontology names to be unique; will raise an error if multiple ontologies have the same name
-        #[clap(long, short, action)]
+        #[clap(long, action)]
         require_ontology_names: bool,
         /// Strict mode - will raise an error if an ontology is not found
         #[clap(long, short, action, default_value = "false")]
@@ -137,7 +137,6 @@ fn main() -> Result<()> {
             no_search,
         } => {
             // if search_directories is empty, use the current directory
-            println!("no search? {}", no_search);
             let config = Config::new(
                 current_dir()?,
                 search_directories,
