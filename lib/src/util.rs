@@ -73,6 +73,7 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     let content_type = content_type.and_then(|ct| ct.to_str().ok());
     let content_type = content_type.and_then(|ext| match ext {
         "application/x-turtle" => Some(RdfFormat::Turtle),
+        "text/turtle" => Some(RdfFormat::Turtle),
         "application/rdf+xml" => Some(RdfFormat::RdfXml),
         "text/rdf+n3" => Some(RdfFormat::NTriples),
         _ => {
