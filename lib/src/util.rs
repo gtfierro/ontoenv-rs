@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 use reqwest::header::CONTENT_TYPE;
@@ -58,15 +58,19 @@ pub fn read_file(file: &Path) -> Result<OxigraphGraph> {
     Ok(graph)
 }
 
-fn read_format(content: BufReader<_>, format: Option<RdfFormat>) -> Result<OxigraphGraph> {
+fn read_format<T: Read + Seek>(mut original_content: BufReader<T>, format: Option<RdfFormat>) -> Result<OxigraphGraph> {
+    let format = format.unwrap_or(RdfFormat::Turtle);
     for format in [
+        format,
         RdfFormat::Turtle,
         RdfFormat::RdfXml,
         RdfFormat::NTriples,
     ] {
+        let content = original_content.get_mut();
+        content.rewind()?;
         let parser = RdfParser::from_format(format);
         let mut graph = OxigraphGraph::new();
-        let mut parser = parser.for_reader(content);
+        let parser = parser.for_reader(content);
 
         // Process each quad from the parser
         for quad in parser {
