@@ -1,6 +1,6 @@
 #![feature(once_cell_try)]
 use ::ontoenv as ontoenvrs;
-use ::ontoenv::consts::{ONTOLOGY, TYPE};
+use ::ontoenv::consts::{ONTOLOGY, TYPE, IMPORTS};
 use ::ontoenv::ontology::OntologyLocation;
 use ::ontoenv::transform;
 use anyhow::Error;
@@ -118,6 +118,7 @@ fn term_to_python<'a>(
 }
 
 #[pyclass]
+#[derive(Clone)]
 struct Config {
     cfg: ontoenvrs::config::Config,
 }
@@ -125,7 +126,7 @@ struct Config {
 #[pymethods]
 impl Config {
     #[new]
-    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=vec![], excludes=vec![]))]
+    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None))]
     fn new(
         search_directories: Option<Vec<String>>,
         require_ontology_names: bool,
@@ -173,10 +174,10 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (config=None, path=Path::new(".").to_owned(), recreate=false, read_only=false))]
+    #[pyo3(signature = (config=None, path=Some(Path::new(".").to_owned()), recreate=false, read_only=false))]
     fn new(
         _py: Python,
-        config: Option<&Config>,
+        config: Option<Config>,
         path: Option<PathBuf>,
         recreate: bool,
         read_only: bool,
@@ -280,7 +281,8 @@ impl OntoEnv {
             transform::rewrite_sh_prefixes_graph(&mut graph, base_ontology);
             transform::remove_ontology_declarations_graph(&mut graph, base_ontology);
         }
-        transform::remove_owl_imports_graph(&mut graph);
+        // remove the owl:import statement for the 'uri' ontology
+        transform::remove_owl_imports_graph(&mut graph, Some(&[(&iri).into()]));   
 
         Python::with_gil(|_py| {
             for triple in graph.into_iter() {
@@ -304,6 +306,7 @@ impl OntoEnv {
         Ok(())
     }
 
+    /// List the ontologies in the imports closure of the given ontology
     #[pyo3(signature = (uri))]
     fn list_closure(&self, py: Python, uri: &str) -> PyResult<Vec<String>> {
         let iri = NamedNode::new(uri)
@@ -320,6 +323,9 @@ impl OntoEnv {
         Ok(names)
     }
 
+    /// Merge all graphs in the imports closure of the given ontology into a single graph. If
+    /// destination_graph is provided, add the merged graph to the destination_graph. If not,
+    /// return the merged graph.
     #[pyo3(signature = (uri, destination_graph=None, rewrite_sh_prefixes=false, remove_owl_imports=false))]
     fn get_closure<'a>(
         &self,
@@ -345,7 +351,7 @@ impl OntoEnv {
             Some(g) => g.clone(),
             None => rdflib.getattr("Graph")?.call0()?,
         };
-        let graph = env
+        let (graph, successful_imports, failed_imports) = env
             .get_union_graph(
                 &closure,
                 Some(rewrite_sh_prefixes),
@@ -357,7 +363,6 @@ impl OntoEnv {
                 let s: Term = triple.subject.into();
                 let p: Term = triple.predicate.into();
                 let o: Term = triple.object.into();
-
                 let t = PyTuple::new(
                     py,
                     &[
@@ -368,10 +373,24 @@ impl OntoEnv {
                 )?;
                 destination_graph.getattr("add")?.call1((t,))?;
             }
+
+            // Remove each successful_imports url in the closure from the destination_graph
+            if remove_owl_imports {
+                for graphid in successful_imports {
+                    let iri = term_to_python(py, &rdflib, Term::NamedNode(graphid.into()))?;
+                    let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
+                    // remove triples with (None, pred, iri)
+                    let remove_tuple = PyTuple::new(py, &[py.None(), pred.into(), iri.into()])?;
+                    destination_graph.getattr("remove")?.call1((remove_tuple,))?;
+                }
+            }
+
+            // Remove each url in the closure from the destination_graph
             return Ok::<Bound<'_, PyAny>, PyErr>(destination_graph);
         })
     }
 
+    /// Print the contents of the OntoEnv
     #[pyo3(signature = (includes=None))]
     fn dump(&self, py: Python, includes: Option<String>) -> PyResult<()> {
         let inner = self.inner.clone();
@@ -380,6 +399,8 @@ impl OntoEnv {
         Ok(())
     }
 
+    /// Import the dependencies of the given graph into the graph. Removes the owl:imports
+    /// of all imported ontologies.
     fn import_dependencies<'a>(
         &self,
         py: Python<'a>,
@@ -401,6 +422,7 @@ impl OntoEnv {
         self.get_closure(py, &ontology, Some(graph), true, true)
     }
 
+    /// Add a new ontology to the OntoEnv
     fn add(&self, location: &Bound<'_, PyAny>) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut env = inner.lock().unwrap();
@@ -411,6 +433,8 @@ impl OntoEnv {
         Ok(())
     }
 
+    /// Refresh the OntoEnv by re-loading all remote graphs and loading
+    /// any local graphs which have changed since the last update
     fn refresh(&self) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut env = inner.lock().unwrap();
@@ -419,6 +443,7 @@ impl OntoEnv {
         Ok(())
     }
 
+    /// Export the graph with the given URI to an rdflib.Graph
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri.to_string())
@@ -451,6 +476,7 @@ impl OntoEnv {
         Ok(res.into())
     }
 
+    /// Get the names of all ontologies in the OntoEnv
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
