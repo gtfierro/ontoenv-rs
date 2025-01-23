@@ -55,6 +55,18 @@ impl std::fmt::Display for GraphIdentifier {
     }
 }
 
+impl Into<NamedNode> for GraphIdentifier {
+    fn into(self) -> NamedNode {
+        self.name
+    }
+}
+
+impl<'a> Into<NamedNodeRef<'a>> for &'a GraphIdentifier {
+    fn into(self) -> NamedNodeRef<'a> {
+        (&self.name).into()
+    }
+}
+
 impl GraphIdentifier {
     pub fn new(name: NamedNodeRef) -> Self {
         // location is same as name

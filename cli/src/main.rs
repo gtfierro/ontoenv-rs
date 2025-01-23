@@ -207,7 +207,12 @@ fn main() -> Result<()> {
                 .get_ontology_by_name(iri.as_ref())
                 .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
             let closure = env.get_dependency_closure(ont.id())?;
-            let graph = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
+            let (graph, _successful, failed_imports) = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
+            if let Some(failed_imports) = failed_imports {
+                for imp in failed_imports {
+                    eprintln!("{}", imp);
+                }
+            }
             // write the graph to a file
             if let Some(destination) = destination {
                 write_dataset_to_file(&graph, &destination)?;
