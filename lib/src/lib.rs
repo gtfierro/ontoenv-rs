@@ -30,7 +30,7 @@ use std::fs;
 use std::io::{BufReader, Write};
 use std::path::Path;
 use walkdir::WalkDir;
-use std::fmt;
+use std::fmt::{self, Display};
 
 // custom derive for ontologies field as vec of Ontology
 fn ontologies_ser<S>(
@@ -54,6 +54,23 @@ where
         map.insert(ontology.id().clone(), ontology);
     }
     Ok(map)
+}
+
+pub struct FailedImport {
+    ontology: GraphIdentifier,
+    error: String,
+}
+
+impl FailedImport {
+    pub fn new(ontology: GraphIdentifier, error: String) -> Self {
+        Self { ontology, error }
+    }
+}
+
+impl Display for FailedImport {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to import ontology {}: {}", self.ontology, self.error)
+    }
 }
 
 pub struct EnvironmentStatus {
@@ -831,17 +848,19 @@ impl OntoEnv {
         Ok(closure)
     }
 
-    /// Returns a graph containing the union of all graphs_ids
+    /// Returns a graph containing the union of all graphs_ids, along with a list of
+    /// graphs that could and could not be imported.
     pub fn get_union_graph(
         &self,
         graph_ids: &[GraphIdentifier],
         rewrite_sh_prefixes: Option<bool>,
         remove_owl_imports: Option<bool>,
-        // TODO: remove_ontology_declarations
-    ) -> Result<Dataset> {
+    ) -> Result<(Dataset, Vec<GraphIdentifier>, Option<Vec<FailedImport>>)> {
         // compute union of all graphs
         let mut union: Dataset = Dataset::new();
         let store = self.store();
+        let mut failed_imports: Vec<FailedImport> = vec![];
+        let mut successful_imports: Vec<GraphIdentifier> = vec![];
         for id in graph_ids {
             let graphname: NamedOrBlankNode = match id.graphname()? {
                 GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
@@ -849,7 +868,11 @@ impl OntoEnv {
             };
 
             if !store.contains_named_graph(graphname.as_ref())? {
-                return Err(anyhow::anyhow!("Graph not found: {:?}", id));
+                failed_imports.push(FailedImport {
+                    ontology: id.clone(),
+                    error: "Graph not found".to_string(),
+                });
+                continue;
             }
 
             let mut count = 0;
@@ -881,12 +904,9 @@ impl OntoEnv {
                     ONTOLOGY,
                     graphname.as_ref(),
                 );
-                if !union.remove(to_remove) {
-                    error!("Failed to remove ontology declaration: {:?}", to_remove);
-                }
+                union.remove(to_remove);
             }
-
-
+            successful_imports.push(id.clone());
             info!("Added {} triples from graph: {:?}", count, id);
         }
         let first_id = graph_ids
@@ -896,15 +916,22 @@ impl OntoEnv {
 
         // Rewrite sh:prefixes
         // defaults to true if not specified
-        if let Some(true) = rewrite_sh_prefixes.or(Some(true)) {
+        if rewrite_sh_prefixes.unwrap_or(true) {
             transform::rewrite_sh_prefixes(&mut union, root_ontology);
         }
         // remove owl:imports
-        if let Some(true) = remove_owl_imports.or(Some(true)) {
-            transform::remove_owl_imports(&mut union)
+        if remove_owl_imports.unwrap_or(true) {
+            let to_remove: Vec<NamedNodeRef> = graph_ids.iter().map(|id| id.into()).collect();
+            println!("Removing owl:imports: {:?}", to_remove);
+            transform::remove_owl_imports(&mut union, Some(&to_remove));
         }
         transform::remove_ontology_declarations(&mut union, root_ontology);
-        Ok(union)
+        let failed_imports = if failed_imports.is_empty() {
+            None
+        } else {
+            Some(failed_imports)
+        };
+        Ok((union, successful_imports, failed_imports))
     }
 
     /// Returns a list of issues with the environment

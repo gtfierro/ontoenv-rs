@@ -1,5 +1,5 @@
 use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, TYPE};
-use oxigraph::model::{Dataset, Graph, Quad, QuadRef, SubjectRef, Triple, TripleRef};
+use oxigraph::model::{Dataset, Graph, Quad, QuadRef, SubjectRef, Triple, TripleRef, NamedNodeRef, TermRef};
 
 /// Rewrites all sh:prefixes in the graph to point to the provided root
 pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: SubjectRef) {
@@ -68,13 +68,24 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: SubjectRef) {
 
 /// Remove owl:imports statements from a graph. Can be helpful to do after computing the union of
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
-/// themselves
-pub fn remove_owl_imports(graph: &mut Dataset) {
-    // remove owl:imports
-    let mut to_remove: Vec<Quad> = vec![];
-    for quad in graph.quads_for_predicate(IMPORTS) {
-        to_remove.push(quad.into());
-    }
+/// themselves. If ontologies_to_remove is provided, only remove owl:imports to those ontologies
+pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+    let to_remove: Vec<Quad> = graph.quads_for_predicate(IMPORTS)
+        .filter_map(|quad| {
+            match quad.object {
+                TermRef::NamedNode(obj) => {
+                    if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
+                        Some(quad.into())
+                    } else {
+                        None
+                    }
+                }
+                _ => None
+            }
+        })
+        .collect();
+
+    // Remove the collected quads
     for quad in to_remove {
         graph.remove(quad.as_ref());
     }
@@ -83,14 +94,25 @@ pub fn remove_owl_imports(graph: &mut Dataset) {
 /// Remove owl:imports statements from a graph. Can be helpful to do after computing the union of
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
 /// themselves
-pub fn remove_owl_imports_graph(graph: &mut Graph) {
-    // remove owl:imports
-    let mut to_remove: Vec<Triple> = vec![];
-    for triple in graph.triples_for_predicate(IMPORTS) {
-        to_remove.push(triple.into());
-    }
-    for triple in to_remove {
-        graph.remove(triple.as_ref());
+pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+    let to_remove: Vec<Triple> = graph.triples_for_predicate(IMPORTS)
+        .filter_map(|triple| {
+            match triple.object {
+                TermRef::NamedNode(obj) => {
+                    if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
+                        Some(triple.into())
+                    } else {
+                        None
+                    }
+                }
+                _ => None
+            }
+        })
+        .collect();
+
+    // Remove the collected quads
+    for quad in to_remove {
+        graph.remove(quad.as_ref());
     }
 }
 
