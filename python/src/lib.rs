@@ -401,6 +401,7 @@ impl OntoEnv {
 
     /// Import the dependencies of the given graph into the graph. Removes the owl:imports
     /// of all imported ontologies.
+    #[pyo3(signature = (graph))]
     fn import_dependencies<'a>(
         &self,
         py: Python<'a>,
@@ -441,6 +442,19 @@ impl OntoEnv {
         env.update().map_err(anyhow_to_pyerr)?;
         env.save_to_directory().map_err(anyhow_to_pyerr)?;
         Ok(())
+    }
+
+    /// Get the names of all ontologies that depend on the given ontology
+    fn get_dependents(&self, uri: &str) -> PyResult<Vec<String>> {
+        let iri = NamedNode::new(uri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
+        let dependents = env
+            .get_dependents(&iri)
+            .map_err(anyhow_to_pyerr)?;
+        let names: Vec<String> = dependents.iter().map(|ont| ont.name().to_string()).collect();
+        Ok(names)
     }
 
     /// Export the graph with the given URI to an rdflib.Graph

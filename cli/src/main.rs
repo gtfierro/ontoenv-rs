@@ -108,6 +108,11 @@ enum Commands {
         #[clap(long, short)]
         output: Option<String>,
     },
+    /// Lists all ontologies which depend on the given ontology
+    Dependents {
+        /// The name (URI) of the ontology to find dependents for
+        ontologies: Vec<String>,
+    },
     /// Run the doctor to check the environment for issues
     Doctor,
     /// Reset the ontology environment by removing the .ontoenv directory
@@ -292,6 +297,19 @@ fn main() -> Result<()> {
                     "Failed to generate PDF: {}",
                     String::from_utf8_lossy(&output.stderr)
                 ));
+            }
+        }
+        Commands::Dependents { ontologies } => {
+            // load env from .ontoenv/ontoenv.json
+            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let env = OntoEnv::from_file(&path, true)?;
+            for ont in ontologies {
+                let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let dependents = env.get_dependents(&iri)?;
+                println!("Dependents of {}: ", iri);
+                for dep in dependents {
+                    println!("{}", dep);
+                }
             }
         }
         Commands::Doctor => {
