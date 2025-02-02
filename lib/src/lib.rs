@@ -201,7 +201,7 @@ impl OntoEnv {
             how_created,
             inner_store: None,
         };
-        env.inner_store = Some(env.get_store()?);
+        env.inner_store = Some(env.get_store(env.read_only)?);
         Ok(env)
     }
 
@@ -215,10 +215,10 @@ impl OntoEnv {
     }
 
     // TODO: add a read-only version? make this thread-safe?
-    fn get_store(&self) -> Result<Store> {
+    fn get_store(&self, read_only: bool) -> Result<Store> {
         let ontoenv_dir = self.config.root.join(".ontoenv");
         std::fs::create_dir_all(&ontoenv_dir)?;
-        if self.read_only {
+        if read_only {
             return Store::open_read_only(ontoenv_dir.join("store.db"))
                 .map_err(|e| anyhow::anyhow!("Could not open store: {}", e));
         }
@@ -330,7 +330,8 @@ impl OntoEnv {
 
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
-        let env: OntoEnv = serde_json::from_reader(reader)?;
+        let mut env: OntoEnv = serde_json::from_reader(reader)?;
+        env.inner_store = Some(env.get_store(read_only)?);
         Ok(Self { read_only, ..env })
     }
 
@@ -959,6 +960,17 @@ impl OntoEnv {
                 println!("  - {}", location);
             }
         }
+    }
+
+    /// Returns a list of all ontologies that depend on the given ontology
+    pub fn get_dependents(&self, id: &NamedNode) -> Result<Vec<GraphIdentifier>> {
+        let mut dependents = vec![];
+        for ontology in self.ontologies.values() {
+            if ontology.imports.contains(&id) {
+                dependents.push(ontology.id().clone());
+            }
+        }
+        Ok(dependents)
     }
 
     /// Outputs a human-readable dump of the environment, including all ontologies
