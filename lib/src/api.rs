@@ -70,7 +70,11 @@ impl OntoEnv {
         let mut file = std::fs::File::create(config_path)?;
         file.write_all(config_str.as_bytes())?;
 
-        // Save the dependency graph
+        // Save the environment
+        let env_path = ontoenv_dir.join("environment.json");
+        let env_str = serde_json::to_string_pretty(&self.env)?;
+        let mut file = std::fs::File::create(env_path)?;
+        file.write_all(env_str.as_bytes())?;
         let graph_path = ontoenv_dir.join("dependency_graph.json");
         let graph_str = serde_json::to_string_pretty(&self.dependency_graph)?;
         let mut file = std::fs::File::create(graph_path)?;
