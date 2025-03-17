@@ -1,6 +1,6 @@
+use crate::api::OntoEnv;
 use crate::consts::*;
 use crate::ontology::OntologyLocation;
-use crate::api::OntoEnv;
 use anyhow::Result;
 use oxigraph::model::NamedNode;
 use std::collections::HashMap;

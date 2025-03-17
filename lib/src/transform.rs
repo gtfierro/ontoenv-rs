@@ -1,5 +1,7 @@
 use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, TYPE};
-use oxigraph::model::{Dataset, Graph, Quad, QuadRef, SubjectRef, Triple, TripleRef, NamedNodeRef, TermRef};
+use oxigraph::model::{
+    Dataset, Graph, NamedNodeRef, Quad, QuadRef, SubjectRef, TermRef, Triple, TripleRef,
+};
 
 /// Rewrites all sh:prefixes in the graph to point to the provided root
 pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: SubjectRef) {
@@ -70,18 +72,17 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: SubjectRef) {
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
 /// themselves. If ontologies_to_remove is provided, only remove owl:imports to those ontologies
 pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[NamedNodeRef]>) {
-    let to_remove: Vec<Quad> = graph.quads_for_predicate(IMPORTS)
-        .filter_map(|quad| {
-            match quad.object {
-                TermRef::NamedNode(obj) => {
-                    if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
-                        Some(quad.into())
-                    } else {
-                        None
-                    }
+    let to_remove: Vec<Quad> = graph
+        .quads_for_predicate(IMPORTS)
+        .filter_map(|quad| match quad.object {
+            TermRef::NamedNode(obj) => {
+                if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
+                    Some(quad.into())
+                } else {
+                    None
                 }
-                _ => None
             }
+            _ => None,
         })
         .collect();
 
@@ -95,18 +96,17 @@ pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[Na
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
 /// themselves
 pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<&[NamedNodeRef]>) {
-    let to_remove: Vec<Triple> = graph.triples_for_predicate(IMPORTS)
-        .filter_map(|triple| {
-            match triple.object {
-                TermRef::NamedNode(obj) => {
-                    if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
-                        Some(triple.into())
-                    } else {
-                        None
-                    }
+    let to_remove: Vec<Triple> = graph
+        .triples_for_predicate(IMPORTS)
+        .filter_map(|triple| match triple.object {
+            TermRef::NamedNode(obj) => {
+                if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
+                    Some(triple.into())
+                } else {
+                    None
                 }
-                _ => None
             }
+            _ => None,
         })
         .collect();
 

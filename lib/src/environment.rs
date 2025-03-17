@@ -3,7 +3,7 @@ use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::policy;
 use anyhow::Result;
 use chrono::prelude::*;
-use oxigraph::model::{Graph, NamedNode, NamedNodeRef};
+use oxigraph::model::{Graph, NamedNodeRef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -37,7 +37,10 @@ where
 pub struct Environment {
     #[serde(serialize_with = "ontologies_ser", deserialize_with = "ontologies_de")]
     ontologies: HashMap<GraphIdentifier, Ontology>,
-    #[serde(serialize_with = "policy::policy_serialize", deserialize_with = "policy::policy_deserialize")]
+    #[serde(
+        serialize_with = "policy::policy_serialize",
+        deserialize_with = "policy::policy_deserialize"
+    )]
     default_policy: Box<dyn policy::ResolutionPolicy>,
     #[serde(skip)]
     pub locations: HashMap<OntologyLocation, GraphIdentifier>,
