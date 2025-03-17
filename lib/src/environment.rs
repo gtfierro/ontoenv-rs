@@ -15,6 +15,7 @@ use std::collections::HashMap;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Environment {
     ontologies: HashMap<GraphIdentifier, Ontology>,
+    #[serde(serialize_with = "policy::policy_serialize", deserialize_with = "policy::policy_deserialize")]
     default_policy: Box<dyn policy::ResolutionPolicy>,
     locations: HashMap<OntologyLocation, GraphIdentifier>,
 }
