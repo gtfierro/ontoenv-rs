@@ -60,6 +60,7 @@ impl OntoEnv {
 
     /// Saves the current environment to the .ontoenv directory.
     pub fn save_to_directory(&self) -> Result<()> {
+        println!("Saving environment");
         let ontoenv_dir = self.config.root.join(".ontoenv");
         info!("Saving ontology environment to: {:?}", ontoenv_dir);
         std::fs::create_dir_all(&ontoenv_dir)?;
@@ -67,12 +68,14 @@ impl OntoEnv {
         // Save the environment configuration
         let config_path = ontoenv_dir.join("ontoenv.json");
         let config_str = serde_json::to_string_pretty(&self.config)?;
+        println!("Config: {}", config_str);
         let mut file = std::fs::File::create(config_path)?;
         file.write_all(config_str.as_bytes())?;
 
         // Save the environment
         let env_path = ontoenv_dir.join("environment.json");
         let env_str = serde_json::to_string_pretty(&self.env)?;
+        println!("Environment: {}", env_str);
         let mut file = std::fs::File::create(env_path)?;
         file.write_all(env_str.as_bytes())?;
         let graph_path = ontoenv_dir.join("dependency_graph.json");
