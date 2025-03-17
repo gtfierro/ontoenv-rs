@@ -161,7 +161,7 @@ impl Config {
                 offline,
                 resolution_policy.to_string(),
                 false,
-                 temporary,
+                temporary,
             )
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
         })

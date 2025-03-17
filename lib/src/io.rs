@@ -5,11 +5,10 @@ use chrono::prelude::*;
 use log::debug;
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::NamedOrBlankNode;
-use oxigraph::model::{Graph, GraphName, Quad, Triple, Dataset};
+use oxigraph::model::{Dataset, Graph, GraphName, Quad, Triple};
 use oxigraph::store::Store;
 use reqwest::header::CONTENT_TYPE;
 use std::collections::HashMap;
-use std::io::BufReader;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
@@ -129,7 +128,6 @@ pub trait GraphIO {
         let content: BufReader<_> = BufReader::new(std::io::Cursor::new(resp.bytes()?));
         read_format(content, content_type)
     }
-
 }
 
 pub struct PersistentGraphIO {
@@ -261,13 +259,6 @@ impl GraphIO for MemoryGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
-        // if overwrite is false and the graph already exists, return the existing graph
-        //if !overwrite {
-        //    if let Some(id) = self.env.graphid_from_location(&location) {
-        //        return Ok(id.clone());
-        //    }
-        //}
-
         let graph = match location {
             OntologyLocation::File(ref path) => self.read_file(&path)?,
             OntologyLocation::Url(ref url) => self.read_url(&url)?,
@@ -275,7 +266,9 @@ impl GraphIO for MemoryGraphIO {
 
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
         let id = ontology.id().clone();
-        self.graphs.insert(id, graph);
+        if overwrite || self.graphs.get(&id).is_none() {
+            self.graphs.insert(id, graph);
+        }
         Ok(ontology)
     }
 

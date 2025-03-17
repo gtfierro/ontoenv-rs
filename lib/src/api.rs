@@ -4,7 +4,7 @@ use crate::environment::Environment;
 use crate::transform;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, NamedNode, NamedNodeRef};
+use oxigraph::model::{Dataset, NamedNode, NamedNodeRef, SubjectRef};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
 
@@ -273,7 +273,10 @@ impl OntoEnv {
                     .source_last_modified(ontology.id())
                     .unwrap_or(Utc::now());
                 // if the ontology has no modified time, then we assume it has never been updated
-                source_modified > ontology.last_updated.unwrap_or(Utc.timestamp_opt(0, 0).unwrap())
+                source_modified
+                    > ontology
+                        .last_updated
+                        .unwrap_or(Utc.timestamp_opt(0, 0).unwrap())
             })
             .map(|(graphid, _)| graphid.clone())
             .collect()

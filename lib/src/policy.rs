@@ -2,10 +2,10 @@
 // the policy should return the ontology that should be used.
 
 use crate::consts::ONTOLOGY_VERSION_IRIS;
-use std::fmt::Debug;
 use crate::ontology::Ontology;
 use oxigraph::model::NamedNode;
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 pub trait ResolutionPolicy: Debug {
     fn resolve<'a>(&self, name: &str, ontologies: &'a [&'a Ontology]) -> Option<&'a Ontology>;
@@ -26,7 +26,10 @@ pub fn policy_to_name(policy: &dyn ResolutionPolicy) -> &'static str {
 }
 
 // custom derives for the resolution policies
-pub fn policy_serialize<S>(policy: &Box<dyn ResolutionPolicy>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn policy_serialize<S>(
+    policy: &Box<dyn ResolutionPolicy>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -38,9 +41,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let policy_name = String::deserialize(deserializer)?;
-    policy_from_name(&policy_name).ok_or_else(|| {
-        serde::de::Error::custom(format!("Unknown policy name: {}", policy_name))
-    })
+    policy_from_name(&policy_name)
+        .ok_or_else(|| serde::de::Error::custom(format!("Unknown policy name: {}", policy_name)))
 }
 
 /// A resolution policy that always returns the first ontology with the given name.
