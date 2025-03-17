@@ -1,6 +1,6 @@
 #![feature(once_cell_try)]
 use ::ontoenv as ontoenvrs;
-use ::ontoenv::consts::{ONTOLOGY, TYPE, IMPORTS};
+use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
 use ::ontoenv::transform;
 use anyhow::Error;
@@ -126,7 +126,7 @@ struct Config {
 #[pymethods]
 impl Config {
     #[new]
-    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None))]
+    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=true))]
     fn new(
         search_directories: Option<Vec<String>>,
         require_ontology_names: bool,
@@ -136,6 +136,7 @@ impl Config {
         root: String,
         includes: Option<Vec<String>>,
         excludes: Option<Vec<String>>,
+        temporary: bool,
     ) -> PyResult<Self> {
         Ok(Config {
             cfg: ontoenvrs::config::Config::new(
@@ -160,6 +161,7 @@ impl Config {
                 offline,
                 resolution_policy.to_string(),
                 false,
+                 temporary,
             )
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
         })
@@ -282,7 +284,7 @@ impl OntoEnv {
             transform::remove_ontology_declarations_graph(&mut graph, base_ontology);
         }
         // remove the owl:import statement for the 'uri' ontology
-        transform::remove_owl_imports_graph(&mut graph, Some(&[(&iri).into()]));   
+        transform::remove_owl_imports_graph(&mut graph, Some(&[(&iri).into()]));
 
         Python::with_gil(|_py| {
             for triple in graph.into_iter() {
@@ -381,7 +383,9 @@ impl OntoEnv {
                     let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
                     // remove triples with (None, pred, iri)
                     let remove_tuple = PyTuple::new(py, &[py.None(), pred.into(), iri.into()])?;
-                    destination_graph.getattr("remove")?.call1((remove_tuple,))?;
+                    destination_graph
+                        .getattr("remove")?
+                        .call1((remove_tuple,))?;
                 }
             }
 
@@ -450,10 +454,11 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        let dependents = env
-            .get_dependents(&iri)
-            .map_err(anyhow_to_pyerr)?;
-        let names: Vec<String> = dependents.iter().map(|ont| ont.name().to_string()).collect();
+        let dependents = env.get_dependents(&iri).map_err(anyhow_to_pyerr)?;
+        let names: Vec<String> = dependents
+            .iter()
+            .map(|ont| ont.name().to_string())
+            .collect();
         Ok(names)
     }
 

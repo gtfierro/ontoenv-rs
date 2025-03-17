@@ -63,6 +63,8 @@ pub struct Config {
     pub offline: bool,
     // resolution policy
     pub resolution_policy: String,
+    // if true, do not store the ontoenv store on disk
+    pub temporary: bool,
 }
 
 impl Config {
@@ -77,6 +79,7 @@ impl Config {
         offline: bool,
         resolution_policy: String,
         no_search: bool,
+        temporary: bool,
     ) -> Result<Self>
     where
         I: IntoIterator,
@@ -106,6 +109,7 @@ impl Config {
             strict,
             offline,
             resolution_policy,
+            temporary,
         };
         let includes: Vec<String> = includes
             .into_iter()
@@ -129,11 +133,15 @@ impl Config {
         Ok(config)
     }
 
-    pub fn default_offline<K>(root: PathBuf, search_directories: Option<K>) -> Result<Self>
+    pub fn default_offline<K>(
+        root: PathBuf,
+        search_directories: Option<K>,
+        temporary: bool,
+    ) -> Result<Self>
     where
         K: IntoIterator<Item = PathBuf>,
     {
-        Self::new_with_default_matches(root, search_directories, false, false, true)
+        Self::new_with_default_matches(root, search_directories, false, false, true, temporary)
     }
 
     pub fn new_with_default_matches<K>(
@@ -142,6 +150,7 @@ impl Config {
         require_ontology_names: bool,
         strict: bool,
         offline: bool,
+        temporary: bool,
     ) -> Result<Self>
     where
         K: IntoIterator<Item = PathBuf>,
@@ -157,6 +166,7 @@ impl Config {
             offline,
             DefaultPolicy.policy_name().to_string(),
             false,
+            temporary,
         )
     }
 
