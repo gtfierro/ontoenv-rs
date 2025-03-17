@@ -2,11 +2,12 @@
 // the policy should return the ontology that should be used.
 
 use crate::consts::ONTOLOGY_VERSION_IRIS;
+use std::fmt::Debug;
 use crate::ontology::Ontology;
 use oxigraph::model::NamedNode;
 use serde::{Deserialize, Serialize};
 
-pub trait ResolutionPolicy {
+pub trait ResolutionPolicy: Debug {
     fn resolve<'a>(&self, name: &str, ontologies: &'a [&'a Ontology]) -> Option<&'a Ontology>;
     fn policy_name(&self) -> &'static str;
 }

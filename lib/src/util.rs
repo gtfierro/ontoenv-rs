@@ -58,7 +58,7 @@ pub fn read_file(file: &Path) -> Result<OxigraphGraph> {
     Ok(graph)
 }
 
-fn read_format<T: Read + Seek>(mut original_content: BufReader<T>, format: Option<RdfFormat>) -> Result<OxigraphGraph> {
+pub fn read_format<T: Read + Seek>(mut original_content: BufReader<T>, format: Option<RdfFormat>) -> Result<OxigraphGraph> {
     let format = format.unwrap_or(RdfFormat::Turtle);
     for format in [
         format,

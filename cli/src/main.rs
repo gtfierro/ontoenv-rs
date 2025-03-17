@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::{Config, EnvironmentConfig};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
-use ontoenv::OntoEnv;
 use oxigraph::model::{NamedNode, NamedNodeRef};
 use serde_json;
-use std::env::current_dir;
+use std::env::{current_dir, temp_dir};
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -49,15 +49,18 @@ enum Commands {
         /// Glob patterns for which files to exclude, defaults to []
         #[clap(long, short, num_args = 1..)]
         excludes: Vec<String>,
-        /// Recreate the environment if it already exists
+        /// Overwrite the environment if it already exists
         #[clap(long, short, default_value = "false")]
-        recreate: bool,
+        overwrite: bool,
         /// A JSON file containing a list of ontologies to add to the environment
         #[clap(long = "list", short = 'l')]
         ontology_list_file: Option<String>,
         /// Do not search for ontologies in the search directories
         #[clap(long = "no-search", short = 'n', action)]
         no_search: bool,
+        /// Use a temporary directory for the environment
+        #[clap(long, short, action)]
+        temporary: bool,
     },
     /// Prints the version of the ontoenv binary
     Version,
@@ -137,9 +140,10 @@ fn main() -> Result<()> {
             offline,
             includes,
             excludes,
-            recreate,
+            overwrite,
             ontology_list_file,
             no_search,
+            temporary,
         } => {
             // if search_directories is empty, use the current directory
             let config = Config::new(
@@ -152,15 +156,16 @@ fn main() -> Result<()> {
                 offline,
                 policy,
                 no_search,
+                temporary,
             )?;
-            let mut env = OntoEnv::new(config, recreate)?;
+            let mut env = OntoEnv::init(config, overwrite)?;
 
             // if an ontology config file is provided, load it and add the ontologies
             if let Some(file) = ontology_list_file {
                 let file = File::open(file)?;
                 let config: EnvironmentConfig = serde_json::from_reader(file)?;
                 for ont in config.ontologies {
-                    env.add(ont.location)?;
+                    env.add(ont.location, true)?;
                 }
             }
 
@@ -177,7 +182,7 @@ fn main() -> Result<()> {
         Commands::Status => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path, true)?;
+            let env = OntoEnv::load_from_directory(path)?;
             let status = env.status()?;
             // pretty print the status
             println!("{}", status);
@@ -185,7 +190,7 @@ fn main() -> Result<()> {
         Commands::Refresh => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let mut env = OntoEnv::from_file(&path, false)?;
+            let mut env = OntoEnv::load_from_directory(path)?;
             env.update()?;
             env.save_to_directory()?;
         }
@@ -203,16 +208,17 @@ fn main() -> Result<()> {
                     "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
                 ));
             }
-            let env = OntoEnv::from_file(&path, true)?;
+            let env = OntoEnv::load_from_directory(path)?;
 
             // make ontology an IRI
             let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-            let ont = env
-                .get_ontology_by_name(iri.as_ref())
+            let graphid = env
+                .resolve(ResolveTarget::Graph(iri.clone()))
                 .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
-            let closure = env.get_dependency_closure(ont.id())?;
-            let (graph, _successful, failed_imports) = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
+            let closure = env.get_dependency_closure(&graphid)?;
+            let (graph, _successful, failed_imports) =
+                env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
             if let Some(failed_imports) = failed_imports {
                 for imp in failed_imports {
                     eprintln!("{}", imp);
@@ -228,7 +234,7 @@ fn main() -> Result<()> {
         Commands::Add { url, file } => {
             // load env from .ontoenv/ontoenv.json
             let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let mut env = OntoEnv::from_file(&path, false)?;
+            let mut env = OntoEnv::load_from_directory(path)?;
 
             let location: OntologyLocation = match (url, file) {
                 (Some(url), None) => OntologyLocation::Url(url),
@@ -236,13 +242,13 @@ fn main() -> Result<()> {
                 _ => return Err(anyhow::anyhow!("Must specify either --url or --file")),
             };
 
-            env.add(location)?;
+            env.add(location, true)?;
             env.save_to_directory()?;
         }
         Commands::ListOntologies => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path, true)?;
+            let path = current_dir()?;
+            let env = OntoEnv::load_from_directory(path)?;
             // print list of ontology URLs from env.onologies.values() sorted alphabetically
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
@@ -253,8 +259,8 @@ fn main() -> Result<()> {
         }
         Commands::ListLocations => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path, true)?;
+            let path = current_dir()?;
+            let env = OntoEnv::load_from_directory(path)?;
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
             for ont in ontologies {
@@ -263,21 +269,20 @@ fn main() -> Result<()> {
         }
         Commands::Dump { contains } => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path, true)?;
+            let path = current_dir()?;
+            let env = OntoEnv::load_from_directory(path)?;
             env.dump(contains.as_deref());
         }
         Commands::DepGraph { roots, output } => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path, true)?;
+            let path = current_dir()?;
+            let env = OntoEnv::load_from_directory(path)?;
             let dot = if let Some(roots) = roots {
                 let roots: Vec<GraphIdentifier> = roots
                     .iter()
                     .map(|iri| {
-                        env.get_ontology_by_name(NamedNodeRef::new(iri).unwrap())
+                        env.resolve(ResolveTarget::Graph(NamedNode::new(iri).unwrap()))
                             .unwrap()
-                            .id()
                             .clone()
                     })
                     .collect();
@@ -286,7 +291,7 @@ fn main() -> Result<()> {
                 env.dep_graph_to_dot()?
             };
             // call graphviz to generate PDF
-            let dot_path = current_dir()?.join("dep_graph.dot");
+            let dot_path = current_dir()?;
             std::fs::write(&dot_path, dot)?;
             let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
             let output = std::process::Command::new("dot")
@@ -301,8 +306,8 @@ fn main() -> Result<()> {
         }
         Commands::Dependents { ontologies } => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path, true)?;
+            let path = current_dir()?;
+            let env = OntoEnv::load_from_directory(path)?;
             for ont in ontologies {
                 let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let dependents = env.get_dependents(&iri)?;
@@ -314,8 +319,8 @@ fn main() -> Result<()> {
         }
         Commands::Doctor => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
-            let env = OntoEnv::from_file(&path, true)?;
+            let path = current_dir()?;
+            let env = OntoEnv::load_from_directory(path)?;
             env.doctor();
         }
         Commands::Reset => {
