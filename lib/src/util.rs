@@ -8,7 +8,7 @@ use reqwest::header::CONTENT_TYPE;
 use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::graph::Graph as OxigraphGraph;
 use oxigraph::model::Dataset;
-use oxigraph::model::{GraphNameRef, Quad, QuadRef, Triple, TripleRef};
+use oxigraph::model::{GraphNameRef, Quad, Triple, TripleRef};
 
 use std::io::BufReader;
 

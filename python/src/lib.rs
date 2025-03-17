@@ -310,7 +310,7 @@ impl OntoEnv {
 
     /// List the ontologies in the imports closure of the given ontology
     #[pyo3(signature = (uri))]
-    fn list_closure(&self, py: Python, uri: &str) -> PyResult<Vec<String>> {
+    fn list_closure(&self, _py: Python, uri: &str) -> PyResult<Vec<String>> {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
@@ -353,7 +353,7 @@ impl OntoEnv {
             Some(g) => g.clone(),
             None => rdflib.getattr("Graph")?.call0()?,
         };
-        let (graph, successful_imports, failed_imports) = env
+        let (graph, successful_imports, _failed_imports) = env
             .get_union_graph(
                 &closure,
                 Some(rewrite_sh_prefixes),
@@ -396,7 +396,7 @@ impl OntoEnv {
 
     /// Print the contents of the OntoEnv
     #[pyo3(signature = (includes=None))]
-    fn dump(&self, py: Python, includes: Option<String>) -> PyResult<()> {
+    fn dump(&self, _py: Python, includes: Option<String>) -> PyResult<()> {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
         env.dump(includes.as_deref());
