@@ -10,14 +10,40 @@ use oxigraph::model::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// custom derive for ontologies field as vec of Ontology
+fn ontologies_ser<S>(
+    ontologies: &HashMap<GraphIdentifier, Ontology>,
+    s: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let vec: Vec<&Ontology> = ontologies.values().collect();
+    vec.serialize(s)
+}
+
+fn ontologies_de<'de, D>(d: D) -> Result<HashMap<GraphIdentifier, Ontology>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let vec: Vec<Ontology> = Vec::deserialize(d)?;
+    let mut map = HashMap::new();
+    for ontology in vec {
+        map.insert(ontology.id().clone(), ontology);
+    }
+    Ok(map)
+}
+
 /// A struct that holds the ontology environment: all the mappings
 /// between ontology names and their respective graph identifiers and locations.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Environment {
+    #[serde(serialize_with = "ontologies_ser", deserialize_with = "ontologies_de")]
     ontologies: HashMap<GraphIdentifier, Ontology>,
     #[serde(serialize_with = "policy::policy_serialize", deserialize_with = "policy::policy_deserialize")]
     default_policy: Box<dyn policy::ResolutionPolicy>,
-    locations: HashMap<OntologyLocation, GraphIdentifier>,
+    #[serde(skip)]
+    pub locations: HashMap<OntologyLocation, GraphIdentifier>,
 }
 
 impl Clone for Environment {

@@ -21,6 +21,28 @@ pub fn policy_from_name(name: &str) -> Option<Box<dyn ResolutionPolicy>> {
     }
 }
 
+pub fn policy_to_name(policy: &dyn ResolutionPolicy) -> &'static str {
+    policy.policy_name()
+}
+
+// custom derives for the resolution policies
+pub fn policy_serialize<S>(policy: &Box<dyn ResolutionPolicy>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(policy.policy_name())
+}
+
+pub fn policy_deserialize<'de, D>(deserializer: D) -> Result<Box<dyn ResolutionPolicy>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let policy_name = String::deserialize(deserializer)?;
+    policy_from_name(&policy_name).ok_or_else(|| {
+        serde::de::Error::custom(format!("Unknown policy name: {}", policy_name))
+    })
+}
+
 /// A resolution policy that always returns the first ontology with the given name.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DefaultPolicy;
