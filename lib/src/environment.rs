@@ -7,11 +7,12 @@ use oxigraph::model::{
     Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, Subject,
     SubjectRef,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A struct that holds the ontology environment: all the mappings
 /// between ontology names and their respective graph identifiers and locations.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Environment {
     ontologies: HashMap<GraphIdentifier, Ontology>,
     default_policy: Box<dyn policy::ResolutionPolicy>,
