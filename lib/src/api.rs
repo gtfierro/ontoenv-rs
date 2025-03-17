@@ -106,8 +106,19 @@ impl OntoEnv {
         let dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed> =
             serde_json::from_reader(reader)?;
 
-        // Initialize the environment and IO
-        let env = Environment::new();
+        // Load the environment
+        let env_path = ontoenv_dir.join("environment.json");
+        let file = std::fs::File::open(env_path)?;
+        let reader = BufReader::new(file);
+        // TODO: clean up the locations field loading
+        let mut env: Environment = serde_json::from_reader(reader)?;
+        let mut locations: HashMap<OntologyLocation, GraphIdentifier> = HashMap::new();
+        for ontology in env.ontologies().values() {
+            locations.insert(ontology.location().unwrap().clone(), ontology.id().clone());
+        }
+        env.locations = locations;
+
+        // Initialize the IO
         let io: Box<dyn GraphIO> = if config.temporary {
             Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict))
         } else {
