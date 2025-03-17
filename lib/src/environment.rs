@@ -3,10 +3,7 @@ use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::policy;
 use anyhow::Result;
 use chrono::prelude::*;
-use oxigraph::model::{
-    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, Subject,
-    SubjectRef,
-};
+use oxigraph::model::{Graph, NamedNode, NamedNodeRef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

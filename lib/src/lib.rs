@@ -15,7 +15,6 @@ pub mod transform;
 
 use crate::config::{Config, HowCreated};
 use crate::consts::{ONTOLOGY, TYPE};
-use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
 use chrono::prelude::*;

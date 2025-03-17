@@ -4,9 +4,9 @@ use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::{Config, EnvironmentConfig};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
-use oxigraph::model::{NamedNode, NamedNodeRef};
+use oxigraph::model::NamedNode;
 use serde_json;
-use std::env::{current_dir, temp_dir};
+use std::env::current_dir;
 use std::fs::File;
 use std::path::PathBuf;
 

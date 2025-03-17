@@ -1,4 +1,3 @@
-use crate::environment::Environment;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::util::read_format;
 use anyhow::{anyhow, Result};
@@ -11,7 +10,7 @@ use oxigraph::store::Store;
 use reqwest::header::CONTENT_TYPE;
 use std::collections::HashMap;
 use std::io::BufReader;
-use std::io::{Read, Seek};
+use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -25,7 +24,7 @@ pub trait GraphIO {
 
     /// Adds a graph to the store and returns the ontology metadata. Overwrites any existing graph with
     /// the same identifier if 'overwrite' is true.
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology>;
+    fn add(&mut self, location: OntologyLocation, _overwrite: bool) -> Result<Ontology>;
 
     /// Removes the graph with the given identifier from the store and ontology metadata
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()>;
