@@ -181,7 +181,7 @@ fn main() -> Result<()> {
         }
         Commands::Status => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let path = current_dir()?;
             let env = OntoEnv::load_from_directory(path)?;
             let status = env.status()?;
             // pretty print the status
@@ -189,7 +189,7 @@ fn main() -> Result<()> {
         }
         Commands::Refresh => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let path = current_dir()?;
             let mut env = OntoEnv::load_from_directory(path)?;
             env.update()?;
             env.save_to_directory()?;
@@ -201,7 +201,7 @@ fn main() -> Result<()> {
             destination,
         } => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let path = current_dir()?;
             // if the path doesn't exist, raise an error
             if !path.exists() {
                 return Err(anyhow::anyhow!(
@@ -233,7 +233,7 @@ fn main() -> Result<()> {
         }
         Commands::Add { url, file } => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?.join(".ontoenv/ontoenv.json");
+            let path = current_dir()?;
             let mut env = OntoEnv::load_from_directory(path)?;
 
             let location: OntologyLocation = match (url, file) {
