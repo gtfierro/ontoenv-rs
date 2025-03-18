@@ -1,6 +1,7 @@
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
+use crate::errors::OfflineRetrievalError;
 use crate::util::read_format;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Error};
 use chrono::prelude::*;
 use log::debug;
 use oxigraph::io::{RdfFormat, RdfParser};
@@ -190,7 +191,13 @@ impl GraphIO for PersistentGraphIO {
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
         let graph = match location {
             OntologyLocation::File(ref path) => self.read_file(&path)?,
-            OntologyLocation::Url(ref url) => self.read_url(&url)?,
+            OntologyLocation::Url(ref url) => if self.offline {
+                return Err(Error::new(OfflineRetrievalError {
+                    file: url.clone(),
+                }))
+            } else {
+                self.read_url(&url)?
+            },
         };
 
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
@@ -288,7 +295,13 @@ impl GraphIO for MemoryGraphIO {
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
         let graph = match location {
             OntologyLocation::File(ref path) => self.read_file(&path)?,
-            OntologyLocation::Url(ref url) => self.read_url(&url)?,
+            OntologyLocation::Url(ref url) => if self.offline {
+                return Err(Error::new(OfflineRetrievalError {
+                    file: url.clone(),
+                }))
+            } else {
+                self.read_url(&url)?
+            },
         };
 
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
