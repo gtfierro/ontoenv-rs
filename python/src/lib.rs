@@ -1,5 +1,6 @@
 #![feature(once_cell_try)]
-use ::ontoenv as ontoenvrs;
+use ::ontoenv::api::OntoEnv as OntoEnvRs;
+use ::ontoenv::config::Config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ontology::OntologyLocation;
 use ::ontoenv::transform;
@@ -14,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Once, OnceLock};
 
 static INIT: Once = Once::new();
-static ONTOENV_SINGLETON: OnceLock<Arc<Mutex<ontoenvrs::OntoEnv>>> = OnceLock::new();
+static ONTOENV_SINGLETON: OnceLock<Arc<Mutex<OntoEnvRs>>> = OnceLock::new();
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -120,7 +121,7 @@ fn term_to_python<'a>(
 #[pyclass]
 #[derive(Clone)]
 struct Config {
-    cfg: ontoenvrs::config::Config,
+    cfg: config::Config,
 }
 
 #[pymethods]
@@ -139,7 +140,7 @@ impl Config {
         temporary: bool,
     ) -> PyResult<Self> {
         Ok(Config {
-            cfg: ontoenvrs::config::Config::new(
+            cfg: config::Config::new(
                 root.to_string().into(),
                 search_directories.map(|dirs| {
                     dirs.iter()
@@ -170,7 +171,7 @@ impl Config {
 
 #[pyclass]
 struct OntoEnv {
-    inner: Arc<Mutex<ontoenvrs::OntoEnv>>,
+    inner: Arc<Mutex<OntoEnvRs>>,
 }
 
 #[pymethods]
@@ -198,7 +199,7 @@ impl OntoEnv {
             // if no Config provided, but there is a path, load the OntoEnv from file
             // otherwise, create a new OntoEnv
             if config.is_none() && config_path.is_some() && config_path.as_ref().unwrap().exists(){
-                if let Ok(env) = ontoenvrs::OntoEnv::from_file(&config_path.unwrap(), read_only) {
+                if let Ok(env) = OntoEnvRs::from_file(&config_path.unwrap(), read_only) {
                     println!("Loaded OntoEnv from file");
                     return Ok(Arc::new(Mutex::new(env)));
                 }
@@ -207,7 +208,7 @@ impl OntoEnv {
             // if config is provided, create a new OntoEnv with the provided config
             if let Some(c) = config {
                 println!("Creating new OntoEnv with provided config");
-                let inner = ontoenvrs::OntoEnv::new(c.cfg.clone(), recreate)
+                let inner = OntoEnvRs::new(c.cfg.clone(), recreate)
                     .map_err(anyhow_to_pyerr)?;
                 return Ok(Arc::new(Mutex::new(inner)));
             }
