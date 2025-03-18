@@ -148,12 +148,33 @@ impl OntoEnv {
             num_ontologies,
             last_updated: Some(last_updated),
             store_size: size,
-            how_created: crate::config::HowCreated::New,
         })
     }
 
     pub fn ontologies(&self) -> &HashMap<GraphIdentifier, Ontology> {
         self.env.ontologies()
+    }
+
+    /// Returns a table of metadata for the given graph
+    pub fn graph_metadata(&self, id: &GraphIdentifier) -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+        if let Some(ontology) = self.ontologies().get(id) {
+            metadata.insert("name".to_string(), ontology.name().to_string());
+            metadata.insert(
+                "location".to_string(),
+                ontology
+                    .location()
+                    .map_or("".to_string(), |loc| loc.to_string()),
+            );
+            if let Some(last_updated) = ontology.last_updated {
+                metadata.insert("last_updated".to_string(), last_updated.to_string());
+            }
+            // add all metadata from the graph ontology object
+            for (key, value) in ontology.version_properties().iter() {
+                metadata.insert(key.to_string(), value.to_string());
+            }
+        }
+        metadata
     }
 
     /// Initializes a new API environment. If the environment directory already exists:
