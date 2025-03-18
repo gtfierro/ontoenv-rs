@@ -56,7 +56,6 @@ impl OntoEnv {
 
     /// Saves the current environment to the .ontoenv directory.
     pub fn save_to_directory(&self) -> Result<()> {
-        println!("Saving environment");
         let ontoenv_dir = self.config.root.join(".ontoenv");
         info!("Saving ontology environment to: {:?}", ontoenv_dir);
         std::fs::create_dir_all(&ontoenv_dir)?;
@@ -64,14 +63,12 @@ impl OntoEnv {
         // Save the environment configuration
         let config_path = ontoenv_dir.join("ontoenv.json");
         let config_str = serde_json::to_string_pretty(&self.config)?;
-        println!("Config: {}", config_str);
         let mut file = std::fs::File::create(config_path)?;
         file.write_all(config_str.as_bytes())?;
 
         // Save the environment
         let env_path = ontoenv_dir.join("environment.json");
         let env_str = serde_json::to_string_pretty(&self.env)?;
-        println!("Environment: {}", env_str);
         let mut file = std::fs::File::create(env_path)?;
         file.write_all(env_str.as_bytes())?;
         let graph_path = ontoenv_dir.join("dependency_graph.json");
@@ -248,7 +245,6 @@ impl OntoEnv {
             ontologies.push(ontology);
         }
 
-        warn!("Updated ids: {:?}", ontologies);
         let mut update_ids: Vec<GraphIdentifier> = Vec::new();
         // add the ontologies to the environment
         for ontology in ontologies {
@@ -257,7 +253,6 @@ impl OntoEnv {
             update_ids.push(id);
         }
         self.add_ids_to_dependency_graph(update_ids)?;
-        warn!("Updated dependency graph");
         Ok(())
     }
 
@@ -533,7 +528,6 @@ impl OntoEnv {
         // remove owl:imports
         if remove_owl_imports.unwrap_or(true) {
             let to_remove: Vec<NamedNodeRef> = graph_ids.iter().map(|id| id.into()).collect();
-            println!("Removing owl:imports: {:?}", to_remove);
             transform::remove_owl_imports(&mut dataset, Some(&to_remove));
         }
         transform::remove_ontology_declarations(&mut dataset, root_ontology);
@@ -610,7 +604,6 @@ impl OntoEnv {
     /// and their metadata and imports
     pub fn dump(&self, contains: Option<&str>) {
         let mut ontologies = self.ontologies().clone();
-        println!("Ontologies #{}", ontologies.len());
         let mut groups: HashMap<NamedNode, Vec<Ontology>> = HashMap::new();
         for ontology in ontologies.values_mut() {
             let name = ontology.name();
