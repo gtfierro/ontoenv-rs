@@ -146,11 +146,8 @@ pub struct PersistentGraphIO {
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
-        let store = if offline {
-            Store::open_read_only(path)?
-        } else {
-            Store::open(path)?
-        };
+        let store_path = path.join("store.db");
+        let store = Store::open(store_path)?;
         Ok(Self {
             store,
             offline,
