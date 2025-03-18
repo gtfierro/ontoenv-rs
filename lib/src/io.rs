@@ -13,6 +13,11 @@ use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 
+pub struct SizeStats {
+    pub num_graphs: usize,
+    pub num_triples: usize,
+}
+
 pub trait GraphIO {
     /// Returns true if the store is offline; if this is true, then the store
     /// will not fetch any data from the internet
@@ -20,6 +25,9 @@ pub trait GraphIO {
     fn is_offline(&self) -> bool;
     /// Returns the graph with the given identifier
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph>;
+
+    /// Returns the size of the underlying store.
+    fn size(&self) -> Result<SizeStats>;
 
     /// Adds a graph to the store and returns the ontology metadata. Overwrites any existing graph with
     /// the same identifier if 'overwrite' is true.
@@ -156,6 +164,15 @@ impl GraphIO for PersistentGraphIO {
         self.offline
     }
 
+    fn size(&self) -> Result<SizeStats> {
+        let num_graphs = self.store.named_graphs().count();
+        let num_triples = self.store.len()?;
+        Ok(SizeStats {
+            num_graphs,
+            num_triples,
+        })
+    }
+
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
         let mut graph = Dataset::new();
         for id in ids {
@@ -239,6 +256,19 @@ impl MemoryGraphIO {
 impl GraphIO for MemoryGraphIO {
     fn is_offline(&self) -> bool {
         self.offline
+    }
+
+    fn size(&self) -> Result<SizeStats> {
+        let num_graphs = self.graphs.len();
+        let num_triples = self
+            .graphs
+            .values()
+            .map(|g| g.len())
+            .fold(0, |acc, x| acc + x);
+        Ok(SizeStats {
+            num_graphs,
+            num_triples,
+        })
     }
 
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
