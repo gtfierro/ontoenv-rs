@@ -11,7 +11,7 @@ use pyo3::{
 };
 use std::borrow::Borrow;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -120,7 +120,7 @@ struct Config {
     cfg: config::Config,
 }
 
-#[pymethods]
+static INIT: Once = Once::new();
 impl Config {
     #[new]
     #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=true))]
@@ -183,7 +183,9 @@ impl OntoEnv {
     ) -> PyResult<Self> {
         // wrap env_logger::init() in a Once to ensure it's only called once. This can
         // happen if a user script creates multiple OntoEnv instances
-        env_logger::init();
+        INIT.call_once(|| {
+            env_logger::init();
+        });
 
         let config_path = path
             .as_ref()
