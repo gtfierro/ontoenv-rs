@@ -272,6 +272,21 @@ impl Ontology {
         &self.id
     }
 
+    pub fn exists(&self) -> bool {
+        match &self.location {
+            Some(OntologyLocation::File(p)) => p.exists(),
+            Some(OntologyLocation::Url(u)) => {
+                // check if the URL is reachable
+                let res = reqwest::blocking::get(u);
+                match res {
+                    Ok(r) => r.status().is_success(),
+                    Err(_) => false,
+                }
+            }
+            None => false,
+        }
+    }
+
     pub fn version_properties(&self) -> &HashMap<NamedNode, String> {
         &self.version_properties
     }
