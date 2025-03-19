@@ -12,7 +12,7 @@ use oxigraph::model::{GraphNameRef, Quad, Triple, TripleRef};
 
 use std::io::BufReader;
 
-use log::{debug, info};
+use log::{debug, info, error};
 
 pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
     info!(
@@ -106,7 +106,8 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
         .header(CONTENT_TYPE, "application/x-turtle")
         .send()?;
     if !resp.status().is_success() {
-        return Err(anyhow::anyhow!("Failed to fetch ontology from {}", file));
+        error!("Failed to fetch ontology from {} ({})", file, resp.status());
+        return Err(anyhow::anyhow!("Failed to fetch ontology from {} ({})", file, resp.status()));
     }
     let content_type = resp.headers().get("Content-Type");
     let content_type = content_type.and_then(|ct| ct.to_str().ok());

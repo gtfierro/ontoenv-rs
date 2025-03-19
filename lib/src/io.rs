@@ -3,7 +3,7 @@ use crate::errors::OfflineRetrievalError;
 use crate::util::read_format;
 use anyhow::{anyhow, Result, Error};
 use chrono::prelude::*;
-use log::debug;
+use log::{debug, error};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::NamedOrBlankNode;
 use oxigraph::model::{Dataset, Graph, GraphName, Quad, Triple};
@@ -14,12 +14,12 @@ use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub struct SizeStats {
+pub struct StoreStats {
     pub num_graphs: usize,
     pub num_triples: usize,
 }
 
-pub trait GraphIO {
+pub trait GraphIO: Send + Sync {
     /// Returns true if the store is offline; if this is true, then the store
     /// will not fetch any data from the internet
 
@@ -27,8 +27,11 @@ pub trait GraphIO {
     /// Returns the graph with the given identifier
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph>;
 
+    /// Returns the path to the store, if it is a file-based store
+    fn store_location(&self) -> Option<&Path>;
+
     /// Returns the size of the underlying store.
-    fn size(&self) -> Result<SizeStats>;
+    fn size(&self) -> Result<StoreStats>;
 
     /// Adds a graph to the store and returns the ontology metadata. Overwrites any existing graph with
     /// the same identifier if 'overwrite' is true.
@@ -119,7 +122,8 @@ pub trait GraphIO {
             .header(CONTENT_TYPE, "application/x-turtle")
             .send()?;
         if !resp.status().is_success() {
-            return Err(anyhow::anyhow!("Failed to fetch ontology from {}", file));
+            error!("Failed to fetch ontology from {} ({})", file, resp.status());
+            return Err(anyhow::anyhow!("Failed to fetch ontology from {} ({})", file, resp.status()));
         }
         let content_type = resp.headers().get("Content-Type");
         let content_type = content_type.and_then(|ct| ct.to_str().ok());
@@ -143,16 +147,18 @@ pub struct PersistentGraphIO {
     store: Store,
     offline: bool,
     strict: bool,
+    store_path: PathBuf,
 }
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
         let store_path = path.join("store.db");
-        let store = Store::open(store_path)?;
+        let store = Store::open(store_path.clone())?;
         Ok(Self {
             store,
             offline,
             strict,
+            store_path,
         })
     }
 }
@@ -162,13 +168,17 @@ impl GraphIO for PersistentGraphIO {
         self.offline
     }
 
-    fn size(&self) -> Result<SizeStats> {
+    fn size(&self) -> Result<StoreStats> {
         let num_graphs = self.store.named_graphs().count();
         let num_triples = self.store.len()?;
-        Ok(SizeStats {
+        Ok(StoreStats {
             num_graphs,
             num_triples,
         })
+    }
+
+    fn store_location(&self) -> Option<&Path> {
+        Some(&self.store_path)
     }
 
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
@@ -262,14 +272,18 @@ impl GraphIO for MemoryGraphIO {
         self.offline
     }
 
-    fn size(&self) -> Result<SizeStats> {
+    fn store_location(&self) -> Option<&Path> {
+        None
+    }
+
+    fn size(&self) -> Result<StoreStats> {
         let num_graphs = self.graphs.len();
         let num_triples = self
             .graphs
             .values()
             .map(|g| g.len())
             .fold(0, |acc, x| acc + x);
-        Ok(SizeStats {
+        Ok(StoreStats {
             num_graphs,
             num_triples,
         })
