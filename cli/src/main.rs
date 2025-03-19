@@ -291,7 +291,7 @@ fn main() -> Result<()> {
                 env.dep_graph_to_dot()?
             };
             // call graphviz to generate PDF
-            let dot_path = current_dir()?;
+            let dot_path = current_dir()?.join("dep_graph.dot");
             std::fs::write(&dot_path, dot)?;
             let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
             let output = std::process::Command::new("dot")

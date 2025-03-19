@@ -125,7 +125,7 @@ struct Config {
 #[pymethods]
 impl Config {
     #[new]
-    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=true))]
+    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false))]
     fn new(
         search_directories: Option<Vec<String>>,
         require_ontology_names: bool,

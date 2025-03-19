@@ -19,22 +19,24 @@ brick.parse("../brick/Brick.ttl", format="turtle")
 env.import_dependencies(brick)
 print(len(brick))
 env.add("https://brickschema.org/schema/1.4/Brick.ttl")
+del env
 
 print("new env")
 env2 = OntoEnv()
+print(env2.store_path())
 
 print("get brick again from URL")
-brick = env2.get_graph("https://brickschema.org/schema/1.4.2/Brick")
+brick = env2.get_graph("https://brickschema.org/schema/1.4/Brick")
 print(len(brick))
 print(brick)
 print(type(brick))
 
-print(env2.list_closure("https://brickschema.org/schema/1.4.2/Brick"))
+print("brick closure", env2.list_closure("https://brickschema.org/schema/1.4/Brick"))
 
 env2.import_graph(brick, "https://w3id.org/rec")
 brick.serialize("test.ttl", format="turtle")
 
-print(env2.get_dependents('https://brickschema.org/schema/1.4.2/Brick'))
+print("qudtqk deps", env2.get_dependents('http://qudt.org/2.1/vocab/quantitykind'))
 
 # get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
 ds = env2.to_rdflib_dataset()
