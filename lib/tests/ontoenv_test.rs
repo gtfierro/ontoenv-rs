@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ontoenv::config::{Config, HowCreated};
 use ontoenv::ontology::OntologyLocation;
-use ontoenv::OntoEnv;
+use ontoenv::api::OntoEnv;
 use oxigraph::model::NamedNodeRef;
 use std::path::PathBuf;
 use tempdir::TempDir;
@@ -123,7 +123,7 @@ fn test_ontoenv_scans() -> Result<()> {
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     // print the files in dir
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
     teardown(dir);
@@ -144,7 +144,7 @@ fn test_ontoenv_scans_default() -> Result<()> {
         false,
         true,
     )?;
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
     teardown(dir);
@@ -169,7 +169,7 @@ fn test_ontoenv_num_triples() -> Result<()> {
         true,
         "default".to_string(),
     )?;
-    let mut env = OntoEnv::new(cfg1, false)?;
+    let mut env = OntoEnv::init(cfg1, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 1);
     assert_eq!(env.num_triples()?, 5);
@@ -185,7 +185,7 @@ fn test_ontoenv_update() -> Result<()> {
                    "fixtures/ont3.ttl" => "ont3.ttl",
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
     let old_num_triples = env.num_triples()?;
     assert_eq!(env.num_graphs(), 4);
@@ -223,22 +223,22 @@ fn test_recreate() -> Result<()> {
                    "fixtures/ont3.ttl" => "ont3.ttl",
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     let cfg = default_config(&dir);
-    let env = OntoEnv::new(cfg, false)?;
+    let env = OntoEnv::init(cfg, false)?;
     env.save_to_directory()?;
     assert_eq!(env.get_how_created(), HowCreated::New);
     // create a new env with the same config. This should still work.
     let cfg = default_config(&dir);
-    let env = OntoEnv::new(cfg, false)?;
+    let env = OntoEnv::init(cfg, false)?;
     env.save_to_directory()?;
     assert_eq!(env.get_how_created(), HowCreated::SameConfig);
     // change the config; this should trigger a recreation of the environment
     let cfg = default_config_ttl_only(&dir);
-    let env = OntoEnv::new(cfg, false)?;
+    let env = OntoEnv::init(cfg, false)?;
     env.save_to_directory()?;
     assert_eq!(env.get_how_created(), HowCreated::RecreatedDifferentConfig);
     // now try to recreate the env with the same config but with recreate set to true
     let cfg = default_config(&dir);
-    let env = OntoEnv::new(cfg, true)?;
+    let env = OntoEnv::init(cfg, true)?;
     env.save_to_directory()?;
     assert_eq!(env.get_how_created(), HowCreated::RecreatedFlag);
 
@@ -254,7 +254,7 @@ fn test_ontoenv_retrieval_by_name() -> Result<()> {
                    "fixtures/ont3.ttl" => "ont3.ttl",
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
 
     let ont1 = NamedNodeRef::new("urn:ont1")?;
@@ -282,7 +282,7 @@ fn test_ontoenv_retrieval_by_location() -> Result<()> {
                    "fixtures/ont3.ttl" => "ont3.ttl",
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
 
     let ont1_path = dir.path().join("ont1.ttl");
@@ -311,7 +311,7 @@ fn test_ontoenv_load() -> Result<()> {
                    "fixtures/ont3.ttl" => "ont3.ttl",
                    "fixtures/ont4.ttl" => "ont4.ttl" });
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
     env.save_to_directory()?;
@@ -337,7 +337,7 @@ fn test_ontoenv_add() -> Result<()> {
     });
 
     let cfg1 = default_config_with_subdir(&dir, "v1");
-    let mut env = OntoEnv::new(cfg1, false)?;
+    let mut env = OntoEnv::init(cfg1, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
 
@@ -362,7 +362,7 @@ fn test_ontoenv_detect_updates() -> Result<()> {
                   "fixtures/updates/v1/ont4.ttl" => "v1/ont4.ttl",
     });
     let cfg1 = default_config_with_subdir(&dir, "v1");
-    let mut env = OntoEnv::new(cfg1, false)?;
+    let mut env = OntoEnv::init(cfg1, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
 
@@ -388,7 +388,7 @@ fn test_check_for_updates() -> Result<()> {
                   "fixtures/updates/v1/ont2.ttl" => "v1/ont2.ttl",
                   "fixtures/updates/v1/ont3.ttl" => "v1/ont3.ttl",
                   "fixtures/updates/v1/ont4.ttl" => "v1/ont4.ttl" });
-    let mut env = OntoEnv::new(cfg1, false)?;
+    let mut env = OntoEnv::init(cfg1, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
 
@@ -431,7 +431,7 @@ fn test_ontoenv_dependency_closure() -> Result<()> {
                   "fixtures/brick-stuff/support/recimports.ttl" => "support/recimports.ttl",
                   "fixtures/brick-stuff/support/ref-schema.ttl" => "support/ref-schema.ttl"});
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
 
     assert_eq!(env.num_graphs(), 21);
@@ -455,7 +455,7 @@ fn test_ontoenv_dag_structure() -> Result<()> {
                   "fixtures/rdftest/ontology6.ttl" => "ontology6.ttl"});
 
     let cfg = default_config(&dir);
-    let mut env = OntoEnv::new(cfg, false)?;
+    let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
 
     // should have 6 ontologies in the environment
@@ -468,9 +468,9 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let ont_graph = env.get_ontology_by_name(ont2).unwrap();
     let closure = env.get_dependency_closure(ont_graph.id()).unwrap();
     assert_eq!(closure.len(), 2);
-    let union = env.get_union_graph(&closure, None, None)?;
+    let union, _, _ = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 4);
-    let union = env.get_union_graph(&closure, None, Some(false))?;
+    let union, _, _ = env.get_union_graph(&closure, None, Some(false))?;
     assert_eq!(union.len(), 5);
 
     // ont3 => {ont3, ont2, ont1}
@@ -478,9 +478,9 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let ont_graph = env.get_ontology_by_name(ont3).unwrap();
     let closure = env.get_dependency_closure(ont_graph.id()).unwrap();
     assert_eq!(closure.len(), 3);
-    let union = env.get_union_graph(&closure, None, None)?;
+    let union, _, _ = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 5);
-    let union = env.get_union_graph(&closure, None, Some(false))?;
+    let union, _, _ = env.get_union_graph(&closure, None, Some(false))?;
     assert_eq!(union.len(), 8);
 
     // ont5 => {ont5, ont4, ont3, ont2, ont1}
@@ -488,9 +488,9 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let ont_graph = env.get_ontology_by_name(ont5).unwrap();
     let closure = env.get_dependency_closure(ont_graph.id()).unwrap();
     assert_eq!(closure.len(), 5);
-    let union = env.get_union_graph(&closure, None, None)?;
+    let union, _, _ = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 7);
-    let union = env.get_union_graph(&closure, None, Some(false))?;
+    let union, _, _ = env.get_union_graph(&closure, None, Some(false))?;
     // print the union
     assert_eq!(union.len(), 14);
 

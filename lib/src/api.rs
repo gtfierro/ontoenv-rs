@@ -10,7 +10,7 @@ use oxigraph::model::{Dataset, NamedNode, NamedNodeRef, SubjectRef, Graph};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
 
-use crate::io::GraphIO;
+use crate::io::{GraphIO, MemoryGraphIO};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::Result;
 use log::{error, info, warn};
@@ -45,6 +45,22 @@ impl OntoEnv {
             io,
             config,
             dependency_graph: DiGraph::new(),
+        }
+    }
+
+    pub fn snapshot(&self) -> OntoEnv {
+        let mut memory_store = MemoryGraphIO::new(self.config.offline, self.config.strict);
+        // copy all graphs from the store to the memory store
+        for ontology in self.env.ontologies().values() {
+            let graph = self.io.get_graph(ontology.id()).unwrap();
+            memory_store.add_graph(ontology.id().clone(), graph);
+        }
+
+        OntoEnv {
+            env: self.env.clone(),
+            io: Box::new(memory_store),
+            config: self.config.clone(),
+            dependency_graph: self.dependency_graph.clone(),
         }
     }
 
