@@ -95,6 +95,10 @@ impl OntoEnv {
         Ok(())
     }
 
+    pub fn flush(&mut self) -> Result<()> {
+        self.io.flush()
+    }
+
     /// Loads the environment from the .ontoenv directory.
     pub fn load_from_directory(root: PathBuf) -> Result<Self> {
         let ontoenv_dir = root.join(".ontoenv");

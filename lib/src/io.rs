@@ -43,6 +43,8 @@ pub trait GraphIO: Send + Sync {
     /// Returns the union of the graphs with the given identifiers
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset;
 
+    fn flush(&mut self) -> Result<()>;
+
     /// Returns the last time the graph with the given identifier was modified at its location
     /// - for on-disk files (file://), if the file has been modified since the last refresh
     /// - for online files (http://), the file's header has a Last-Modified header with a later
@@ -168,6 +170,10 @@ impl GraphIO for PersistentGraphIO {
         self.offline
     }
 
+    fn flush(&mut self) -> Result<()> {
+        self.store.flush().map_err(|e| anyhow!("Failed to flush store: {}", e))
+    }
+
     fn size(&self) -> Result<StoreStats> {
         let num_graphs = self.store.named_graphs().count();
         let num_triples = self.store.len()?;
@@ -274,6 +280,10 @@ impl GraphIO for MemoryGraphIO {
 
     fn store_location(&self) -> Option<&Path> {
         None
+    }
+
+    fn flush(&mut self) -> Result<()>{
+        Ok(())
     }
 
     fn size(&self) -> Result<StoreStats> {
