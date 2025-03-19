@@ -515,6 +515,21 @@ impl OntoEnv {
         store.getattr("open")?.call1((path,))?;
         Ok(store.into())
     }
+
+    pub fn store_path(&self) -> PyResult<String> {
+        let inner = self.inner.clone();
+        let env = inner.lock().unwrap();
+        Ok(env.store_path().unwrap().to_string_lossy().to_string())
+    }
+
+    pub fn flush(&mut self, py: Python<'_> ) -> PyResult<()> {
+        py.allow_threads(|| {
+            let inner = self.inner.clone();
+            let mut env = inner.lock().unwrap();
+            env.flush().map_err(anyhow_to_pyerr)?;
+            Ok(())
+        })
+    }
 }
 
 #[pymodule]
