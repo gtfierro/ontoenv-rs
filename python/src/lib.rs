@@ -459,6 +459,7 @@ impl OntoEnv {
             let inner = self.inner.clone();
             let env = inner.lock().unwrap();
             let graphid = env.resolve(ResolveTarget::Graph(iri).into()).unwrap();
+            println!("graphid: {:?}", graphid);
             let graph = env
                 .get_graph(&graphid)
                 .map_err(anyhow_to_pyerr)?;
