@@ -79,7 +79,7 @@ impl OntoEnv {
     }
 
     pub fn stats(&self) -> Result<Stats> {
-        let store_stats = self.io.size()?;
+        let store_stats = self.stats()?;
         Ok(Stats {
             num_triples: store_stats.num_triples,
             num_graphs: store_stats.num_graphs,
@@ -179,7 +179,7 @@ impl OntoEnv {
         // get the size of the .ontoenv directory on disk
         //let size = self.get_store_size()?;
         let size = 999999;
-        let num_ontologies = self.env.ontologies().len();
+        let num_ontologies = self.stats()?.num_ontologies;
         Ok(EnvironmentStatus {
             exists: true,
             num_ontologies,

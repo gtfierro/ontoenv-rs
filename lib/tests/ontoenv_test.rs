@@ -125,7 +125,7 @@ fn test_ontoenv_scans() -> Result<()> {
     let cfg = default_config(&dir);
     let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
-    assert_eq!(env.num_graphs(), 4);
+    assert_eq!(env.stats()?.num_graphs, 4);
     teardown(dir);
     Ok(())
 }
@@ -172,7 +172,7 @@ fn test_ontoenv_num_triples() -> Result<()> {
     let mut env = OntoEnv::init(cfg1, false)?;
     env.update()?;
     assert_eq!(env.num_graphs(), 1);
-    assert_eq!(env.num_triples()?, 5);
+    assert_eq!(env.stats()?.num_triples, 5);
     teardown(dir);
     Ok(())
 }
@@ -193,7 +193,7 @@ fn test_ontoenv_update() -> Result<()> {
     // updating again shouldn't add anything
     env.update()?;
     assert_eq!(env.num_graphs(), 4);
-    assert_eq!(env.num_triples()?, old_num_triples);
+    assert_eq!(env.stats()?.num_triples, old_num_triples);
 
     // remove ont2.ttl
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
@@ -201,7 +201,7 @@ fn test_ontoenv_update() -> Result<()> {
                    "fixtures/ont4.ttl" => "ont4.ttl"});
 
     env.update()?;
-    assert_eq!(env.num_graphs(), 3);
+    assert_eq!(env.stats()?.num_graphs, 3);
 
     // copy ont4.ttl back
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
@@ -348,7 +348,7 @@ fn test_ontoenv_add() -> Result<()> {
             .ok_or(anyhow::anyhow!("Failed to convert to string"))?,
     )?;
     env.add(loc)?;
-    assert_eq!(env.num_graphs(), 5);
+    assert_eq!(env.stats()?.num_graphs, 5);
     teardown(dir);
     Ok(())
 }
