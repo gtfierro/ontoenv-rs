@@ -1,5 +1,6 @@
 use crate::config::Config;
 use std::path::Path;
+use petgraph::visit::EdgeRef;
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::environment::Environment;
 use crate::transform;
@@ -585,11 +586,21 @@ impl OntoEnv {
 
     /// Returns a list of all ontologies that depend on the given ontology
     pub fn get_dependents(&self, id: &NamedNode) -> Result<Vec<GraphIdentifier>> {
-        let mut dependents = vec![];
-        for ontology in self.ontologies().values() {
-            if ontology.imports.contains(&id) {
-                dependents.push(ontology.id().clone());
-            }
+        // find all nodes in the dependency_graph which have an edge to the given node
+        // and return the list of nodes
+        let mut dependents: Vec<GraphIdentifier> = Vec::new();
+        let node = self
+            .env
+            .get_ontology_by_name(id.into())
+            .ok_or(anyhow::anyhow!("Ontology not found"))?;
+        let index = self
+            .dependency_graph
+            .node_indices()
+            .find(|i| self.dependency_graph[*i] == *node.id())
+            .ok_or(anyhow::anyhow!("Node not found"))?;
+        for edge in self.dependency_graph.edges_directed(index, petgraph::Direction::Incoming) {
+            let dependent = self.dependency_graph[edge.source()].clone();
+            dependents.push(dependent);
         }
         Ok(dependents)
     }
