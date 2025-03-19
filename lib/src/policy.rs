@@ -5,8 +5,9 @@ use crate::consts::ONTOLOGY_VERSION_IRIS;
 use crate::ontology::Ontology;
 use oxigraph::model::NamedNode;
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
-pub trait ResolutionPolicy {
+pub trait ResolutionPolicy: Debug + Send + Sync {
     fn resolve<'a>(&self, name: &str, ontologies: &'a [&'a Ontology]) -> Option<&'a Ontology>;
     fn policy_name(&self) -> &'static str;
 }
@@ -18,6 +19,30 @@ pub fn policy_from_name(name: &str) -> Option<Box<dyn ResolutionPolicy>> {
         "version" => Some(Box::new(VersionPolicy)),
         _ => None,
     }
+}
+
+pub fn policy_to_name(policy: &dyn ResolutionPolicy) -> &'static str {
+    policy.policy_name()
+}
+
+// custom derives for the resolution policies
+pub fn policy_serialize<S>(
+    policy: &Box<dyn ResolutionPolicy>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(policy.policy_name())
+}
+
+pub fn policy_deserialize<'de, D>(deserializer: D) -> Result<Box<dyn ResolutionPolicy>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let policy_name = String::deserialize(deserializer)?;
+    policy_from_name(&policy_name)
+        .ok_or_else(|| serde::de::Error::custom(format!("Unknown policy name: {}", policy_name)))
 }
 
 /// A resolution policy that always returns the first ontology with the given name.

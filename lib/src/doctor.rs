@@ -1,6 +1,6 @@
+use crate::api::OntoEnv;
 use crate::consts::*;
 use crate::ontology::OntologyLocation;
-use crate::OntoEnv;
 use anyhow::Result;
 use oxigraph::model::NamedNode;
 use std::collections::HashMap;
@@ -92,7 +92,7 @@ impl EnvironmentCheck for DuplicateOntology {
     fn check(&mut self, env: &OntoEnv, problems: &mut Vec<OntologyProblem>) -> Result<()> {
         // group ontologies by name; if there are more than one in a group, report an error
         let mut names: HashMap<NamedNode, Vec<OntologyLocation>> = HashMap::new();
-        for ontology in env.ontologies.values() {
+        for ontology in env.ontologies().values() {
             let name = ontology.name();
             names
                 .entry(name)

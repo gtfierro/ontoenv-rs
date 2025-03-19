@@ -9,7 +9,7 @@ pub struct OfflineRetrievalError {
 
 impl fmt::Display for OfflineRetrievalError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to fetch ontology from {}", self.file)
+        write!(f, "OFFLINE enabled: Failed to fetch ontology from {}", self.file)
     }
 }
 
