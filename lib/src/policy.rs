@@ -7,7 +7,7 @@ use oxigraph::model::NamedNode;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-pub trait ResolutionPolicy: Debug {
+pub trait ResolutionPolicy: Debug + Send + Sync {
     fn resolve<'a>(&self, name: &str, ontologies: &'a [&'a Ontology]) -> Option<&'a Ontology>;
     fn policy_name(&self) -> &'static str;
 }

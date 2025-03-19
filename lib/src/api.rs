@@ -1,10 +1,11 @@
 use crate::config::Config;
+use std::path::Path;
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::environment::Environment;
 use crate::transform;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, NamedNode, NamedNodeRef, SubjectRef};
+use oxigraph::model::{Dataset, NamedNode, NamedNodeRef, SubjectRef, Graph};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
 
@@ -21,6 +22,12 @@ use std::fs;
 pub enum ResolveTarget {
     Location(OntologyLocation),
     Graph(NamedNode),
+}
+
+pub struct Stats {
+    pub num_triples: usize,
+    pub num_graphs: usize,
+    pub num_ontologies: usize,
 }
 
 pub struct OntoEnv {
@@ -52,6 +59,15 @@ impl OntoEnv {
                 .get_ontology_by_name(iri.as_ref())
                 .map(|ont| ont.id().clone()),
         }
+    }
+
+    pub fn stats(&self) -> Result<Stats> {
+        let store_stats = self.io.size()?;
+        Ok(Stats {
+            num_triples: store_stats.num_triples,
+            num_graphs: store_stats.num_graphs,
+            num_ontologies: self.env.ontologies().len(),
+        })
     }
 
     /// Saves the current environment to the .ontoenv directory.
@@ -149,6 +165,10 @@ impl OntoEnv {
             last_updated: Some(last_updated),
             store_size: size,
         })
+    }
+
+    pub fn store_path(&self) -> Option<&Path> {
+        self.io.store_location()
     }
 
     pub fn ontologies(&self) -> &HashMap<GraphIdentifier, Ontology> {
@@ -553,6 +573,10 @@ impl OntoEnv {
         }
         transform::remove_ontology_declarations(&mut dataset, root_ontology);
         Ok((dataset, graph_ids.to_vec(), None))
+    }
+
+    pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        self.io.get_graph(id)
     }
 
     /// Returns a list of all ontologies that depend on the given ontology

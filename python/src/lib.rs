@@ -17,6 +17,8 @@ fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
 }
 
+static INIT: Once = Once::new();
+
 #[allow(dead_code)]
 struct MyTerm(Term);
 impl From<Result<Bound<'_, PyAny>, pyo3::PyErr>> for MyTerm {
@@ -120,7 +122,7 @@ struct Config {
     cfg: config::Config,
 }
 
-static INIT: Once = Once::new();
+#[pymethods]
 impl Config {
     #[new]
     #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=true))]
@@ -187,9 +189,7 @@ impl OntoEnv {
             env_logger::init();
         });
 
-        let config_path = path
-            .as_ref()
-            .map(|p| p.join(".ontoenv").join("ontoenv.json"));
+        let config_path = path;
 
         let env = if config.is_none() && config_path.as_ref().map_or(false, |p| p.exists()) {
             // If no config but a valid path is given, attempt to load from the directory
