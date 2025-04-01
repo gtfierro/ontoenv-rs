@@ -1803,7 +1803,7 @@ checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
 
 [[package]]
 name = "ontoenv"
-version = "0.2.0-a1"
+version = "0.2.0-a2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "ontoenv-cli"
-version = "0.2.0-a1"
+version = "0.2.0-a2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2212,7 +2212,7 @@ dependencies = [
 
 [[package]]
 name = "pyontoenv"
-version = "0.2.0-a1"
+version = "0.2.0-a2"
 dependencies = [
  "anyhow",
  "env_logger",
