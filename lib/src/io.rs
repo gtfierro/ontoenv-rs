@@ -1,7 +1,7 @@
-use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::errors::OfflineRetrievalError;
+use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::util::read_format;
-use anyhow::{anyhow, Result, Error};
+use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use log::{debug, error};
 use oxigraph::io::{RdfFormat, RdfParser};
@@ -125,7 +125,11 @@ pub trait GraphIO: Send + Sync {
             .send()?;
         if !resp.status().is_success() {
             error!("Failed to fetch ontology from {} ({})", file, resp.status());
-            return Err(anyhow::anyhow!("Failed to fetch ontology from {} ({})", file, resp.status()));
+            return Err(anyhow::anyhow!(
+                "Failed to fetch ontology from {} ({})",
+                file,
+                resp.status()
+            ));
         }
         let content_type = resp.headers().get("Content-Type");
         let content_type = content_type.and_then(|ct| ct.to_str().ok());
@@ -171,7 +175,9 @@ impl GraphIO for PersistentGraphIO {
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.store.flush().map_err(|e| anyhow!("Failed to flush store: {}", e))
+        self.store
+            .flush()
+            .map_err(|e| anyhow!("Failed to flush store: {}", e))
     }
 
     fn size(&self) -> Result<StoreStats> {
@@ -207,13 +213,13 @@ impl GraphIO for PersistentGraphIO {
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
         let graph = match location {
             OntologyLocation::File(ref path) => self.read_file(&path)?,
-            OntologyLocation::Url(ref url) => if self.offline {
-                return Err(Error::new(OfflineRetrievalError {
-                    file: url.clone(),
-                }))
-            } else {
-                self.read_url(&url)?
-            },
+            OntologyLocation::Url(ref url) => {
+                if self.offline {
+                    return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
+                } else {
+                    self.read_url(&url)?
+                }
+            }
         };
 
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
@@ -286,7 +292,7 @@ impl GraphIO for MemoryGraphIO {
         None
     }
 
-    fn flush(&mut self) -> Result<()>{
+    fn flush(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -323,13 +329,13 @@ impl GraphIO for MemoryGraphIO {
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
         let graph = match location {
             OntologyLocation::File(ref path) => self.read_file(&path)?,
-            OntologyLocation::Url(ref url) => if self.offline {
-                return Err(Error::new(OfflineRetrievalError {
-                    file: url.clone(),
-                }))
-            } else {
-                self.read_url(&url)?
-            },
+            OntologyLocation::Url(ref url) => {
+                if self.offline {
+                    return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
+                } else {
+                    self.read_url(&url)?
+                }
+            }
         };
 
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;

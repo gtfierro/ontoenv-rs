@@ -197,8 +197,7 @@ impl OntoEnv {
                 .map_err(anyhow_to_pyerr)
         } else if let Some(c) = config {
             // If a config is provided, initialize a new OntoEnv
-            OntoEnvRs::init(c.cfg, read_only)
-                .map_err(anyhow_to_pyerr)
+            OntoEnvRs::init(c.cfg, read_only).map_err(anyhow_to_pyerr)
         } else {
             // Return an error if neither a valid path nor a config is provided
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -211,7 +210,9 @@ impl OntoEnv {
         env.update().map_err(anyhow_to_pyerr)?;
         env.save_to_directory().map_err(anyhow_to_pyerr)?;
 
-        Ok(OntoEnv { inner: inner.clone() })
+        Ok(OntoEnv {
+            inner: inner.clone(),
+        })
     }
 
     fn update(&self) -> PyResult<()> {
@@ -234,9 +235,7 @@ impl OntoEnv {
         let stats = env.stats().map_err(anyhow_to_pyerr)?;
         Ok(format!(
             "<OntoEnv: {} ontologies, {} graphs, {} triples>",
-            stats.num_ontologies,
-            stats.num_graphs,
-            stats.num_triples,
+            stats.num_ontologies, stats.num_graphs, stats.num_triples,
         ))
     }
 
@@ -253,8 +252,14 @@ impl OntoEnv {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let graphid = env.resolve(ResolveTarget::Graph(iri.clone()).into())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to resolve graph for URI: {}", uri)))?;
+        let graphid = env
+            .resolve(ResolveTarget::Graph(iri.clone()).into())
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Failed to resolve graph for URI: {}",
+                    uri
+                ))
+            })?;
         let mut graph = env.get_graph(&graphid).map_err(anyhow_to_pyerr)?;
 
         let uriref_constructor = rdflib.getattr("URIRef")?;
@@ -302,8 +307,14 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        let graphid = env.resolve(ResolveTarget::Graph(iri.clone()).into())
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to resolve graph for URI: {}", uri)))?;
+        let graphid = env
+            .resolve(ResolveTarget::Graph(iri.clone()).into())
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Failed to resolve graph for URI: {}",
+                    uri
+                ))
+            })?;
         let ont = env.ontologies().get(&graphid).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
@@ -331,7 +342,9 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        let graphid = env.resolve(ResolveTarget::Graph(iri.clone()).into()).unwrap();
+        let graphid = env
+            .resolve(ResolveTarget::Graph(iri.clone()).into())
+            .unwrap();
         let ont = env.ontologies().get(&graphid).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
@@ -460,12 +473,16 @@ impl OntoEnv {
         let graph = {
             let inner = self.inner.clone();
             let env = inner.lock().unwrap();
-            let graphid = env.resolve(ResolveTarget::Graph(iri).into())
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to resolve graph for URI: {}", uri)))?;
+            let graphid = env
+                .resolve(ResolveTarget::Graph(iri).into())
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to resolve graph for URI: {}",
+                        uri
+                    ))
+                })?;
             println!("graphid: {:?}", graphid);
-            let graph = env
-                .get_graph(&graphid)
-                .map_err(anyhow_to_pyerr)?;
+            let graph = env.get_graph(&graphid).map_err(anyhow_to_pyerr)?;
             graph
         };
         let res = rdflib.getattr("Graph")?.call0()?;
@@ -522,7 +539,7 @@ impl OntoEnv {
         Ok(env.store_path().unwrap().to_string_lossy().to_string())
     }
 
-    pub fn flush(&mut self, py: Python<'_> ) -> PyResult<()> {
+    pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         py.allow_threads(|| {
             let inner = self.inner.clone();
             let mut env = inner.lock().unwrap();
