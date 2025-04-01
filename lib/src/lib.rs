@@ -13,27 +13,11 @@ pub mod policy;
 pub mod util;
 pub mod transform;
 
-use crate::config::{Config, HowCreated};
-use crate::consts::{ONTOLOGY, TYPE};
-use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
-use anyhow::Result;
+use crate::ontology::GraphIdentifier;
 use chrono::prelude::*;
-use log::{debug, error, info, warn};
-use oxigraph::model::{
-    Dataset, Graph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNode, QuadRef, Subject,
-    SubjectRef,
-};
-use oxigraph::store::Store;
-use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use pretty_bytes::converter::convert as pretty_bytes;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::collections::{HashSet, VecDeque};
 use std::fmt::{self, Display};
-use std::fs;
-use std::io::{BufReader, Write};
-use std::path::Path;
-use walkdir::WalkDir;
+use std::io::Write;
 
 pub struct FailedImport {
     ontology: GraphIdentifier,
