@@ -271,6 +271,10 @@ impl MemoryGraphIO {
             strict,
         }
     }
+
+    pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) {
+        self.graphs.insert(id, graph);
+    }
 }
 
 impl GraphIO for MemoryGraphIO {

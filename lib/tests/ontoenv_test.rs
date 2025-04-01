@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ontoenv::config::{Config, HowCreated};
 use ontoenv::ontology::OntologyLocation;
-use ontoenv::OntoEnv;
+use ontoenv::api::OntoEnv;
 use oxigraph::model::NamedNodeRef;
 use std::path::PathBuf;
 use tempdir::TempDir;

@@ -1,3 +1,4 @@
+#![feature(let_chains)]
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use ontoenv::api::{OntoEnv, ResolveTarget};
@@ -23,44 +24,45 @@ struct Cli {
     /// Debug mode - sets the RUST_LOG level to debug, defaults to warning level
     #[clap(long, action, default_value = "false")]
     debug: bool,
+    /// Directories to search for ontologies. If not provided, the current directory is used.
+    #[clap(long, short, num_args = 1..)]
+    search_directories: Option<Vec<PathBuf>>,
     /// Resolution policy for determining which ontology to use when there are multiple with the same name
     #[clap(long, short, default_value = "default")]
     policy: Option<String>,
+    /// Temporary (non-persistent) mode - will not save the environment to disk
+    #[clap(long, short, action)]
+    temporary: bool,
+    /// Require ontology names to be unique; will raise an error if multiple ontologies have the same name
+    #[clap(long, action)]
+    require_ontology_names: bool,
+    /// Strict mode - will raise an error if an ontology is not found
+    #[clap(long, action, default_value = "false")]
+    strict: bool,
+    /// Offline mode - will not attempt to fetch ontologies from the web
+    #[clap(long, short, action, default_value = "false")]
+    offline: bool,
+    /// Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']
+    #[clap(long, short, num_args = 1..)]
+    includes: Vec<String>,
+    /// Glob patterns for which files to exclude, defaults to []
+    #[clap(long, short, num_args = 1..)]
+    excludes: Vec<String>,
+    /// Do not search for ontologies in the search directories
+    #[clap(long = "no-search", short = 'n', action)]
+    no_search: bool,
 }
 
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Create a new ontology environment
     Init {
-        /// Directories to search for ontologies. If not provided, the current directory is used.
-        search_directories: Option<Vec<PathBuf>>,
-        /// Require ontology names to be unique; will raise an error if multiple ontologies have the same name
-        #[clap(long, action)]
-        require_ontology_names: bool,
-        /// Strict mode - will raise an error if an ontology is not found
-        #[clap(long, short, action, default_value = "false")]
-        strict: bool,
-        /// Offline mode - will not attempt to fetch ontologies from the web
-        #[clap(long, short, action, default_value = "false")]
-        offline: bool,
-        /// Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']
-        #[clap(long, short, num_args = 1..)]
-        includes: Vec<String>,
-        /// Glob patterns for which files to exclude, defaults to []
-        #[clap(long, short, num_args = 1..)]
-        excludes: Vec<String>,
         /// Overwrite the environment if it already exists
         #[clap(long, short, default_value = "false")]
         overwrite: bool,
         /// A JSON file containing a list of ontologies to add to the environment
         #[clap(long = "list", short = 'l')]
         ontology_list_file: Option<String>,
-        /// Do not search for ontologies in the search directories
-        #[clap(long = "no-search", short = 'n', action)]
-        no_search: bool,
-        /// Use a temporary directory for the environment
-        #[clap(long, short, action)]
-        temporary: bool,
     },
     /// Prints the version of the ontoenv binary
     Version,
@@ -132,34 +134,42 @@ fn main() -> Result<()> {
 
     let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
 
+    let config: Config = Config::new(
+        current_dir()?,
+        cmd.search_directories,
+        &cmd.includes,
+        &cmd.excludes,
+        cmd.require_ontology_names,
+        cmd.strict,
+        cmd.offline,
+        policy,
+        false,
+        cmd.temporary,
+    )?;
+
+    // create the env object to use in the subcommand.
+    // - if temporary is true, create a new env object each time
+    // - if temporary is false, load the env from the .ontoenv directory if it exists
+    let mut env = if cmd.temporary {
+        let mut env = OntoEnv::init(config, false)?;
+        env.update()?;
+        env
+    } else {
+        // if the command is NOT init and the .ontoenv directory doesn't exist, raise an error
+        let path = current_dir()?;
+        if let Commands::Init { .. } = cmd.command && !path.exists() {
+            return Err(anyhow::anyhow!(
+                "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
+            ));
+        }
+        OntoEnv::load_from_directory(path)?
+    };
+
     match cmd.command {
         Commands::Init {
-            search_directories,
-            require_ontology_names,
-            strict,
-            offline,
-            includes,
-            excludes,
             overwrite,
             ontology_list_file,
-            no_search,
-            temporary,
         } => {
-            // if search_directories is empty, use the current directory
-            let config = Config::new(
-                current_dir()?,
-                search_directories,
-                &includes,
-                &excludes,
-                require_ontology_names,
-                strict,
-                offline,
-                policy,
-                no_search,
-                temporary,
-            )?;
-            let mut env = OntoEnv::init(config, overwrite)?;
-
             // if an ontology config file is provided, load it and add the ontologies
             if let Some(file) = ontology_list_file {
                 let file = File::open(file)?;
@@ -181,16 +191,17 @@ fn main() -> Result<()> {
         }
         Commands::Status => {
             // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let env = OntoEnv::load_from_directory(path)?;
             let status = env.status()?;
             // pretty print the status
             println!("{}", status);
         }
         Commands::Refresh => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let mut env = OntoEnv::load_from_directory(path)?;
+            // if temporary, raise an error
+            if cmd.temporary {
+                return Err(anyhow::anyhow!(
+                    "Cannot refresh in temporary mode. Run `ontoenv init` to create a new OntoEnv."
+                ));
+            }
             env.update()?;
             env.save_to_directory()?;
         }
@@ -200,16 +211,6 @@ fn main() -> Result<()> {
             remove_owl_imports,
             destination,
         } => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            // if the path doesn't exist, raise an error
-            if !path.exists() {
-                return Err(anyhow::anyhow!(
-                    "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
-                ));
-            }
-            let env = OntoEnv::load_from_directory(path)?;
-
             // make ontology an IRI
             let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
@@ -232,10 +233,6 @@ fn main() -> Result<()> {
             }
         }
         Commands::Add { url, file } => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let mut env = OntoEnv::load_from_directory(path)?;
-
             let location: OntologyLocation = match (url, file) {
                 (Some(url), None) => OntologyLocation::Url(url),
                 (None, Some(file)) => OntologyLocation::File(PathBuf::from(file)),
@@ -246,9 +243,6 @@ fn main() -> Result<()> {
             env.save_to_directory()?;
         }
         Commands::ListOntologies => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let env = OntoEnv::load_from_directory(path)?;
             // print list of ontology URLs from env.onologies.values() sorted alphabetically
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
@@ -258,9 +252,6 @@ fn main() -> Result<()> {
             }
         }
         Commands::ListLocations => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let env = OntoEnv::load_from_directory(path)?;
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
             for ont in ontologies {
@@ -268,15 +259,9 @@ fn main() -> Result<()> {
             }
         }
         Commands::Dump { contains } => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let env = OntoEnv::load_from_directory(path)?;
             env.dump(contains.as_deref());
         }
         Commands::DepGraph { roots, output } => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let env = OntoEnv::load_from_directory(path)?;
             let dot = if let Some(roots) = roots {
                 let roots: Vec<GraphIdentifier> = roots
                     .iter()
@@ -305,9 +290,6 @@ fn main() -> Result<()> {
             }
         }
         Commands::Dependents { ontologies } => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let env = OntoEnv::load_from_directory(path)?;
             for ont in ontologies {
                 let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let dependents = env.get_dependents(&iri)?;
@@ -318,9 +300,6 @@ fn main() -> Result<()> {
             }
         }
         Commands::Doctor => {
-            // load env from .ontoenv/ontoenv.json
-            let path = current_dir()?;
-            let env = OntoEnv::load_from_directory(path)?;
             env.doctor();
         }
         Commands::Reset => {
