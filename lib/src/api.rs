@@ -1,13 +1,13 @@
 use crate::config::Config;
-use std::path::Path;
-use petgraph::visit::EdgeRef;
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::environment::Environment;
 use crate::transform;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, NamedNode, NamedNodeRef, SubjectRef, Graph};
+use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, SubjectRef};
+use petgraph::visit::EdgeRef;
 use std::io::{BufReader, Write};
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::io::GraphIO;
@@ -146,12 +146,12 @@ impl OntoEnv {
         }
         env.locations = locations;
 
-        // Initialize the IO to the persistent graph type. We know that it exists because we 
+        // Initialize the IO to the persistent graph type. We know that it exists because we
         // are loading from a directory
         let mut io: Box<dyn GraphIO> = Box::new(crate::io::PersistentGraphIO::new(
-                ontoenv_dir.into(),
-                config.offline,
-                config.strict,
+            ontoenv_dir.into(),
+            config.offline,
+            config.strict,
         )?);
 
         // copy the graphs from the persistent store to the memory store if we are a 'temporary'
@@ -619,7 +619,10 @@ impl OntoEnv {
             .node_indices()
             .find(|i| self.dependency_graph[*i] == *node.id())
             .ok_or(anyhow::anyhow!("Node not found"))?;
-        for edge in self.dependency_graph.edges_directed(index, petgraph::Direction::Incoming) {
+        for edge in self
+            .dependency_graph
+            .edges_directed(index, petgraph::Direction::Incoming)
+        {
             let dependent = self.dependency_graph[edge.source()].clone();
             dependents.push(dependent);
         }

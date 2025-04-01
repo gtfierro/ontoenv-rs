@@ -157,7 +157,9 @@ fn main() -> Result<()> {
     } else {
         // if the command is NOT init and the .ontoenv directory doesn't exist, raise an error
         let path = current_dir()?;
-        if let Commands::Init { .. } = cmd.command && !path.exists() {
+        if let Commands::Init { .. } = cmd.command
+            && !path.exists()
+        {
             return Err(anyhow::anyhow!(
                 "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
             ));
