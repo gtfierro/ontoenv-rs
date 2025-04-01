@@ -170,6 +170,12 @@ fn main() -> Result<()> {
             overwrite,
             ontology_list_file,
         } => {
+            // if temporary, raise an error
+            if cmd.temporary {
+                return Err(anyhow::anyhow!(
+                    "Cannot initialize in temporary mode. Run `ontoenv init` to create a new OntoEnv."
+                ));
+            }
             // if an ontology config file is provided, load it and add the ontologies
             if let Some(file) = ontology_list_file {
                 let file = File::open(file)?;
