@@ -73,6 +73,9 @@ impl OntoEnv {
 
     /// Saves the current environment to the .ontoenv directory.
     pub fn save_to_directory(&self) -> Result<()> {
+        if self.config.temporary {
+            return Err(anyhow::anyhow!("Cannot save a temporary environment"));
+        }
         let ontoenv_dir = self.config.root.join(".ontoenv");
         info!("Saving ontology environment to: {:?}", ontoenv_dir);
         std::fs::create_dir_all(&ontoenv_dir)?;
@@ -98,6 +101,14 @@ impl OntoEnv {
 
     pub fn flush(&mut self) -> Result<()> {
         self.io.flush()
+    }
+
+    pub fn new_temporary(&self) -> Result<Self> {
+        let io: Box<dyn GraphIO> = Box::new(crate::io::MemoryGraphIO::new(
+            self.config.offline,
+            self.config.strict,
+        ));
+        Ok(Self::new(self.env.clone(), io, self.config.clone()))
     }
 
     /// Loads the environment from the .ontoenv directory.
@@ -135,16 +146,24 @@ impl OntoEnv {
         }
         env.locations = locations;
 
-        // Initialize the IO
-        let io: Box<dyn GraphIO> = if config.temporary {
-            Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict))
-        } else {
-            Box::new(crate::io::PersistentGraphIO::new(
+        // Initialize the IO to the persistent graph type. We know that it exists because we 
+        // are loading from a directory
+        let mut io: Box<dyn GraphIO> = Box::new(crate::io::PersistentGraphIO::new(
                 ontoenv_dir.into(),
                 config.offline,
                 config.strict,
-            )?)
-        };
+        )?);
+
+        // copy the graphs from the persistent store to the memory store if we are a 'temporary'
+        // environment
+        if config.temporary {
+            let mut new_io = Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict));
+            for ontology in env.ontologies().values() {
+                let graph = io.get_graph(ontology.id())?;
+                new_io.add_graph(ontology.id().clone(), graph);
+            }
+            io = new_io;
+        }
 
         Ok(OntoEnv {
             env,
@@ -209,7 +228,7 @@ impl OntoEnv {
     pub fn init(config: Config, overwrite: bool) -> Result<Self> {
         let ontoenv_dir = config.root.join(".ontoenv");
 
-        if ontoenv_dir.exists() {
+        if !config.temporary && ontoenv_dir.exists() {
             if overwrite {
                 info!(
                     "Directory exists and will be overwritten: {:?}",
@@ -224,7 +243,9 @@ impl OntoEnv {
             }
         }
 
-        std::fs::create_dir_all(&ontoenv_dir)?;
+        if !config.temporary {
+            std::fs::create_dir_all(&ontoenv_dir)?;
+        }
 
         let env = Environment::new();
         let io: Box<dyn GraphIO> = match config.temporary {
