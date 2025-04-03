@@ -74,7 +74,11 @@ impl OntoEnv {
     /// Saves the current environment to the .ontoenv directory.
     pub fn save_to_directory(&self) -> Result<()> {
         if self.config.temporary {
-            return Err(anyhow::anyhow!("Cannot save a temporary environment"));
+            warn!("Cannot save a temporary environment");
+            if self.config.strict {
+                return Err(anyhow::anyhow!("Cannot save a temporary environment"));
+            }
+            return Ok(());
         }
         let ontoenv_dir = self.config.root.join(".ontoenv");
         info!("Saving ontology environment to: {:?}", ontoenv_dir);
