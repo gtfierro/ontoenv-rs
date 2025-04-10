@@ -1,3 +1,6 @@
+//! Defines the main OntoEnv API struct and its methods for managing the ontology environment.
+//! This includes loading, saving, updating, and querying the environment.
+
 use crate::config::Config;
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::environment::Environment;

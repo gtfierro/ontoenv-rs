@@ -1,3 +1,6 @@
+//! Defines the core data structures for representing ontologies and their metadata within the OntoEnv.
+//! Includes `Ontology`, `GraphIdentifier`, and `OntologyLocation`.
+
 use crate::consts::*;
 use crate::util::{read_file, read_url};
 use anyhow::Result;

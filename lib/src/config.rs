@@ -1,3 +1,6 @@
+//! Defines the configuration structures for the OntoEnv environment.
+//! This includes the main `Config` struct and related structs for ontology locations and environment setup.
+
 use crate::ontology::OntologyLocation;
 use crate::policy::{DefaultPolicy, ResolutionPolicy};
 use anyhow::Result;

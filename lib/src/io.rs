@@ -1,3 +1,6 @@
+//! Defines traits and implementations for handling graph input/output operations.
+//! This includes reading graphs from files and URLs, and interacting with persistent or in-memory stores.
+
 use crate::errors::OfflineRetrievalError;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::util::read_format;
