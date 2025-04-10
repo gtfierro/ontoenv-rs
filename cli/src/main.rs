@@ -1,4 +1,3 @@
-#![feature(let_chains)]
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use ontoenv::api::{OntoEnv, ResolveTarget};
@@ -181,17 +180,16 @@ fn main() -> Result<()> {
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
     // - if temporary is false, load the env from the .ontoenv directory if it exists
-    let mut env: Option<OntoEnv> = if cmd.temporary {
+    let mut env: Option<OntoEnv> = None;
+
+    if cmd.temporary {
         // Create a new OntoEnv object in temporary mode
         let mut e = OntoEnv::init(config.clone(), false)?;
         e.update()?;
-        Some(e)
+        env = Some(e);
     } else if cmd.command.to_string() != "Init" {
-        Some(OntoEnv::load_from_directory(current_dir()?)?)
-    } else {
-        // Create a new OntoEnv object in non-temporary mode
-        None
-    };
+        env = Some(OntoEnv::load_from_directory(current_dir()?)?);
+    }
 
     match cmd.command {
         Commands::Init {
@@ -227,11 +225,12 @@ fn main() -> Result<()> {
             );
         }
         Commands::Status => {
-            let env = env.as_ref().unwrap();
-            // load env from .ontoenv/ontoenv.json
-            let status = env.status()?;
-            // pretty print the status
-            println!("{}", status);
+            if let Some(ref env) = env {
+                // load env from .ontoenv/ontoenv.json
+                let status = env.status()?;
+                // pretty print the status
+                println!("{}", status);
+            }
         }
         Commands::Refresh => {
             // if temporary, raise an error
@@ -240,9 +239,10 @@ fn main() -> Result<()> {
                     "Cannot refresh in temporary mode. Run `ontoenv init` to create a new OntoEnv."
                 ));
             }
-            let env = env.as_mut().unwrap();
-            env.update()?;
-            env.save_to_directory()?;
+            if let Some(ref mut env) = env {
+                env.update()?;
+                env.save_to_directory()?;
+            }
         }
         Commands::GetClosure {
             ontology,
@@ -252,24 +252,21 @@ fn main() -> Result<()> {
         } => {
             // make ontology an IRI
             let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            let env = env.as_mut().unwrap();
-
-            let graphid = env
-                .resolve(ResolveTarget::Graph(iri.clone()))
-                .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
-            let closure = env.get_dependency_closure(&graphid)?;
-            let (graph, _successful, failed_imports) =
-                env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
-            if let Some(failed_imports) = failed_imports {
-                for imp in failed_imports {
-                    eprintln!("{}", imp);
+            if let Some(ref mut env) = env {
+                let graphid = env
+                    .resolve(ResolveTarget::Graph(iri.clone()))
+                    .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
+                let closure = env.get_dependency_closure(&graphid)?;
+                let (graph, _successful, failed_imports) =
+                    env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
+                if let Some(failed_imports) = failed_imports {
+                    for imp in failed_imports {
+                        eprintln!("{}", imp);
+                    }
                 }
-            }
-            // write the graph to a file
-            if let Some(destination) = destination {
+                // write the graph to a file
+                let destination = destination.unwrap_or_else(|| "output.ttl".to_string());
                 write_dataset_to_file(&graph, &destination)?;
-            } else {
-                write_dataset_to_file(&graph, "output.ttl")?;
             }
         }
         Commands::Add { url, file } => {
@@ -278,76 +275,82 @@ fn main() -> Result<()> {
                 (None, Some(file)) => OntologyLocation::File(PathBuf::from(file)),
                 _ => return Err(anyhow::anyhow!("Must specify either --url or --file")),
             };
-            let env = env.as_mut().unwrap();
-
-            env.add(location, true)?;
-            env.save_to_directory()?;
+            if let Some(ref mut env) = env {
+                env.add(location, true)?;
+                env.save_to_directory()?;
+            }
         }
         Commands::ListOntologies => {
-            // print list of ontology URLs from env.onologies.values() sorted alphabetically
-            let env = env.as_ref().unwrap();
-            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
-            ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
-            ontologies.dedup_by(|a, b| a.name() == b.name());
-            for ont in ontologies {
-                println!("{}", ont.name().as_str());
+            if let Some(ref env) = env {
+                // print list of ontology URLs from env.ontologies.values() sorted alphabetically
+                let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
+                ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
+                ontologies.dedup_by(|a, b| a.name() == b.name());
+                for ont in ontologies {
+                    println!("{}", ont.name().as_str());
+                }
             }
         }
         Commands::ListLocations => {
-            let env = env.as_ref().unwrap();
-            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
-            ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
-            for ont in ontologies {
-                println!("{}", ont.location().as_str());
+            if let Some(ref env) = env {
+                let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
+                ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
+                for ont in ontologies {
+                    println!("{}", ont.location().as_str());
+                }
             }
         }
         Commands::Dump { contains } => {
-            let env = env.as_ref().unwrap();
-            env.dump(contains.as_deref());
+            if let Some(ref env) = env {
+                env.dump(contains.as_deref());
+            }
         }
         Commands::DepGraph { roots, output } => {
-            let env = env.as_mut().unwrap();
-            let dot = if let Some(roots) = roots {
-                let roots: Vec<GraphIdentifier> = roots
-                    .iter()
-                    .map(|iri| {
-                        env.resolve(ResolveTarget::Graph(NamedNode::new(iri).unwrap()))
-                            .unwrap()
-                            .clone()
-                    })
-                    .collect();
-                env.rooted_dep_graph_to_dot(roots)?
-            } else {
-                env.dep_graph_to_dot()?
-            };
-            // call graphviz to generate PDF
-            let dot_path = current_dir()?.join("dep_graph.dot");
-            std::fs::write(&dot_path, dot)?;
-            let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
-            let output = std::process::Command::new("dot")
-                .args(["-Tpdf", dot_path.to_str().unwrap(), "-o", &output_path])
-                .output()?;
-            if !output.status.success() {
-                return Err(anyhow::anyhow!(
-                    "Failed to generate PDF: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
+            if let Some(ref mut env) = env {
+                let dot = if let Some(roots) = roots {
+                    let roots: Vec<GraphIdentifier> = roots
+                        .iter()
+                        .map(|iri| {
+                            env.resolve(ResolveTarget::Graph(NamedNode::new(iri).unwrap()))
+                                .unwrap()
+                                .clone()
+                        })
+                        .collect();
+                    env.rooted_dep_graph_to_dot(roots)?
+                } else {
+                    env.dep_graph_to_dot()?
+                };
+                // call graphviz to generate PDF
+                let dot_path = current_dir()?.join("dep_graph.dot");
+                std::fs::write(&dot_path, dot)?;
+                let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
+                let output = std::process::Command::new("dot")
+                    .args(["-Tpdf", dot_path.to_str().unwrap(), "-o", &output_path])
+                    .output()?;
+                if !output.status.success() {
+                    return Err(anyhow::anyhow!(
+                        "Failed to generate PDF: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
             }
         }
         Commands::Dependents { ontologies } => {
-            let env = env.as_mut().unwrap();
-            for ont in ontologies {
-                let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let dependents = env.get_dependents(&iri)?;
-                println!("Dependents of {}: ", iri);
-                for dep in dependents {
-                    println!("{}", dep);
+            if let Some(ref mut env) = env {
+                for ont in ontologies {
+                    let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    let dependents = env.get_dependents(&iri)?;
+                    println!("Dependents of {}: ", iri);
+                    for dep in dependents {
+                        println!("{}", dep);
+                    }
                 }
             }
         }
         Commands::Doctor => {
-            let env = env.as_mut().unwrap();
-            env.doctor();
+            if let Some(ref mut env) = env {
+                env.doctor();
+            }
         }
         Commands::Reset => {
             // remove .ontoenv directory
