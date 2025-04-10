@@ -1,3 +1,6 @@
+//! Provides functions for transforming RDF graphs and datasets within the OntoEnv context.
+//! This includes rewriting SHACL prefixes and removing OWL imports or ontology declarations.
+
 use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, TYPE};
 use oxigraph::model::{
     Dataset, Graph, NamedNodeRef, Quad, QuadRef, SubjectRef, TermRef, Triple, TripleRef,

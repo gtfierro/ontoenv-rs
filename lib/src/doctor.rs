@@ -1,3 +1,6 @@
+//! Provides functionality for diagnosing potential issues within an OntoEnv environment.
+//! Defines traits and structs for environment checks and reporting problems.
+
 use crate::api::OntoEnv;
 use crate::consts::*;
 use crate::ontology::OntologyLocation;
