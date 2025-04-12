@@ -1,3 +1,6 @@
+//! Defines the main OntoEnv API struct and its methods for managing the ontology environment.
+//! This includes loading, saving, updating, and querying the environment.
+
 use crate::config::Config;
 use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::environment::Environment;
@@ -25,6 +28,22 @@ pub enum ResolveTarget {
     Graph(NamedNode),
 }
 
+/// Represents the result of a union graph operation.
+/// Contains the resulting dataset, the identifiers of the graphs included,
+/// and any imports that failed during the process.
+pub struct UnionGraph {
+    pub dataset: Dataset,
+    pub graph_ids: Vec<GraphIdentifier>,
+    pub failed_imports: Option<Vec<FailedImport>>,
+}
+
+impl UnionGraph {
+    /// Returns the total number of triples in the union graph dataset.
+    pub fn len(&self) -> usize {
+        self.dataset.len()
+    }
+}
+
 pub struct Stats {
     pub num_triples: usize,
     pub num_graphs: usize,
@@ -39,7 +58,7 @@ pub struct OntoEnv {
 }
 
 impl OntoEnv {
-    pub fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
+    fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
         Self {
             env,
             io,
@@ -402,8 +421,13 @@ impl OntoEnv {
     /// the patterns
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
         let mut files = vec![];
-        for search_directory in &self.config.search_directories {
-            for entry in walkdir::WalkDir::new(search_directory) {
+        for location in &self.config.locations {
+            // if location is a file, add it to the list
+            if location.is_file() && self.config.is_included(location) {
+                files.push(OntologyLocation::File(location.clone()));
+                continue;
+            }
+            for entry in walkdir::WalkDir::new(location) {
                 let entry = entry?;
                 if entry.file_type().is_file() && self.config.is_included(entry.path()) {
                     files.push(OntologyLocation::File(entry.path().to_path_buf()));
@@ -584,7 +608,7 @@ impl OntoEnv {
         graph_ids: &[GraphIdentifier],
         rewrite_sh_prefixes: Option<bool>,
         remove_owl_imports: Option<bool>,
-    ) -> Result<(Dataset, Vec<GraphIdentifier>, Option<Vec<FailedImport>>)> {
+    ) -> Result<UnionGraph> {
         // TODO: figure out failed imports
         let mut dataset = self.io.union_graph(graph_ids);
         let first_id = graph_ids
@@ -602,11 +626,21 @@ impl OntoEnv {
             transform::remove_owl_imports(&mut dataset, Some(&to_remove));
         }
         transform::remove_ontology_declarations(&mut dataset, root_ontology);
-        Ok((dataset, graph_ids.to_vec(), None))
+        Ok(UnionGraph {
+            dataset,
+            graph_ids: graph_ids.to_vec(),
+            failed_imports: None, // TODO: Populate this correctly
+        })
     }
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         self.io.get_graph(id)
+    }
+
+    pub fn get_ontology(&self, id: &GraphIdentifier) -> Result<Ontology> {
+        self.env
+            .get_ontology(id)
+            .ok_or(anyhow::anyhow!("Ontology not found"))
     }
 
     /// Returns a list of all ontologies that depend on the given ontology

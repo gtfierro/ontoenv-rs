@@ -1,3 +1,6 @@
+//! Defines constant NamedNodeRefs for commonly used RDF terms and predicates,
+//! primarily from OWL, RDFS, DCTERMS, VAEM, and SHACL vocabularies.
+
 use oxigraph::model::NamedNodeRef;
 
 pub const ONTOLOGY: NamedNodeRef<'_> =

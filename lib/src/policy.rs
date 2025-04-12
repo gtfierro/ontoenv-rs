@@ -1,3 +1,6 @@
+//! Defines traits and implementations for ontology resolution policies.
+//! Policies determine which ontology version to use when multiple ontologies share the same name.
+
 // define a trait for a resolution policy. Given an ontology name and a set of possible ontologies,
 // the policy should return the ontology that should be used.
 

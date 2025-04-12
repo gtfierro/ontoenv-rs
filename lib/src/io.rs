@@ -1,3 +1,6 @@
+//! Defines traits and implementations for handling graph input/output operations.
+//! This includes reading graphs from files and URLs, and interacting with persistent or in-memory stores.
+
 use crate::errors::OfflineRetrievalError;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::util::read_format;
@@ -14,6 +17,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
 pub struct StoreStats {
     pub num_graphs: usize,
     pub num_triples: usize,

@@ -1,3 +1,6 @@
+//! Provides utility functions for common tasks within the OntoEnv library,
+//! such as reading/writing RDF files and URLs, and converting between graph representations.
+
 use anyhow::Result;
 
 use std::io::{Read, Seek};

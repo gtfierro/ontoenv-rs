@@ -1,3 +1,6 @@
+//! Defines the core data structures for representing ontologies and their metadata within the OntoEnv.
+//! Includes `Ontology`, `GraphIdentifier`, and `OntologyLocation`.
+
 use crate::consts::*;
 use crate::util::{read_file, read_url};
 use anyhow::Result;
@@ -89,18 +92,7 @@ impl GraphIdentifier {
         format!("{}-{}", name, location).replace('/', "_")
     }
     pub fn graphname(&self) -> Result<GraphName> {
-        // if self.name is a URL, use that as the graphname
-        if self.name.as_str().starts_with("http") {
-            return Ok(GraphName::NamedNode(self.name.clone()));
-        }
-
-        // graphname is the self.name + URL-safe self.location
-        let name = self.name.as_str().replace(':', "+");
-        let location = self.location.as_str().replace("file://", "");
-        Ok(GraphName::NamedNode(NamedNode::new(format!(
-            "urn://{}-{}",
-            name, location
-        ))?))
+        Ok(GraphName::NamedNode(self.name.clone()))
     }
 }
 
