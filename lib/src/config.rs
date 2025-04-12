@@ -45,7 +45,7 @@ pub struct OntologyConfig {
 pub struct Config {
     pub root: PathBuf,
     #[serde(default)]
-    pub search_directories: Vec<PathBuf>,
+    pub locations: Vec<PathBuf>,
     // include regex patterns
     #[serde(
         serialize_with = "vec_pattern_ser",
@@ -74,7 +74,7 @@ impl Config {
     // new constructor where includes and excludes accept iterators of &str
     pub fn new<I, J, K>(
         root: PathBuf,
-        search_directories: Option<K>,
+        locations: Option<K>,
         includes: I,
         excludes: J,
         require_ontology_names: bool,
@@ -93,7 +93,7 @@ impl Config {
     {
         // if search directories are empty, add the root. Otherwise, use the provided search directories
         // if no_search is true, then do not default to the root directory
-        let search_directories = search_directories
+        let locations = locations
             .map(|dirs| dirs.into_iter().collect())
             .unwrap_or_else(|| {
                 if no_search {
@@ -105,7 +105,7 @@ impl Config {
 
         let mut config = Config {
             root,
-            search_directories,
+            locations,
             includes: vec![],
             excludes: vec![],
             require_ontology_names,
@@ -138,18 +138,18 @@ impl Config {
 
     pub fn default_offline<K>(
         root: PathBuf,
-        search_directories: Option<K>,
+        locations: Option<K>,
         temporary: bool,
     ) -> Result<Self>
     where
         K: IntoIterator<Item = PathBuf>,
     {
-        Self::new_with_default_matches(root, search_directories, false, false, true, temporary)
+        Self::new_with_default_matches(root, locations, false, false, true, temporary)
     }
 
     pub fn new_with_default_matches<K>(
         root: PathBuf,
-        search_directories: Option<K>,
+        locations: Option<K>,
         require_ontology_names: bool,
         strict: bool,
         offline: bool,
@@ -161,7 +161,7 @@ impl Config {
         let includes = vec!["*.ttl", "*.xml", "*.n3"];
         Self::new::<Vec<&str>, Vec<&str>, Vec<PathBuf>>(
             root,
-            search_directories.map(|dirs| dirs.into_iter().collect()),
+            locations.map(|dirs| dirs.into_iter().collect()),
             includes,
             vec![],
             require_ontology_names,
@@ -201,8 +201,8 @@ impl Config {
         let reader = BufReader::new(file);
         let mut config: Config = serde_json::from_reader(reader)?;
 
-        if config.search_directories.is_empty() {
-            config.search_directories = vec![config.root.clone()];
+        if config.locations.is_empty() {
+            config.locations = vec![config.root.clone()];
         }
         Ok(config)
     }
