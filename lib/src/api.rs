@@ -42,7 +42,7 @@ pub struct OntoEnv {
 }
 
 impl OntoEnv {
-    pub fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
+    fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
         Self {
             env,
             io,
