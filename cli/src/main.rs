@@ -49,7 +49,7 @@ struct Cli {
     no_search: bool,
     /// Directories to search for ontologies. If not provided, the current directory is used.
     #[clap(global = true)]
-    search_directories: Option<Vec<PathBuf>>,
+    locations: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -57,7 +57,7 @@ enum Commands {
     /// Create a new ontology environment
     Init {
         /// Overwrite the environment if it already exists
-        #[clap(long, short, default_value = "false")]
+        #[clap(long, default_value = "false")]
         overwrite: bool,
         /// A JSON file containing a list of ontologies to add to the environment
         #[clap(long = "list", short = 'l')]
@@ -155,7 +155,7 @@ fn main() -> Result<()> {
 
     let config: Config = Config::new(
         current_dir()?,
-        cmd.search_directories,
+        cmd.locations,
         &cmd.includes,
         &cmd.excludes,
         cmd.require_ontology_names,
@@ -165,17 +165,6 @@ fn main() -> Result<()> {
         false,
         cmd.temporary,
     )?;
-
-    // if not temporary and not init, check if the .ontoenv directory exists
-    // if it does not exist, raise an error
-    if !cmd.temporary && cmd.command.to_string() != "Init" {
-        let path = current_dir()?.join(".ontoenv");
-        if !path.exists() {
-            return Err(anyhow::anyhow!(
-                "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
-            ));
-        }
-    }
 
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
@@ -188,7 +177,10 @@ fn main() -> Result<()> {
         e.update()?;
         env = Some(e);
     } else if cmd.command.to_string() != "Init" {
-        env = Some(OntoEnv::load_from_directory(current_dir()?)?);
+        // if .ontoenv exists, load it
+        if current_dir()?.join(".ontoenv").exists() {
+            env = Some(OntoEnv::load_from_directory(current_dir()?)?);
+        }
     }
 
     match cmd.command {
@@ -225,12 +217,11 @@ fn main() -> Result<()> {
             );
         }
         Commands::Status => {
-            if let Some(ref env) = env {
-                // load env from .ontoenv/ontoenv.json
-                let status = env.status()?;
-                // pretty print the status
-                println!("{}", status);
-            }
+            let env = require_ontoenv(env)?;
+            // load env from .ontoenv/ontoenv.json
+            let status = env.status()?;
+            // pretty print the status
+            println!("{}", status);
         }
         Commands::Refresh => {
             // if temporary, raise an error
@@ -239,10 +230,9 @@ fn main() -> Result<()> {
                     "Cannot refresh in temporary mode. Run `ontoenv init` to create a new OntoEnv."
                 ));
             }
-            if let Some(ref mut env) = env {
-                env.update()?;
-                env.save_to_directory()?;
-            }
+            let mut env = require_ontoenv(env)?;
+            env.update()?;
+            env.save_to_directory()?;
         }
         Commands::GetClosure {
             ontology,
@@ -252,22 +242,21 @@ fn main() -> Result<()> {
         } => {
             // make ontology an IRI
             let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            if let Some(ref mut env) = env {
-                let graphid = env
-                    .resolve(ResolveTarget::Graph(iri.clone()))
-                    .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
-                let closure = env.get_dependency_closure(&graphid)?;
-                let (graph, _successful, failed_imports) =
-                    env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
-                if let Some(failed_imports) = failed_imports {
-                    for imp in failed_imports {
-                        eprintln!("{}", imp);
-                    }
+            let mut env = require_ontoenv(env)?;
+            let graphid = env
+                .resolve(ResolveTarget::Graph(iri.clone()))
+                .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
+            let closure = env.get_dependency_closure(&graphid)?;
+            let (graph, _successful, failed_imports) =
+                env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
+            if let Some(failed_imports) = failed_imports {
+                for imp in failed_imports {
+                    eprintln!("{}", imp);
                 }
-                // write the graph to a file
-                let destination = destination.unwrap_or_else(|| "output.ttl".to_string());
-                write_dataset_to_file(&graph, &destination)?;
             }
+            // write the graph to a file
+            let destination = destination.unwrap_or_else(|| "output.ttl".to_string());
+            write_dataset_to_file(&graph, &destination)?;
         }
         Commands::Add { url, file } => {
             let location: OntologyLocation = match (url, file) {
@@ -275,91 +264,105 @@ fn main() -> Result<()> {
                 (None, Some(file)) => OntologyLocation::File(PathBuf::from(file)),
                 _ => return Err(anyhow::anyhow!("Must specify either --url or --file")),
             };
-            if let Some(ref mut env) = env {
-                env.add(location, true)?;
-                env.save_to_directory()?;
-            }
+            let mut env = require_ontoenv(env)?;
+            env.add(location, true)?;
+            env.save_to_directory()?;
         }
         Commands::ListOntologies => {
-            if let Some(ref env) = env {
-                // print list of ontology URLs from env.ontologies.values() sorted alphabetically
-                let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
-                ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
-                ontologies.dedup_by(|a, b| a.name() == b.name());
-                for ont in ontologies {
-                    println!("{}", ont.name().as_str());
-                }
+            let env = require_ontoenv(env)?;
+            // print list of ontology URLs from env.ontologies.values() sorted alphabetically
+            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
+            ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
+            ontologies.dedup_by(|a, b| a.name() == b.name());
+            for ont in ontologies {
+                println!("{}", ont.name().as_str());
             }
         }
         Commands::ListLocations => {
-            if let Some(ref env) = env {
-                let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
-                ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
-                for ont in ontologies {
-                    println!("{}", ont.location().as_str());
-                }
+            let env = require_ontoenv(env)?;
+            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
+            ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
+            for ont in ontologies {
+                println!("{}", ont.location().as_str());
             }
         }
         Commands::Dump { contains } => {
-            if let Some(ref env) = env {
-                env.dump(contains.as_deref());
-            }
+            let env = require_ontoenv(env)?;
+            env.dump(contains.as_deref());
         }
         Commands::DepGraph { roots, output } => {
-            if let Some(ref mut env) = env {
-                let dot = if let Some(roots) = roots {
-                    let roots: Vec<GraphIdentifier> = roots
-                        .iter()
-                        .map(|iri| {
-                            env.resolve(ResolveTarget::Graph(NamedNode::new(iri).unwrap()))
-                                .unwrap()
-                                .clone()
-                        })
-                        .collect();
-                    env.rooted_dep_graph_to_dot(roots)?
-                } else {
-                    env.dep_graph_to_dot()?
-                };
-                // call graphviz to generate PDF
-                let dot_path = current_dir()?.join("dep_graph.dot");
-                std::fs::write(&dot_path, dot)?;
-                let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
-                let output = std::process::Command::new("dot")
-                    .args(["-Tpdf", dot_path.to_str().unwrap(), "-o", &output_path])
-                    .output()?;
-                if !output.status.success() {
-                    return Err(anyhow::anyhow!(
-                        "Failed to generate PDF: {}",
-                        String::from_utf8_lossy(&output.stderr)
-                    ));
-                }
+            let env = require_ontoenv(env)?;
+            let dot = if let Some(roots) = roots {
+                let roots: Vec<GraphIdentifier> = roots
+                    .iter()
+                    .map(|iri| {
+                        env.resolve(ResolveTarget::Graph(NamedNode::new(iri).unwrap()))
+                            .unwrap()
+                            .clone()
+                    })
+                    .collect();
+                env.rooted_dep_graph_to_dot(roots)?
+            } else {
+                env.dep_graph_to_dot()?
+            };
+            // call graphviz to generate PDF
+            let dot_path = current_dir()?.join("dep_graph.dot");
+            std::fs::write(&dot_path, dot)?;
+            let output_path = output.unwrap_or_else(|| "dep_graph.pdf".to_string());
+            let output = std::process::Command::new("dot")
+                .args(["-Tpdf", dot_path.to_str().unwrap(), "-o", &output_path])
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow::anyhow!(
+                    "Failed to generate PDF: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
         Commands::Dependents { ontologies } => {
-            if let Some(ref mut env) = env {
-                for ont in ontologies {
-                    let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                    let dependents = env.get_dependents(&iri)?;
-                    println!("Dependents of {}: ", iri);
-                    for dep in dependents {
-                        println!("{}", dep);
-                    }
+            let mut env = require_ontoenv(env)?;
+            for ont in ontologies {
+                let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let dependents = env.get_dependents(&iri)?;
+                println!("Dependents of {}: ", iri);
+                for dep in dependents {
+                    println!("{}", dep);
                 }
             }
         }
         Commands::Doctor => {
-            if let Some(ref mut env) = env {
-                env.doctor();
-            }
+            let env = require_ontoenv(env)?;
+            env.doctor();
         }
         Commands::Reset => {
             // remove .ontoenv directory
             let path = current_dir()?.join(".ontoenv");
+            println!("Removing .ontoenv directory at {}...", path.display());
             if path.exists() {
+                // check delete? [y/N]
+                let mut input = String::new();
+                println!("Are you sure you want to delete the .ontoenv directory? [y/N]");
+                std::io::stdin()
+                    .read_line(&mut input)
+                    .expect("Failed to read line");
+                let input = input.trim();
+                if input != "y" && input != "Y" {
+                    println!("Aborting...");
+                    return Ok(());
+                }
                 std::fs::remove_dir_all(path)?;
             }
         }
     }
 
     Ok(())
+}
+
+
+fn require_ontoenv(env: Option<OntoEnv>) -> Result<OntoEnv> {
+    env.ok_or_else(|| {
+        anyhow::anyhow!(
+            "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
+        )
+    })
 }

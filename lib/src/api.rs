@@ -405,8 +405,13 @@ impl OntoEnv {
     /// the patterns
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
         let mut files = vec![];
-        for search_directory in &self.config.search_directories {
-            for entry in walkdir::WalkDir::new(search_directory) {
+        for location in &self.config.locations {
+            // if location is a file, add it to the list
+            if location.is_file() && self.config.is_included(location) {
+                files.push(OntologyLocation::File(location.clone()));
+                continue;
+            }
+            for entry in walkdir::WalkDir::new(location) {
                 let entry = entry?;
                 if entry.file_type().is_file() && self.config.is_included(entry.path()) {
                     files.push(OntologyLocation::File(entry.path().to_path_buf()));
