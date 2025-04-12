@@ -23,9 +23,6 @@ struct Cli {
     /// Debug mode - sets the RUST_LOG level to debug, defaults to warning level
     #[clap(long, action, default_value = "false", global = true)]
     debug: bool,
-    /// Directories to search for ontologies. If not provided, the current directory is used.
-    #[clap(long, short, num_args = 1.., global = true)]
-    search_directories: Option<Vec<PathBuf>>,
     /// Resolution policy for determining which ontology to use when there are multiple with the same name
     #[clap(long, short, default_value = "default", global = true)]
     policy: Option<String>,
@@ -50,6 +47,9 @@ struct Cli {
     /// Do not search for ontologies in the search directories
     #[clap(long = "no-search", short = 'n', action, global = true)]
     no_search: bool,
+    /// Directories to search for ontologies. If not provided, the current directory is used.
+    #[clap(global = true)]
+    search_directories: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Subcommand)]
