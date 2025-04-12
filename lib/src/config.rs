@@ -136,11 +136,7 @@ impl Config {
         Ok(config)
     }
 
-    pub fn default_offline<K>(
-        root: PathBuf,
-        locations: Option<K>,
-        temporary: bool,
-    ) -> Result<Self>
+    pub fn default_offline<K>(root: PathBuf, locations: Option<K>, temporary: bool) -> Result<Self>
     where
         K: IntoIterator<Item = PathBuf>,
     {
