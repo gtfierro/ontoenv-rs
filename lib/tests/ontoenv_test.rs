@@ -239,8 +239,7 @@ fn test_ontoenv_retrieval_by_name() -> Result<()> {
     let ont_id = env
         .resolve(ResolveTarget::Graph(ont1.into()))
         .ok_or(anyhow::anyhow!("Ontology not found"))?;
-    let ont = env
-        .get_ontology(&ont_id)?;
+    let ont = env.get_ontology(&ont_id)?;
     assert_eq!(ont.imports.len(), 1);
     assert!(ont.location().expect("should be a location").is_file());
 
@@ -248,8 +247,7 @@ fn test_ontoenv_retrieval_by_name() -> Result<()> {
     let ont_id = env
         .resolve(ResolveTarget::Graph(ont2.into()))
         .ok_or(anyhow::anyhow!("Ontology not found"))?;
-    let ont = env
-        .get_ontology(&ont_id)?;
+    let ont = env.get_ontology(&ont_id)?;
     assert_eq!(ont.imports.len(), 2);
     assert!(ont.location().unwrap().is_file());
     teardown(dir);
@@ -276,8 +274,7 @@ fn test_ontoenv_retrieval_by_location() -> Result<()> {
     let ont_id = env
         .resolve(ResolveTarget::Location(loc.clone()))
         .ok_or(anyhow::anyhow!("Ontology not found"))?;
-    let ont = env.
-        get_ontology(&ont_id)?;
+    let ont = env.get_ontology(&ont_id)?;
     assert_eq!(ont.imports.len(), 1);
     assert!(ont
         .location()
