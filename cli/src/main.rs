@@ -358,11 +358,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-
 fn require_ontoenv(env: Option<OntoEnv>) -> Result<OntoEnv> {
     env.ok_or_else(|| {
-        anyhow::anyhow!(
-            "OntoEnv not found. Run `ontoenv init` to create a new OntoEnv."
-        )
+        anyhow::anyhow!("OntoEnv not found. Run `ontoenv init` to create a new OntoEnv.")
     })
 }
