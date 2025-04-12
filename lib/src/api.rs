@@ -28,6 +28,22 @@ pub enum ResolveTarget {
     Graph(NamedNode),
 }
 
+/// Represents the result of a union graph operation.
+/// Contains the resulting dataset, the identifiers of the graphs included,
+/// and any imports that failed during the process.
+pub struct UnionGraph {
+    pub dataset: Dataset,
+    pub graph_ids: Vec<GraphIdentifier>,
+    pub failed_imports: Option<Vec<FailedImport>>,
+}
+
+impl UnionGraph {
+    /// Returns the total number of triples in the union graph dataset.
+    pub fn len(&self) -> usize {
+        self.dataset.len()
+    }
+}
+
 pub struct Stats {
     pub num_triples: usize,
     pub num_graphs: usize,
@@ -592,7 +608,7 @@ impl OntoEnv {
         graph_ids: &[GraphIdentifier],
         rewrite_sh_prefixes: Option<bool>,
         remove_owl_imports: Option<bool>,
-    ) -> Result<(Dataset, Vec<GraphIdentifier>, Option<Vec<FailedImport>>)> {
+    ) -> Result<UnionGraph> {
         // TODO: figure out failed imports
         let mut dataset = self.io.union_graph(graph_ids);
         let first_id = graph_ids
@@ -610,7 +626,11 @@ impl OntoEnv {
             transform::remove_owl_imports(&mut dataset, Some(&to_remove));
         }
         transform::remove_ontology_declarations(&mut dataset, root_ontology);
-        Ok((dataset, graph_ids.to_vec(), None))
+        Ok(UnionGraph {
+            dataset,
+            graph_ids: graph_ids.to_vec(),
+            failed_imports: None, // TODO: Populate this correctly
+        })
     }
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
