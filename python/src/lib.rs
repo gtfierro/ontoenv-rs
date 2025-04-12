@@ -356,7 +356,7 @@ impl OntoEnv {
             Some(g) => g.clone(),
             None => rdflib.getattr("Graph")?.call0()?,
         };
-        let (graph, successful_imports, _failed_imports) = env
+        let union = env
             .get_union_graph(
                 &closure,
                 Some(rewrite_sh_prefixes),
@@ -364,7 +364,7 @@ impl OntoEnv {
             )
             .map_err(anyhow_to_pyerr)?;
         Python::with_gil(|_py| {
-            for triple in graph.into_iter() {
+            for triple in union.dataset.into_iter() {
                 let s: Term = triple.subject.into();
                 let p: Term = triple.predicate.into();
                 let o: Term = triple.object.into();
@@ -381,7 +381,7 @@ impl OntoEnv {
 
             // Remove each successful_imports url in the closure from the destination_graph
             if remove_owl_imports {
-                for graphid in successful_imports {
+                for graphid in union.graph_ids {
                     let iri = term_to_python(py, &rdflib, Term::NamedNode(graphid.into()))?;
                     let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
                     // remove triples with (None, pred, iri)

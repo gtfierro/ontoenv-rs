@@ -637,6 +637,12 @@ impl OntoEnv {
         self.io.get_graph(id)
     }
 
+    pub fn get_ontology(&self, id: &GraphIdentifier) -> Result<Ontology> {
+        self.env
+            .get_ontology(id)
+            .ok_or(anyhow::anyhow!("Ontology not found"))
+    }
+
     /// Returns a list of all ontologies that depend on the given ontology
     pub fn get_dependents(&self, id: &NamedNode) -> Result<Vec<GraphIdentifier>> {
         // find all nodes in the dependency_graph which have an edge to the given node
