@@ -17,6 +17,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
 pub struct StoreStats {
     pub num_graphs: usize,
     pub num_triples: usize,

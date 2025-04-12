@@ -396,7 +396,6 @@ fn test_ontoenv_dependency_closure() -> Result<()> {
                   "fixtures/brick-stuff/support/SHACL-SCHEMA-SUPPLEMENT_QUDT-v2.1.ttl" => "support/SHACL-SCHEMA-SUPPLEMENT_QUDT-v2.1.ttl",
                   "fixtures/brick-stuff/support/VOCAB_QUDT-DIMENSION-VECTORS-v2.1.ttl" => "support/VOCAB_QUDT-DIMENSION-VECTORS-v2.1.ttl",
                   "fixtures/brick-stuff/support/VOCAB_QUDT-PREFIX-v2.1.ttl" => "support/VOCAB_QUDT-PREFIX-v2.1.ttl",
-                  "fixtures/brick-stuff/support/VOCAB_QUDT-PREFIXES-v2.1.ttl" => "support/VOCAB_QUDT-PREFIXES-v2.1.ttl",
                   "fixtures/brick-stuff/support/VOCAB_QUDT-QUANTITY-KINDS-ALL-v2.1.ttl" => "support/VOCAB_QUDT-QUANTITY-KINDS-ALL-v2.1.ttl",
                   "fixtures/brick-stuff/support/VOCAB_QUDT-SYSTEM-OF-UNITS-ALL-v2.1.ttl" => "support/VOCAB_QUDT-SYSTEM-OF-UNITS-ALL-v2.1.ttl",
                   "fixtures/brick-stuff/support/VOCAB_QUDT-UNITS-ALL-v2.1.ttl" => "support/VOCAB_QUDT-UNITS-ALL-v2.1.ttl",
@@ -415,7 +414,7 @@ fn test_ontoenv_dependency_closure() -> Result<()> {
     let mut env = OntoEnv::init(cfg, false)?;
     env.update()?;
 
-    assert_eq!(env.stats()?.num_graphs, 21);
+    assert_eq!(env.stats()?.num_graphs, 20);
 
     let ont1 = NamedNodeRef::new("https://brickschema.org/schema/1.3/Brick")?;
     let ont_graph = env.resolve(ResolveTarget::Graph(ont1.into())).unwrap();
