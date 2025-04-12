@@ -1,3 +1,6 @@
+//! Defines the `Environment` struct which holds the core state of the ontology environment,
+//! including the collection of ontologies, their locations, and the default resolution policy.
+
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::policy;

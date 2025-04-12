@@ -1,3 +1,5 @@
+//! Defines custom error types used within the OntoEnv library, such as errors related to offline mode.
+
 // OfflineRetrieval error
 
 use std::fmt;
