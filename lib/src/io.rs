@@ -267,6 +267,86 @@ impl GraphIO for PersistentGraphIO {
     }
 }
 
+pub struct ReadOnlyPersistentGraphIO {
+    store: Store,
+    offline: bool,
+    strict: bool,
+    store_path: PathBuf,
+}
+
+impl ReadOnlyPersistentGraphIO {
+    pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
+        let store_path = path.join("store.db");
+        let store = Store::open_read_only(store_path.clone())?;
+        Ok(Self {
+            store,
+            offline,
+            strict,
+            store_path,
+        })
+    }
+}
+
+impl GraphIO for ReadOnlyPersistentGraphIO {
+    fn is_offline(&self) -> bool {
+        self.offline
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn size(&self) -> Result<StoreStats> {
+        let num_graphs = self.store.named_graphs().count();
+        let num_triples = self.store.len()?;
+        Ok(StoreStats {
+            num_graphs,
+            num_triples,
+        })
+    }
+
+    fn store_location(&self) -> Option<&Path> {
+        Some(&self.store_path)
+    }
+
+    fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
+        let mut graph = Dataset::new();
+        for id in ids {
+            let graphname = id.graphname().unwrap();
+            let g = self.get_graph(&id).unwrap();
+            for t in g.iter() {
+                graph.insert(&Quad::new(
+                    t.subject.clone(),
+                    t.predicate.clone(),
+                    t.object.clone(),
+                    graphname.clone(),
+                ));
+            }
+        }
+        graph
+    }
+
+    fn add(&mut self, _location: OntologyLocation, _overwrite: bool) -> Result<Ontology> {
+        Err(anyhow!("Cannot add to read-only store"))
+    }
+
+    fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        let mut graph = Graph::new();
+        let graphname = id.graphname()?;
+        for quad in self
+            .store
+            .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+        {
+            graph.insert(quad?.as_ref());
+        }
+        Ok(graph)
+    }
+
+    fn remove(&mut self, _id: &GraphIdentifier) -> Result<()> {
+        Err(anyhow!("Cannot remove from read-only store"))
+    }
+}
+
 pub struct MemoryGraphIO {
     graphs: HashMap<GraphIdentifier, Graph>,
     offline: bool,

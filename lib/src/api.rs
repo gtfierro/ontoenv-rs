@@ -135,7 +135,7 @@ impl OntoEnv {
     }
 
     /// Loads the environment from the .ontoenv directory.
-    pub fn load_from_directory(root: PathBuf) -> Result<Self> {
+    pub fn load_from_directory(root: PathBuf, read_only: bool) -> Result<Self> {
         let ontoenv_dir = root.join(".ontoenv");
         if !ontoenv_dir.exists() {
             return Err(anyhow::anyhow!(
@@ -171,11 +171,18 @@ impl OntoEnv {
 
         // Initialize the IO to the persistent graph type. We know that it exists because we
         // are loading from a directory
-        let mut io: Box<dyn GraphIO> = Box::new(crate::io::PersistentGraphIO::new(
-            ontoenv_dir.into(),
-            config.offline,
-            config.strict,
-        )?);
+        let mut io: Box<dyn GraphIO> = match read_only {
+            true => Box::new(crate::io::ReadOnlyPersistentGraphIO::new(
+                ontoenv_dir.into(),
+                config.offline,
+                config.strict,
+            )?),
+            false => Box::new(crate::io::PersistentGraphIO::new(
+                ontoenv_dir.into(),
+                config.offline,
+                config.strict,
+            )?),
+        };
 
         // copy the graphs from the persistent store to the memory store if we are a 'temporary'
         // environment
