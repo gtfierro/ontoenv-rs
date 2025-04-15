@@ -21,7 +21,6 @@ use crate::ontology::GraphIdentifier;
 use chrono::prelude::*;
 use pretty_bytes::converter::convert as pretty_bytes;
 use std::fmt::{self, Display};
-use std::io::Write;
 
 pub struct FailedImport {
     ontology: GraphIdentifier,
