@@ -301,7 +301,7 @@ fn test_ontoenv_load() -> Result<()> {
 
     // reload env
     let cfg_location = dir.path();
-    let env2 = OntoEnv::load_from_directory(cfg_location.to_path_buf())?;
+    let env2 = OntoEnv::load_from_directory(cfg_location.to_path_buf(), false)?;
     assert_eq!(env2.stats()?.num_graphs, 4);
     teardown(dir);
     Ok(())

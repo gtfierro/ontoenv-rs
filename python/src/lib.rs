@@ -193,11 +193,11 @@ impl OntoEnv {
 
         let env = if config.is_none() && config_path.as_ref().map_or(false, |p| p.exists()) {
             // If no config but a valid path is given, attempt to load from the directory
-            OntoEnvRs::load_from_directory(config_path.as_ref().unwrap().clone())
+            OntoEnvRs::load_from_directory(config_path.as_ref().unwrap().clone(), read_only)
                 .map_err(anyhow_to_pyerr)
         } else if let Some(c) = config {
             // If a config is provided, initialize a new OntoEnv
-            OntoEnvRs::init(c.cfg, read_only).map_err(anyhow_to_pyerr)
+            OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
         } else {
             // Return an error if neither a valid path nor a config is provided
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

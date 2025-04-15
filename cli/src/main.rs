@@ -179,7 +179,7 @@ fn main() -> Result<()> {
     } else if cmd.command.to_string() != "Init" {
         // if .ontoenv exists, load it
         if current_dir()?.join(".ontoenv").exists() {
-            env = Some(OntoEnv::load_from_directory(current_dir()?)?);
+            env = Some(OntoEnv::load_from_directory(current_dir()?, false)?); // no read-only
         }
     }
 
@@ -242,7 +242,7 @@ fn main() -> Result<()> {
         } => {
             // make ontology an IRI
             let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            let mut env = require_ontoenv(env)?;
+            let env = require_ontoenv(env)?;
             let graphid = env
                 .resolve(ResolveTarget::Graph(iri.clone()))
                 .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
@@ -319,7 +319,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Dependents { ontologies } => {
-            let mut env = require_ontoenv(env)?;
+            let env = require_ontoenv(env)?;
             for ont in ontologies {
                 let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let dependents = env.get_dependents(&iri)?;
@@ -359,6 +359,6 @@ fn main() -> Result<()> {
 
 fn require_ontoenv(env: Option<OntoEnv>) -> Result<OntoEnv> {
     env.ok_or_else(|| {
-        anyhow::anyhow!("OntoEnv not found. Run `ontoenv init` to create a new OntoEnv.")
+        anyhow::anyhow!("OntoEnv not found. Run `ontoenv init` to create a new OntoEnv or use -t/--temporary to create a temporary environment.")
     })
 }
