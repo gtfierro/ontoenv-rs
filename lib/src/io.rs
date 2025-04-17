@@ -270,18 +270,16 @@ impl GraphIO for PersistentGraphIO {
 pub struct ReadOnlyPersistentGraphIO {
     store: Store,
     offline: bool,
-    strict: bool,
     store_path: PathBuf,
 }
 
 impl ReadOnlyPersistentGraphIO {
-    pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
+    pub fn new(path: PathBuf, offline: bool) -> Result<Self> {
         let store_path = path.join("store.db");
         let store = Store::open_read_only(store_path.clone())?;
         Ok(Self {
             store,
             offline,
-            strict,
             store_path,
         })
     }

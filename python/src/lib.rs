@@ -195,8 +195,13 @@ impl OntoEnv {
             // If no config but a valid path is given, attempt to load from the directory
             OntoEnvRs::load_from_directory(config_path.as_ref().unwrap().clone(), read_only)
                 .map_err(anyhow_to_pyerr)
+        } else if !recreate {
+            // if recreate is 'false', try to load from the directory
+            OntoEnvRs::load_from_directory(config_path.as_ref().unwrap().clone(), read_only)
+                .map_err(anyhow_to_pyerr)
         } else if let Some(c) = config {
-            // If a config is provided, initialize a new OntoEnv
+            // If a config is provided, initialize a new OntoEnv. 'recreate' will be true here
+            // (else it would have been loaded from the directory in the previous step)
             OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
         } else {
             // Return an error if neither a valid path nor a config is provided

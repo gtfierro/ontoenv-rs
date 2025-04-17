@@ -175,7 +175,6 @@ impl OntoEnv {
             true => Box::new(crate::io::ReadOnlyPersistentGraphIO::new(
                 ontoenv_dir.into(),
                 config.offline,
-                config.strict,
             )?),
             false => Box::new(crate::io::PersistentGraphIO::new(
                 ontoenv_dir.into(),
