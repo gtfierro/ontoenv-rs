@@ -165,6 +165,7 @@ fn main() -> Result<()> {
         false,
         cmd.temporary,
     )?;
+    config.print();
 
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time

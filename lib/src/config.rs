@@ -202,6 +202,33 @@ impl Config {
         }
         Ok(config)
     }
+
+    /// Prints out the current Config in a clear and readable way for command line output.
+    pub fn print(&self) {
+        println!("Configuration:");
+        println!("  Root: {}", self.root.display());
+        if !self.locations.is_empty() {
+            println!("  Locations:");
+            for loc in &self.locations {
+                println!("    - {}", loc.display());
+            }
+        }
+        println!("  Include Patterns:");
+        for pat in &self.includes {
+            println!("    - {}", pat);
+        }
+        if !self.excludes.is_empty() {
+            println!("  Exclude Patterns:");
+            for pat in &self.excludes {
+                println!("    - {}", pat);
+            }
+        }
+        println!("  Require Ontology Names: {}", self.require_ontology_names);
+        println!("  Strict: {}", self.strict);
+        println!("  Offline: {}", self.offline);
+        println!("  Resolution Policy: {}", self.resolution_policy);
+        println!("  Temporary: {}", self.temporary);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

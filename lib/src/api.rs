@@ -57,6 +57,19 @@ pub struct OntoEnv {
     config: Config,
 }
 
+impl std::fmt::Debug for OntoEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        // print config
+        write!(f, "OntoEnv {{\n")?;
+        write!(f, "  config: {:?},\n", self.config)?;
+        write!(f, "  env: {:?},\n", self.env)?;
+        write!(f, "  dependency_graph: {:?},\n", self.dependency_graph)?;
+        write!(f, "  io: {:?},\n", self.io.io_type())?;
+        write!(f, "}}")?;
+        Ok(())
+    }
+}
+
 impl OntoEnv {
     fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
         Self {
@@ -94,9 +107,6 @@ impl OntoEnv {
     pub fn save_to_directory(&self) -> Result<()> {
         if self.config.temporary {
             warn!("Cannot save a temporary environment");
-            if self.config.strict {
-                return Err(anyhow::anyhow!("Cannot save a temporary environment"));
-            }
             return Ok(());
         }
         let ontoenv_dir = self.config.root.join(".ontoenv");
@@ -428,6 +438,11 @@ impl OntoEnv {
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
         let mut files = vec![];
         for location in &self.config.locations {
+            // if location does not exist, skip it
+            if !location.exists() {
+                warn!("Location does not exist: {:?}", location);
+                continue;
+            }
             // if location is a file, add it to the list
             if location.is_file() && self.config.is_included(location) {
                 files.push(OntologyLocation::File(location.clone()));
