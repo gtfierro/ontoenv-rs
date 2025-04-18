@@ -349,7 +349,12 @@ impl OntoEnv {
         let env = inner.lock().unwrap();
         let graphid = env
             .resolve(ResolveTarget::Graph(iri.clone()).into())
-            .unwrap();
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "No graph with URI: {}",
+                    uri
+                ))
+            })?;
         let ont = env.ontologies().get(&graphid).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {} not found", iri))
         })?;
