@@ -19,3 +19,8 @@ features = ["pyo3/extension-module"]
 [build-system]
 requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
