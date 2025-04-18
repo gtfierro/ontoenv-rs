@@ -54,7 +54,7 @@ def test_init_load_from_existing_dir(existing_env_dir):
     # Initialize by path only, should load existing
     env = OntoEnv(path=existing_env_dir, read_only=False)
     # Simple check: does it have a store path?
-    assert env.store_path() == str(existing_env_dir / ".ontoenv" / "store")
+    assert env.store_path() == str(existing_env_dir / ".ontoenv" / "store.db")
     # Add more checks if the fixture pre-populates data
 
 def test_init_recreate_existing_dir(existing_env_dir):
