@@ -543,11 +543,18 @@ impl OntoEnv {
         Ok(store.into())
     }
 
-    pub fn store_path(&self) -> PyResult<String> {
+    pub fn store_path(&self) -> PyResult<Option<String>> {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
-        Ok(env.store_path().unwrap().to_string_lossy().to_string())
+        match env.store_path() {
+            Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+            None => Ok(None), // Return None if the path doesn't exist (e.g., temporary env)
+        }
     }
+
+    // Wrapper method to raise error if store_path is None, matching previous panic behavior
+    // but providing a Python-level error. Or tests can check for None.
+    // Let's keep the Option return type for flexibility and adjust tests.
 
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         py.allow_threads(|| {
