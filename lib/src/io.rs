@@ -26,10 +26,12 @@ pub struct StoreStats {
 pub trait GraphIO: Send + Sync {
     /// Returns true if the store is offline; if this is true, then the store
     /// will not fetch any data from the internet
-
     fn is_offline(&self) -> bool;
     /// Returns the graph with the given identifier
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph>;
+
+    /// Returns the type of the store (e.g., "persistent", "memory", "read-only")
+    fn io_type(&self) -> String;
 
     /// Returns the path to the store, if it is a file-based store
     fn store_location(&self) -> Option<&Path>;
@@ -178,6 +180,10 @@ impl GraphIO for PersistentGraphIO {
         self.offline
     }
 
+    fn io_type(&self) -> String {
+        "persistent".to_string()
+    }
+
     fn flush(&mut self) -> Result<()> {
         self.store
             .flush()
@@ -290,6 +296,10 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         self.offline
     }
 
+    fn io_type(&self) -> String {
+        "read-only".to_string()
+    }
+
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
@@ -368,6 +378,10 @@ impl MemoryGraphIO {
 impl GraphIO for MemoryGraphIO {
     fn is_offline(&self) -> bool {
         self.offline
+    }
+
+    fn io_type(&self) -> String {
+        "memory".to_string()
     }
 
     fn store_location(&self) -> Option<&Path> {
