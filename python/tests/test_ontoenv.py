@@ -95,7 +95,8 @@ def test_init_no_config_no_path_error():
          else:
              shutil.rmtree(".ontoenv")
 
-    with pytest.raises(ValueError, match="Either a Config or a valid path must be provided"):
+    # Expecting failure because '.' likely doesn't contain a valid .ontoenv
+    with pytest.raises(ValueError, match="OntoEnv directory not found at ."):
         OntoEnv() # No args
 
 def test_init_path_no_env_error(temp_dir):
