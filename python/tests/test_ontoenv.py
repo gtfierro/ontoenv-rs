@@ -103,7 +103,8 @@ def test_init_path_no_env_error(temp_dir):
     env_path = temp_dir / "no_env_here"
     env_path.mkdir()
     assert not (env_path / ".ontoenv").exists()
-    with pytest.raises(ValueError): # Expecting an error, maybe match message later
+    # Expecting failure because the specified path doesn't contain a .ontoenv dir
+    with pytest.raises(ValueError, match=f"OntoEnv directory not found at {env_path}"):
         # This fails because load_from_directory expects .ontoenv unless recreate=True
          OntoEnv(path=env_path)
 
