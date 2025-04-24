@@ -190,22 +190,20 @@ impl OntoEnv {
         });
 
         let config_path = path.unwrap_or_else(|| PathBuf::from("."));
-        let env =  if let Some(c) = config {
+        let env = if let Some(c) = config {
             // if temporary is true, create a new OntoEnv
             if c.cfg.temporary {
                 OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
-            } else if !recreate {
+            } else if !recreate && config_path.join(".ontoenv").exists() {
                 // if temporary is false, load from the directory
-                OntoEnvRs::load_from_directory(config_path, read_only)
-                    .map_err(anyhow_to_pyerr)
+                OntoEnvRs::load_from_directory(config_path, read_only).map_err(anyhow_to_pyerr)
             } else {
-                // if temporary is false and recreate is true, create a new OntoEnv
+                // if temporary is false and recreate is true or the directory doesn't exist, create a new OntoEnv
                 OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
             }
         } else {
             // If no config but a valid path is given, attempt to load from the directory
-            OntoEnvRs::load_from_directory(config_path, read_only)
-                .map_err(anyhow_to_pyerr)
+            OntoEnvRs::load_from_directory(config_path, read_only).map_err(anyhow_to_pyerr)
         }?;
 
         let inner = Arc::new(Mutex::new(env));
