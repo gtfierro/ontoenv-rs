@@ -477,7 +477,6 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     Ok(())
 }
 
-
 // === Initialization Tests Translated from Python ===
 
 #[test]
@@ -488,7 +487,7 @@ fn test_init_with_config_new_dir() -> Result<()> {
     assert!(!env_path.exists());
 
     let cfg = Config::new(
-        env_path.clone(), // root path
+        env_path.clone(),             // root path
         Some(vec![env_path.clone()]), // search paths
         &["*.ttl"],
         &[""],
@@ -524,7 +523,14 @@ fn test_init_with_config_existing_empty_dir() -> Result<()> {
         env_path.clone(),
         Some(vec![env_path.clone()]),
         &["*.ttl"],
-        &[""], false, false, false, "default".to_string(), false, false)?;
+        &[""],
+        false,
+        false,
+        false,
+        "default".to_string(),
+        false,
+        false,
+    )?;
 
     // Initialize with recreate=true
     let env = OntoEnv::init(cfg, true)?;
@@ -548,7 +554,15 @@ fn test_init_load_from_existing_dir() -> Result<()> {
     let cfg = Config::new(
         env_path.clone(),
         Some(vec![env_path.clone()]),
-        &["*.ttl"], &[""], false, false, false, "default".to_string(), false, false)?;
+        &["*.ttl"],
+        &[""],
+        false,
+        false,
+        false,
+        "default".to_string(),
+        false,
+        false,
+    )?;
     let mut initial_env = OntoEnv::init(cfg, true)?;
     initial_env.flush()?; // Ensure store is created/flushed
     let expected_store_path = initial_env.store_path().unwrap().to_path_buf();
@@ -575,7 +589,15 @@ fn test_init_recreate_existing_dir() -> Result<()> {
     let cfg = Config::new(
         env_path.clone(),
         Some(vec![env_path.clone()]),
-        &["*.ttl"], &[""], false, false, false, "default".to_string(), false, false)?;
+        &["*.ttl"],
+        &[""],
+        false,
+        false,
+        false,
+        "default".to_string(),
+        false,
+        false,
+    )?;
     let mut initial_env = OntoEnv::init(cfg.clone(), true)?;
     // Add a dummy file to check for removal
     let dummy_file_path = env_path.join(".ontoenv").join("dummy.txt");
@@ -609,7 +631,15 @@ fn test_init_read_only() -> Result<()> {
     let cfg = Config::new(
         env_path.clone(),
         Some(vec![env_path.clone()]),
-        &["*.ttl"], &[""], false, false, false, "default".to_string(), false, false)?;
+        &["*.ttl"],
+        &[""],
+        false,
+        false,
+        false,
+        "default".to_string(),
+        false,
+        false,
+    )?;
     let mut initial_env = OntoEnv::init(cfg, true)?;
     initial_env.flush()?;
     initial_env.save_to_directory()?;
@@ -621,7 +651,10 @@ fn test_init_read_only() -> Result<()> {
     // Attempting to modify should fail.
     // We need a file that *could* be added if not read-only.
     let dummy_ont_path = dir.path().join("dummy.ttl");
-    std::fs::write(&dummy_ont_path, "<urn:dummy> a <http://www.w3.org/2002/07/owl#Ontology> .")?;
+    std::fs::write(
+        &dummy_ont_path,
+        "<urn:dummy> a <http://www.w3.org/2002/07/owl#Ontology> .",
+    )?;
     let location = OntologyLocation::File(dummy_ont_path);
 
     // The OntoEnv::add method requires &mut self.
@@ -634,13 +667,14 @@ fn test_init_read_only() -> Result<()> {
     // Assuming ReadOnlyPersistentGraphIO::add returns a specific error.
     // If GraphIO trait doesn't have 'add', this test might need adjustment based on how OntoEnv handles it.
     // Let's assume GraphIO has 'add' and ReadOnly returns an error like below.
-    assert!(add_result.unwrap_err().to_string().contains("Cannot add to read-only store"));
-
+    assert!(add_result
+        .unwrap_err()
+        .to_string()
+        .contains("Cannot add to read-only store"));
 
     teardown(dir);
     Ok(())
 }
-
 
 #[test]
 fn test_init_path_no_env_error() -> Result<()> {
@@ -657,13 +691,14 @@ fn test_init_path_no_env_error() -> Result<()> {
     let err_msg = load_result.unwrap_err().to_string();
     // Check for the specific error message from load_from_directory
     let expected_meta_path = env_path.join(".ontoenv");
-    assert!(err_msg.contains(&format!("OntoEnv directory not found at: {:?}", expected_meta_path)));
-
+    assert!(err_msg.contains(&format!(
+        "OntoEnv directory not found at: {:?}",
+        expected_meta_path
+    )));
 
     teardown(dir);
     Ok(())
 }
-
 
 #[test]
 fn test_init_temporary() -> Result<()> {
@@ -672,15 +707,16 @@ fn test_init_temporary() -> Result<()> {
     // Temporary envs shouldn't persist to disk relative to root
 
     let cfg = Config::new(
-        env_path.clone(), // Root path (shouldn't be used for storage)
+        env_path.clone(),             // Root path (shouldn't be used for storage)
         Some(vec![env_path.clone()]), // Search path (can still be used)
-        &["*.ttl"], &[""],
+        &["*.ttl"],
+        &[""],
         false, // require_ontology_names
         false, // strict
         false, // offline
         "default".to_string(),
         false, // search_imports
-        true   // temporary = true
+        true,  // temporary = true
     )?;
 
     let mut env = OntoEnv::init(cfg, false)?; // recreate doesn't matter much for temp
@@ -694,7 +730,10 @@ fn test_init_temporary() -> Result<()> {
     // Check if adding works in memory (should not raise read-only error)
     // Create a dummy ontology file to add
     let dummy_ont_path = dir.path().join("dummy_temp.ttl");
-    std::fs::write(&dummy_ont_path, "<urn:dummy_temp> a <http://www.w3.org/2002/07/owl#Ontology> .")?;
+    std::fs::write(
+        &dummy_ont_path,
+        "<urn:dummy_temp> a <http://www.w3.org/2002/07/owl#Ontology> .",
+    )?;
     let location = OntologyLocation::File(dummy_ont_path);
 
     let add_result = env.add(location, false);
@@ -702,7 +741,11 @@ fn test_init_temporary() -> Result<()> {
 
     // Verify the ontology was added (in memory)
     assert_eq!(env.ontologies().len(), 1);
-    assert!(env.resolve(ResolveTarget::Graph(NamedNodeRef::new("urn:dummy_temp")?.into())).is_some());
+    assert!(env
+        .resolve(ResolveTarget::Graph(
+            NamedNodeRef::new("urn:dummy_temp")?.into()
+        ))
+        .is_some());
 
     teardown(dir);
     Ok(())
