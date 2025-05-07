@@ -120,7 +120,10 @@ enum Commands {
     /// Run the doctor to check the environment for issues
     Doctor,
     /// Reset the ontology environment by removing the .ontoenv directory
-    Reset,
+    Reset {
+        #[clap(long, short, action = clap::ArgAction::Set, default_value = "false")]
+        force: bool,
+    },
 }
 
 impl ToString for Commands {
@@ -138,7 +141,7 @@ impl ToString for Commands {
             Commands::DepGraph { .. } => "DepGraph".to_string(),
             Commands::Dependents { .. } => "Dependents".to_string(),
             Commands::Doctor => "Doctor".to_string(),
-            Commands::Reset => "Reset".to_string(),
+            Commands::Reset { .. } => "Reset".to_string(),
         }
     }
 }
@@ -165,24 +168,25 @@ fn main() -> Result<()> {
         false,
         cmd.temporary,
     )?;
-    config.print();
+    if cmd.verbose || cmd.debug {
+        config.print();
+    }
+    let ontoenv_exists = current_dir()?.join(".ontoenv").exists();
 
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
     // - if temporary is false, load the env from the .ontoenv directory if it exists
-    let mut env: Option<OntoEnv> = None;
-
-    if cmd.temporary {
+    let env: Option<OntoEnv> = if cmd.temporary {
         // Create a new OntoEnv object in temporary mode
         let mut e = OntoEnv::init(config.clone(), false)?;
         e.update()?;
-        env = Some(e);
-    } else if cmd.command.to_string() != "Init" {
+        Some(e)
+    } else if cmd.command.to_string() != "Init" && ontoenv_exists{
         // if .ontoenv exists, load it
-        if current_dir()?.join(".ontoenv").exists() {
-            env = Some(OntoEnv::load_from_directory(current_dir()?, false)?); // no read-only
-        }
-    }
+        Some(OntoEnv::load_from_directory(current_dir()?, false)?) // no read-only
+    } else {
+        None
+    };
 
     match cmd.command {
         Commands::Init {
@@ -334,14 +338,14 @@ fn main() -> Result<()> {
             let env = require_ontoenv(env)?;
             env.doctor();
         }
-        Commands::Reset => {
+        Commands::Reset { force } => {
             // remove .ontoenv directory
             let path = current_dir()?.join(".ontoenv");
             println!("Removing .ontoenv directory at {}...", path.display());
-            if path.exists() {
+            if path.exists() && !force {
                 // check delete? [y/N]
                 let mut input = String::new();
-                println!("Are you sure you want to delete the .ontoenv directory? [y/N]");
+                println!("Are you sure you want to delete the .ontoenv directory? [y/N] ");
                 std::io::stdin()
                     .read_line(&mut input)
                     .expect("Failed to read line");
@@ -360,6 +364,6 @@ fn main() -> Result<()> {
 
 fn require_ontoenv(env: Option<OntoEnv>) -> Result<OntoEnv> {
     env.ok_or_else(|| {
-        anyhow::anyhow!("OntoEnv not found. Run `ontoenv init` to create a new OntoEnv or use -t/--temporary to create a temporary environment.")
+        anyhow::anyhow!("OntoEnv not found. Run `ontoenv init` to create a new OntoEnv or use -t/--temporary to use a temporary environment.")
     })
 }
