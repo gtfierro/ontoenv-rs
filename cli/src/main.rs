@@ -121,7 +121,7 @@ enum Commands {
     Doctor,
     /// Reset the ontology environment by removing the .ontoenv directory
     Reset {
-        #[clap(long, short, action = clap::ArgAction::Set, default_value = "false")]
+        #[clap(long, short, action = clap::ArgAction::SetTrue, default_value = "false")]
         force: bool,
     },
 }
@@ -171,7 +171,11 @@ fn main() -> Result<()> {
     if cmd.verbose || cmd.debug {
         config.print();
     }
-    let ontoenv_exists = current_dir()?.join(".ontoenv").exists();
+    let ontoenv_exists = current_dir()?
+        .join(".ontoenv")
+        .join("ontoenv.json")
+        .exists();
+    println!("[INFO] OntoEnv exists: {}", ontoenv_exists);
 
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
@@ -181,12 +185,13 @@ fn main() -> Result<()> {
         let mut e = OntoEnv::init(config.clone(), false)?;
         e.update()?;
         Some(e)
-    } else if cmd.command.to_string() != "Init" && ontoenv_exists{
+    } else if cmd.command.to_string() != "Init" && ontoenv_exists {
         // if .ontoenv exists, load it
         Some(OntoEnv::load_from_directory(current_dir()?, false)?) // no read-only
     } else {
         None
     };
+    println!("[INFO] OntoEnv loaded: {}", env.is_some());
 
     match cmd.command {
         Commands::Init {
@@ -342,7 +347,7 @@ fn main() -> Result<()> {
             // remove .ontoenv directory
             let path = current_dir()?.join(".ontoenv");
             println!("Removing .ontoenv directory at {}...", path.display());
-            if path.exists() && !force {
+            if !force {
                 // check delete? [y/N]
                 let mut input = String::new();
                 println!("Are you sure you want to delete the .ontoenv directory? [y/N] ");
@@ -354,6 +359,8 @@ fn main() -> Result<()> {
                     println!("Aborting...");
                     return Ok(());
                 }
+            }
+            if path.exists() {
                 std::fs::remove_dir_all(path)?;
             }
         }

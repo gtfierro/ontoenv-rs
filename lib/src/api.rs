@@ -311,6 +311,7 @@ impl OntoEnv {
         let id = ont.id().clone();
         self.env.add_ontology(ont);
         self.add_ids_to_dependency_graph(vec![id.clone()])?;
+        self.save_to_directory()?;
         Ok(id)
     }
 
@@ -347,7 +348,24 @@ impl OntoEnv {
         // load all of these files into the environment
         let mut ontologies: Vec<Ontology> = vec![];
         for location in updated_files {
-            let ontology = self.io.add(location.clone(), true)?;
+            // if 'strict' mode then fail on any errors when adding the ontology
+            // otherwise just warn
+
+            let result = self.io.add(location.clone(), true);
+            if result.is_err() {
+                if self.config.strict {
+                    return Err(result.unwrap_err());
+                } else {
+                    warn!(
+                        "Failed to read ontology file {}: {}",
+                        location,
+                        result.unwrap_err()
+                    );
+                    continue;
+                }
+            }
+
+            let ontology = result.unwrap();
             ontologies.push(ontology);
         }
 
@@ -359,6 +377,7 @@ impl OntoEnv {
             update_ids.push(id);
         }
         self.add_ids_to_dependency_graph(update_ids)?;
+        self.save_to_directory()?;
         Ok(())
     }
 
