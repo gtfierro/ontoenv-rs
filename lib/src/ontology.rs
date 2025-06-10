@@ -310,6 +310,42 @@ impl Ontology {
         serde_json::to_string_pretty(self).unwrap()
     }
 
+    pub fn get_namespace_map(&self) -> Result<HashMap<String, String>> {
+        let graph = self.graph()?;
+        let mut namespace_map = HashMap::new();
+
+        let declare_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#declare");
+        let prefix_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#prefix");
+        let namespace_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#namespace");
+
+        let ontology_name_subject: Subject = self.name().into();
+
+        for decl_obj_ref in
+            graph.objects_for_subject_predicate(ontology_name_subject.as_ref(), declare_prop.as_ref())
+        {
+            let decl_subj: SubjectRef = match decl_obj_ref {
+                TermRef::NamedNode(n) => n.into(),
+                TermRef::BlankNode(b) => b.into(),
+                _ => continue,
+            };
+
+            let prefix_term = graph.object_for_subject_predicate(decl_subj, prefix_prop.as_ref());
+            let namespace_term =
+                graph.object_for_subject_predicate(decl_subj, namespace_prop.as_ref());
+
+            if let (Some(TermRef::Literal(prefix_lit)), Some(TermRef::Literal(namespace_lit))) =
+                (prefix_term, namespace_term)
+            {
+                namespace_map.insert(
+                    prefix_lit.value().to_string(),
+                    namespace_lit.value().to_string(),
+                );
+            }
+        }
+
+        Ok(namespace_map)
+    }
+
     pub fn from_graph(
         graph: &OxigraphGraph,
         location: OntologyLocation,
