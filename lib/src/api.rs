@@ -2,7 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
-use crate::doctor::{Doctor, DuplicateOntology, OntologyDeclaration};
+use crate::doctor::{ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration};
 use crate::environment::Environment;
 use crate::transform;
 use crate::{EnvironmentStatus, FailedImport};
@@ -35,12 +35,18 @@ pub struct UnionGraph {
     pub dataset: Dataset,
     pub graph_ids: Vec<GraphIdentifier>,
     pub failed_imports: Option<Vec<FailedImport>>,
+    pub namespace_map: HashMap<String, String>,
 }
 
 impl UnionGraph {
     /// Returns the total number of triples in the union graph dataset.
     pub fn len(&self) -> usize {
         self.dataset.len()
+    }
+
+    /// Returns the union of all namespace maps from the ontologies in the graph.
+    pub fn get_namespace_map(&self) -> &HashMap<String, String> {
+        &self.namespace_map
     }
 }
 
@@ -582,6 +588,7 @@ impl OntoEnv {
         let mut doctor = Doctor::new();
         doctor.add_check(Box::new(DuplicateOntology {}));
         doctor.add_check(Box::new(OntologyDeclaration {}));
+        doctor.add_check(Box::new(ConflictingPrefixes {}));
 
         let problems = doctor.run(self).unwrap();
 
@@ -655,6 +662,13 @@ impl OntoEnv {
             .first()
             .ok_or(anyhow::anyhow!("No graphs found"))?;
         let root_ontology: SubjectRef = SubjectRef::NamedNode(first_id.name());
+
+        let mut namespace_map = HashMap::new();
+        for graph_id in graph_ids {
+            let ontology = self.get_ontology(graph_id)?;
+            namespace_map.extend(ontology.get_namespace_map()?);
+        }
+
         // Rewrite sh:prefixes
         // defaults to true if not specified
         if rewrite_sh_prefixes.unwrap_or(true) {
@@ -670,6 +684,7 @@ impl OntoEnv {
             dataset,
             graph_ids: graph_ids.to_vec(),
             failed_imports: None, // TODO: Populate this correctly
+            namespace_map,
         })
     }
 
