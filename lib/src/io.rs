@@ -12,7 +12,6 @@ use oxigraph::model::NamedOrBlankNode;
 use oxigraph::model::{Dataset, Graph, GraphName, Quad, Triple};
 use oxigraph::store::Store;
 use reqwest::header::CONTENT_TYPE;
-use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
@@ -470,22 +469,35 @@ impl GraphIO for ExternalStoreGraphIO {
 }
 
 pub struct MemoryGraphIO {
-    graphs: HashMap<GraphIdentifier, Graph>,
+    store: Store,
     offline: bool,
     strict: bool,
 }
 
 impl MemoryGraphIO {
-    pub fn new(offline: bool, strict: bool) -> Self {
-        Self {
-            graphs: HashMap::new(),
+    pub fn new(offline: bool, strict: bool) -> Result<Self> {
+        Ok(Self {
+            store: Store::new()?,
             offline,
             strict,
-        }
+        })
     }
 
-    pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) {
-        self.graphs.insert(id, graph);
+    pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
+        let graphname: NamedOrBlankNode = match id.graphname()? {
+            GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
+            _ => return Err(anyhow!("Graph name not found")),
+        };
+        self.store.remove_named_graph(graphname.as_ref())?;
+        self.store.bulk_loader().load_quads(graph.iter().map(|t| {
+            Quad::new(
+                t.subject.clone(),
+                t.predicate.clone(),
+                t.object.clone(),
+                graphname.clone(),
+            )
+        }))?;
+        Ok(())
     }
 }
 
@@ -503,16 +515,14 @@ impl GraphIO for MemoryGraphIO {
     }
 
     fn flush(&mut self) -> Result<()> {
-        Ok(())
+        self.store
+            .flush()
+            .map_err(|e| anyhow!("Failed to flush store: {}", e))
     }
 
     fn size(&self) -> Result<StoreStats> {
-        let num_graphs = self.graphs.len();
-        let num_triples = self
-            .graphs
-            .values()
-            .map(|g| g.len())
-            .fold(0, |acc, x| acc + x);
+        let num_graphs = self.store.named_graphs().count();
+        let num_triples = self.store.len()?;
         Ok(StoreStats {
             num_graphs,
             num_triples,
@@ -550,22 +560,41 @@ impl GraphIO for MemoryGraphIO {
 
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
         let id = ontology.id().clone();
-        if overwrite || self.graphs.get(&id).is_none() {
-            self.graphs.insert(id, graph);
+
+        let graphname: NamedOrBlankNode = match id.graphname()? {
+            GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
+            _ => return Err(anyhow!("Graph name not found")),
+        };
+
+        if overwrite || !self.store.contains_named_graph(graphname.as_ref())? {
+            self.store.remove_named_graph(graphname.as_ref())?;
+            self.store.bulk_loader().load_quads(graph.iter().map(|t| {
+                Quad::new(
+                    t.subject.clone(),
+                    t.predicate.clone(),
+                    t.object.clone(),
+                    graphname.clone(),
+                )
+            }))?;
         }
         Ok(ontology)
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
-        Ok(self
-            .graphs
-            .get(&id)
-            .ok_or(anyhow!("Graph not found"))?
-            .clone())
+        let mut graph = Graph::new();
+        let graphname = id.graphname()?;
+        for quad in self
+            .store
+            .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+        {
+            graph.insert(quad?.as_ref());
+        }
+        Ok(graph)
     }
 
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
-        self.graphs.remove(id);
+        let graphname = id.name();
+        self.store.remove_named_graph(graphname)?;
         Ok(())
     }
 }
