@@ -8,6 +8,7 @@ use crate::transform;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
 use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, SubjectRef};
+use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
 use std::io::{BufReader, Write};
 use std::path::Path;
@@ -84,6 +85,24 @@ impl OntoEnv {
             config,
             dependency_graph: DiGraph::new(),
         }
+    }
+
+    pub fn new_from_store(strict: bool, offline: bool, store: Store) -> Result<Self> {
+        let io = Box::new(crate::io::ExternalStoreGraphIO::new(
+            store, offline, strict,
+        ));
+        let root = std::env::current_dir()?;
+        let includes = vec!["*.ttl", "*.xml", "*.n3"];
+        let config = Config::new_with_default_matches(
+            root,
+            None::<Vec<PathBuf>>,
+            false,
+            false,
+            strict,
+            offline,
+        )?;
+
+        Ok(Self::new(Environment::new(), io, config))
     }
 
     /// returns the graph identifier for the given resolve target, if it exists
