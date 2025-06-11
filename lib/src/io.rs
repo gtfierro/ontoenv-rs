@@ -285,8 +285,8 @@ impl GraphIO for PersistentGraphIO {
         let graphname: GraphName = id.graphname()?;
 
         // 3. Load from bytes using bulk loader
-        if overwrite || !self.store.contains_named_graph(graphname.clone())? {
-            self.store.remove_named_graph(graphname.clone())?;
+        if overwrite || !self.store.contains_named_graph(id.name())? {
+            self.store.remove_named_graph(id.name())?;
             let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
                 .with_default_graph(graphname.as_ref())
                 .without_named_graphs();
@@ -527,8 +527,8 @@ impl GraphIO for ExternalStoreGraphIO {
         let graphname: GraphName = id.graphname()?;
 
         // 3. Load from bytes using bulk loader
-        if overwrite || !self.store.contains_named_graph(graphname.clone())? {
-            self.store.remove_named_graph(graphname.clone())?;
+        if overwrite || !self.store.contains_named_graph(id.name())? {
+            self.store.remove_named_graph(id.name())?;
             let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
                 .with_default_graph(graphname.as_ref())
                 .without_named_graphs();
@@ -575,7 +575,7 @@ impl MemoryGraphIO {
 
     pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
         let graphname = id.graphname()?;
-        self.store.remove_named_graph(graphname.as_ref())?;
+        self.store.remove_named_graph(id.name())?;
         self.store.bulk_loader().load_quads(graph.iter().map(|t| {
             Quad::new(
                 t.subject.clone(),
@@ -697,8 +697,8 @@ impl GraphIO for MemoryGraphIO {
         let graphname: GraphName = id.graphname()?;
 
         // 3. Load from bytes using bulk loader
-        if overwrite || !self.store.contains_named_graph(graphname.clone())? {
-            self.store.remove_named_graph(graphname.clone())?;
+        if overwrite || !self.store.contains_named_graph(id.name())? {
+            self.store.remove_named_graph(id.name())?;
             let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
                 .with_default_graph(graphname.as_ref())
                 .without_named_graphs();
