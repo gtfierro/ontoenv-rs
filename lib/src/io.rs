@@ -8,7 +8,6 @@ use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use log::{debug, error};
 use oxigraph::io::{RdfFormat, RdfParser};
-use oxigraph::model::NamedOrBlankNode;
 use oxigraph::model::{Dataset, Graph, GraphName, Quad, Triple};
 use oxigraph::store::Store;
 use reqwest::header::CONTENT_TYPE;
@@ -227,35 +226,73 @@ impl GraphIO for PersistentGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
-        let graph = match location {
-            OntologyLocation::File(ref path) => self.read_file(&path)?,
-            OntologyLocation::Url(ref url) => {
+        // 1. Get content into bytes and determine format
+        let (bytes, format) = match &location {
+            OntologyLocation::File(path) => {
+                let b = std::fs::read(path)?;
+                let format = path.extension().and_then(|ext| ext.to_str()).and_then(|ext| {
+                    match ext {
+                        "ttl" => Some(RdfFormat::Turtle),
+                        "xml" => Some(RdfFormat::RdfXml),
+                        "n3" => Some(RdfFormat::Turtle),
+                        "nt" => Some(RdfFormat::NTriples),
+                        _ => None,
+                    }
+                });
+                (b, format)
+            }
+            OntologyLocation::Url(url) => {
                 if self.offline {
-                    return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
-                } else {
-                    self.read_url(&url)?
+                    return Err(Error::new(OfflineRetrievalError {
+                        file: url.clone(),
+                    }));
                 }
+                let client = reqwest::blocking::Client::new();
+                let resp = client
+                    .get(url.as_str())
+                    .header(CONTENT_TYPE, "application/x-turtle")
+                    .send()?;
+                if !resp.status().is_success() {
+                    error!("Failed to fetch ontology from {} ({})", url, resp.status());
+                    return Err(anyhow::anyhow!(
+                        "Failed to fetch ontology from {} ({})",
+                        url,
+                        resp.status()
+                    ));
+                }
+                let content_type = resp.headers().get("Content-Type");
+                let format =
+                    content_type
+                        .and_then(|ct| ct.to_str().ok())
+                        .and_then(|ext| match ext {
+                            "application/x-turtle" => Some(RdfFormat::Turtle),
+                            "text/turtle" => Some(RdfFormat::Turtle),
+                            "application/rdf+xml" => Some(RdfFormat::RdfXml),
+                            "text/rdf+n3" => Some(RdfFormat::NTriples),
+                            _ => {
+                                debug!("Unknown content type: {}", ext);
+                                None
+                            }
+                        });
+                (resp.bytes()?.to_vec(), format)
             }
         };
 
+        // 2. Parse from bytes to get metadata
+        let graph = read_format(BufReader::new(std::io::Cursor::new(&bytes)), format)?;
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
         let id = ontology.id().clone();
+        let graphname: GraphName = id.graphname()?;
 
-        let graphname: NamedOrBlankNode = match id.graphname()? {
-            GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
-            _ => return Err(anyhow!("Graph name not found")),
-        };
-
+        // 3. Load from bytes using bulk loader
         if overwrite || !self.store.contains_named_graph(graphname.as_ref())? {
             self.store.remove_named_graph(graphname.as_ref())?;
-            self.store.bulk_loader().load_quads(graph.iter().map(|t| {
-                Quad::new(
-                    t.subject.clone(),
-                    t.predicate.clone(),
-                    t.object.clone(),
-                    graphname.clone(),
-                )
-            }))?;
+            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
+                .with_default_graph(graphname.as_ref())
+                .without_named_graphs();
+            self.store
+                .bulk_loader()
+                .load_from_reader(parser, bytes.as_slice())?;
         }
         Ok(ontology)
     }
@@ -431,35 +468,73 @@ impl GraphIO for ExternalStoreGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
-        let graph = match location {
-            OntologyLocation::File(ref path) => self.read_file(&path)?,
-            OntologyLocation::Url(ref url) => {
+        // 1. Get content into bytes and determine format
+        let (bytes, format) = match &location {
+            OntologyLocation::File(path) => {
+                let b = std::fs::read(path)?;
+                let format = path.extension().and_then(|ext| ext.to_str()).and_then(|ext| {
+                    match ext {
+                        "ttl" => Some(RdfFormat::Turtle),
+                        "xml" => Some(RdfFormat::RdfXml),
+                        "n3" => Some(RdfFormat::Turtle),
+                        "nt" => Some(RdfFormat::NTriples),
+                        _ => None,
+                    }
+                });
+                (b, format)
+            }
+            OntologyLocation::Url(url) => {
                 if self.offline {
-                    return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
-                } else {
-                    self.read_url(&url)?
+                    return Err(Error::new(OfflineRetrievalError {
+                        file: url.clone(),
+                    }));
                 }
+                let client = reqwest::blocking::Client::new();
+                let resp = client
+                    .get(url.as_str())
+                    .header(CONTENT_TYPE, "application/x-turtle")
+                    .send()?;
+                if !resp.status().is_success() {
+                    error!("Failed to fetch ontology from {} ({})", url, resp.status());
+                    return Err(anyhow::anyhow!(
+                        "Failed to fetch ontology from {} ({})",
+                        url,
+                        resp.status()
+                    ));
+                }
+                let content_type = resp.headers().get("Content-Type");
+                let format =
+                    content_type
+                        .and_then(|ct| ct.to_str().ok())
+                        .and_then(|ext| match ext {
+                            "application/x-turtle" => Some(RdfFormat::Turtle),
+                            "text/turtle" => Some(RdfFormat::Turtle),
+                            "application/rdf+xml" => Some(RdfFormat::RdfXml),
+                            "text/rdf+n3" => Some(RdfFormat::NTriples),
+                            _ => {
+                                debug!("Unknown content type: {}", ext);
+                                None
+                            }
+                        });
+                (resp.bytes()?.to_vec(), format)
             }
         };
 
+        // 2. Parse from bytes to get metadata
+        let graph = read_format(BufReader::new(std::io::Cursor::new(&bytes)), format)?;
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
         let id = ontology.id().clone();
+        let graphname: GraphName = id.graphname()?;
 
-        let graphname: NamedOrBlankNode = match id.graphname()? {
-            GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
-            _ => return Err(anyhow!("Graph name not found")),
-        };
-
+        // 3. Load from bytes using bulk loader
         if overwrite || !self.store.contains_named_graph(graphname.as_ref())? {
             self.store.remove_named_graph(graphname.as_ref())?;
-            self.store.bulk_loader().load_quads(graph.iter().map(|t| {
-                Quad::new(
-                    t.subject.clone(),
-                    t.predicate.clone(),
-                    t.object.clone(),
-                    graphname.clone(),
-                )
-            }))?;
+            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
+                .with_default_graph(graphname.as_ref())
+                .without_named_graphs();
+            self.store
+                .bulk_loader()
+                .load_from_reader(parser, bytes.as_slice())?;
         }
         Ok(ontology)
     }
@@ -499,10 +574,7 @@ impl MemoryGraphIO {
     }
 
     pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
-        let graphname: NamedOrBlankNode = match id.graphname()? {
-            GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
-            _ => return Err(anyhow!("Graph name not found")),
-        };
+        let graphname = id.graphname()?;
         self.store.remove_named_graph(graphname.as_ref())?;
         self.store.bulk_loader().load_quads(graph.iter().map(|t| {
             Quad::new(
@@ -566,35 +638,73 @@ impl GraphIO for MemoryGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
-        let graph = match location {
-            OntologyLocation::File(ref path) => self.read_file(&path)?,
-            OntologyLocation::Url(ref url) => {
+        // 1. Get content into bytes and determine format
+        let (bytes, format) = match &location {
+            OntologyLocation::File(path) => {
+                let b = std::fs::read(path)?;
+                let format = path.extension().and_then(|ext| ext.to_str()).and_then(|ext| {
+                    match ext {
+                        "ttl" => Some(RdfFormat::Turtle),
+                        "xml" => Some(RdfFormat::RdfXml),
+                        "n3" => Some(RdfFormat::Turtle),
+                        "nt" => Some(RdfFormat::NTriples),
+                        _ => None,
+                    }
+                });
+                (b, format)
+            }
+            OntologyLocation::Url(url) => {
                 if self.offline {
-                    return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
-                } else {
-                    self.read_url(&url)?
+                    return Err(Error::new(OfflineRetrievalError {
+                        file: url.clone(),
+                    }));
                 }
+                let client = reqwest::blocking::Client::new();
+                let resp = client
+                    .get(url.as_str())
+                    .header(CONTENT_TYPE, "application/x-turtle")
+                    .send()?;
+                if !resp.status().is_success() {
+                    error!("Failed to fetch ontology from {} ({})", url, resp.status());
+                    return Err(anyhow::anyhow!(
+                        "Failed to fetch ontology from {} ({})",
+                        url,
+                        resp.status()
+                    ));
+                }
+                let content_type = resp.headers().get("Content-Type");
+                let format =
+                    content_type
+                        .and_then(|ct| ct.to_str().ok())
+                        .and_then(|ext| match ext {
+                            "application/x-turtle" => Some(RdfFormat::Turtle),
+                            "text/turtle" => Some(RdfFormat::Turtle),
+                            "application/rdf+xml" => Some(RdfFormat::RdfXml),
+                            "text/rdf+n3" => Some(RdfFormat::NTriples),
+                            _ => {
+                                debug!("Unknown content type: {}", ext);
+                                None
+                            }
+                        });
+                (resp.bytes()?.to_vec(), format)
             }
         };
 
+        // 2. Parse from bytes to get metadata
+        let graph = read_format(BufReader::new(std::io::Cursor::new(&bytes)), format)?;
         let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
         let id = ontology.id().clone();
+        let graphname: GraphName = id.graphname()?;
 
-        let graphname: NamedOrBlankNode = match id.graphname()? {
-            GraphName::NamedNode(n) => NamedOrBlankNode::NamedNode(n),
-            _ => return Err(anyhow!("Graph name not found")),
-        };
-
+        // 3. Load from bytes using bulk loader
         if overwrite || !self.store.contains_named_graph(graphname.as_ref())? {
             self.store.remove_named_graph(graphname.as_ref())?;
-            self.store.bulk_loader().load_quads(graph.iter().map(|t| {
-                Quad::new(
-                    t.subject.clone(),
-                    t.predicate.clone(),
-                    t.object.clone(),
-                    graphname.clone(),
-                )
-            }))?;
+            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
+                .with_default_graph(graphname.as_ref())
+                .without_named_graphs();
+            self.store
+                .bulk_loader()
+                .load_from_reader(parser, bytes.as_slice())?;
         }
         Ok(ontology)
     }
