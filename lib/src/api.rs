@@ -685,7 +685,12 @@ impl OntoEnv {
         let mut namespace_map = HashMap::new();
         for graph_id in graph_ids {
             let ontology = self.get_ontology(graph_id)?;
-            namespace_map.extend(ontology.get_namespace_map()?);
+            namespace_map.extend(
+                ontology
+                    .namespace_map()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
         }
 
         // Rewrite sh:prefixes
