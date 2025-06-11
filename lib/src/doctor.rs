@@ -134,13 +134,13 @@ impl EnvironmentCheck for ConflictingPrefixes {
 
             for graph_id in &closure_ids {
                 let ontology = env.get_ontology(graph_id)?;
-                let ns_map = ontology.get_namespace_map()?;
+                let ns_map = ontology.namespace_map();
                 if let Some(location) = ontology.location() {
                     for (prefix, namespace) in ns_map {
                         closure_prefix_map
-                            .entry(prefix)
+                            .entry(prefix.to_string())
                             .or_default()
-                            .entry(namespace)
+                            .entry(namespace.to_string())
                             .or_default()
                             .push(location.clone());
                     }
