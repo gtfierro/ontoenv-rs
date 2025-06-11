@@ -35,6 +35,9 @@ pub trait GraphIO: Send + Sync {
     /// Returns the path to the store, if it is a file-based store
     fn store_location(&self) -> Option<&Path>;
 
+    /// Returns a reference to the underlying store
+    fn store(&self) -> &Store;
+
     /// Returns the size of the underlying store.
     fn size(&self) -> Result<StoreStats>;
 
@@ -202,6 +205,10 @@ impl GraphIO for PersistentGraphIO {
         Some(&self.store_path)
     }
 
+    fn store(&self) -> &Store {
+        &self.store
+    }
+
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
         let mut graph = Dataset::new();
         for id in ids {
@@ -316,6 +323,10 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         Some(&self.store_path)
     }
 
+    fn store(&self) -> &Store {
+        &self.store
+    }
+
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
         let mut graph = Dataset::new();
         for id in ids {
@@ -396,6 +407,10 @@ impl GraphIO for ExternalStoreGraphIO {
 
     fn store_location(&self) -> Option<&Path> {
         None
+    }
+
+    fn store(&self) -> &Store {
+        &self.store
     }
 
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
@@ -512,6 +527,10 @@ impl GraphIO for MemoryGraphIO {
 
     fn store_location(&self) -> Option<&Path> {
         None
+    }
+
+    fn store(&self) -> &Store {
+        &self.store
     }
 
     fn flush(&mut self) -> Result<()> {
