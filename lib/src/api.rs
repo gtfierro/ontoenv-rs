@@ -105,6 +105,10 @@ impl OntoEnv {
         Ok(Self::new(Environment::new(), io, config))
     }
 
+    pub fn io(&self) -> &Box<dyn GraphIO> {
+        &self.io
+    }
+
     /// returns the graph identifier for the given resolve target, if it exists
     pub fn resolve(&self, target: ResolveTarget) -> Option<GraphIdentifier> {
         match target {
