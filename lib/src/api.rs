@@ -92,7 +92,7 @@ impl OntoEnv {
             store, offline, strict,
         ));
         let root = std::env::current_dir()?;
-        let includes = vec!["*.ttl", "*.xml", "*.n3"];
+        let _includes = vec!["*.ttl", "*.xml", "*.n3"];
         let config = Config::new_with_default_matches(
             root,
             None::<Vec<PathBuf>>,
@@ -165,7 +165,7 @@ impl OntoEnv {
         let io: Box<dyn GraphIO> = Box::new(crate::io::MemoryGraphIO::new(
             self.config.offline,
             self.config.strict,
-        ));
+        )?);
         Ok(Self::new(self.env.clone(), io, self.config.clone()))
     }
 
@@ -221,10 +221,11 @@ impl OntoEnv {
         // copy the graphs from the persistent store to the memory store if we are a 'temporary'
         // environment
         if config.temporary {
-            let mut new_io = Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict));
+            let mut new_io =
+                Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?);
             for ontology in env.ontologies().values() {
                 let graph = io.get_graph(ontology.id())?;
-                new_io.add_graph(ontology.id().clone(), graph);
+                new_io.add_graph(ontology.id().clone(), graph)?;
             }
             io = new_io;
         }
@@ -313,7 +314,7 @@ impl OntoEnv {
 
         let env = Environment::new();
         let io: Box<dyn GraphIO> = match config.temporary {
-            true => Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)),
+            true => Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?),
             false => Box::new(crate::io::PersistentGraphIO::new(
                 ontoenv_dir.into(),
                 config.offline,
