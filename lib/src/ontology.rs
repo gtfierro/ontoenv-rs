@@ -322,9 +322,14 @@ impl Ontology {
         require_ontology_names: bool,
     ) -> Result<Self> {
         // get the rdf:type owl:Ontology declarations
-        let decls: Vec<SubjectRef> = graph
+        let mut decls: Vec<SubjectRef> = graph
             .subjects_for_predicate_object(TYPE, ONTOLOGY)
             .collect::<Vec<_>>();
+
+        // if decls is empty, then find all subjets of sh:declare
+        if decls.is_empty() {
+            decls.extend(graph.triples_for_predicate(DECLARE).map(|t| t.subject));
+        }
 
         // ontology_name is the subject of the first declaration
         let ontology_name: Subject = match decls.first() {
