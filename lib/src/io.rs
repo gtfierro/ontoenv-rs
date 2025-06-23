@@ -42,7 +42,7 @@ pub trait GraphIO: Send + Sync {
 
     /// Adds a graph to the store and returns the ontology metadata. Overwrites any existing graph with
     /// the same identifier if 'overwrite' is true.
-    fn add(&mut self, location: OntologyLocation, _overwrite: bool) -> Result<Ontology>;
+    fn add(&mut self, location: OntologyLocation, _overwrite: bool) -> Result<Vec<Ontology>>;
 
     /// Removes the graph with the given identifier from the store and ontology metadata
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()>;
@@ -225,7 +225,7 @@ impl GraphIO for PersistentGraphIO {
         graph
     }
 
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Vec<Ontology>> {
         // 1. Get content into bytes and determine format
         let (bytes, format) = match &location {
             OntologyLocation::File(path) => {
@@ -280,21 +280,24 @@ impl GraphIO for PersistentGraphIO {
 
         // 2. Parse from bytes to get metadata
         let graph = read_format(BufReader::new(std::io::Cursor::new(&bytes)), format)?;
-        let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
-        let id = ontology.id().clone();
-        let graphname: GraphName = id.graphname()?;
+        let ontologies = Ontology::from_graph(&graph, location.clone(), self.strict)?;
 
-        // 3. Load from bytes using bulk loader
-        if overwrite || !self.store.contains_named_graph(id.name())? {
-            self.store.remove_named_graph(id.name())?;
-            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
-                .with_default_graph(graphname.as_ref())
-                .without_named_graphs();
-            self.store
-                .bulk_loader()
-                .load_from_reader(parser, bytes.as_slice())?;
+        for ontology in &ontologies {
+            let id = ontology.id();
+            let graphname: GraphName = id.graphname()?;
+
+            // 3. Load from bytes using bulk loader
+            if overwrite || !self.store.contains_named_graph(id.name())? {
+                self.store.remove_named_graph(id.name())?;
+                let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
+                    .with_default_graph(graphname.as_ref())
+                    .without_named_graphs();
+                self.store
+                    .bulk_loader()
+                    .load_from_reader(parser, bytes.as_slice())?;
+            }
         }
-        Ok(ontology)
+        Ok(ontologies)
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
@@ -381,7 +384,7 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         graph
     }
 
-    fn add(&mut self, _location: OntologyLocation, _overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, _location: OntologyLocation, _overwrite: bool) -> Result<Vec<Ontology>> {
         Err(anyhow!("Cannot add to read-only store"))
     }
 
@@ -467,7 +470,7 @@ impl GraphIO for ExternalStoreGraphIO {
         graph
     }
 
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Vec<Ontology>> {
         // 1. Get content into bytes and determine format
         let (bytes, format) = match &location {
             OntologyLocation::File(path) => {
@@ -522,21 +525,24 @@ impl GraphIO for ExternalStoreGraphIO {
 
         // 2. Parse from bytes to get metadata
         let graph = read_format(BufReader::new(std::io::Cursor::new(&bytes)), format)?;
-        let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
-        let id = ontology.id().clone();
-        let graphname: GraphName = id.graphname()?;
+        let ontologies = Ontology::from_graph(&graph, location.clone(), self.strict)?;
 
-        // 3. Load from bytes using bulk loader
-        if overwrite || !self.store.contains_named_graph(id.name())? {
-            self.store.remove_named_graph(id.name())?;
-            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
-                .with_default_graph(graphname.as_ref())
-                .without_named_graphs();
-            self.store
-                .bulk_loader()
-                .load_from_reader(parser, bytes.as_slice())?;
+        for ontology in &ontologies {
+            let id = ontology.id();
+            let graphname: GraphName = id.graphname()?;
+
+            // 3. Load from bytes using bulk loader
+            if overwrite || !self.store.contains_named_graph(id.name())? {
+                self.store.remove_named_graph(id.name())?;
+                let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
+                    .with_default_graph(graphname.as_ref())
+                    .without_named_graphs();
+                self.store
+                    .bulk_loader()
+                    .load_from_reader(parser, bytes.as_slice())?;
+            }
         }
-        Ok(ontology)
+        Ok(ontologies)
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
@@ -637,7 +643,7 @@ impl GraphIO for MemoryGraphIO {
         graph
     }
 
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Vec<Ontology>> {
         // 1. Get content into bytes and determine format
         let (bytes, format) = match &location {
             OntologyLocation::File(path) => {
@@ -692,21 +698,24 @@ impl GraphIO for MemoryGraphIO {
 
         // 2. Parse from bytes to get metadata
         let graph = read_format(BufReader::new(std::io::Cursor::new(&bytes)), format)?;
-        let ontology = Ontology::from_graph(&graph, location.clone(), self.strict)?;
-        let id = ontology.id().clone();
-        let graphname: GraphName = id.graphname()?;
+        let ontologies = Ontology::from_graph(&graph, location.clone(), self.strict)?;
 
-        // 3. Load from bytes using bulk loader
-        if overwrite || !self.store.contains_named_graph(id.name())? {
-            self.store.remove_named_graph(id.name())?;
-            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
-                .with_default_graph(graphname.as_ref())
-                .without_named_graphs();
-            self.store
-                .bulk_loader()
-                .load_from_reader(parser, bytes.as_slice())?;
+        for ontology in &ontologies {
+            let id = ontology.id();
+            let graphname: GraphName = id.graphname()?;
+
+            // 3. Load from bytes using bulk loader
+            if overwrite || !self.store.contains_named_graph(id.name())? {
+                self.store.remove_named_graph(id.name())?;
+                let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
+                    .with_default_graph(graphname.as_ref())
+                    .without_named_graphs();
+                self.store
+                    .bulk_loader()
+                    .load_from_reader(parser, bytes.as_slice())?;
+            }
         }
-        Ok(ontology)
+        Ok(ontologies)
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {

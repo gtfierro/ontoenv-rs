@@ -212,7 +212,7 @@ fn main() -> Result<()> {
                 let file = File::open(file)?;
                 let config: EnvironmentConfig = serde_json::from_reader(file)?;
                 for ont in config.ontologies {
-                    env.add(ont.location, true)?;
+                    let _ = env.add(ont.location, true)?;
                 }
             }
 
@@ -274,7 +274,7 @@ fn main() -> Result<()> {
                 _ => return Err(anyhow::anyhow!("Must specify either --url or --file")),
             };
             let mut env = require_ontoenv(env)?;
-            env.add(location, true)?;
+            let _ = env.add(location, true)?;
             env.save_to_directory()?;
         }
         Commands::ListOntologies => {
