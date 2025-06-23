@@ -316,42 +316,12 @@ impl Ontology {
         &self.namespace_map
     }
 
-    pub fn from_graph(
+    fn build_from_subject(
         graph: &OxigraphGraph,
+        ontology_subject: Subject,
         location: OntologyLocation,
-        require_ontology_names: bool,
     ) -> Result<Self> {
-        // get the rdf:type owl:Ontology declarations
-        let mut decls: Vec<SubjectRef> = graph
-            .subjects_for_predicate_object(TYPE, ONTOLOGY)
-            .collect::<Vec<_>>();
-
-        // if decls is empty, then find all subjets of sh:declare
-        if decls.is_empty() {
-            decls.extend(graph.triples_for_predicate(DECLARE).map(|t| t.subject));
-        }
-
-        // ontology_name is the subject of the first declaration
-        let ontology_name: Subject = match decls.first() {
-            Some(decl) => match decl {
-                SubjectRef::NamedNode(s) => Subject::NamedNode((*s).into()),
-                _ => return Err(anyhow::anyhow!("Ontology name is not an IRI")),
-            },
-            None => {
-                if require_ontology_names {
-                    return Err(anyhow::anyhow!(
-                        "No ontology declaration found in {}",
-                        location
-                    ));
-                }
-                warn!(
-                    "No ontology declaration found in {}. Using this as the ontology name",
-                    location
-                );
-                Subject::NamedNode(location.to_iri())
-            }
-        };
-        debug!("got ontology name: {}", ontology_name);
+        debug!("got ontology name: {}", ontology_subject);
 
         let mut namespace_map = HashMap::new();
 
@@ -360,7 +330,7 @@ impl Ontology {
         let namespace_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#namespace");
 
         for decl_obj_ref in
-            graph.objects_for_subject_predicate(ontology_name.as_ref(), declare_prop.as_ref())
+            graph.objects_for_subject_predicate(ontology_subject.as_ref(), declare_prop.as_ref())
         {
             let decl_subj: SubjectRef = match decl_obj_ref {
                 TermRef::NamedNode(n) => n.into(),
@@ -383,7 +353,7 @@ impl Ontology {
         }
 
         let imports: Vec<TermRef> = graph
-            .objects_for_subject_predicate(ontology_name.as_ref(), IMPORTS)
+            .objects_for_subject_predicate(ontology_subject.as_ref(), IMPORTS)
             .collect::<Vec<_>>();
 
         // get each of the ONNTOLOGY_VERSION_IRIS values, if they exist on the ontology
@@ -391,7 +361,7 @@ impl Ontology {
             ONTOLOGY_VERSION_IRIS
                 .iter()
                 .fold(HashMap::new(), |mut acc, &iri| {
-                    if let Some(o) = graph.object_for_subject_predicate(ontology_name.as_ref(), iri)
+                    if let Some(o) = graph.object_for_subject_predicate(ontology_subject.as_ref(), iri)
                     {
                         match o {
                             TermRef::NamedNode(s) => {
@@ -409,7 +379,7 @@ impl Ontology {
         // check if any of the ONTOLOGY_VERSION_IRIS exist on the other side of a
         // vaem:hasGraphMetadata predicate
         let graph_metadata: Vec<TermRef> = graph
-            .objects_for_subject_predicate(ontology_name.as_ref(), HAS_GRAPH_METADATA)
+            .objects_for_subject_predicate(ontology_subject.as_ref(), HAS_GRAPH_METADATA)
             .collect::<Vec<_>>();
         for value in graph_metadata {
             let graph_iri = match value {
@@ -437,10 +407,10 @@ impl Ontology {
 
         info!(
             "Fetched graph {} from location: {:?}",
-            ontology_name, location
+            ontology_subject, location
         );
 
-        let ontology_name: NamedNode = match ontology_name {
+        let ontology_name: NamedNode = match ontology_subject {
             Subject::NamedNode(s) => s,
             _ => panic!("Ontology name is not an IRI"),
         };
@@ -465,6 +435,60 @@ impl Ontology {
             last_updated: None,
             namespace_map,
         })
+    }
+
+    pub fn from_graph(
+        graph: &OxigraphGraph,
+        location: OntologyLocation,
+        require_ontology_names: bool,
+    ) -> Result<Vec<Self>> {
+        // get the rdf:type owl:Ontology declarations
+        let mut decls: Vec<SubjectRef> = graph
+            .subjects_for_predicate_object(TYPE, ONTOLOGY)
+            .collect::<Vec<_>>();
+
+        // if decls is empty, then find all subjets of sh:declare
+        if decls.is_empty() {
+            decls.extend(graph.triples_for_predicate(DECLARE).map(|t| t.subject));
+        }
+
+        let mut ontologies = Vec::new();
+
+        if decls.is_empty() {
+            if require_ontology_names {
+                return Err(anyhow::anyhow!(
+                    "No ontology declaration found in {}",
+                    location
+                ));
+            }
+            warn!(
+                "No ontology declaration found in {}. Using this as the ontology name",
+                location
+            );
+            let ontology_subject = Subject::NamedNode(location.to_iri());
+            ontologies.push(Self::build_from_subject(
+                graph,
+                ontology_subject,
+                location,
+            )?);
+        } else {
+            for decl in decls {
+                let ontology_subject = match decl {
+                    SubjectRef::NamedNode(s) => Subject::NamedNode(s.into_owned()),
+                    _ => {
+                        warn!("Ontology declaration subject is not a NamedNode, skipping.");
+                        continue;
+                    }
+                };
+                ontologies.push(Self::build_from_subject(
+                    graph,
+                    ontology_subject,
+                    location.clone(),
+                )?);
+            }
+        }
+
+        Ok(ontologies)
     }
 
     pub fn from_str(s: &str) -> Result<Self> {

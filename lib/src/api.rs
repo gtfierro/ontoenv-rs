@@ -336,13 +336,21 @@ impl OntoEnv {
 
     /// Add the ontology from the given location to the environment,
     /// then add it to the dependency graph.
-    pub fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<GraphIdentifier> {
-        let ont = self.io.add(location, overwrite)?;
-        let id = ont.id().clone();
-        self.env.add_ontology(ont);
-        self.add_ids_to_dependency_graph(vec![id.clone()])?;
+    pub fn add(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: bool,
+    ) -> Result<Vec<GraphIdentifier>> {
+        let onts = self.io.add(location, overwrite)?;
+        let mut ids = Vec::new();
+        for ont in onts {
+            let id = ont.id().clone();
+            self.env.add_ontology(ont);
+            ids.push(id);
+        }
+        self.add_ids_to_dependency_graph(ids.clone())?;
         self.save_to_directory()?;
-        Ok(id)
+        Ok(ids)
     }
 
     /// Load all graphs from the search directories. There are several things that can happen:
@@ -395,8 +403,8 @@ impl OntoEnv {
                 }
             }
 
-            let ontology = result.unwrap();
-            ontologies.push(ontology);
+            let new_onts = result.unwrap();
+            ontologies.extend(new_onts);
         }
 
         let mut update_ids: Vec<GraphIdentifier> = Vec::new();
@@ -551,11 +559,13 @@ impl OntoEnv {
                     // otherwise, try to find the ontology by location
                     OntologyLocation::from_str(import.as_str())?
                 };
-                let imp = match self.io.add(location, false) {
-                    Ok(imp) => {
-                        let id = imp.id().clone();
-                        self.env.add_ontology(imp);
-                        id
+                match self.io.add(location, false) {
+                    Ok(new_onts) => {
+                        for ont in new_onts {
+                            let id = ont.id().clone();
+                            self.env.add_ontology(ont);
+                            stack.push_back(id);
+                        }
                     }
                     Err(e) => {
                         if self.config.strict {
@@ -566,7 +576,6 @@ impl OntoEnv {
                         }
                     }
                 };
-                stack.push_back(imp);
             }
         }
         //
