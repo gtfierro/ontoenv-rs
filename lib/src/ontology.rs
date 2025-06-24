@@ -429,7 +429,12 @@ impl Ontology {
             };
             for iri in ONTOLOGY_VERSION_IRIS.iter() {
                 if let Some(value) = store
-                    .quads_for_pattern(Some(graph_iri.as_ref()), Some(*iri), None, Some(graph_name))
+                    .quads_for_pattern(
+                        Some(SubjectRef::NamedNode(graph_iri.as_ref())),
+                        Some(*iri),
+                        None,
+                        Some(graph_name),
+                    )
                     .filter_map(Result::ok)
                     .map(|q| q.object)
                     .next()
