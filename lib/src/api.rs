@@ -2,7 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
-use crate::doctor::{ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration};
+use crate::doctor::{ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem};
 use crate::environment::Environment;
 use crate::transform;
 use crate::{EnvironmentStatus, FailedImport};
@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use log::{error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -549,10 +549,12 @@ impl OntoEnv {
                         continue;
                     }
                     imp.location()
-                        .ok_or(anyhow::anyhow!(format!(
-                            "Parsing imports: Ontology {} location not found",
-                            imp
-                        )))?
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "Parsing imports: Ontology {} location not found",
+                                imp
+                            )
+                        })?
                         .clone()
                 } else {
                     // otherwise, try to find the ontology by location
@@ -588,7 +590,9 @@ impl OntoEnv {
         }
         // traverse the ontologies and add edges to the graph
         for ontology in self.env.ontologies().keys() {
-            let index = indexes.get(ontology).unwrap();
+            let index = indexes.get(ontology).ok_or_else(|| {
+                anyhow!("Programming error: ontology id {:?} not in index map", ontology)
+            })?;
             let ont = match self.env.ontologies().get(ontology) {
                 Some(ont) => ont,
                 None => {
@@ -607,7 +611,12 @@ impl OntoEnv {
                         continue;
                     }
                 };
-                let import_index = indexes.get(graph_id).unwrap();
+                let import_index = indexes.get(graph_id).ok_or_else(|| {
+                    anyhow!(
+                        "Programming error: ontology id {:?} not in index map",
+                        graph_id
+                    )
+                })?;
                 graph.add_edge(*index, *import_index, ());
             }
         }
@@ -616,31 +625,13 @@ impl OntoEnv {
     }
 
     /// Returns a list of issues with the environment
-    pub fn doctor(&self) {
+    pub fn doctor(&self) -> Result<Vec<OntologyProblem>> {
         let mut doctor = Doctor::new();
         doctor.add_check(Box::new(DuplicateOntology {}));
         doctor.add_check(Box::new(OntologyDeclaration {}));
         doctor.add_check(Box::new(ConflictingPrefixes {}));
 
-        let problems = doctor.run(self).unwrap();
-
-        // for each problem, print two columns. The first column is the message
-        // and the second column is a list of locations for that problem. The locations
-        // should be stacked on top of one another
-        let mut messages: HashMap<String, Vec<String>> = HashMap::new();
-        for problem in problems {
-            let message = problem.message;
-            let locations: Vec<String> = problem.locations.iter().map(|l| l.to_string()).collect();
-            messages.entry(message).or_default().extend(locations);
-        }
-
-        // print the messages
-        for (message, locations) in messages {
-            println!("Problem: {message}");
-            for location in locations {
-                println!("  - {location}");
-            }
-        }
+        doctor.run(self)
     }
 
     /// Returns the names of all graphs within the dependency closure of the provided graph
@@ -656,7 +647,7 @@ impl OntoEnv {
             let ontology = self
                 .ontologies()
                 .get(&graph)
-                .ok_or(anyhow::anyhow!("Ontology not found"))?;
+                .ok_or_else(|| anyhow!("Ontology not found"))?;
             for import in &ontology.imports {
                 // get graph identifier for import
                 let import = match self.env.get_ontology_by_name(import.into()) {
@@ -692,7 +683,7 @@ impl OntoEnv {
         let mut dataset = self.io.union_graph(graph_ids);
         let first_id = graph_ids
             .first()
-            .ok_or(anyhow::anyhow!("No graphs found"))?;
+            .ok_or_else(|| anyhow!("No graphs found"))?;
         let root_ontology: SubjectRef = SubjectRef::NamedNode(first_id.name());
 
         let mut namespace_map = HashMap::new();
@@ -732,7 +723,7 @@ impl OntoEnv {
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Result<Ontology> {
         self.env
             .get_ontology(id)
-            .ok_or(anyhow::anyhow!("Ontology not found"))
+            .ok_or_else(|| anyhow!("Ontology not found"))
     }
 
     /// Returns a list of all ontologies that depend on the given ontology
@@ -743,12 +734,12 @@ impl OntoEnv {
         let node = self
             .env
             .get_ontology_by_name(id.into())
-            .ok_or(anyhow::anyhow!("Ontology not found"))?;
+            .ok_or_else(|| anyhow!("Ontology not found"))?;
         let index = self
             .dependency_graph
             .node_indices()
             .find(|i| self.dependency_graph[*i] == *node.id())
-            .ok_or(anyhow::anyhow!("Node not found"))?;
+            .ok_or_else(|| anyhow!("Node not found"))?;
         for edge in self
             .dependency_graph
             .edges_directed(index, petgraph::Direction::Incoming)
@@ -782,10 +773,12 @@ impl OntoEnv {
             let ont = self
                 .ontologies()
                 .get(&ontology)
-                .ok_or(anyhow::anyhow!(format!(
-                    "Listing ontologies: Ontology {} not found",
-                    ontology
-                )))?;
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Listing ontologies: Ontology {} not found",
+                        ontology
+                    )
+                })?;
             for import in &ont.imports {
                 let import = match self.env.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),

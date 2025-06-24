@@ -88,37 +88,22 @@ pub struct VersionPolicy;
 
 impl ResolutionPolicy for VersionPolicy {
     fn resolve<'a>(&self, name: &str, ontologies: &'a [&'a Ontology]) -> Option<&'a Ontology> {
-        // for each ontology, create a vector which contains the value for each of the ONTOLOGY_VERSION_IRIS values
-        // if the ontology doesn't have a value for a given version, use "0" as the value
-        let version_vectors: Vec<Vec<String>> = ontologies
+        ontologies
             .iter()
-            .filter_map(|o| {
-                if o.name() != name {
-                    return None;
-                }
+            .filter(|o| o.name() == name)
+            .max_by_key(|o| {
                 ONTOLOGY_VERSION_IRIS
                     .iter()
                     .map(|iri| {
-                        let iri: NamedNode = iri.to_owned().into();
-                        Some(
-                            o.version_properties()
-                                .get(&iri)
-                                .cloned()
-                                .unwrap_or_else(|| "0".to_string()),
-                        )
+                        let iri_nn: NamedNode = (*iri).into();
+                        o.version_properties()
+                            .get(&iri_nn)
+                            .cloned()
+                            .unwrap_or_else(|| "0".to_string())
                     })
-                    .collect()
+                    .collect::<Vec<String>>()
             })
-            .collect();
-
-        // choose the "max" version by comparing the version vectors by lexicographically comparing
-        // the values of the version vectors. REturn the ontology with the max version
-        let max_version = version_vectors.iter().max().unwrap();
-        let max_index = version_vectors
-            .iter()
-            .position(|v| v == max_version)
-            .unwrap();
-        Some(&ontologies[max_index]).copied()
+            .copied()
     }
 
     fn policy_name(&self) -> &'static str {
