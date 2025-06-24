@@ -8,6 +8,7 @@ use anyhow::Result;
 use oxigraph::model::NamedNode;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+#[derive(Debug)]
 pub struct OntologyProblem {
     pub locations: Vec<OntologyLocation>,
     pub message: String,
@@ -54,7 +55,11 @@ impl EnvironmentCheck for OntologyDeclaration {
     }
 
     fn check(&mut self, env: &OntoEnv, problems: &mut Vec<OntologyProblem>) -> Result<()> {
-        for location in env.find_files()? {
+        for ontology in env.ontologies().values() {
+            let location = match ontology.location() {
+                Some(loc) => loc,
+                None => continue, // Cannot check ontologies without a location
+            };
             let g = match location.graph() {
                 Ok(g) => g,
                 Err(e) => {
@@ -96,11 +101,10 @@ impl EnvironmentCheck for DuplicateOntology {
         // group ontologies by name; if there are more than one in a group, report an error
         let mut names: HashMap<NamedNode, Vec<OntologyLocation>> = HashMap::new();
         for ontology in env.ontologies().values() {
-            let name = ontology.name();
-            names
-                .entry(name)
-                .or_default()
-                .push(ontology.location().unwrap().clone());
+            if let Some(location) = ontology.location() {
+                let name = ontology.name();
+                names.entry(name).or_default().push(location.clone());
+            }
         }
         for (name, locations) in names {
             if locations.len() > 1 {
