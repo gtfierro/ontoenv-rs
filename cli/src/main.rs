@@ -340,7 +340,18 @@ fn main() -> Result<()> {
         }
         Commands::Doctor => {
             let env = require_ontoenv(env)?;
-            env.doctor();
+            let problems = env.doctor()?;
+            if problems.is_empty() {
+                println!("No issues found.");
+            } else {
+                println!("Found {} issues:", problems.len());
+                for problem in problems {
+                    println!("- {}", problem.message);
+                    for location in problem.locations {
+                        println!("  - {}", location);
+                    }
+                }
+            }
         }
         Commands::Reset { force } => {
             // remove .ontoenv directory
