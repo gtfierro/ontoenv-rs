@@ -67,11 +67,11 @@ pub struct OntoEnv {
 impl std::fmt::Debug for OntoEnv {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         // print config
-        write!(f, "OntoEnv {{\n")?;
-        write!(f, "  config: {:?},\n", self.config)?;
-        write!(f, "  env: {:?},\n", self.env)?;
-        write!(f, "  dependency_graph: {:?},\n", self.dependency_graph)?;
-        write!(f, "  io: {:?},\n", self.io.io_type())?;
+        writeln!(f, "OntoEnv {{")?;
+        writeln!(f, "  config: {:?},", self.config)?;
+        writeln!(f, "  env: {:?},", self.env)?;
+        writeln!(f, "  dependency_graph: {:?},", self.dependency_graph)?;
+        writeln!(f, "  io: {:?},", self.io.io_type())?;
         write!(f, "}}")?;
         Ok(())
     }
@@ -92,7 +92,7 @@ impl OntoEnv {
             store, offline, strict,
         ));
         let root = std::env::current_dir()?;
-        let _includes = vec!["*.ttl", "*.xml", "*.n3"];
+        let _includes = ["*.ttl", "*.xml", "*.n3"];
         let config = Config::new_with_default_matches(
             root,
             None::<Vec<PathBuf>>,
@@ -139,7 +139,7 @@ impl OntoEnv {
             return Ok(());
         }
         let ontoenv_dir = self.config.root.join(".ontoenv");
-        info!("Saving ontology environment to: {:?}", ontoenv_dir);
+        info!("Saving ontology environment to: {ontoenv_dir:?}");
         std::fs::create_dir_all(&ontoenv_dir)?;
 
         // Save the environment configuration
@@ -212,11 +212,11 @@ impl OntoEnv {
         // are loading from a directory
         let mut io: Box<dyn GraphIO> = match read_only {
             true => Box::new(crate::io::ReadOnlyPersistentGraphIO::new(
-                ontoenv_dir.into(),
+                ontoenv_dir,
                 config.offline,
             )?),
             false => Box::new(crate::io::PersistentGraphIO::new(
-                ontoenv_dir.into(),
+                ontoenv_dir,
                 config.offline,
                 config.strict,
             )?),
@@ -300,8 +300,7 @@ impl OntoEnv {
         if !config.temporary && ontoenv_dir.exists() {
             if overwrite {
                 info!(
-                    "Directory exists and will be overwritten: {:?}",
-                    ontoenv_dir
+                    "Directory exists and will be overwritten: {ontoenv_dir:?}"
                 );
                 fs::remove_dir_all(&ontoenv_dir)?;
             } else {
@@ -320,7 +319,7 @@ impl OntoEnv {
         let io: Box<dyn GraphIO> = match config.temporary {
             true => Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?),
             false => Box::new(crate::io::PersistentGraphIO::new(
-                ontoenv_dir.into(),
+                ontoenv_dir,
                 config.offline,
                 config.strict,
             )?),
@@ -462,7 +461,7 @@ impl OntoEnv {
         // get the updated ontologies from the environment
         let updated_ids = self.get_updated_from_environment();
         if !updated_ids.is_empty() {
-            info!("Updating ontologies: {:?}", updated_ids);
+            info!("Updating ontologies: {updated_ids:?}");
         }
         let mut updated_files: HashSet<OntologyLocation> = updated_ids
             .iter()
@@ -497,7 +496,7 @@ impl OntoEnv {
         for location in &self.config.locations {
             // if location does not exist, skip it
             if !location.exists() {
-                warn!("Location does not exist: {:?}", location);
+                warn!("Location does not exist: {location:?}");
                 continue;
             }
             // if location is a file, add it to the list
@@ -521,7 +520,7 @@ impl OntoEnv {
         let mut seen: HashSet<GraphIdentifier> = HashSet::new();
 
         while let Some(graphid) = stack.pop_front() {
-            info!("Building dependency graph for: {:?}", graphid);
+            info!("Building dependency graph for: {graphid:?}");
             if seen.contains(&graphid) {
                 continue;
             }
@@ -531,12 +530,12 @@ impl OntoEnv {
             let ontology = match self.env.get_ontology(&graphid) {
                 Some(ontology) => ontology,
                 None => {
-                    let msg = format!("Could not find ontology: {:?}", graphid);
+                    let msg = format!("Could not find ontology: {graphid:?}");
                     if self.config.strict {
-                        error!("{}", msg);
+                        error!("{msg}");
                         return Err(anyhow::anyhow!(msg));
                     } else {
-                        warn!("{}", msg);
+                        warn!("{msg}");
                         continue;
                     }
                 }
@@ -593,7 +592,7 @@ impl OntoEnv {
             let ont = match self.env.ontologies().get(ontology) {
                 Some(ont) => ont,
                 None => {
-                    error!("Ontology not found: {:?}", ontology);
+                    error!("Ontology not found: {ontology:?}");
                     continue;
                 }
             };
@@ -604,7 +603,7 @@ impl OntoEnv {
                         if self.config.strict {
                             return Err(anyhow::anyhow!("Import not found: {}", import));
                         }
-                        warn!("Import not found: {}", import);
+                        warn!("Import not found: {import}");
                         continue;
                     }
                 };
@@ -637,9 +636,9 @@ impl OntoEnv {
 
         // print the messages
         for (message, locations) in messages {
-            println!("Problem: {}", message);
+            println!("Problem: {message}");
             for location in locations {
-                println!("  - {}", location);
+                println!("  - {location}");
             }
         }
     }
@@ -666,7 +665,7 @@ impl OntoEnv {
                         if self.config.strict {
                             return Err(anyhow::anyhow!("Import not found: {}", import));
                         }
-                        warn!("Import not found: {}", import);
+                        warn!("Import not found: {import}");
                         continue;
                     }
                 };
@@ -791,7 +790,7 @@ impl OntoEnv {
                 let import = match self.env.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),
                     None => {
-                        error!("Import not found: {}", import);
+                        error!("Import not found: {import}");
                         continue;
                     }
                 };
@@ -812,7 +811,7 @@ impl OntoEnv {
         let dot =
             petgraph::dot::Dot::with_config(&graph, &[petgraph::dot::Config::GraphContentOnly]);
 
-        Ok(format!("digraph {{\nrankdir=LR;\n{:?}}}", dot))
+        Ok(format!("digraph {{\nrankdir=LR;\n{dot:?}}}"))
     }
 
     /// Outputs a human-readable dump of the environment, including all ontologies
@@ -833,7 +832,7 @@ impl OntoEnv {
                 }
             }
             let group = groups.get(&name).unwrap();
-            println!("┌ Ontology: {}", name);
+            println!("┌ Ontology: {name}");
             for ontology in group {
                 let g = self.io.get_graph(ontology.id()).unwrap();
                 println!("├─ Location: {}", ontology.location().unwrap());
@@ -871,7 +870,7 @@ impl OntoEnv {
                     sorted_imports.sort();
                     // print up until last import
                     for import in sorted_imports.iter().take(sorted_imports.len() - 1) {
-                        println!("│ │ ├─ {}", import);
+                        println!("│ │ ├─ {import}");
                     }
                     // print last import
                     println!("│ │ └─ {}", sorted_imports.last().unwrap());

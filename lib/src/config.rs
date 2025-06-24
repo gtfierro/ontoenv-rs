@@ -215,12 +215,12 @@ impl Config {
         }
         println!("  Include Patterns:");
         for pat in &self.includes {
-            println!("    - {}", pat);
+            println!("    - {pat}");
         }
         if !self.excludes.is_empty() {
             println!("  Exclude Patterns:");
             for pat in &self.excludes {
-                println!("    - {}", pat);
+                println!("    - {pat}");
             }
         }
         println!("  Require Ontology Names: {}", self.require_ontology_names);

@@ -60,15 +60,15 @@ impl std::fmt::Display for GraphIdentifier {
     }
 }
 
-impl Into<NamedNode> for GraphIdentifier {
-    fn into(self) -> NamedNode {
-        self.name
+impl From<GraphIdentifier> for NamedNode {
+    fn from(val: GraphIdentifier) -> Self {
+        val.name
     }
 }
 
-impl<'a> Into<NamedNodeRef<'a>> for &'a GraphIdentifier {
-    fn into(self) -> NamedNodeRef<'a> {
-        (&self.name).into()
+impl<'a> From<&'a GraphIdentifier> for NamedNodeRef<'a> {
+    fn from(val: &'a GraphIdentifier) -> Self {
+        (&val.name).into()
     }
 }
 
@@ -84,14 +84,14 @@ impl GraphIdentifier {
         &self.location
     }
 
-    pub fn name(&self) -> NamedNodeRef {
+    pub fn name(&self) -> NamedNodeRef<'_> {
         self.name.as_ref()
     }
 
     pub fn to_filename(&self) -> String {
         let name = self.name.as_str().replace(':', "+");
         let location = self.location.as_str().replace("file://", "");
-        format!("{}-{}", name, location).replace('/', "_")
+        format!("{name}-{location}").replace('/', "_")
     }
     pub fn graphname(&self) -> Result<GraphName> {
         Ok(GraphName::NamedNode(self.name.clone()))
@@ -111,7 +111,7 @@ impl std::fmt::Display for OntologyLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OntologyLocation::File(p) => write!(f, "file://{}", p.to_str().unwrap_or_default()),
-            OntologyLocation::Url(u) => write!(f, "{}", u),
+            OntologyLocation::Url(u) => write!(f, "{u}"),
         }
     }
 }
@@ -172,7 +172,7 @@ impl OntologyLocation {
         match self {
             OntologyLocation::File(p) => {
                 let p = p.to_str().unwrap_or_default();
-                NamedNode::new(format!("file://{}", p)).unwrap()
+                NamedNode::new(format!("file://{p}")).unwrap()
             }
             OntologyLocation::Url(u) => NamedNode::new(u.clone()).unwrap(),
         }
@@ -231,7 +231,7 @@ impl std::fmt::Display for Ontology {
             self.id.location.as_str()
         )?;
         for (k, v) in self.version_properties.iter() {
-            writeln!(f, "  {}: {}", k, v)?;
+            writeln!(f, "  {k}: {v}")?;
         }
         Ok(())
     }
@@ -295,7 +295,7 @@ impl Ontology {
         if let Some(location) = &self.location {
             return location.graph();
         }
-        return OntologyLocation::from_str(self.name.as_str()).and_then(|loc| loc.graph());
+        OntologyLocation::from_str(self.name.as_str()).and_then(|loc| loc.graph())
     }
 
     ///// Returns the graph for this ontology from the OntoEnv
@@ -324,7 +324,7 @@ impl Ontology {
         ontology_subject: Subject,
         location: OntologyLocation,
     ) -> Result<Self> {
-        debug!("got ontology name: {}", ontology_subject);
+        debug!("got ontology name: {ontology_subject}");
 
         let mut namespace_map = HashMap::new();
 
@@ -453,12 +453,11 @@ impl Ontology {
         }
         // dump version properties
         for (k, v) in version_properties.iter() {
-            debug!("{}: {}", k, v);
+            debug!("{k}: {v}");
         }
 
         info!(
-            "Fetched graph {} from location: {:?}",
-            ontology_subject, location
+            "Fetched graph {ontology_subject} from location: {location:?}"
         );
 
         let ontology_name: NamedNode = match ontology_subject {
@@ -502,7 +501,7 @@ impl Ontology {
         let mut decls: Vec<Subject> = store
             .quads_for_pattern(
                 None,
-                Some(TYPE.into()),
+                Some(TYPE),
                 Some(ONTOLOGY.into()),
                 Some(graph_name_ref),
             )
@@ -514,7 +513,7 @@ impl Ontology {
         if decls.is_empty() {
             decls.extend(
                 store
-                    .quads_for_pattern(None, Some(DECLARE.into()), None, Some(graph_name_ref))
+                    .quads_for_pattern(None, Some(DECLARE), None, Some(graph_name_ref))
                     .filter_map(Result::ok)
                     .map(|t| t.subject),
             );
@@ -530,8 +529,7 @@ impl Ontology {
                 ));
             }
             warn!(
-                "No ontology declaration found in {}. Using this as the ontology name",
-                location
+                "No ontology declaration found in {location}. Using this as the ontology name"
             );
             let ontology_subject = Subject::NamedNode(location.to_iri());
             ontologies.push(Self::build_from_subject_in_store(
@@ -566,7 +564,7 @@ impl Ontology {
         ontology_subject: Subject,
         location: OntologyLocation,
     ) -> Result<Self> {
-        debug!("got ontology name: {}", ontology_subject);
+        debug!("got ontology name: {ontology_subject}");
 
         let mut namespace_map = HashMap::new();
 
@@ -647,12 +645,11 @@ impl Ontology {
         }
         // dump version properties
         for (k, v) in version_properties.iter() {
-            debug!("{}: {}", k, v);
+            debug!("{k}: {v}");
         }
 
         info!(
-            "Fetched graph {} from location: {:?}",
-            ontology_subject, location
+            "Fetched graph {ontology_subject} from location: {location:?}"
         );
 
         let ontology_name: NamedNode = match ontology_subject {
@@ -707,8 +704,7 @@ impl Ontology {
                 ));
             }
             warn!(
-                "No ontology declaration found in {}. Using this as the ontology name",
-                location
+                "No ontology declaration found in {location}. Using this as the ontology name"
             );
             let ontology_subject = Subject::NamedNode(location.to_iri());
             ontologies.push(Self::build_from_subject(

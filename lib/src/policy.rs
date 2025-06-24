@@ -45,7 +45,7 @@ where
 {
     let policy_name = String::deserialize(deserializer)?;
     policy_from_name(&policy_name)
-        .ok_or_else(|| serde::de::Error::custom(format!("Unknown policy name: {}", policy_name)))
+        .ok_or_else(|| serde::de::Error::custom(format!("Unknown policy name: {policy_name}")))
 }
 
 /// A resolution policy that always returns the first ontology with the given name.
