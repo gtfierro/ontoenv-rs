@@ -5,7 +5,6 @@ use ontoenv::config::{Config, EnvironmentConfig};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
 use oxigraph::model::NamedNode;
-use serde_json;
 use std::env::current_dir;
 use std::fs::File;
 use std::path::PathBuf;
@@ -175,7 +174,7 @@ fn main() -> Result<()> {
         .join(".ontoenv")
         .join("ontoenv.json")
         .exists();
-    println!("[INFO] OntoEnv exists: {}", ontoenv_exists);
+    println!("[INFO] OntoEnv exists: {ontoenv_exists}");
 
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
@@ -231,7 +230,7 @@ fn main() -> Result<()> {
             // load env from .ontoenv/ontoenv.json
             let status = env.status()?;
             // pretty print the status
-            println!("{}", status);
+            println!("{status}");
         }
         Commands::Refresh => {
             // if temporary, raise an error
@@ -260,7 +259,7 @@ fn main() -> Result<()> {
             let union = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
             if let Some(failed_imports) = union.failed_imports {
                 for imp in failed_imports {
-                    eprintln!("{}", imp);
+                    eprintln!("{imp}");
                 }
             }
             // write the graph to a file
@@ -333,9 +332,9 @@ fn main() -> Result<()> {
             for ont in ontologies {
                 let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let dependents = env.get_dependents(&iri)?;
-                println!("Dependents of {}: ", iri);
+                println!("Dependents of {iri}: ");
                 for dep in dependents {
-                    println!("{}", dep);
+                    println!("{dep}");
                 }
             }
         }

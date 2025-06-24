@@ -101,7 +101,7 @@ pub fn read_format<T: Read + Seek>(
 }
 
 pub fn read_url(file: &str) -> Result<OxigraphGraph> {
-    debug!("Reading url: {}", file);
+    debug!("Reading url: {file}");
 
     let client = reqwest::blocking::Client::new();
     let resp = client
@@ -124,7 +124,7 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
         "application/rdf+xml" => Some(RdfFormat::RdfXml),
         "text/rdf+n3" => Some(RdfFormat::NTriples),
         _ => {
-            debug!("Unknown content type: {}", ext);
+            debug!("Unknown content type: {ext}");
             None
         }
     });

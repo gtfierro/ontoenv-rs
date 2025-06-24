@@ -79,7 +79,7 @@ pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[Na
         .quads_for_predicate(IMPORTS)
         .filter_map(|quad| match quad.object {
             TermRef::NamedNode(obj) => {
-                if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
+                if ontologies_to_remove.is_none_or(|ontologies| ontologies.contains(&obj)) {
                     Some(quad.into())
                 } else {
                     None
@@ -103,7 +103,7 @@ pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<
         .triples_for_predicate(IMPORTS)
         .filter_map(|triple| match triple.object {
             TermRef::NamedNode(obj) => {
-                if ontologies_to_remove.map_or(true, |ontologies| ontologies.contains(&obj)) {
+                if ontologies_to_remove.is_none_or(|ontologies| ontologies.contains(&obj)) {
                     Some(triple.into())
                 } else {
                     None

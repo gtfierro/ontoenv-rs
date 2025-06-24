@@ -60,7 +60,7 @@ impl EnvironmentCheck for OntologyDeclaration {
                 Err(e) => {
                     problems.push(OntologyProblem {
                         locations: vec![location.clone()],
-                        message: format!("Failed to load graph: {}", e),
+                        message: format!("Failed to load graph: {e}"),
                     });
                     continue;
                 }
@@ -106,7 +106,7 @@ impl EnvironmentCheck for DuplicateOntology {
             if locations.len() > 1 {
                 problems.push(OntologyProblem {
                     locations,
-                    message: format!("Multiple ontologies with name {}", name),
+                    message: format!("Multiple ontologies with name {name}"),
                 });
             }
         }
@@ -160,8 +160,7 @@ impl EnvironmentCheck for ConflictingPrefixes {
                         problems.push(OntologyProblem {
                             locations: all_locations,
                             message: format!(
-                                "Conflicting namespace definitions for prefix '{}'",
-                                prefix
+                                "Conflicting namespace definitions for prefix '{prefix}'"
                             ),
                         });
                     }

@@ -123,7 +123,7 @@ pub trait GraphIO: Send + Sync {
     }
 
     fn read_url(&self, file: &str) -> Result<Graph> {
-        debug!("Reading url: {}", file);
+        debug!("Reading url: {file}");
 
         let client = reqwest::blocking::Client::new();
         let resp = client
@@ -146,7 +146,7 @@ pub trait GraphIO: Send + Sync {
             "application/rdf+xml" => Some(RdfFormat::RdfXml),
             "text/rdf+n3" => Some(RdfFormat::NTriples),
             _ => {
-                debug!("Unknown content type: {}", ext);
+                debug!("Unknown content type: {ext}");
                 None
             }
         });
@@ -212,12 +212,12 @@ impl GraphIO for PersistentGraphIO {
         let mut graph = Dataset::new();
         for id in ids {
             let graphname = id.graphname().unwrap();
-            let g = self.get_graph(&id).unwrap();
+            let g = self.get_graph(id).unwrap();
             for t in g.iter() {
                 graph.insert(&Quad::new(
-                    t.subject.clone(),
-                    t.predicate.clone(),
-                    t.object.clone(),
+                    t.subject,
+                    t.predicate,
+                    t.object,
                     graphname.clone(),
                 ));
             }
@@ -270,7 +270,7 @@ impl GraphIO for PersistentGraphIO {
                             "application/rdf+xml" => Some(RdfFormat::RdfXml),
                             "text/rdf+n3" => Some(RdfFormat::NTriples),
                             _ => {
-                                debug!("Unknown content type: {}", ext);
+                                debug!("Unknown content type: {ext}");
                                 None
                             }
                         });
@@ -371,12 +371,12 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         let mut graph = Dataset::new();
         for id in ids {
             let graphname = id.graphname().unwrap();
-            let g = self.get_graph(&id).unwrap();
+            let g = self.get_graph(id).unwrap();
             for t in g.iter() {
                 graph.insert(&Quad::new(
-                    t.subject.clone(),
-                    t.predicate.clone(),
-                    t.object.clone(),
+                    t.subject,
+                    t.predicate,
+                    t.object,
                     graphname.clone(),
                 ));
             }
@@ -457,12 +457,12 @@ impl GraphIO for ExternalStoreGraphIO {
         let mut graph = Dataset::new();
         for id in ids {
             let graphname = id.graphname().unwrap();
-            let g = self.get_graph(&id).unwrap();
+            let g = self.get_graph(id).unwrap();
             for t in g.iter() {
                 graph.insert(&Quad::new(
-                    t.subject.clone(),
-                    t.predicate.clone(),
-                    t.object.clone(),
+                    t.subject,
+                    t.predicate,
+                    t.object,
                     graphname.clone(),
                 ));
             }
@@ -515,7 +515,7 @@ impl GraphIO for ExternalStoreGraphIO {
                             "application/rdf+xml" => Some(RdfFormat::RdfXml),
                             "text/rdf+n3" => Some(RdfFormat::NTriples),
                             _ => {
-                                debug!("Unknown content type: {}", ext);
+                                debug!("Unknown content type: {ext}");
                                 None
                             }
                         });
@@ -584,9 +584,9 @@ impl MemoryGraphIO {
         self.store.remove_named_graph(id.name())?;
         self.store.bulk_loader().load_quads(graph.iter().map(|t| {
             Quad::new(
-                t.subject.clone(),
-                t.predicate.clone(),
-                t.object.clone(),
+                t.subject,
+                t.predicate,
+                t.object,
                 graphname.clone(),
             )
         }))?;
@@ -630,12 +630,12 @@ impl GraphIO for MemoryGraphIO {
         let mut graph = Dataset::new();
         for id in ids {
             let graphname = id.graphname().unwrap();
-            let g = self.get_graph(&id).unwrap();
+            let g = self.get_graph(id).unwrap();
             for t in g.iter() {
                 graph.insert(&Quad::new(
-                    t.subject.clone(),
-                    t.predicate.clone(),
-                    t.object.clone(),
+                    t.subject,
+                    t.predicate,
+                    t.object,
                     graphname.clone(),
                 ));
             }
@@ -688,7 +688,7 @@ impl GraphIO for MemoryGraphIO {
                             "application/rdf+xml" => Some(RdfFormat::RdfXml),
                             "text/rdf+n3" => Some(RdfFormat::NTriples),
                             _ => {
-                                debug!("Unknown content type: {}", ext);
+                                debug!("Unknown content type: {ext}");
                                 None
                             }
                         });

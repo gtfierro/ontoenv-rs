@@ -60,6 +60,12 @@ impl Clone for Environment {
     }
 }
 
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Environment {
     pub fn new() -> Self {
         Self {
@@ -89,8 +95,7 @@ impl Environment {
     pub fn get_modified_time(&self, id: &GraphIdentifier) -> Option<DateTime<Utc>> {
         self.ontologies
             .get(id)
-            .map(|ontology| ontology.last_updated)
-            .flatten()
+            .and_then(|ontology| ontology.last_updated)
     }
 
     pub fn graphid_from_location(&self, location: &OntologyLocation) -> Option<&GraphIdentifier> {
