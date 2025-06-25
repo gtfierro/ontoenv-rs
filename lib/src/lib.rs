@@ -74,7 +74,7 @@ impl std::fmt::Display for EnvironmentStatus {
             "Environment Status\n\
             Number of Ontologies: {}\n\
             Last Updated: {}\n\
-            Store Size: {} bytes",
+            Store Size: {}",
             self.num_ontologies,
             last_updated,
             pretty_bytes(self.store_size as f64),
