@@ -101,12 +101,12 @@ impl OntoEnv {
         } else {
             let config = Config::new_with_default_matches(
                 root,
-                None, // will default to root
-                false, // require_ontology_names
-                false, // strict
-                true,  // offline
-                false, // temporary
-                false, // no_search
+                None::<Vec<PathBuf>>, // will default to root
+                false,                // require_ontology_names
+                false,                // strict
+                true,                 // offline
+                false,                // temporary
+                false,                // no_search
             )?;
             // overwrite should be false, but init will create it.
             Self::init(config, false)
@@ -134,12 +134,12 @@ impl OntoEnv {
         let root = std::env::current_dir()?;
         let config = Config::new_with_default_matches(
             root,
-            None, // will default to root
-            false, // require_ontology_names
-            false, // strict
-            false, // offline
-            true,  // temporary
-            false, // no_search
+            None::<Vec<PathBuf>>, // will default to root
+            false,                // require_ontology_names
+            false,                // strict
+            false,                // offline
+            true,                 // temporary
+            false,                // no_search
         )?;
         Self::init(config, true)
     }
