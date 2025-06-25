@@ -62,6 +62,7 @@ pub struct OntoEnv {
     io: Box<dyn GraphIO>,
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
     config: Config,
+    failed_resolutions: HashSet<NamedNode>,
 }
 
 impl std::fmt::Debug for OntoEnv {
@@ -84,6 +85,7 @@ impl OntoEnv {
             io,
             config,
             dependency_graph: DiGraph::new(),
+            failed_resolutions: HashSet::new(),
         }
     }
 
@@ -239,6 +241,7 @@ impl OntoEnv {
             io,
             config,
             dependency_graph,
+            failed_resolutions: HashSet::new(),
         })
     }
 
@@ -330,6 +333,7 @@ impl OntoEnv {
             io,
             dependency_graph: DiGraph::new(),
             config,
+            failed_resolutions: HashSet::new(),
         })
     }
 
@@ -340,6 +344,7 @@ impl OntoEnv {
         location: OntologyLocation,
         overwrite: bool,
     ) -> Result<Vec<GraphIdentifier>> {
+        self.failed_resolutions.clear();
         let onts = self.io.add(location, overwrite)?;
         let mut ids = Vec::new();
         for ont in onts {
@@ -372,6 +377,7 @@ impl OntoEnv {
     ///
     /// Finally, it updates the dependency graph for all the updated ontologies.
     pub fn update(&mut self) -> Result<()> {
+        self.failed_resolutions.clear();
         // remove ontologies which are no longer present in the search directories
         for graphid in self.missing_ontologies() {
             self.io.remove(&graphid)?;
@@ -542,24 +548,40 @@ impl OntoEnv {
             };
             let imports = &ontology.imports.clone();
             for import in imports {
+                if self.failed_resolutions.contains(import) {
+                    continue;
+                }
                 // check to see if we have a file defining this ontology first
-                let location = if let Some(imp) = self.env.get_ontology_by_name(import.into()) {
+                let location_res = if let Some(imp) = self.env.get_ontology_by_name(import.into()) {
                     // if we have already re-visited it, skip
                     if seen.contains(imp.id()) || stack.contains(imp.id()) {
                         continue;
                     }
                     imp.location()
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "Parsing imports: Ontology {} location not found",
-                                imp
-                            )
-                        })?
-                        .clone()
+                        .ok_or_else(|| anyhow!("Parsing imports: Ontology {} location not found", imp))
+                        .cloned()
                 } else {
                     // otherwise, try to find the ontology by location
-                    OntologyLocation::from_str(import.as_str())?
+                    OntologyLocation::from_str(import.as_str())
                 };
+
+                let location = match location_res {
+                    Ok(loc) => loc,
+                    Err(e) => {
+                        self.failed_resolutions.insert(import.clone());
+                        if self.config.strict {
+                            return Err(e);
+                        } else {
+                            warn!(
+                                "Failed to resolve location for import {}: {}",
+                                import.as_str(),
+                                e
+                            );
+                            continue;
+                        }
+                    }
+                };
+
                 match self.io.add(location, false) {
                     Ok(new_onts) => {
                         for ont in new_onts {
@@ -569,6 +591,7 @@ impl OntoEnv {
                         }
                     }
                     Err(e) => {
+                        self.failed_resolutions.insert(import.clone());
                         if self.config.strict {
                             return Err(e);
                         } else {
