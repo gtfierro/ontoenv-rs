@@ -136,13 +136,6 @@ impl Config {
         Ok(config)
     }
 
-    pub fn default_offline<K>(root: PathBuf, locations: Option<K>, temporary: bool) -> Result<Self>
-    where
-        K: IntoIterator<Item = PathBuf>,
-    {
-        Self::new_with_default_matches(root, locations, false, false, true, temporary)
-    }
-
     pub fn new_with_default_matches<K>(
         root: PathBuf,
         locations: Option<K>,
@@ -150,6 +143,7 @@ impl Config {
         strict: bool,
         offline: bool,
         temporary: bool,
+        no_search: bool,
     ) -> Result<Self>
     where
         K: IntoIterator<Item = PathBuf>,
@@ -164,9 +158,16 @@ impl Config {
             strict,
             offline,
             DefaultPolicy.policy_name().to_string(),
-            false,
+            no_search,
             temporary,
         )
+    }
+
+    pub fn default_offline<K>(root: PathBuf, locations: Option<K>, temporary: bool) -> Result<Self>
+    where
+        K: IntoIterator<Item = PathBuf>,
+    {
+        Self::new_with_default_matches(root, locations, false, false, true, temporary, false)
     }
 
     /// Determines if a file is included in the ontology environment configuration
