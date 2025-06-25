@@ -89,6 +89,61 @@ impl OntoEnv {
         }
     }
 
+    /// Creates a new offline OntoEnv that searches for ontologies in the current directory.
+    /// If an environment already exists at the location, it will be loaded.
+    /// The environment will be persisted to disk in the `.ontoenv` directory.
+    pub fn new_offline() -> Result<Self> {
+        let root = std::env::current_dir()?;
+        let ontoenv_dir = root.join(".ontoenv");
+        if ontoenv_dir.exists() {
+            // Don't load as read_only
+            Self::load_from_directory(root, false)
+        } else {
+            let config = Config::new_with_default_matches(
+                root,
+                None, // will default to root
+                false, // require_ontology_names
+                false, // strict
+                true,  // offline
+                false, // temporary
+                false, // no_search
+            )?;
+            // overwrite should be false, but init will create it.
+            Self::init(config, false)
+        }
+    }
+
+    /// Creates a new online, in-memory OntoEnv with no local search paths.
+    /// This is useful for working with remote ontologies only.
+    pub fn new_in_memory_online_no_search() -> Result<Self> {
+        let root = std::env::current_dir()?; // root is still needed for config
+        let config = Config::new_with_default_matches(
+            root,
+            None::<Vec<PathBuf>>,
+            false, // require_ontology_names
+            false, // strict
+            false, // offline
+            true,  // temporary
+            true,  // no_search
+        )?;
+        Self::init(config, true) // overwrite is fine for in-memory
+    }
+
+    /// Creates a new online, in-memory OntoEnv that searches for ontologies in the current directory.
+    pub fn new_in_memory_online_with_search() -> Result<Self> {
+        let root = std::env::current_dir()?;
+        let config = Config::new_with_default_matches(
+            root,
+            None, // will default to root
+            false, // require_ontology_names
+            false, // strict
+            false, // offline
+            true,  // temporary
+            false, // no_search
+        )?;
+        Self::init(config, true)
+    }
+
     pub fn new_from_store(strict: bool, offline: bool, store: Store) -> Result<Self> {
         let io = Box::new(crate::io::ExternalStoreGraphIO::new(
             store, offline, strict,
@@ -99,9 +154,10 @@ impl OntoEnv {
             root,
             None::<Vec<PathBuf>>,
             false,
-            false,
             strict,
             offline,
+            false,
+            false,
         )?;
 
         Ok(Self::new(Environment::new(), io, config))
