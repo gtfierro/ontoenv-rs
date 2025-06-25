@@ -204,6 +204,18 @@ fn main() -> Result<()> {
                 ));
             }
 
+            let ontoenv_dir = current_dir()?.join(".ontoenv");
+            if ontoenv_dir.exists() && !overwrite {
+                println!("An ontology environment already exists in this directory.");
+                println!("Use --overwrite to re-initialize or `ontoenv refresh` to update.");
+
+                let env = OntoEnv::load_from_directory(current_dir()?, false)?;
+                let status = env.status()?;
+                println!("\nCurrent status:");
+                println!("{status}");
+                return Ok(());
+            }
+
             let mut env = OntoEnv::init(config, overwrite)?;
 
             // if an ontology config file is provided, load it and add the ontologies
