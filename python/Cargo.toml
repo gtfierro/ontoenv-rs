@@ -13,6 +13,7 @@ build = "build.rs"
 [lib]
 name = "ontoenv"
 crate-type = ["cdylib"]
+doc = false
 
 [dependencies]
 pyo3 = { version = "0.25", features = ["extension-module"] }
