@@ -87,6 +87,11 @@ impl Config {
         Config::builder().root(root).temporary(true).build()
     }
 
+    /// A convenient constructor for a default configuration that uses default file matching patterns.
+    pub fn new_with_default_matches(root: PathBuf) -> Result<Self> {
+        Config::builder().root(root).build()
+    }
+
     /// Determines if a file is included in the ontology environment configuration
     pub fn is_included(&self, path: &Path) -> bool {
         for exclude in self.excludes.iter() {
