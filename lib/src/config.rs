@@ -153,7 +153,7 @@ impl Config {
             root,
             locations,
             includes,
-            vec![],
+            Vec::<&str>::new(),
             require_ontology_names,
             strict,
             offline,
