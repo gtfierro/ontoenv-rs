@@ -155,18 +155,28 @@ fn main() -> Result<()> {
 
     let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
 
-    let config: Config = Config::new(
-        current_dir()?,
-        cmd.locations,
-        &cmd.includes,
-        &cmd.excludes,
-        cmd.require_ontology_names,
-        cmd.strict,
-        cmd.offline,
-        policy,
-        false,
-        cmd.temporary,
-    )?;
+    let mut builder = Config::builder()
+        .root(current_dir()?)
+        .require_ontology_names(cmd.require_ontology_names)
+        .strict(cmd.strict)
+        .offline(cmd.offline)
+        .resolution_policy(policy)
+        .temporary(cmd.temporary)
+        .no_search(cmd.no_search);
+
+    if let Some(locations) = cmd.locations {
+        builder = builder.locations(locations);
+    }
+    // only set includes if they are provided on the command line, otherwise use builder defaults
+    if !cmd.includes.is_empty() {
+        builder = builder.includes(&cmd.includes);
+    }
+    if !cmd.excludes.is_empty() {
+        builder = builder.excludes(&cmd.excludes);
+    }
+
+    let config: Config = builder.build()?;
+
     if cmd.verbose || cmd.debug {
         config.print();
     }
