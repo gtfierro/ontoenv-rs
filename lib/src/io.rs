@@ -8,7 +8,7 @@ use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use log::{debug, error};
 use oxigraph::io::{RdfFormat, RdfParser};
-use oxigraph::model::{Dataset, Graph, GraphNameRef, NamedNode, Quad, Triple};
+use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, Quad, Triple};
 use oxigraph::store::Store;
 use reqwest::header::CONTENT_TYPE;
 use std::io::BufReader;
@@ -26,7 +26,7 @@ pub struct StoreStats {
 fn add_ontology_to_store(
     store: &Store,
     location: OntologyLocation,
-    _overwrite: bool,
+    overwrite: bool,
     offline: bool,
     strict: bool,
 ) -> Result<Vec<Ontology>> {
@@ -83,34 +83,35 @@ fn add_ontology_to_store(
     };
 
     let temp_graph_name = NamedNode::new_unchecked("temp:graph");
+    if store.contains_named_graph(temp_graph_name.as_ref())? {
+        store.remove_named_graph(temp_graph_name.as_ref())?;
+    }
     let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
         .with_default_graph(GraphNameRef::NamedNode(temp_graph_name.as_ref()))
         .without_named_graphs();
-    store.bulk_loader().load_from_reader(parser, bytes.as_slice())?;
-    let temp_graph_id = GraphIdentifier::new(
-        temp_graph_name.as_ref(),
-    );
-    let ontologies = Ontology::from_store(store, &temp_graph_id, strict)?;
+    store
+        .bulk_loader()
+        .load_from_reader(parser, bytes.as_slice())?;
+    let temp_graph_id = GraphIdentifier::new(temp_graph_name.as_ref());
+    let mut ontologies = Ontology::from_store(store, &temp_graph_id, strict)?;
 
-    //// 2. Parse from bytes to get metadata
-    //let graph = read_format(BufReader::new(std::io::Cursor::new(&bytes)), format)?;
-    //let ontologies = Ontology::from_graph(&graph, location, strict)?;
+    for ontology in &mut ontologies {
+        ontology.with_location(location.clone());
+        let id = ontology.id();
+        let graphname: GraphName = id.graphname()?;
 
-    //for ontology in &ontologies {
-    //    let id = ontology.id();
-    //    let graphname: GraphName = id.graphname()?;
-
-    //    // 3. Load from bytes using bulk loader
-    //    if overwrite || !store.contains_named_graph(id.name())? {
-    //        store.remove_named_graph(id.name())?;
-    //        let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
-    //            .with_default_graph(graphname.as_ref())
-    //            .without_named_graphs();
-    //        store
-    //            .bulk_loader()
-    //            .load_from_reader(parser, bytes.as_slice())?;
-    //    }
-    //}
+        // 3. Load from bytes using bulk loader
+        if overwrite || !store.contains_named_graph(id.name())? {
+            store.remove_named_graph(id.name())?;
+            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
+                .with_default_graph(graphname.as_ref())
+                .without_named_graphs();
+            store
+                .bulk_loader()
+                .load_from_reader(parser, bytes.as_slice())?;
+        }
+    }
+    store.remove_named_graph(temp_graph_name.as_ref())?;
     Ok(ontologies)
 }
 

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
-use ontoenv::config::{Config, HowCreated};
+use ontoenv::config::Config;
 use ontoenv::ontology::OntologyLocation;
 use oxigraph::model::NamedNodeRef;
 use std::path::PathBuf;
@@ -72,18 +72,6 @@ fn default_config(dir: &TempDir) -> Config {
         .root(dir.path().into())
         .locations(vec![dir.path().into()])
         .includes(&["*.ttl", "*.xml"])
-        .excludes(&[] as &[&str])
-        .strict(true)
-        .offline(true)
-        .build()
-        .unwrap()
-}
-
-fn default_config_ttl_only(dir: &TempDir) -> Config {
-    Config::builder()
-        .root(dir.path().into())
-        .locations(vec![dir.path().into()])
-        .includes(&["*.ttl"])
         .excludes(&[] as &[&str])
         .strict(true)
         .offline(true)
@@ -361,7 +349,7 @@ fn test_check_for_updates() -> Result<()> {
     });
 
     let updates = env.get_updated_locations()?;
-    assert_eq!(updates.len(), 1);
+    assert_eq!(updates.len(), 2);
     teardown(dir);
     Ok(())
 }
