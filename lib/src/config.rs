@@ -71,103 +71,20 @@ pub struct Config {
 }
 
 impl Config {
-    // new constructor where includes and excludes accept iterators of &str
-    pub fn new<I, J, K>(
-        root: PathBuf,
-        locations: Option<K>,
-        includes: I,
-        excludes: J,
-        require_ontology_names: bool,
-        strict: bool,
-        offline: bool,
-        resolution_policy: String,
-        no_search: bool,
-        temporary: bool,
-    ) -> Result<Self>
-    where
-        I: IntoIterator,
-        I::Item: AsRef<str>,
-        J: IntoIterator,
-        J::Item: AsRef<str>,
-        K: IntoIterator<Item = PathBuf>,
-    {
-        // if search directories are empty, add the root. Otherwise, use the provided search directories
-        // if no_search is true, then do not default to the root directory
-        let locations = locations
-            .map(|dirs| dirs.into_iter().collect())
-            .unwrap_or_else(|| {
-                if no_search {
-                    vec![]
-                } else {
-                    vec![root.clone()]
-                }
-            });
-
-        let mut config = Config {
-            root,
-            locations,
-            includes: vec![],
-            excludes: vec![],
-            require_ontology_names,
-            strict,
-            offline,
-            resolution_policy,
-            temporary,
-        };
-        let includes: Vec<String> = includes
-            .into_iter()
-            .map(|s| s.as_ref().to_owned())
-            .collect();
-        let excludes: Vec<String> = excludes
-            .into_iter()
-            .map(|s| s.as_ref().to_owned())
-            .collect();
-        if includes.is_empty() {
-            config.includes.push(Pattern::new("*.ttl")?);
-        }
-        for include in includes {
-            let pat = Pattern::new(&include)?;
-            config.includes.push(pat);
-        }
-        for exclude in excludes {
-            let pat = Pattern::new(&exclude)?;
-            config.excludes.push(pat);
-        }
-        Ok(config)
+    /// Creates a new `ConfigBuilder` to construct a `Config`.
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::new()
     }
 
-    pub fn new_with_default_matches<K>(
-        root: PathBuf,
-        locations: Option<K>,
-        require_ontology_names: bool,
-        strict: bool,
-        offline: bool,
-        temporary: bool,
-        no_search: bool,
-    ) -> Result<Self>
-    where
-        K: IntoIterator<Item = PathBuf>,
-    {
-        let includes = vec!["*.ttl", "*.xml", "*.n3"];
-        Self::new(
-            root,
-            locations,
-            includes,
-            Vec::<&str>::new(),
-            require_ontology_names,
-            strict,
-            offline,
-            DefaultPolicy.policy_name().to_string(),
-            no_search,
-            temporary,
-        )
+    /// A convenient constructor for a default offline, non-temporary environment.
+    /// Searches for ontologies in the root directory.
+    pub fn default(root: PathBuf) -> Result<Self> {
+        Config::builder().root(root).offline(true).build()
     }
 
-    pub fn default_offline<K>(root: PathBuf, locations: Option<K>, temporary: bool) -> Result<Self>
-    where
-        K: IntoIterator<Item = PathBuf>,
-    {
-        Self::new_with_default_matches(root, locations, false, false, true, temporary, false)
+    /// A convenient constructor for a temporary environment.
+    pub fn temporary(root: PathBuf) -> Result<Self> {
+        Config::builder().root(root).temporary(true).build()
     }
 
     /// Determines if a file is included in the ontology environment configuration
@@ -225,6 +142,178 @@ impl Config {
         println!("  Offline: {}", self.offline);
         println!("  Resolution Policy: {}", self.resolution_policy);
         println!("  Temporary: {}", self.temporary);
+    }
+}
+
+/// A builder for creating `Config` instances.
+pub struct ConfigBuilder {
+    root: Option<PathBuf>,
+    locations: Option<Vec<PathBuf>>,
+    includes: Option<Vec<String>>,
+    excludes: Option<Vec<String>>,
+    require_ontology_names: Option<bool>,
+    strict: Option<bool>,
+    offline: Option<bool>,
+    resolution_policy: Option<String>,
+    no_search: bool,
+    temporary: Option<bool>,
+}
+
+impl ConfigBuilder {
+    /// Creates a new `ConfigBuilder` with default values.
+    pub fn new() -> Self {
+        Self {
+            root: None,
+            locations: None,
+            includes: None,
+            excludes: None,
+            require_ontology_names: None,
+            strict: None,
+            offline: None,
+            resolution_policy: None,
+            no_search: false,
+            temporary: None,
+        }
+    }
+
+    /// Sets the root directory for the environment. This is a required field.
+    pub fn root(mut self, root: PathBuf) -> Self {
+        self.root = Some(root);
+        self
+    }
+
+    /// Sets the search locations for ontologies. If not set, defaults to the root directory,
+    /// unless `no_search` is enabled.
+    pub fn locations(mut self, locations: Vec<PathBuf>) -> Self {
+        self.locations = Some(locations);
+        self
+    }
+
+    /// Sets the glob patterns for including files.
+    /// Defaults to `["*.ttl", "*.xml", "*.n3"]`.
+    pub fn includes<I>(mut self, includes: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        self.includes = Some(
+            includes
+                .into_iter()
+                .map(|s| s.as_ref().to_string())
+                .collect(),
+        );
+        self
+    }
+
+    /// Sets the glob patterns for excluding files. Defaults to an empty list.
+    pub fn excludes<I>(mut self, excludes: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        self.excludes = Some(
+            excludes
+                .into_iter()
+                .map(|s| s.as_ref().to_string())
+                .collect(),
+        );
+        self
+    }
+
+    /// Sets whether ontology names are required to be unique. Defaults to `false`.
+    pub fn require_ontology_names(mut self, require: bool) -> Self {
+        self.require_ontology_names = Some(require);
+        self
+    }
+
+    /// Sets strict mode. Defaults to `false`.
+    pub fn strict(mut self, strict: bool) -> Self {
+        self.strict = Some(strict);
+        self
+    }
+
+    /// Sets offline mode. Defaults to `false`.
+    pub fn offline(mut self, offline: bool) -> Self {
+        self.offline = Some(offline);
+        self
+    }
+
+    /// Sets the resolution policy. Defaults to `"default"`.
+    pub fn resolution_policy(mut self, policy: String) -> Self {
+        self.resolution_policy = Some(policy);
+        self
+    }
+
+    /// If set to `true`, the root directory will not be used as a default search location.
+    /// Defaults to `false`.
+    pub fn no_search(mut self, no_search: bool) -> Self {
+        self.no_search = no_search;
+        self
+    }
+
+    /// Sets temporary mode. If `true`, the environment is not persisted to disk.
+    /// Defaults to `false`.
+    pub fn temporary(mut self, temporary: bool) -> Self {
+        self.temporary = Some(temporary);
+        self
+    }
+
+    /// Builds the `Config` object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `root` is not set, or if any of the glob patterns are invalid.
+    pub fn build(self) -> Result<Config> {
+        let root = self
+            .root
+            .ok_or_else(|| anyhow::anyhow!("Config 'root' is required"))?;
+
+        let locations = self.locations.unwrap_or_else(|| {
+            if self.no_search {
+                vec![]
+            } else {
+                vec![root.clone()]
+            }
+        });
+
+        let includes_str = self.includes.unwrap_or_else(|| {
+            vec![
+                "*.ttl".to_string(),
+                "*.xml".to_string(),
+                "*.n3".to_string(),
+            ]
+        });
+        let excludes_str = self.excludes.unwrap_or_default();
+
+        let includes = includes_str
+            .iter()
+            .map(|p| Pattern::new(p))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let excludes = excludes_str
+            .iter()
+            .map(|p| Pattern::new(p))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Config {
+            root,
+            locations,
+            includes,
+            excludes,
+            require_ontology_names: self.require_ontology_names.unwrap_or(false),
+            strict: self.strict.unwrap_or(false),
+            offline: self.offline.unwrap_or(false),
+            resolution_policy: self
+                .resolution_policy
+                .unwrap_or_else(|| DefaultPolicy.policy_name().to_string()),
+            temporary: self.temporary.unwrap_or(false),
+        })
+    }
+}
+
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
