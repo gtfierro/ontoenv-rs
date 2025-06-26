@@ -149,9 +149,9 @@ impl Config {
         K: IntoIterator<Item = PathBuf>,
     {
         let includes = vec!["*.ttl", "*.xml", "*.n3"];
-        Self::new::<Vec<&str>, Vec<&str>, Vec<PathBuf>>(
+        Self::new(
             root,
-            locations.map(|dirs| dirs.into_iter().collect()),
+            locations,
             includes,
             vec![],
             require_ontology_names,
@@ -196,11 +196,7 @@ impl Config {
     pub fn from_file(file: &Path) -> Result<Self> {
         let file = std::fs::File::open(file)?;
         let reader = BufReader::new(file);
-        let mut config: Config = serde_json::from_reader(reader)?;
-
-        if config.locations.is_empty() {
-            config.locations = vec![config.root.clone()];
-        }
+        let config: Config = serde_json::from_reader(reader)?;
         Ok(config)
     }
 
