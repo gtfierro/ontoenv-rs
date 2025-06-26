@@ -70,104 +70,120 @@ pub struct Config {
     pub temporary: bool,
 }
 
-impl Config {
-    // new constructor where includes and excludes accept iterators of &str
-    pub fn new<I, J, K>(
-        root: PathBuf,
-        locations: Option<K>,
-        includes: I,
-        excludes: J,
-        require_ontology_names: bool,
-        strict: bool,
-        offline: bool,
-        resolution_policy: String,
-        no_search: bool,
-        temporary: bool,
-    ) -> Result<Self>
-    where
-        I: IntoIterator,
-        I::Item: AsRef<str>,
-        J: IntoIterator,
-        J::Item: AsRef<str>,
-        K: IntoIterator<Item = PathBuf>,
-    {
-        // if search directories are empty, add the root. Otherwise, use the provided search directories
-        // if no_search is true, then do not default to the root directory
-        let locations = locations
-            .map(|dirs| dirs.into_iter().collect())
-            .unwrap_or_else(|| {
-                if no_search {
-                    vec![]
-                } else {
-                    vec![root.clone()]
-                }
-            });
+#[derive(Debug, Default)]
+pub struct ConfigBuilder {
+    root: Option<PathBuf>,
+    locations: Option<Vec<PathBuf>>,
+    includes: Option<Vec<String>>,
+    excludes: Option<Vec<String>>,
+    require_ontology_names: Option<bool>,
+    strict: Option<bool>,
+    offline: Option<bool>,
+    resolution_policy: Option<String>,
+    temporary: Option<bool>,
+    no_search: bool,
+}
 
-        let mut config = Config {
-            root,
-            locations,
-            includes: vec![],
-            excludes: vec![],
-            require_ontology_names,
-            strict,
-            offline,
-            resolution_policy,
-            temporary,
-        };
-        let includes: Vec<String> = includes
-            .into_iter()
-            .map(|s| s.as_ref().to_owned())
-            .collect();
-        let excludes: Vec<String> = excludes
-            .into_iter()
-            .map(|s| s.as_ref().to_owned())
-            .collect();
-        if includes.is_empty() {
-            config.includes.push(Pattern::new("*.ttl")?);
-        }
-        for include in includes {
-            let pat = Pattern::new(&include)?;
-            config.includes.push(pat);
-        }
-        for exclude in excludes {
-            let pat = Pattern::new(&exclude)?;
-            config.excludes.push(pat);
-        }
-        Ok(config)
+impl ConfigBuilder {
+    pub fn locations(mut self, locations: Vec<PathBuf>) -> Self {
+        self.locations = Some(locations);
+        self
     }
 
-    pub fn new_with_default_matches<K>(
-        root: PathBuf,
-        locations: Option<K>,
-        require_ontology_names: bool,
-        strict: bool,
-        offline: bool,
-        temporary: bool,
-        no_search: bool,
-    ) -> Result<Self>
-    where
-        K: IntoIterator<Item = PathBuf>,
-    {
-        let includes = vec!["*.ttl", "*.xml", "*.n3"];
-        Self::new(
+    pub fn includes(mut self, includes: Vec<String>) -> Self {
+        self.includes = Some(includes);
+        self
+    }
+
+    pub fn excludes(mut self, excludes: Vec<String>) -> Self {
+        self.excludes = Some(excludes);
+        self
+    }
+
+    pub fn require_ontology_names(mut self, require: bool) -> Self {
+        self.require_ontology_names = Some(require);
+        self
+    }
+
+    pub fn strict(mut self, strict: bool) -> Self {
+        self.strict = Some(strict);
+        self
+    }
+
+    pub fn offline(mut self, offline: bool) -> Self {
+        self.offline = Some(offline);
+        self
+    }
+
+    pub fn resolution_policy(mut self, policy: String) -> Self {
+        self.resolution_policy = Some(policy);
+        self
+    }
+
+    pub fn temporary(mut self, temporary: bool) -> Self {
+        self.temporary = Some(temporary);
+        self
+    }
+
+    pub fn no_search(mut self, no_search: bool) -> Self {
+        self.no_search = no_search;
+        self
+    }
+
+    pub fn build(self) -> Result<Config> {
+        let root = self
+            .root
+            .ok_or_else(|| anyhow::anyhow!("Config 'root' is required"))?;
+
+        let locations = self.locations.unwrap_or_else(|| {
+            if self.no_search {
+                vec![]
+            } else {
+                vec![root.clone()]
+            }
+        });
+
+        let include_strs = self.includes.unwrap_or_else(|| {
+            vec![
+                "*.ttl".to_string(),
+                "*.xml".to_string(),
+                "*.n3".to_string(),
+            ]
+        });
+
+        let mut includes = Vec::new();
+        for s in include_strs {
+            includes.push(Pattern::new(&s)?);
+        }
+
+        let exclude_strs = self.excludes.unwrap_or_default();
+        let mut excludes = Vec::new();
+        for s in exclude_strs {
+            excludes.push(Pattern::new(&s)?);
+        }
+
+        Ok(Config {
             root,
             locations,
             includes,
-            Vec::<&str>::new(),
-            require_ontology_names,
-            strict,
-            offline,
-            DefaultPolicy.policy_name().to_string(),
-            no_search,
-            temporary,
-        )
+            excludes,
+            require_ontology_names: self.require_ontology_names.unwrap_or(false),
+            strict: self.strict.unwrap_or(false),
+            offline: self.offline.unwrap_or(false),
+            resolution_policy: self
+                .resolution_policy
+                .unwrap_or_else(|| DefaultPolicy.policy_name().to_string()),
+            temporary: self.temporary.unwrap_or(false),
+        })
     }
+}
 
-    pub fn default_offline<K>(root: PathBuf, locations: Option<K>, temporary: bool) -> Result<Self>
-    where
-        K: IntoIterator<Item = PathBuf>,
-    {
-        Self::new_with_default_matches(root, locations, false, false, true, temporary, false)
+impl Config {
+    pub fn builder(root: PathBuf) -> ConfigBuilder {
+        ConfigBuilder {
+            root: Some(root),
+            ..Default::default()
+        }
     }
 
     /// Determines if a file is included in the ontology environment configuration
