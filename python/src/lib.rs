@@ -125,7 +125,7 @@ struct Config {
 #[pymethods]
 impl Config {
     #[new]
-    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false))]
+    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
     fn new(
         search_directories: Option<Vec<String>>,
         require_ontology_names: bool,
@@ -136,34 +136,35 @@ impl Config {
         includes: Option<Vec<String>>,
         excludes: Option<Vec<String>>,
         temporary: bool,
+        no_search: bool,
     ) -> PyResult<Self> {
-        Ok(Config {
-            cfg: config::Config::new(
-                root.to_string().into(),
-                search_directories.map(|dirs| {
-                    dirs.iter()
-                        .map(|s| s.to_string().into())
-                        .collect::<Vec<PathBuf>>()
-                }),
-                includes
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>(),
-                excludes
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>(),
-                require_ontology_names,
-                strict,
-                offline,
-                resolution_policy.to_string(),
-                false,
-                temporary,
-            )
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
-        })
+        let mut builder = config::Config::builder()
+            .root(root.into())
+            .require_ontology_names(require_ontology_names)
+            .strict(strict)
+            .offline(offline)
+            .resolution_policy(resolution_policy)
+            .temporary(temporary)
+            .no_search(no_search);
+
+        if let Some(dirs) = search_directories {
+            let paths = dirs.into_iter().map(PathBuf::from).collect();
+            builder = builder.locations(paths);
+        }
+
+        if let Some(includes) = includes {
+            builder = builder.includes(includes);
+        }
+
+        if let Some(excludes) = excludes {
+            builder = builder.excludes(excludes);
+        }
+
+        let cfg = builder
+            .build()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+        Ok(Config { cfg })
     }
 }
 
