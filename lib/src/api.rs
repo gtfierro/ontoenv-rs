@@ -99,7 +99,15 @@ impl OntoEnv {
             // Don't load as read_only
             Self::load_from_directory(root, false)
         } else {
-            let config = Config::builder(root).offline(true).build()?;
+            let config = Config::new_with_default_matches(
+                root,
+                None::<Vec<PathBuf>>, // will default to root
+                false,                // require_ontology_names
+                false,                // strict
+                true,                 // offline
+                false,                // temporary
+                false,                // no_search
+            )?;
             // overwrite should be false, but init will create it.
             Self::init(config, false)
         }
@@ -109,17 +117,30 @@ impl OntoEnv {
     /// This is useful for working with remote ontologies only.
     pub fn new_in_memory_online_no_search() -> Result<Self> {
         let root = std::env::current_dir()?; // root is still needed for config
-        let config = Config::builder(root)
-            .temporary(true)
-            .no_search(true)
-            .build()?;
+        let config = Config::new_with_default_matches(
+            root,
+            None::<Vec<PathBuf>>,
+            false, // require_ontology_names
+            false, // strict
+            false, // offline
+            true,  // temporary
+            true,  // no_search
+        )?;
         Self::init(config, true) // overwrite is fine for in-memory
     }
 
     /// Creates a new online, in-memory OntoEnv that searches for ontologies in the current directory.
     pub fn new_in_memory_online_with_search() -> Result<Self> {
         let root = std::env::current_dir()?;
-        let config = Config::builder(root).temporary(true).build()?;
+        let config = Config::new_with_default_matches(
+            root,
+            None::<Vec<PathBuf>>, // will default to root
+            false,                // require_ontology_names
+            false,                // strict
+            false,                // offline
+            true,                 // temporary
+            false,                // no_search
+        )?;
         Self::init(config, true)
     }
 
@@ -128,10 +149,16 @@ impl OntoEnv {
             store, offline, strict,
         ));
         let root = std::env::current_dir()?;
-        let config = Config::builder(root)
-            .strict(strict)
-            .offline(offline)
-            .build()?;
+        let _includes = ["*.ttl", "*.xml", "*.n3"];
+        let config = Config::new_with_default_matches(
+            root,
+            None::<Vec<PathBuf>>,
+            false,
+            strict,
+            offline,
+            false,
+            false,
+        )?;
 
         Ok(Self::new(Environment::new(), io, config))
     }
