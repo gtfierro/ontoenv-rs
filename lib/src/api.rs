@@ -481,16 +481,56 @@ impl OntoEnv {
             .ontologies()
             .iter()
             .filter(|(_, ontology)| {
+                let location = match ontology.location() {
+                    Some(loc) => loc,
+                    None => {
+                        // Cannot check ontologies without a location
+                        return false;
+                    }
+                };
+
                 // if the source modified is missing, then we assume it has been updated
                 let source_modified = self
                     .io
                     .source_last_modified(ontology.id())
                     .unwrap_or(Utc::now());
                 // if the ontology has no modified time, then we assume it has never been updated
-                source_modified
-                    > ontology
-                        .last_updated
-                        .unwrap_or(Utc.timestamp_opt(0, 0).unwrap())
+                let last_updated = ontology
+                    .last_updated
+                    .unwrap_or(Utc.timestamp_opt(0, 0).unwrap());
+
+                if source_modified > last_updated {
+                    if let OntologyLocation::File(path) = location {
+                        // Mtime is newer, so now check if content is different
+                        let new_graph = match self.io.read_file(path) {
+                            Ok(g) => g,
+                            Err(e) => {
+                                warn!(
+                                    "Could not read file for update check {}: {}",
+                                    path.display(),
+                                    e
+                                );
+                                return true; // If we can't read it, assume it's updated
+                            }
+                        };
+                        let old_graph = match self.io.get_graph(ontology.id()) {
+                            Ok(g) => g,
+                            Err(e) => {
+                                warn!(
+                                    "Could not get graph from store for update check {}: {}",
+                                    ontology.id(),
+                                    e
+                                );
+                                return true; // If we can't get the old one, assume updated
+                            }
+                        };
+                        return new_graph != old_graph;
+                    }
+                    // For non-file locations, we can't easily check content, so stick with mtime.
+                    return true;
+                }
+
+                false
             })
             .map(|(graphid, _)| graphid.clone())
             .collect()

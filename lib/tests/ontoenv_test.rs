@@ -32,18 +32,16 @@ macro_rules! setup {
         $(
             let source_path: PathBuf = PathBuf::from($from);
             let dest_path: PathBuf = dir.path().join($to);
-            if !dest_path.exists() {
-                // Ensure the parent directories exist
-                if let Some(parent) = dest_path.parent() {
-                    if !parent.exists() {
-                        fs::create_dir_all(parent).expect("Failed to create parent directories");
-                    }
+            // Ensure the parent directories exist
+            if let Some(parent) = dest_path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent).expect("Failed to create parent directories");
                 }
-
-                // 'copy_file' is assumed to be a custom function in the user's project
-                // If not, consider using std::fs::copy for basic file copying
-                copy_file(&source_path, &dest_path).expect(format!("Failed to copy file from {} to {}", source_path.display(), dest_path.display()).as_str());
             }
+
+            // 'copy_file' is assumed to be a custom function in the user's project
+            // If not, consider using std::fs::copy for basic file copying
+            copy_file(&source_path, &dest_path).expect(format!("Failed to copy file from {} to {}", source_path.display(), dest_path.display()).as_str());
         )*
 
         // Check the contents of the temporary directory
