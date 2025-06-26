@@ -532,6 +532,10 @@ impl OntoEnv {
 
         // compute the union of new_files and updated_files
         updated_files.extend(new_files);
+        println!(
+            "Found {} new or updated files in the search directories",
+            updated_files.len()
+        );
         Ok(updated_files.into_iter().collect())
     }
 
