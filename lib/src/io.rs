@@ -8,14 +8,12 @@ use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use log::{debug, error};
 use oxigraph::io::{RdfFormat, RdfParser};
-use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, Quad, Triple, NamedNode};
+use oxigraph::model::{Dataset, Graph, GraphNameRef, NamedNode, Quad, Triple};
 use oxigraph::store::Store;
 use reqwest::header::CONTENT_TYPE;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
-
-
 
 #[derive(Debug, Clone)]
 pub struct StoreStats {
@@ -28,7 +26,7 @@ pub struct StoreStats {
 fn add_ontology_to_store(
     store: &Store,
     location: OntologyLocation,
-    overwrite: bool,
+    _overwrite: bool,
     offline: bool,
     strict: bool,
 ) -> Result<Vec<Ontology>> {
