@@ -113,7 +113,9 @@ fn add_ontology_to_store(
                 .map(|res| {
                     res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
                 });
-            store.bulk_loader().load_ok_quads(quads_to_load)?;
+            store
+                .bulk_loader()
+                .load_ok_quads::<_, oxigraph::store::StorageError>(quads_to_load)?;
         }
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
