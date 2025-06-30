@@ -103,7 +103,7 @@ fn add_ontology_to_store(
         // 3. Load from bytes using bulk loader
         if overwrite || !store.contains_named_graph(id.name())? {
             store.remove_named_graph(id.name())?;
-            let quads_to_load: Vec<Quad> = store
+            let quads_to_load: dyn Iterator<Item=Result<Quad>> = store
                 .quads_for_pattern(
                     None,
                     None,
@@ -112,9 +112,8 @@ fn add_ontology_to_store(
                 )
                 .map(|res| {
                     res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
-                })
-                .collect::<Result<Vec<Quad>, _>>()?;
-            store.bulk_loader().load_quads(quads_to_load)?;
+                });
+            store.bulk_loader().load_ok_quads(quads_to_load)?;
         }
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
