@@ -92,8 +92,6 @@ enum Commands {
     },
     /// List the ontologies in the environment sorted by name
     ListOntologies,
-    /// List the locations of the ontologies in the environment sorted by location
-    ListLocations,
     // TODO: dump all ontologies; nest by ontology name (sorted), w/n each ontology name list all
     // the places where that graph can be found. List basic stats: the metadata field in the
     // Ontology struct and # of triples in the graph; last updated; etc
@@ -135,7 +133,6 @@ impl ToString for Commands {
             Commands::GetClosure { .. } => "GetClosure".to_string(),
             Commands::Add { .. } => "Add".to_string(),
             Commands::ListOntologies => "ListOntologies".to_string(),
-            Commands::ListLocations => "ListLocations".to_string(),
             Commands::Dump { .. } => "Dump".to_string(),
             Commands::DepGraph { .. } => "DepGraph".to_string(),
             Commands::Dependents { .. } => "Dependents".to_string(),
@@ -334,15 +331,6 @@ fn main() -> Result<()> {
             ontologies.dedup_by(|a, b| a.name() == b.name());
             for ont in ontologies {
                 println!("{}", ont.name().as_str());
-            }
-        }
-        Commands::ListLocations => {
-            let env = require_ontoenv(env)?;
-            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
-            ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
-            ontologies.dedup_by(|a, b| a.location().as_str() == b.location().as_str());
-            for ont in ontologies {
-                println!("{}", ont.location().as_str());
             }
         }
         Commands::Dump { contains } => {
