@@ -388,6 +388,16 @@ impl OntoEnv {
         })
     }
 
+    /// Deletes the .ontoenv directory from the given root path.
+    pub fn reset(root: &Path) -> Result<()> {
+        let ontoenv_dir = root.join(".ontoenv");
+        info!("Removing ontology environment at: {ontoenv_dir:?}");
+        if ontoenv_dir.exists() {
+            std::fs::remove_dir_all(&ontoenv_dir)?;
+        }
+        Ok(())
+    }
+
     /// Add the ontology from the given location to the environment,
     /// then add it to the dependency graph.
     pub fn add(

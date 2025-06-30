@@ -180,6 +180,32 @@ fn main() -> Result<()> {
     if cmd.verbose || cmd.debug {
         config.print();
     }
+
+    if let Commands::Reset { force } = &cmd.command {
+        let path = current_dir()?.join(".ontoenv");
+        if !path.exists() {
+            println!("No .ontoenv directory found. Nothing to do.");
+            return Ok(());
+        }
+        println!("Removing .ontoenv directory at {}...", path.display());
+        if !*force {
+            // check delete? [y/N]
+            let mut input = String::new();
+            println!("Are you sure you want to delete the .ontoenv directory? [y/N] ");
+            std::io::stdin()
+                .read_line(&mut input)
+                .expect("Failed to read line");
+            let input = input.trim();
+            if input != "y" && input != "Y" {
+                println!("Aborting...");
+                return Ok(());
+            }
+        }
+        OntoEnv::reset(&current_dir()?)?;
+        println!(".ontoenv directory removed.");
+        return Ok(());
+    }
+
     let ontoenv_exists = current_dir()?
         .join(".ontoenv")
         .join("ontoenv.json")
@@ -375,26 +401,6 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Reset { force } => {
-            // remove .ontoenv directory
-            let path = current_dir()?.join(".ontoenv");
-            println!("Removing .ontoenv directory at {}...", path.display());
-            if !force {
-                // check delete? [y/N]
-                let mut input = String::new();
-                println!("Are you sure you want to delete the .ontoenv directory? [y/N] ");
-                std::io::stdin()
-                    .read_line(&mut input)
-                    .expect("Failed to read line");
-                let input = input.trim();
-                if input != "y" && input != "Y" {
-                    println!("Aborting...");
-                    return Ok(());
-                }
-            }
-            if path.exists() {
-                std::fs::remove_dir_all(path)?;
-            }
         }
     }
 
