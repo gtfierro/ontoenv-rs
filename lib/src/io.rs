@@ -103,12 +103,7 @@ fn add_ontology_to_store(
         // 3. Load from bytes using bulk loader
         if overwrite || !store.contains_named_graph(id.name())? {
             store.remove_named_graph(id.name())?;
-            let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
-                .with_default_graph(graphname.as_ref())
-                .without_named_graphs();
-            store
-                .bulk_loader()
-                .load_from_reader(parser, bytes.as_slice())?;
+            store.copy_named_graph(temp_graph_name.as_ref(), graphname.as_ref())?;
         }
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
