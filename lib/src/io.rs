@@ -104,14 +104,17 @@ fn add_ontology_to_store(
         if overwrite || !store.contains_named_graph(id.name())? {
             store.remove_named_graph(id.name())?;
             let quads_to_load: Vec<Quad> = store
-                .quads_for_pattern(None, None, None, Some(temp_graph_name.as_ref()))
+                .quads_for_pattern(
+                    None,
+                    None,
+                    None,
+                    Some(GraphNameRef::NamedNode(temp_graph_name.as_ref())),
+                )
                 .map(|res| {
                     res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
                 })
-                .collect::<Result<Vec<Quad>>>()?;
-            store
-                .bulk_loader()
-                .load_quads(quads_to_load.iter().map(Ok))?;
+                .collect::<Result<Vec<Quad>, _>>()?;
+            store.bulk_loader().load_quads(quads_to_load)?;
         }
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
