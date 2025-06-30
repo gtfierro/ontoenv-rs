@@ -103,7 +103,11 @@ fn add_ontology_to_store(
         // 3. Load from bytes using bulk loader
         if overwrite || !store.contains_named_graph(id.name())? {
             store.remove_named_graph(id.name())?;
-            store.copy_named_graph(temp_graph_name.as_ref(), graphname.as_ref())?;
+            let query = format!(
+                "INSERT {{ GRAPH {} {{ ?s ?p ?o }} }} WHERE {{ GRAPH {} {{ ?s ?p ?o }} }}",
+                graphname, temp_graph_name
+            );
+            store.update(&query)?;
         }
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
