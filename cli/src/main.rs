@@ -340,6 +340,7 @@ fn main() -> Result<()> {
             let env = require_ontoenv(env)?;
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
             ontologies.sort_by(|a, b| a.location().as_str().cmp(b.location().as_str()));
+            ontologies.dedup_by(|a, b| a.location().as_str() == b.location().as_str());
             for ont in ontologies {
                 println!("{}", ont.location().as_str());
             }
