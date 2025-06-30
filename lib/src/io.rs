@@ -103,7 +103,7 @@ fn add_ontology_to_store(
         // 3. Load from bytes using bulk loader
         if overwrite || !store.contains_named_graph(id.name())? {
             store.remove_named_graph(id.name())?;
-            let quads_to_load: dyn Iterator<Item=Result<Quad>> = store
+            let quads_to_load = store
                 .quads_for_pattern(
                     None,
                     None,
