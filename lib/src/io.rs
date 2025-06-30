@@ -103,11 +103,15 @@ fn add_ontology_to_store(
         // 3. Load from bytes using bulk loader
         if overwrite || !store.contains_named_graph(id.name())? {
             store.remove_named_graph(id.name())?;
-            let query = format!(
-                "INSERT {{ GRAPH {} {{ ?s ?p ?o }} }} WHERE {{ GRAPH {} {{ ?s ?p ?o }} }}",
-                graphname, temp_graph_name
-            );
-            store.update(&query)?;
+            let quads_to_load: Vec<Quad> = store
+                .quads_for_pattern(None, None, None, Some(temp_graph_name.as_ref()))
+                .map(|res| {
+                    res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
+                })
+                .collect::<Result<Vec<Quad>>>()?;
+            store
+                .bulk_loader()
+                .load_quads(quads_to_load.iter().map(Ok))?;
         }
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
