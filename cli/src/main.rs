@@ -401,6 +401,8 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Reset { .. } => {
+            // This command is handled before the environment is loaded.
         }
     }
 
