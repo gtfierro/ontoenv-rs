@@ -22,6 +22,20 @@ use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 
+/// Searches for the .ontoenv directory in the current directory and then recursively up its parent directories.
+/// Returns the path to the directory containing the .ontoenv directory if found.
+pub fn find_ontoenv_root() -> Option<PathBuf> {
+    let start_dir = std::env::current_dir().ok()?;
+    let mut current_dir = Some(start_dir.as_path());
+    while let Some(dir) = current_dir {
+        if dir.join(".ontoenv").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        current_dir = dir.parent();
+    }
+    None
+}
+
 /// These are the different ways to refer to an ontology: either
 /// by a location (file or URL), or the name of the graph (IRI)
 pub enum ResolveTarget {
@@ -90,15 +104,14 @@ impl OntoEnv {
     }
 
     /// Creates a new offline OntoEnv that searches for ontologies in the current directory.
-    /// If an environment already exists at the location, it will be loaded.
+    /// If an environment already exists, it will be loaded.
     /// The environment will be persisted to disk in the `.ontoenv` directory.
     pub fn new_offline() -> Result<Self> {
-        let root = std::env::current_dir()?;
-        let ontoenv_dir = root.join(".ontoenv");
-        if ontoenv_dir.exists() {
+        if let Some(root) = find_ontoenv_root() {
             // Don't load as read_only
             Self::load_from_directory(root, false)
         } else {
+            let root = std::env::current_dir()?;
             let config = Config::builder()
                 .root(root)
                 .require_ontology_names(false)
@@ -388,12 +401,14 @@ impl OntoEnv {
         })
     }
 
-    /// Deletes the .ontoenv directory from the given root path.
-    pub fn reset(root: &Path) -> Result<()> {
-        let ontoenv_dir = root.join(".ontoenv");
-        info!("Removing ontology environment at: {ontoenv_dir:?}");
-        if ontoenv_dir.exists() {
-            std::fs::remove_dir_all(&ontoenv_dir)?;
+    /// Deletes the .ontoenv directory, searching from the current directory upwards.
+    pub fn reset() -> Result<()> {
+        if let Some(root) = find_ontoenv_root() {
+            let ontoenv_dir = root.join(".ontoenv");
+            info!("Removing ontology environment at: {ontoenv_dir:?}");
+            if ontoenv_dir.exists() {
+                std::fs::remove_dir_all(&ontoenv_dir)?;
+            }
         }
         Ok(())
     }

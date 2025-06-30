@@ -182,34 +182,33 @@ fn main() -> Result<()> {
     }
 
     if let Commands::Reset { force } = &cmd.command {
-        let path = current_dir()?.join(".ontoenv");
-        if !path.exists() {
-            println!("No .ontoenv directory found. Nothing to do.");
-            return Ok(());
-        }
-        println!("Removing .ontoenv directory at {}...", path.display());
-        if !*force {
-            // check delete? [y/N]
-            let mut input = String::new();
-            println!("Are you sure you want to delete the .ontoenv directory? [y/N] ");
-            std::io::stdin()
-                .read_line(&mut input)
-                .expect("Failed to read line");
-            let input = input.trim();
-            if input != "y" && input != "Y" {
-                println!("Aborting...");
-                return Ok(());
+        if let Some(root) = ontoenv::api::find_ontoenv_root() {
+            let path = root.join(".ontoenv");
+            println!("Removing .ontoenv directory at {}...", path.display());
+            if !*force {
+                // check delete? [y/N]
+                let mut input = String::new();
+                println!("Are you sure you want to delete the .ontoenv directory? [y/N] ");
+                std::io::stdin()
+                    .read_line(&mut input)
+                    .expect("Failed to read line");
+                let input = input.trim();
+                if input != "y" && input != "Y" {
+                    println!("Aborting...");
+                    return Ok(());
+                }
             }
+            OntoEnv::reset()?;
+            println!(".ontoenv directory removed.");
+        } else {
+            println!("No .ontoenv directory found. Nothing to do.");
         }
-        OntoEnv::reset(&current_dir()?)?;
-        println!(".ontoenv directory removed.");
         return Ok(());
     }
 
-    let ontoenv_exists = current_dir()?
-        .join(".ontoenv")
-        .join("ontoenv.json")
-        .exists();
+    let ontoenv_exists = ontoenv::api::find_ontoenv_root()
+        .map(|root| root.join(".ontoenv").join("ontoenv.json").exists())
+        .unwrap_or(false);
     println!("[INFO] OntoEnv exists: {ontoenv_exists}");
 
     // create the env object to use in the subcommand.
@@ -240,16 +239,20 @@ fn main() -> Result<()> {
                 ));
             }
 
-            let ontoenv_dir = current_dir()?.join(".ontoenv");
-            if ontoenv_dir.exists() && !overwrite {
-                println!("An ontology environment already exists in this directory.");
-                println!("Use --overwrite to re-initialize or `ontoenv refresh` to update.");
+            if let Some(root) = ontoenv::api::find_ontoenv_root() {
+                if !overwrite {
+                    println!(
+                        "An ontology environment already exists in: {}",
+                        root.display()
+                    );
+                    println!("Use --overwrite to re-initialize or `ontoenv refresh` to update.");
 
-                let env = OntoEnv::load_from_directory(current_dir()?, false)?;
-                let status = env.status()?;
-                println!("\nCurrent status:");
-                println!("{status}");
-                return Ok(());
+                    let env = OntoEnv::load_from_directory(root, false)?;
+                    let status = env.status()?;
+                    println!("\nCurrent status:");
+                    println!("{status}");
+                    return Ok(());
+                }
             }
 
             let mut env = OntoEnv::init(config, overwrite)?;
