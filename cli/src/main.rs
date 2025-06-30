@@ -370,7 +370,7 @@ fn main() -> Result<()> {
                 for problem in problems {
                     println!("- {}", problem.message);
                     for location in problem.locations {
-                        println!("  - {}", location);
+                        println!("  - {location}");
                     }
                 }
             }
