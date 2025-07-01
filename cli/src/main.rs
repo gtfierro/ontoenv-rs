@@ -66,7 +66,7 @@ enum Commands {
     /// Update the ontology environment
     Refresh,
     /// Compute the owl:imports closure of an ontology and write it to a file
-    GetClosure {
+    Closure {
         /// The name (URI) of the ontology to compute the closure for
         ontology: String,
         /// Rewrite the sh:prefixes declarations to point to the chosen ontology, defaults to true
@@ -88,7 +88,7 @@ enum Commands {
         file: Option<String>,
     },
     /// List the ontologies in the environment sorted by name
-    ListOntologies,
+    List,
     // TODO: dump all ontologies; nest by ontology name (sorted), w/n each ontology name list all
     // the places where that graph can be found. List basic stats: the metadata field in the
     // Ontology struct and # of triples in the graph; last updated; etc
@@ -127,9 +127,9 @@ impl ToString for Commands {
             Commands::Version => "Version".to_string(),
             Commands::Status => "Status".to_string(),
             Commands::Refresh => "Refresh".to_string(),
-            Commands::GetClosure { .. } => "GetClosure".to_string(),
+            Commands::Closure { .. } => "Closure".to_string(),
             Commands::Add { .. } => "Add".to_string(),
-            Commands::ListOntologies => "ListOntologies".to_string(),
+            Commands::List => "List".to_string(),
             Commands::Dump { .. } => "Dump".to_string(),
             Commands::DepGraph { .. } => "DepGraph".to_string(),
             Commands::Dependents { .. } => "Dependents".to_string(),
@@ -275,7 +275,7 @@ fn main() -> Result<()> {
             env.update()?;
             env.save_to_directory()?;
         }
-        Commands::GetClosure {
+        Commands::Closure {
             ontology,
             rewrite_sh_prefixes,
             remove_owl_imports,
@@ -308,7 +308,7 @@ fn main() -> Result<()> {
             let _ = env.add(location, true)?;
             env.save_to_directory()?;
         }
-        Commands::ListOntologies => {
+        Commands::List => {
             let env = require_ontoenv(env)?;
             // print list of ontology URLs from env.ontologies.values() sorted alphabetically
             let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
