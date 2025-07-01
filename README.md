@@ -62,9 +62,12 @@ Arguments:
   [SEARCH_DIRECTORIES]...  Directories to search for ontologies. If not provided, the current directory is used
 
 Options:
+      --overwrite                 Overwrite the environment if it already exists
   -r, --require-ontology-names  Require ontology names to be unique; will raise an error if multiple ontologies have the same name
   -s, --strict                  Strict mode - will raise an error if an ontology is not found
   -o, --offline                 Offline mode - will not attempt to fetch ontologies from the web
+  -p, --policy <POLICY>         Resolution policy for determining which ontology to use when there are multiple with the same name. One of 'default', 'latest', 'version' [default: default]
+  -n, --no-search               Do not search for ontologies in the search directories
   -i, --includes <INCLUDES>...  Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']
   -e, --excludes <EXCLUDES>...  Glob patterns for which files to exclude, defaults to []
   -h, --help                    Print help
@@ -131,16 +134,16 @@ from ontoenv import Config, OntoEnv
 from rdflib import Graph
 
 # create config object. This assumes you have a 'brick' folder locally storing some ontologies
-cfg = Config(["brick"], strict=False, offline=True)
+cfg = Config(search_directories=["brick"], strict=False, offline=True)
 # can also create an 'empty' config object if there are no local ontologies
 # cfg = Config(strict=False, offline=True)
 
 # make the environment
-env = OntoEnv(cfg)
+env = OntoEnv(config=cfg)
 
 # compute closure for a given ontology and insert it into a graph
 g = Graph()
-env.get_closure("https://brickschema.org/schema/1.4/Brick", g)
+env.get_closure("https://brickschema.org/schema/1.4/Brick", destination_graph=g)
 
 # import all dependencies from a graph
 brick = Graph()
