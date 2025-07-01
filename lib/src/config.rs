@@ -1,7 +1,6 @@
 //! Defines the configuration structures for the OntoEnv environment.
 //! This includes the main `Config` struct and related structs for ontology locations and environment setup.
 
-use crate::ontology::OntologyLocation;
 use crate::policy::{DefaultPolicy, ResolutionPolicy};
 use anyhow::Result;
 use glob::{Pattern, PatternError};
@@ -27,18 +26,6 @@ where
     let patterns: Result<Vec<Pattern>, PatternError> =
         patterns.iter().map(|p| Pattern::new(p)).collect();
     patterns.map_err(serde::de::Error::custom)
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EnvironmentConfig {
-    pub ontologies: Vec<OntologyConfig>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct OntologyConfig {
-    #[serde(flatten)]
-    pub location: OntologyLocation,
-    pub version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

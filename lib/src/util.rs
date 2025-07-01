@@ -17,6 +17,51 @@ use std::io::BufReader;
 
 use log::{debug, error, info};
 
+pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
+    let b = std::fs::read(path)?;
+    let format = path.extension().and_then(|ext| ext.to_str()).and_then(|ext| {
+        match ext {
+            "ttl" => Some(RdfFormat::Turtle),
+            "xml" => Some(RdfFormat::RdfXml),
+            "n3" => Some(RdfFormat::Turtle),
+            "nt" => Some(RdfFormat::NTriples),
+            _ => None,
+        }
+    });
+    Ok((b, format))
+}
+
+pub fn get_url_contents(url: &str) -> Result<(Vec<u8>, Option<RdfFormat>)> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(url)
+        .header(CONTENT_TYPE, "application/x-turtle")
+        .send()?;
+    if !resp.status().is_success() {
+        error!("Failed to fetch ontology from {} ({})", url, resp.status());
+        return Err(anyhow::anyhow!(
+            "Failed to fetch ontology from {} ({})",
+            url,
+            resp.status()
+        ));
+    }
+    let content_type = resp.headers().get("Content-Type");
+    let format =
+        content_type
+            .and_then(|ct| ct.to_str().ok())
+            .and_then(|ext| match ext {
+                "application/x-turtle" => Some(RdfFormat::Turtle),
+                "text/turtle" => Some(RdfFormat::Turtle),
+                "application/rdf+xml" => Some(RdfFormat::RdfXml),
+                "text/rdf+n3" => Some(RdfFormat::NTriples),
+                _ => {
+                    debug!("Unknown content type: {ext}");
+                    None
+                }
+            });
+    Ok((resp.bytes()?.to_vec(), format))
+}
+
 pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
     info!(
         "Writing dataset to file: {} with length {}",

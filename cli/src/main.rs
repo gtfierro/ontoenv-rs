@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use log::info;
 use ontoenv::api::{OntoEnv, ResolveTarget};
-use ontoenv::config::{Config, EnvironmentConfig};
+use ontoenv::config::Config;
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
 use oxigraph::model::NamedNode;
 use std::env::current_dir;
-use std::fs::File;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -58,9 +58,6 @@ enum Commands {
         /// Overwrite the environment if it already exists
         #[clap(long, default_value = "false")]
         overwrite: bool,
-        /// A JSON file containing a list of ontologies to add to the environment
-        #[clap(long = "list", short = 'l')]
-        ontology_list_file: Option<String>,
     },
     /// Prints the version of the ontoenv binary
     Version,
@@ -206,7 +203,7 @@ fn main() -> Result<()> {
     let ontoenv_exists = ontoenv::api::find_ontoenv_root()
         .map(|root| root.join(".ontoenv").join("ontoenv.json").exists())
         .unwrap_or(false);
-    println!("[INFO] OntoEnv exists: {ontoenv_exists}");
+    info!("OntoEnv exists: {ontoenv_exists}");
 
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
@@ -222,13 +219,10 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    println!("[INFO] OntoEnv loaded: {}", env.is_some());
+    info!("OntoEnv loaded: {}", env.is_some());
 
     match cmd.command {
-        Commands::Init {
-            overwrite,
-            ontology_list_file,
-        } => {
+        Commands::Init { overwrite } => {
             // if temporary, raise an error
             if cmd.temporary {
                 return Err(anyhow::anyhow!(
@@ -252,15 +246,6 @@ fn main() -> Result<()> {
             }
 
             let mut env = OntoEnv::init(config, overwrite)?;
-
-            // if an ontology config file is provided, load it and add the ontologies
-            if let Some(file) = ontology_list_file {
-                let file = File::open(file)?;
-                let config: EnvironmentConfig = serde_json::from_reader(file)?;
-                for ont in config.ontologies {
-                    let _ = env.add(ont.location, true)?;
-                }
-            }
 
             env.update()?;
             env.save_to_directory()?;
