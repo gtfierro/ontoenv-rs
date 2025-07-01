@@ -19,6 +19,7 @@ pub mod transform;
 
 use crate::ontology::GraphIdentifier;
 use chrono::prelude::*;
+use oxigraph::model::NamedNode;
 use pretty_bytes::converter::convert as pretty_bytes;
 use std::fmt::{self, Display};
 
@@ -52,8 +53,8 @@ pub struct EnvironmentStatus {
     last_updated: Option<DateTime<Utc>>,
     // size of the oxigraph store, in bytes
     store_size: u64,
-    // list of missing ontologies
-    missing_ontologies: Vec<GraphIdentifier>,
+    // list of missing imports
+    missing_imports: Vec<NamedNode>,
 }
 
 // impl Display pretty print for EnvironmentStatus
@@ -82,10 +83,10 @@ impl std::fmt::Display for EnvironmentStatus {
             pretty_bytes(self.store_size as f64),
         )?;
 
-        if !self.missing_ontologies.is_empty() {
-            write!(f, "\n\nMissing Ontologies:")?;
-            for ontology in &self.missing_ontologies {
-                write!(f, "\n  - {}", ontology)?;
+        if !self.missing_imports.is_empty() {
+            write!(f, "\n\nMissing Imports:")?;
+            for import in &self.missing_imports {
+                write!(f, "\n  - {}", import)?;
             }
         }
         Ok(())
