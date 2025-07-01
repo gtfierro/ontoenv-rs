@@ -277,7 +277,7 @@ impl OntoEnv {
             transform::remove_ontology_declarations_graph(&mut graph, base_ontology);
         }
         // remove the owl:import statement for the 'uri' ontology
-        transform::remove_owl_imports_graph(&mut graph, Some(&[(&iri).into()]));
+        transform::remove_owl_imports_graph(&mut graph, Some(&[iri.as_ref()]));
 
         Python::with_gil(|_py| {
             for triple in graph.into_iter() {
