@@ -52,6 +52,16 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+enum ListCommands {
+    /// List all ontology locations found in the search paths
+    Locations,
+    /// List all declared ontologies in the environment
+    Ontologies,
+    /// List all missing imports
+    MissingImports,
+}
+
+#[derive(Debug, Subcommand)]
 enum Commands {
     /// Create a new ontology environment
     Init {
@@ -87,8 +97,9 @@ enum Commands {
         #[clap(long, short)]
         file: Option<String>,
     },
-    /// List the ontologies in the environment sorted by name
-    List,
+    /// List various properties of the environment
+    #[command(subcommand)]
+    List(ListCommands),
     // TODO: dump all ontologies; nest by ontology name (sorted), w/n each ontology name list all
     // the places where that graph can be found. List basic stats: the metadata field in the
     // Ontology struct and # of triples in the graph; last updated; etc
@@ -129,7 +140,7 @@ impl ToString for Commands {
             Commands::Refresh => "Refresh".to_string(),
             Commands::Closure { .. } => "Closure".to_string(),
             Commands::Add { .. } => "Add".to_string(),
-            Commands::List => "List".to_string(),
+            Commands::List(..) => "List".to_string(),
             Commands::Dump { .. } => "Dump".to_string(),
             Commands::DepGraph { .. } => "DepGraph".to_string(),
             Commands::Dependents { .. } => "Dependents".to_string(),
@@ -308,14 +319,32 @@ fn main() -> Result<()> {
             let _ = env.add(location, true)?;
             env.save_to_directory()?;
         }
-        Commands::List => {
+        Commands::List(list_cmd) => {
             let env = require_ontoenv(env)?;
-            // print list of ontology URLs from env.ontologies.values() sorted alphabetically
-            let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
-            ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
-            ontologies.dedup_by(|a, b| a.name() == b.name());
-            for ont in ontologies {
-                println!("{}", ont.name().as_str());
+            match list_cmd {
+                ListCommands::Locations => {
+                    let mut locations = env.find_files()?;
+                    locations.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+                    for loc in locations {
+                        println!("{}", loc);
+                    }
+                }
+                ListCommands::Ontologies => {
+                    // print list of ontology URLs from env.ontologies.values() sorted alphabetically
+                    let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
+                    ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
+                    ontologies.dedup_by(|a, b| a.name() == b.name());
+                    for ont in ontologies {
+                        println!("{}", ont.name().as_str());
+                    }
+                }
+                ListCommands::MissingImports => {
+                    let mut missing_imports = env.missing_imports();
+                    missing_imports.sort();
+                    for import in missing_imports {
+                        println!("{}", import);
+                    }
+                }
             }
         }
         Commands::Dump { contains } => {
