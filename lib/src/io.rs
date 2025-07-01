@@ -99,39 +99,40 @@ fn add_ontology_to_store(
         location.as_str(),
         now.elapsed()
     );
+    let storage_graph_name = location.to_iri();
     let temp_graph_id = GraphIdentifier::new(temp_graph_name.as_ref());
-    let mut ontologies = Ontology::from_store(store, &temp_graph_id, strict)?;
+    let ontologies =
+        Ontology::from_store(store, &temp_graph_id, strict, storage_graph_name.clone())?;
 
-    for ontology in &mut ontologies {
-        debug!("Adding ontology: {}", ontology.id());
-        ontology.with_location(location.clone());
-        let id = ontology.id();
-        let graphname: GraphName = id.graphname()?;
+    for ontology in &ontologies {
+        debug!("Found ontology: {}", ontology.id());
+    }
 
-        // 3. Load from bytes using bulk loader
-        if overwrite || !store.contains_named_graph(id.name())? {
-            store.remove_named_graph(id.name())?;
-            let now = Instant::now();
-            let quads_to_load = store
-                .quads_for_pattern(
-                    None,
-                    None,
-                    None,
-                    Some(GraphNameRef::NamedNode(temp_graph_name.as_ref())),
-                )
-                .map(|res| {
-                    res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
-                });
-            debug!("Loading quads into graph {}", id);
-            store
-                .bulk_loader()
-                .load_ok_quads::<_, oxigraph::store::StorageError>(quads_to_load)?;
-            info!(
-                "Copied temp graph to {} in {:?}",
-                id.name(),
-                now.elapsed()
-            );
-        }
+    let graphname: GraphName = GraphName::NamedNode(storage_graph_name);
+
+    // 3. Load from bytes using bulk loader
+    if overwrite || !store.contains_named_graph(graphname.as_ref())? {
+        store.remove_named_graph(graphname.as_ref())?;
+        let now = Instant::now();
+        let quads_to_load = store
+            .quads_for_pattern(
+                None,
+                None,
+                None,
+                Some(GraphNameRef::NamedNode(temp_graph_name.as_ref())),
+            )
+            .map(|res| {
+                res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
+            });
+        debug!("Loading quads into graph {}", graphname.as_ref());
+        store
+            .bulk_loader()
+            .load_ok_quads::<_, oxigraph::store::StorageError>(quads_to_load)?;
+        info!(
+            "Copied temp graph to {} in {:?}",
+            graphname.as_ref(),
+            now.elapsed()
+        );
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
     Ok(ontologies)
@@ -156,12 +157,11 @@ pub trait GraphIO: Send + Sync {
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Vec<Ontology>>;
 
     /// Returns the graph with the given identifier
-    fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+    fn get_graph(&self, graph_name: GraphNameRef) -> Result<Graph> {
         let mut graph = Graph::new();
-        let graphname = id.graphname()?;
         for quad in self
             .store()
-            .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+            .quads_for_pattern(None, None, None, Some(graph_name))
         {
             graph.insert(quad?.as_ref());
         }
@@ -179,9 +179,8 @@ pub trait GraphIO: Send + Sync {
     }
 
     /// Removes the graph with the given identifier from the store and ontology metadata
-    fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
-        let graphname = id.name();
-        self.store().remove_named_graph(graphname)?;
+    fn remove(&mut self, graph_name: &NamedNode) -> Result<()> {
+        self.store().remove_named_graph(graph_name)?;
         Ok(())
     }
 
@@ -381,7 +380,7 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         Err(anyhow!("Cannot add to read-only store"))
     }
 
-    fn remove(&mut self, _id: &GraphIdentifier) -> Result<()> {
+    fn remove(&mut self, _graph_name: &NamedNode) -> Result<()> {
         Err(anyhow!("Cannot remove from read-only store"))
     }
 }
@@ -439,16 +438,12 @@ impl MemoryGraphIO {
         })
     }
 
-    pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
-        let graphname = id.graphname()?;
-        self.store.remove_named_graph(id.name())?;
+    pub fn add_graph(&mut self, storage_graph_name: NamedNode, graph: Graph) -> Result<()> {
+        self.store
+            .remove_named_graph(storage_graph_name.as_ref())?;
         self.store.bulk_loader().load_quads(graph.iter().map(|t| {
-            Quad::new(
-                t.subject,
-                t.predicate,
-                t.object,
-                graphname.clone(),
-            )
+            let graphname = GraphName::NamedNode(storage_graph_name.clone());
+            Quad::new(t.subject, t.predicate, t.object, graphname)
         }))?;
         Ok(())
     }
