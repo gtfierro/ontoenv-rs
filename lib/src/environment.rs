@@ -133,7 +133,7 @@ impl Environment {
         let ontology = self
             .get_ontology_by_name(name)
             .ok_or(anyhow::anyhow!(format!("Ontology {} not found", name)))?;
-        store.get_graph(ontology.id())
+        store.get_graph(ontology)
     }
 
     /// Returns the first ontology with the given location

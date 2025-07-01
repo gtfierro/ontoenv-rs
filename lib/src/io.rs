@@ -108,11 +108,11 @@ fn add_ontology_to_store(
         debug!("Found ontology: {}", ontology.id());
     }
 
-    let graphname: GraphName = GraphName::NamedNode(storage_graph_name);
+    let graphname: GraphName = GraphName::NamedNode(storage_graph_name.clone());
 
     // 3. Load from bytes using bulk loader
-    if overwrite || !store.contains_named_graph(graphname.as_ref())? {
-        store.remove_named_graph(graphname.as_ref())?;
+    if overwrite || !store.contains_named_graph(storage_graph_name.as_ref())? {
+        store.remove_named_graph(storage_graph_name.as_ref())?;
         let now = Instant::now();
         let quads_to_load = store
             .quads_for_pattern(
@@ -157,12 +157,14 @@ pub trait GraphIO: Send + Sync {
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Vec<Ontology>>;
 
     /// Returns the graph with the given identifier
-    fn get_graph(&self, graph_name: GraphNameRef) -> Result<Graph> {
+    fn get_graph(&self, ontology: &Ontology) -> Result<Graph> {
         let mut graph = Graph::new();
-        for quad in self
-            .store()
-            .quads_for_pattern(None, None, None, Some(graph_name))
-        {
+        for quad in self.store().quads_for_pattern(
+            None,
+            None,
+            None,
+            Some(ontology.storage_graph_name.as_ref().into()),
+        ) {
             graph.insert(quad?.as_ref());
         }
         Ok(graph)
@@ -185,21 +187,21 @@ pub trait GraphIO: Send + Sync {
     }
 
     /// Returns the union of the graphs with the given identifiers
-    fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
-        let mut graph = Dataset::new();
-        for id in ids {
-            let graphname = id.graphname().unwrap();
-            let g = self.get_graph(id).unwrap();
+    fn union_graph(&self, ontologies: &[&Ontology]) -> Dataset {
+        let mut dataset = Dataset::new();
+        for ontology in ontologies {
+            let g = self.get_graph(ontology).unwrap();
+            let graph_name = GraphName::NamedNode(ontology.name());
             for t in g.iter() {
-                graph.insert(&Quad::new(
+                dataset.insert(&Quad::new(
                     t.subject,
                     t.predicate,
                     t.object,
-                    graphname.clone(),
+                    graph_name.clone(),
                 ));
             }
         }
-        graph
+        dataset
     }
 
     fn flush(&mut self) -> Result<()> {
