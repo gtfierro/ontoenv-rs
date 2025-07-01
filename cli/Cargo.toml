@@ -23,3 +23,4 @@ oxigraph.workspace = true
 chrono.workspace = true
 walkdir.workspace = true
 serde_json.workspace = true
+log.workspace = true

@@ -58,7 +58,7 @@ enum ListCommands {
     /// List all declared ontologies in the environment
     Ontologies,
     /// List all missing imports
-    MissingImports,
+    Missing,
 }
 
 #[derive(Debug, Subcommand)]
@@ -338,7 +338,7 @@ fn main() -> Result<()> {
                         println!("{}", ont.name().as_str());
                     }
                 }
-                ListCommands::MissingImports => {
+                ListCommands::Missing => {
                     let mut missing_imports = env.missing_imports();
                     missing_imports.sort();
                     for import in missing_imports {
