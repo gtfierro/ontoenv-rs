@@ -315,14 +315,9 @@ impl OntoEnv {
         if config.temporary {
             let mut new_io =
                 Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?);
-            let mut seen_storages = HashSet::new();
             for ontology in env.ontologies().values() {
-                if seen_storages.contains(&ontology.storage_graph_name) {
-                    continue;
-                }
-                let graph = io.get_graph(ontology)?;
-                new_io.add_graph(ontology.storage_graph_name.clone(), graph)?;
-                seen_storages.insert(ontology.storage_graph_name.clone());
+                let graph = io.get_graph(ontology.id())?;
+                new_io.add_graph(ontology.id().clone(), graph)?;
             }
             io = new_io;
         }
@@ -446,18 +441,14 @@ impl OntoEnv {
         &mut self,
         location: OntologyLocation,
         overwrite: bool,
-    ) -> Result<Vec<GraphIdentifier>> {
+    ) -> Result<GraphIdentifier> {
         self.failed_resolutions.clear();
-        let onts = self.io.add(location, overwrite)?;
-        let mut ids = Vec::new();
-        for ont in onts {
-            let id = ont.id().clone();
-            self.env.add_ontology(ont);
-            ids.push(id);
-        }
-        self.add_ids_to_dependency_graph(ids.clone())?;
+        let ont = self.io.add(location, overwrite)?;
+        let id = ont.id().clone();
+        self.env.add_ontology(ont);
+        self.add_ids_to_dependency_graph(vec![id.clone()])?;
         self.save_to_directory()?;
-        Ok(ids)
+        Ok(id)
     }
 
     /// Load all graphs from the search directories. There are several things that can happen:
@@ -482,29 +473,9 @@ impl OntoEnv {
     pub fn update(&mut self) -> Result<()> {
         self.failed_resolutions.clear();
         // remove ontologies which are no longer present in the search directories
-        let missing: HashSet<GraphIdentifier> = self.missing_ontologies().into_iter().collect();
-
-        let storages_to_keep: HashSet<NamedNode> = self
-            .env
-            .ontologies()
-            .values()
-            .filter(|o| !missing.contains(o.id()))
-            .map(|o| o.storage_graph_name.clone())
-            .collect();
-
-        let storages_to_remove: HashSet<NamedNode> = self
-            .env
-            .ontologies()
-            .values()
-            .filter(|o| missing.contains(o.id()))
-            .map(|o| o.storage_graph_name.clone())
-            .collect();
-
-        for storage_name in storages_to_remove.difference(&storages_to_keep) {
-            self.io.remove(storage_name)?;
-        }
-
-        for graphid in missing {
+        // remove ontologies which are no longer present in the search directories
+        for graphid in self.missing_ontologies() {
+            self.io.remove(&graphid)?;
             self.env.remove_ontology(&graphid);
         }
 
@@ -532,8 +503,8 @@ impl OntoEnv {
                 }
             }
 
-            let new_onts = result.unwrap();
-            ontologies.extend(new_onts);
+            let new_ont = result.unwrap();
+            ontologies.push(new_ont);
         }
 
         let mut update_ids: Vec<GraphIdentifier> = Vec::new();
@@ -586,7 +557,7 @@ impl OntoEnv {
                                 return true; // If we can't read it, assume it's updated
                             }
                         };
-                        let old_graph = match self.io.get_graph(ontology) {
+                        let old_graph = match self.io.get_graph(ontology.id()) {
                             Ok(g) => g,
                             Err(e) => {
                                 warn!(
@@ -751,12 +722,10 @@ impl OntoEnv {
                 };
 
                 match self.io.add(location, false) {
-                    Ok(new_onts) => {
-                        for ont in new_onts {
-                            let id = ont.id().clone();
-                            self.env.add_ontology(ont);
-                            stack.push_back(id);
-                        }
+                    Ok(new_ont) => {
+                        let id = new_ont.id().clone();
+                        self.env.add_ontology(new_ont);
+                        stack.push_back(id);
                     }
                     Err(e) => {
                         self.failed_resolutions.insert(import.clone());
@@ -871,11 +840,7 @@ impl OntoEnv {
         remove_owl_imports: Option<bool>,
     ) -> Result<UnionGraph> {
         // TODO: figure out failed imports
-        let ontologies: Result<Vec<Ontology>> =
-            graph_ids.iter().map(|id| self.get_ontology(id)).collect();
-        let ontologies = ontologies?;
-        let ontologies_refs: Vec<&Ontology> = ontologies.iter().collect();
-        let mut dataset = self.io.union_graph(&ontologies_refs);
+        let mut dataset = self.io.union_graph(graph_ids);
         let first_id = graph_ids
             .first()
             .ok_or_else(|| anyhow!("No graphs found"))?;
@@ -912,8 +877,7 @@ impl OntoEnv {
     }
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
-        let ontology = self.get_ontology(id)?;
-        self.io.get_graph(&ontology)
+        self.io.get_graph(id)
     }
 
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Result<Ontology> {
@@ -1023,7 +987,7 @@ impl OntoEnv {
             let group = groups.get(&name).unwrap();
             println!("┌ Ontology: {name}");
             for ontology in group {
-                let g = self.io.get_graph(ontology).unwrap();
+                let g = self.io.get_graph(ontology.id()).unwrap();
                 println!("├─ Location: {}", ontology.location().unwrap());
                 // sorted keys
                 let mut sorted_keys: Vec<NamedNode> =
