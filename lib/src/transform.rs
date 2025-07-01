@@ -6,6 +6,78 @@ use oxigraph::model::{
     Dataset, Graph, NamedNodeRef, Quad, QuadRef, SubjectRef, TermRef, Triple, TripleRef,
 };
 
+/// Rewrites all sh:prefixes in a graph to point to the provided root
+pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: SubjectRef) {
+    let mut to_remove: Vec<Triple> = vec![];
+    let mut to_add: Vec<Triple> = vec![];
+    // find all sh:prefixes triples
+    for triple in graph.triples_for_predicate(PREFIXES) {
+        let s = triple.subject;
+        let new_triple = TripleRef::new(s, PREFIXES, root);
+        // remove the old triple <shape or rule, sh:prefixes, ontology>
+        to_remove.push(triple.into());
+        // add a new triple <shape or rule, sh:prefixes, root>
+        to_add.push(new_triple.into());
+    }
+    // move the sh:declare statements to the root ontology too
+    for triple in graph.triples_for_predicate(DECLARE) {
+        let o = triple.object;
+        let new_triple = TripleRef::new(root, DECLARE, o);
+        // remove the old triple <ontology, sh:declare, prefix>
+        to_remove.push(triple.into());
+        // add a new triple <root, sh:declare, prefix>
+        to_add.push(new_triple.into());
+    }
+
+    // apply all changes
+    for triple in to_remove {
+        graph.remove(triple.as_ref());
+    }
+    for triple in to_add {
+        graph.insert(triple.as_ref());
+    }
+}
+
+/// Remove owl:imports statements from a graph. Can be helpful to do after computing the union of
+/// all imports so that downstream tools do not attempt to fetch these graph dependencies
+/// themselves. If ontologies_to_remove is provided, only remove owl:imports to those ontologies
+pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+    let to_remove: Vec<Triple> = graph
+        .triples_for_predicate(IMPORTS)
+        .filter_map(|triple| match triple.object {
+            TermRef::NamedNode(obj) => {
+                if ontologies_to_remove.is_none_or(|ontologies| ontologies.contains(&obj)) {
+                    Some(triple.into())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
+    // Remove the collected triples
+    for triple in to_remove {
+        graph.remove(triple.as_ref());
+    }
+}
+
+/// Removes owl:Ontology declarations which are not the provided root
+pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: SubjectRef) {
+    // remove owl:Ontology declarations that are not the first graph
+    let mut to_remove: Vec<Triple> = vec![];
+    for triple in graph.triples_for_object(ONTOLOGY) {
+        let s = triple.subject;
+        let p = triple.predicate;
+        if p == TYPE && s != root {
+            to_remove.push(triple.into());
+        }
+    }
+    for triple in to_remove {
+        graph.remove(triple.as_ref());
+    }
+}
+
 /// Rewrites all sh:prefixes in the graph to point to the provided root
 pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: SubjectRef) {
     let mut to_remove: Vec<Quad> = vec![];

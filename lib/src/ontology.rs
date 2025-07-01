@@ -8,7 +8,7 @@ use chrono::prelude::*;
 use log::{debug, info, warn};
 use oxigraph::model::{
     Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, Subject, SubjectRef,
-    Term, TermRef,
+    Term,
 };
 use oxigraph::store::Store;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

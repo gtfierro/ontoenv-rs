@@ -6,7 +6,7 @@ use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::util::{get_file_contents, get_url_contents};
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
-use log::{debug, error, info};
+use log::{debug, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, Quad};
 use oxigraph::store::Store;
