@@ -345,13 +345,13 @@ impl OntoEnv {
             .map(|m| m.len())
             .sum();
         let num_ontologies = self.env.ontologies().len();
-        let missing_ontologies = self.missing_ontologies();
+        let missing_imports = self.missing_imports();
         Ok(EnvironmentStatus {
             exists: true,
             num_ontologies,
             last_updated: Some(last_updated),
             store_size: size,
-            missing_ontologies,
+            missing_imports,
         })
     }
 
