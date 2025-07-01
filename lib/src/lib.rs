@@ -1,6 +1,4 @@
-//! The main library crate for OntoEnv, providing tools for managing ontology environments.
-//! It includes modules for API interaction, configuration, I/O, ontology representation,
-//! resolution policies, transformations, and utility functions.
+#[doc = include_str!("../../README.md")]
 
 extern crate derive_builder;
 
