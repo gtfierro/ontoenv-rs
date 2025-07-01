@@ -6,7 +6,7 @@ use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::util::read_format;
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
-use log::{debug, error};
+use log::{debug, error, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, Quad, Triple};
 use oxigraph::store::Store;
@@ -14,6 +14,7 @@ use reqwest::header::CONTENT_TYPE;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct StoreStats {
@@ -89,9 +90,15 @@ fn add_ontology_to_store(
     let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
         .with_default_graph(GraphNameRef::NamedNode(temp_graph_name.as_ref()))
         .without_named_graphs();
+    let now = Instant::now();
     store
         .bulk_loader()
         .load_from_reader(parser, bytes.as_slice())?;
+    info!(
+        "Bulk loaded {} into temp graph in {:?}",
+        location.as_str(),
+        now.elapsed()
+    );
     let temp_graph_id = GraphIdentifier::new(temp_graph_name.as_ref());
     let mut ontologies = Ontology::from_store(store, &temp_graph_id, strict)?;
 
@@ -104,6 +111,7 @@ fn add_ontology_to_store(
         // 3. Load from bytes using bulk loader
         if overwrite || !store.contains_named_graph(id.name())? {
             store.remove_named_graph(id.name())?;
+            let now = Instant::now();
             let quads_to_load = store
                 .quads_for_pattern(
                     None,
@@ -118,6 +126,11 @@ fn add_ontology_to_store(
             store
                 .bulk_loader()
                 .load_ok_quads::<_, oxigraph::store::StorageError>(quads_to_load)?;
+            info!(
+                "Copied temp graph to {} in {:?}",
+                id.name(),
+                now.elapsed()
+            );
         }
     }
     store.remove_named_graph(temp_graph_name.as_ref())?;
