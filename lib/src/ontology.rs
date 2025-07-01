@@ -7,8 +7,8 @@ use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, info, warn};
 use oxigraph::model::{
-    Graph as OxigraphGraph, GraphNameRef, NamedNode, NamedNodeRef, Subject, SubjectRef, Term,
-    TermRef,
+    Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, Subject, SubjectRef,
+    Term, TermRef,
 };
 use oxigraph::store::Store;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -92,6 +92,10 @@ impl GraphIdentifier {
         let name = self.name.as_str().replace(':', "+");
         let location = self.location.as_str().replace("file://", "");
         format!("{name}-{location}").replace('/', "_")
+    }
+
+    pub fn graphname(&self) -> Result<GraphName> {
+        Ok(GraphName::NamedNode(self.name.clone()))
     }
 }
 
@@ -209,8 +213,6 @@ pub struct Ontology {
     id: GraphIdentifier,
     #[serde(serialize_with = "namednode_ser", deserialize_with = "namednode_de")]
     name: NamedNode,
-    #[serde(serialize_with = "namednode_ser", deserialize_with = "namednode_de")]
-    pub storage_graph_name: NamedNode,
     #[serde_as(as = "Vec<LocalType>")]
     pub imports: Vec<NamedNode>,
     location: Option<OntologyLocation>,
@@ -245,7 +247,6 @@ impl Default for Ontology {
                 name: NamedNode::new("<n/a>").unwrap(),
             },
             name: NamedNode::new("<n/a>").unwrap(),
-            storage_graph_name: NamedNode::new("<n/a>").unwrap(),
             imports: vec![],
             location: None,
             last_updated: None,
@@ -320,7 +321,6 @@ impl Ontology {
         graph_name: GraphNameRef,
         ontology_subject: Subject,
         location: OntologyLocation,
-        storage_graph_name: NamedNode,
     ) -> Result<Self> {
         debug!("got ontology name: {ontology_subject}");
 
@@ -479,7 +479,6 @@ impl Ontology {
                 name: ontology_name.clone(),
             },
             name: ontology_name,
-            storage_graph_name,
             imports,
             location: Some(location),
             version_properties,
@@ -493,9 +492,9 @@ impl Ontology {
         store: &Store,
         id: &GraphIdentifier,
         require_ontology_names: bool,
-        storage_graph_name: NamedNode,
-    ) -> Result<Vec<Self>> {
-        let graph_name_ref = GraphNameRef::NamedNode(id.name());
+    ) -> Result<Self> {
+        let graph_name = id.graphname()?;
+        let graph_name_ref = graph_name.as_ref();
         let location = id.location().clone();
 
         // get the rdf:type owl:Ontology declarations
@@ -520,7 +519,9 @@ impl Ontology {
             );
         }
 
-        let mut ontologies = Vec::new();
+        if decls.len() > 1 {
+            warn!("Multiple ontology declarations found in {location}, using first one");
+        }
 
         if decls.is_empty() {
             if require_ontology_names {
@@ -533,40 +534,25 @@ impl Ontology {
                 "No ontology declaration found in {location}. Using this as the ontology name"
             );
             let ontology_subject = Subject::NamedNode(location.to_iri());
-            ontologies.push(Self::build_from_subject_in_store(
-                store,
-                graph_name_ref,
-                ontology_subject,
-                location,
-                storage_graph_name.clone(),
-            )?);
+            Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
         } else {
-            for decl in decls {
-                let ontology_subject = match decl {
-                    Subject::NamedNode(s) => Subject::NamedNode(s),
-                    _ => {
-                        warn!("Ontology declaration subject is not a NamedNode, skipping.");
-                        continue;
-                    }
-                };
-                ontologies.push(Self::build_from_subject_in_store(
-                    store,
-                    graph_name_ref,
-                    ontology_subject,
-                    location.clone(),
-                    storage_graph_name.clone(),
-                )?);
-            }
+            let decl = decls.into_iter().next().unwrap();
+            let ontology_subject = match decl {
+                Subject::NamedNode(s) => Subject::NamedNode(s),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Ontology declaration subject is not a NamedNode, skipping."
+                    ));
+                }
+            };
+            Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
         }
-
-        Ok(ontologies)
     }
 
     fn build_from_subject(
         graph: &OxigraphGraph,
         ontology_subject: Subject,
         location: OntologyLocation,
-        storage_graph_name: NamedNode,
     ) -> Result<Self> {
         debug!("got ontology name: {ontology_subject}");
 
@@ -678,7 +664,6 @@ impl Ontology {
                 name: ontology_name.clone(),
             },
             name: ontology_name,
-            storage_graph_name,
             imports,
             location: Some(location),
             version_properties,
@@ -691,8 +676,7 @@ impl Ontology {
         graph: &OxigraphGraph,
         location: OntologyLocation,
         require_ontology_names: bool,
-    ) -> Result<Vec<Self>> {
-        let storage_graph_name = location.to_iri();
+    ) -> Result<Self> {
         // get the rdf:type owl:Ontology declarations
         let mut decls: Vec<SubjectRef> = graph
             .subjects_for_predicate_object(TYPE, ONTOLOGY)
@@ -703,7 +687,9 @@ impl Ontology {
             decls.extend(graph.triples_for_predicate(DECLARE).map(|t| t.subject));
         }
 
-        let mut ontologies = Vec::new();
+        if decls.len() > 1 {
+            warn!("Multiple ontology declarations found in {location}, using first one");
+        }
 
         if decls.is_empty() {
             if require_ontology_names {
@@ -716,31 +702,19 @@ impl Ontology {
                 "No ontology declaration found in {location}. Using this as the ontology name"
             );
             let ontology_subject = Subject::NamedNode(location.to_iri());
-            ontologies.push(Self::build_from_subject(
-                graph,
-                ontology_subject,
-                location,
-                storage_graph_name.clone(),
-            )?);
+            Self::build_from_subject(graph, ontology_subject, location)
         } else {
-            for decl in decls {
-                let ontology_subject = match decl {
-                    SubjectRef::NamedNode(s) => Subject::NamedNode(s.into_owned()),
-                    _ => {
-                        warn!("Ontology declaration subject is not a NamedNode, skipping.");
-                        continue;
-                    }
-                };
-                ontologies.push(Self::build_from_subject(
-                    graph,
-                    ontology_subject,
-                    location.clone(),
-                    storage_graph_name.clone(),
-                )?);
-            }
+            let decl = decls.into_iter().next().unwrap();
+            let ontology_subject = match decl {
+                SubjectRef::NamedNode(s) => Subject::NamedNode(s.into_owned()),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Ontology declaration subject is not a NamedNode, skipping."
+                    ));
+                }
+            };
+            Self::build_from_subject(graph, ontology_subject, location)
         }
-
-        Ok(ontologies)
     }
 
     pub fn from_str(s: &str) -> Result<Self> {
