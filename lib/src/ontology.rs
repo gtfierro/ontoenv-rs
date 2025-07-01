@@ -468,10 +468,12 @@ impl Ontology {
         let imports: Vec<NamedNode> = imports
             .iter()
             .map(|t| match t {
-                Term::NamedNode(s) => Ok(NamedNode::new(s.as_str())?),
+                Term::NamedNode(s) => s,
                 _ => panic!("Import is not an IRI"),
             })
-            .collect::<Result<Vec<NamedNode>>>()?;
+            .filter(|s| **s != ontology_name)
+            .cloned()
+            .collect();
 
         Ok(Ontology {
             id: GraphIdentifier {
@@ -660,10 +662,13 @@ impl Ontology {
         let imports: Vec<NamedNode> = imports
             .iter()
             .map(|t| match t {
-                TermRef::NamedNode(s) => Ok(NamedNode::new(s.as_str())?),
+                TermRef::NamedNode(s) => s,
                 _ => panic!("Import is not an IRI"),
             })
-            .collect::<Result<Vec<NamedNode>>>()?;
+            .filter(|s| **s != ontology_name.as_ref())
+            .cloned()
+            .map(|s| s.into_owned())
+            .collect();
 
         Ok(Ontology {
             id: GraphIdentifier {
