@@ -96,6 +96,7 @@ fn add_ontology_to_store(
     let mut ontologies = Ontology::from_store(store, &temp_graph_id, strict)?;
 
     for ontology in &mut ontologies {
+        debug!("Adding ontology: {}", ontology.id());
         ontology.with_location(location.clone());
         let id = ontology.id();
         let graphname: GraphName = id.graphname()?;
@@ -113,6 +114,7 @@ fn add_ontology_to_store(
                 .map(|res| {
                     res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
                 });
+            debug!("Loading quads into graph {}", id);
             store
                 .bulk_loader()
                 .load_ok_quads::<_, oxigraph::store::StorageError>(quads_to_load)?;
