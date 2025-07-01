@@ -46,13 +46,13 @@ It saves this in a local [Oxigraph](https://github.com/oxigraph/oxigraph) databa
 
 Begin by initializing an `ontoenv` workspace in a directory containing some ontology files (Turtle files, etc).
 
-```sh
+```ignore
 ontoenv init
 ```
 
 This may take a couple minutes. `ontoenv` searches for all local files defining ontologies, identifies their dependencies, and then recursively pulls in those dependencies, *their* dependencies, and so on. It is possible to adjust which directories `ontoenv` searches for, which files it traverses, and whether it pulls ontologies from the web.
 
-```sh
+```ignore
 $ ontoenv init -h
 Create a new ontology environment
 
@@ -95,7 +95,7 @@ We refer to the resulting "unified graph" as the *imports closure*.
 `ontoenv closure <root ontology name>` computes the imports closure and places it into an `output.ttl` file (or a location of your choice).
 There are a several flags one can provide for this process
 
-```sh
+```ignore
 $ Compute the owl:imports closure of an ontology and write it to a file
 
 Usage: ontoenv closure [OPTIONS] <ONTOLOGY> [DESTINATION]
