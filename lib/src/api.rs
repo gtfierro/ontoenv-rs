@@ -334,12 +334,16 @@ impl OntoEnv {
     /// Calculates and returns the environment status
     pub fn status(&self) -> Result<EnvironmentStatus> {
         // get time modified of the self.store_path() directory
-        let last_updated: DateTime<Utc> = std::fs::metadata(self.config.root.join(".ontoenv"))?
-            .modified()?
-            .into();
+        let ontoenv_dir = self.config.root.join(".ontoenv");
+        let last_updated: DateTime<Utc> = std::fs::metadata(&ontoenv_dir)?.modified()?.into();
         // get the size of the .ontoenv directory on disk
-        // TODO: implement getting store size
-        let size = 0;
+        let size: u64 = walkdir::WalkDir::new(ontoenv_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .filter_map(|e| e.metadata().ok())
+            .map(|m| m.len())
+            .sum();
         let num_ontologies = self.env.ontologies().len();
         Ok(EnvironmentStatus {
             exists: true,
