@@ -92,22 +92,22 @@ To change these parameters, just run `ontoenv init` again with the desired flags
 This is often helpful for passing to reasoners or query processors; while many of these can deal with importing multiple graphs, it is much more convenient to have a single file one can ship around.
 We refer to the resulting "unified graph" as the *imports closure*.
 
-`ontoenv get-closure <root ontology name>` computes the imports closure and places it into an `output.ttl` file (or a location of your choice).
+`ontoenv closure <root ontology name>` computes the imports closure and places it into an `output.ttl` file (or a location of your choice).
 There are a several flags one can provide for this process
 
 ```
 $ Compute the owl:imports closure of an ontology and write it to a file
 
-Usage: ontoenv get-closure [OPTIONS] <ONTOLOGY> [DESTINATION]
+Usage: ontoenv closure [OPTIONS] <ONTOLOGY> [DESTINATION]
 
 Arguments:
   <ONTOLOGY>     The name (URI) of the ontology to compute the closure for
   [DESTINATION]  The file to write the closure to, defaults to 'output.ttl'
 
 Options:
-  -r, --rewrite-sh-prefixes <REWRITE_SH_PREFIXES>
+      --rewrite-sh-prefixes <REWRITE_SH_PREFIXES>
           Rewrite the sh:prefixes declarations to point to the chosen ontology, defaults to true [default: true] [possible values: true, false]
-  -r, --remove-owl-imports <REMOVE_OWL_IMPORTS>
+      --remove-owl-imports <REMOVE_OWL_IMPORTS>
           Remove owl:imports statements from the closure, defaults to true [default: true] [possible values: true, false]
   -h, --help
           Print help
