@@ -320,7 +320,7 @@ impl OntoEnv {
                 if seen_storages.contains(&ontology.storage_graph_name) {
                     continue;
                 }
-                let graph = io.get_graph(ontology.storage_graph_name.as_ref().into())?;
+                let graph = io.get_graph(ontology)?;
                 new_io.add_graph(ontology.storage_graph_name.clone(), graph)?;
                 seen_storages.insert(ontology.storage_graph_name.clone());
             }
@@ -586,9 +586,8 @@ impl OntoEnv {
                                 return true; // If we can't read it, assume it's updated
                             }
                         };
-                        let old_graph =
-                            match self.io.get_graph(ontology.storage_graph_name.as_ref().into()) {
-                                Ok(g) => g,
+                        let old_graph = match self.io.get_graph(ontology) {
+                            Ok(g) => g,
                             Err(e) => {
                                 warn!(
                                     "Could not get graph from store for update check {}: {}",
@@ -872,7 +871,11 @@ impl OntoEnv {
         remove_owl_imports: Option<bool>,
     ) -> Result<UnionGraph> {
         // TODO: figure out failed imports
-        let mut dataset = self.io.union_graph(graph_ids);
+        let ontologies: Result<Vec<Ontology>> =
+            graph_ids.iter().map(|id| self.get_ontology(id)).collect();
+        let ontologies = ontologies?;
+        let ontologies_refs: Vec<&Ontology> = ontologies.iter().collect();
+        let mut dataset = self.io.union_graph(&ontologies_refs);
         let first_id = graph_ids
             .first()
             .ok_or_else(|| anyhow!("No graphs found"))?;
@@ -910,8 +913,7 @@ impl OntoEnv {
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let ontology = self.get_ontology(id)?;
-        self.io
-            .get_graph(ontology.storage_graph_name.as_ref().into())
+        self.io.get_graph(&ontology)
     }
 
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Result<Ontology> {
@@ -1021,10 +1023,7 @@ impl OntoEnv {
             let group = groups.get(&name).unwrap();
             println!("┌ Ontology: {name}");
             for ontology in group {
-                let g = self
-                    .io
-                    .get_graph(ontology.storage_graph_name.as_ref().into())
-                    .unwrap();
+                let g = self.io.get_graph(ontology).unwrap();
                 println!("├─ Location: {}", ontology.location().unwrap());
                 // sorted keys
                 let mut sorted_keys: Vec<NamedNode> =
