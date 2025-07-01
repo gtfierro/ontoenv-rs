@@ -59,7 +59,13 @@ fn add_ontology_to_store(
         now.elapsed()
     );
     let temp_graph_id = GraphIdentifier::new(temp_graph_name.as_ref());
-    let mut ontology = Ontology::from_store(store, &temp_graph_id, strict)?;
+    let ontology = Ontology::from_store(store, &temp_graph_id, strict)?;
+
+    // The location is incorrectly parsed from the temp graph id, so we set it from the original
+    // location here by round-tripping through JSON.
+    let mut ont_json = serde_json::to_value(&ontology)?;
+    ont_json["location"] = serde_json::to_value(&location)?;
+    let mut ontology: Ontology = serde_json::from_value(ont_json)?;
 
     debug!("Adding ontology: {}", ontology.id());
     ontology.with_last_updated(Utc::now());
