@@ -640,6 +640,19 @@ impl OntoEnv {
             .collect()
     }
 
+    /// Returns a list of all imports that could not be resolved.
+    pub fn missing_imports(&self) -> Vec<NamedNode> {
+        let mut missing = HashSet::new();
+        for ontology in self.env.ontologies().values() {
+            for import in &ontology.imports {
+                if self.env.get_ontology_by_name(import.as_ref()).is_none() {
+                    missing.insert(import.clone());
+                }
+            }
+        }
+        missing.into_iter().collect()
+    }
+
     /// Lists all ontologies in the search directories which match
     /// the patterns
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
