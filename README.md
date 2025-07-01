@@ -46,13 +46,13 @@ It saves this in a local [Oxigraph](https://github.com/oxigraph/oxigraph) databa
 
 Begin by initializing an `ontoenv` workspace in a directory containing some ontology files (Turtle files, etc).
 
-```
+```sh
 ontoenv init
 ```
 
 This may take a couple minutes. `ontoenv` searches for all local files defining ontologies, identifies their dependencies, and then recursively pulls in those dependencies, *their* dependencies, and so on. It is possible to adjust which directories `ontoenv` searches for, which files it traverses, and whether it pulls ontologies from the web.
 
-```
+```sh
 $ ontoenv init -h
 Create a new ontology environment
 
@@ -95,7 +95,7 @@ We refer to the resulting "unified graph" as the *imports closure*.
 `ontoenv closure <root ontology name>` computes the imports closure and places it into an `output.ttl` file (or a location of your choice).
 There are a several flags one can provide for this process
 
-```
+```sh
 $ Compute the owl:imports closure of an ontology and write it to a file
 
 Usage: ontoenv closure [OPTIONS] <ONTOLOGY> [DESTINATION]
@@ -166,3 +166,60 @@ for graphname in ds.graphs():
 ## Rust Library
 
 [Docs](https://docs.rs/crate/ontoenv)
+
+### Usage
+
+Here is a basic example of how to use the `ontoenv` Rust library. This example will:
+1. Create a temporary directory.
+2. Write a simple ontology to a file in that directory.
+3. Configure and initialize `ontoenv` to use this directory.
+4. Verify that the ontology has been loaded correctly.
+
+```rust
+use ontoenv::config::Config;
+use ontoenv::api::OntoEnv;
+use std::path::PathBuf;
+use std::fs;
+use std::io::Write;
+
+# fn main() -> anyhow::Result<()> {
+// Set up a temporary directory for the example
+let test_dir = PathBuf::from("target/doc_test_temp_readme");
+if test_dir.exists() {
+    fs::remove_dir_all(&test_dir)?;
+}
+fs::create_dir_all(&test_dir)?;
+let root = test_dir.canonicalize()?;
+
+// Create a dummy ontology file
+let ontology_path = root.join("my_ontology.ttl");
+let mut file = fs::File::create(&ontology_path)?;
+writeln!(file, r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix : <http://example.com/my_ontology#> .
+
+<http://example.com/my_ontology> a owl:Ontology .
+"#)?;
+
+// Configure ontoenv
+let config = Config::builder()
+    .root(root.clone())
+    .locations(vec![root.clone()])
+    .temporary(true) // Use a temporary environment
+    .build()?;
+
+// Initialize the environment
+let mut env = OntoEnv::init(config, false)?;
+env.update()?;
+
+// Check that our ontology was loaded
+let ontologies = env.ontologies();
+assert_eq!(ontologies.len(), 1);
+let ont_name = ontologies.keys().next().unwrap().name();
+assert_eq!(ont_name.as_str(), "http://example.com/my_ontology");
+
+// Clean up
+fs::remove_dir_all(&test_dir)?;
+# Ok(())
+# }
+```
