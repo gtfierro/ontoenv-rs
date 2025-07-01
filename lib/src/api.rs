@@ -338,8 +338,8 @@ impl OntoEnv {
             .modified()?
             .into();
         // get the size of the .ontoenv directory on disk
-        //let size = self.get_store_size()?;
-        let size = 999999;
+        // TODO: implement getting store size
+        let size = 0;
         let num_ontologies = self.env.ontologies().len();
         Ok(EnvironmentStatus {
             exists: true,
@@ -616,7 +616,7 @@ impl OntoEnv {
 
         // compute the union of new_files and updated_files
         updated_files.extend(new_files);
-        println!(
+        info!(
             "Found {} new or updated files in the search directories",
             updated_files.len()
         );
@@ -987,8 +987,18 @@ impl OntoEnv {
             let group = groups.get(&name).unwrap();
             println!("┌ Ontology: {name}");
             for ontology in group {
-                let g = self.io.get_graph(ontology.id()).unwrap();
-                println!("├─ Location: {}", ontology.location().unwrap());
+                let g = match self.io.get_graph(ontology.id()) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        error!("Could not get graph for {}: {e}", ontology.id());
+                        continue;
+                    }
+                };
+                let loc = ontology
+                    .location()
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "N/A".to_string());
+                println!("├─ Location: {}", loc);
                 // sorted keys
                 let mut sorted_keys: Vec<NamedNode> =
                     ontology.version_properties().keys().cloned().collect();

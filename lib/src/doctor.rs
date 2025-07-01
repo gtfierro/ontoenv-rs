@@ -6,7 +6,7 @@ use crate::consts::*;
 use crate::ontology::OntologyLocation;
 use anyhow::Result;
 use oxigraph::model::NamedNode;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct OntologyProblem {
@@ -127,48 +127,30 @@ impl EnvironmentCheck for ConflictingPrefixes {
     }
 
     fn check(&mut self, env: &OntoEnv, problems: &mut Vec<OntologyProblem>) -> Result<()> {
-        let mut reported_conflicts: HashSet<(String, BTreeSet<String>)> = HashSet::new();
+        // prefix -> { namespace -> [locations] }
+        let mut prefix_map: HashMap<String, HashMap<String, Vec<OntologyLocation>>> =
+            HashMap::new();
 
-        for root_ontology in env.ontologies().values() {
-            let closure_ids = env.get_dependency_closure(root_ontology.id())?;
-
-            // prefix -> { namespace -> [locations] }
-            let mut closure_prefix_map: HashMap<String, HashMap<String, Vec<OntologyLocation>>> =
-                HashMap::new();
-
-            for graph_id in &closure_ids {
-                let ontology = env.get_ontology(graph_id)?;
-                let ns_map = ontology.namespace_map();
-                if let Some(location) = ontology.location() {
-                    for (prefix, namespace) in ns_map {
-                        closure_prefix_map
-                            .entry(prefix.to_string())
-                            .or_default()
-                            .entry(namespace.to_string())
-                            .or_default()
-                            .push(location.clone());
-                    }
+        for ontology in env.ontologies().values() {
+            if let Some(location) = ontology.location() {
+                for (prefix, namespace) in ontology.namespace_map() {
+                    prefix_map
+                        .entry(prefix.clone())
+                        .or_default()
+                        .entry(namespace.clone())
+                        .or_default()
+                        .push(location.clone());
                 }
             }
+        }
 
-            for (prefix, ns_mappings) in closure_prefix_map {
-                if ns_mappings.len() > 1 {
-                    // This prefix has conflicting namespaces within this closure.
-                    let conflicting_namespaces: BTreeSet<String> =
-                        ns_mappings.keys().cloned().collect();
-                    let conflict_key = (prefix.clone(), conflicting_namespaces);
-
-                    if reported_conflicts.insert(conflict_key) {
-                        // This is a new conflict we haven't reported yet.
-                        let all_locations = ns_mappings.into_values().flatten().collect();
-                        problems.push(OntologyProblem {
-                            locations: all_locations,
-                            message: format!(
-                                "Conflicting namespace definitions for prefix '{prefix}'"
-                            ),
-                        });
-                    }
-                }
+        for (prefix, ns_mappings) in prefix_map {
+            if ns_mappings.len() > 1 {
+                let all_locations = ns_mappings.into_values().flatten().collect();
+                problems.push(OntologyProblem {
+                    locations: all_locations,
+                    message: format!("Conflicting namespace definitions for prefix '{prefix}'"),
+                });
             }
         }
 
