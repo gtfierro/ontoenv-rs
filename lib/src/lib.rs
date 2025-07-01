@@ -52,6 +52,8 @@ pub struct EnvironmentStatus {
     last_updated: Option<DateTime<Utc>>,
     // size of the oxigraph store, in bytes
     store_size: u64,
+    // list of missing ontologies
+    missing_ontologies: Vec<GraphIdentifier>,
 }
 
 // impl Display pretty print for EnvironmentStatus
@@ -78,6 +80,14 @@ impl std::fmt::Display for EnvironmentStatus {
             self.num_ontologies,
             last_updated,
             pretty_bytes(self.store_size as f64),
-        )
+        )?;
+
+        if !self.missing_ontologies.is_empty() {
+            write!(f, "\n\nMissing Ontologies:")?;
+            for ontology in &self.missing_ontologies {
+                write!(f, "\n  - {}", ontology)?;
+            }
+        }
+        Ok(())
     }
 }
