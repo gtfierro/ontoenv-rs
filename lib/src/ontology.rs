@@ -455,7 +455,7 @@ impl Ontology {
         }
 
         info!(
-            "Fetched graph {ontology_subject} from location: {location:?}"
+            "1Fetched graph {ontology_subject} from location: {location:?}"
         );
 
         let ontology_name: NamedNode = match ontology_subject {
@@ -639,7 +639,7 @@ impl Ontology {
         }
 
         info!(
-            "Fetched graph {ontology_subject} from location: {location:?}"
+            "2Fetched graph {ontology_subject} from location: {location:?}"
         );
 
         let ontology_name: NamedNode = match ontology_subject {
