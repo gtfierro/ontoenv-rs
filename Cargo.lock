@@ -1855,6 +1855,7 @@ dependencies = [
  "chrono",
  "clap",
  "env_logger",
+ "log",
  "ontoenv",
  "oxigraph",
  "serde_json",
