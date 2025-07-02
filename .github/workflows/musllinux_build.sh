@@ -2,7 +2,7 @@ cd /workdir
 apk add clang-dev
 curl https://static.rust-lang.org/rustup/dist/%arch%-unknown-linux-musl/rustup-init --output rustup-init
 chmod +x rustup-init
-./rustup-init -y --profile minimal --default-toolchain nightly
+./rustup-init -y --profile minimal --default-toolchain stable
 source "$HOME/.cargo/env"
 export PATH="${PATH}:/opt/python/cp37-cp37m/bin:/opt/python/cp38-cp38/bin:/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin"
 cd python
