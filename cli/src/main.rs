@@ -5,6 +5,7 @@ use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::Config;
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
+use ontoenv::ToUriString;
 use oxigraph::model::NamedNode;
 use std::env::current_dir;
 use std::path::PathBuf;
@@ -335,14 +336,14 @@ fn main() -> Result<()> {
                     ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
                     ontologies.dedup_by(|a, b| a.name() == b.name());
                     for ont in ontologies {
-                        println!("{}", ont.name().as_str());
+                        println!("{}", ont.to_uri_string());
                     }
                 }
                 ListCommands::Missing => {
                     let mut missing_imports = env.missing_imports();
                     missing_imports.sort();
                     for import in missing_imports {
-                        println!("{}", import);
+                        println!("{}", import.to_uri_string());
                     }
                 }
             }
@@ -385,9 +386,9 @@ fn main() -> Result<()> {
             for ont in ontologies {
                 let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let dependents = env.get_dependents(&iri)?;
-                println!("Dependents of {iri}: ");
+                println!("Dependents of {}: ", iri.to_uri_string());
                 for dep in dependents {
-                    println!("{dep}");
+                    println!("{}", dep.to_uri_string());
                 }
             }
         }

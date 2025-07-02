@@ -1,6 +1,8 @@
+#[doc = include_str!("../../README.md")]
 use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
+use ::ontoenv::ToUriString;
 use ::ontoenv::ontology::OntologyLocation;
 use ::ontoenv::transform;
 use anyhow::Error;
@@ -321,7 +323,7 @@ impl OntoEnv {
         let closure = env
             .get_dependency_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
-        let names: Vec<String> = closure.iter().map(|ont| ont.name().to_string()).collect();
+        let names: Vec<String> = closure.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
     }
 
@@ -462,10 +464,7 @@ impl OntoEnv {
         let inner = self.inner.clone();
         let env = inner.lock().unwrap();
         let dependents = env.get_dependents(&iri).map_err(anyhow_to_pyerr)?;
-        let names: Vec<String> = dependents
-            .iter()
-            .map(|ont| ont.name().to_string())
-            .collect();
+        let names: Vec<String> = dependents.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
     }
 
@@ -515,7 +514,7 @@ impl OntoEnv {
         let names: Vec<String> = env
             .ontologies()
             .keys()
-            .map(|k| k.name().to_string())
+            .map(|k| k.to_uri_string())
             .collect();
         Ok(names)
     }
