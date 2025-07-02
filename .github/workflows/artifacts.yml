@@ -23,7 +23,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           target: aarch64-unknown-linux-gnu
-          version: nightly
+          version: stable
       - run: |
           sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu libssl-dev
           mkdir .cargo
@@ -66,7 +66,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           target: aarch64-apple-darwin
-          version: nightly
+          version: stable
       - run: cargo build --release
         working-directory: ./cli
       - run: cargo build --release --target aarch64-apple-darwin
@@ -98,7 +98,7 @@ jobs:
           submodules: true
       - uses: ./.github/actions/setup-rust
         with:
-          version: nightly
+          version: stable
       - run: Remove-Item -LiteralPath "C:\msys64\" -Force -Recurse
       - run: cargo build --release
         working-directory: ./cli
@@ -121,7 +121,7 @@ jobs:
           submodules: true
       - uses: ./.github/actions/setup-rust
         with:
-          version: nightly
+          version: stable
       - uses: actions/setup-python@v4
         with:
           python-version: "3.12"
@@ -153,7 +153,7 @@ jobs:
         if: github.event_name == 'release' && matrix.architecture != 'x86_64'
       - uses: ./.github/actions/setup-rust
         with:
-          version: nightly
+          version: stable
       - run: sed 's/%arch%/${{ matrix.architecture }}/g' .github/workflows/manylinux_build.sh | sed 's/%for_each_version%/${{ github.event_name == 'release' || '' }}/g' > .github/workflows/manylinux_build_script.sh
       - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/manylinux2014_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/manylinux_build_script.sh
         if: github.event_name == 'release' || matrix.architecture == 'x86_64'
@@ -178,7 +178,7 @@ jobs:
         if: github.event_name == 'release' && matrix.architecture != 'x86_64'
       - uses: ./.github/actions/setup-rust
         with:
-          version: nightly
+          version: stable
       - run: sed 's/%arch%/${{ matrix.architecture }}/g' .github/workflows/musllinux_build.sh | sed 's/%for_each_version%/${{ github.event_name == 'release' || '' }}/g' > .github/workflows/musllinux_build_script.sh
       - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/musllinux_1_2_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/musllinux_build_script.sh
         if: github.event_name == 'release' || matrix.architecture == 'x86_64'
@@ -201,11 +201,11 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           target: aarch64-apple-darwin
-          version: nightly
+          version: stable
       - uses: ./.github/actions/setup-rust
         with:
           target: x86_64-apple-darwin
-          version: nightly
+          version: stable
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -237,7 +237,7 @@ jobs:
           submodules: true
       - uses: ./.github/actions/setup-rust
         with:
-          version: nightly
+          version: stable
       - uses: actions/setup-python@v4
         with:
           python-version: "3.12"
