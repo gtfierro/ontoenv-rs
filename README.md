@@ -129,38 +129,58 @@ If GraphViz is installed, `ontoenv dep-graph` will output a PDF graph representa
 
 #### Usage
 
+Here is a basic example of how to use the `pyontoenv` Python library. This example will:
+1. Create a temporary directory.
+2. Write two simple ontologies to files in that directory, where one imports the other.
+3. Configure and initialize `ontoenv` to use this directory.
+4. Compute the dependency closure of one ontology to demonstrate that `ontoenv` correctly resolves and includes the imported ontology.
+
 ```python
+import tempfile
+from pathlib import Path
 from ontoenv import Config, OntoEnv
 from rdflib import Graph
 
-# create config object. This assumes you have a 'brick' folder locally storing some ontologies
-cfg = Config(search_directories=["brick"], strict=False, offline=True)
-# can also create an 'empty' config object if there are no local ontologies
-# cfg = Config(strict=False, offline=True)
+# create a temporary directory to store our ontology files
+with tempfile.TemporaryDirectory() as temp_dir:
+    root = Path(temp_dir)
+    # create a dummy ontology file for ontology A
+    ontology_a_content = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix : <http://example.com/ontology_a#> .
+<http://example.com/ontology_a> a owl:Ontology .
+"""
+    (root / "ontology_a.ttl").write_text(ontology_a_content)
 
-# make the environment
-env = OntoEnv(config=cfg)
+    # create a dummy ontology file for ontology B which imports A
+    ontology_b_content = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix : <http://example.com/ontology_b#> .
+<http://example.com/ontology_b> a owl:Ontology ;
+    owl:imports <http://example.com/ontology_a> .
+"""
+    (root / "ontology_b.ttl").write_text(ontology_b_content)
 
-# compute closure for a given ontology and insert it into a graph
-g = Graph()
-env.get_closure("https://brickschema.org/schema/1.4/Brick", destination_graph=g)
+    # create config object. We use temporary=True so it doesn't create a .ontoenv dir
+    cfg = Config(search_directories=[str(root)], strict=False, offline=True, temporary=True)
+    # make the environment
+    env = OntoEnv(config=cfg)
 
-# import all dependencies from a graph
-brick = Graph()
-brick.parse("brick/Brick.ttl", format="turtle")
-env.import_dependencies(brick)
+    # list the ontologies found
+    print("Ontologies found:", env.get_ontology_names())
 
-# get a graph by IRI
-rec = env.get_graph("https://w3id.org/rec")
+    # compute closure for ontology B and insert it into a graph
+    g = Graph()
+    env.get_closure("http://example.com/ontology_b", destination_graph=g)
+    # The closure should contain triples from both A and B.
+    # Each ontology has 1 triple, so the union should have 2.
+    print(f"Closure of ontology_b has {len(g)} triples")
+    assert len(g) == 2
 
-# add an ontology to a graph by IRI
-env.import_graph(brick, "https://w3id.org/rec")
-
-# get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
-ds = env.to_rdflib_dataset()
-for graphname in ds.graphs():
-    graph = ds.graph(graphname)
-    print(f"Graph {graphname} has {len(graph)} triples")
+    # get just the graph for ontology A
+    g_a = env.get_graph("http://example.com/ontology_a")
+    print(f"Graph of ontology_a has {len(g_a)} triples")
+    assert len(g_a) == 1
 ```
 
 ## Rust Library
@@ -171,16 +191,19 @@ for graphname in ds.graphs():
 
 Here is a basic example of how to use the `ontoenv` Rust library. This example will:
 1. Create a temporary directory.
-2. Write a simple ontology to a file in that directory.
+2. Write two simple ontologies to files in that directory, where one imports the other.
 3. Configure and initialize `ontoenv` to use this directory.
-4. Verify that the ontology has been loaded correctly.
+4. Compute the dependency closure of one ontology to demonstrate that `ontoenv` correctly resolves and includes the imported ontology.
 
 ```rust
 use ontoenv::config::Config;
-use ontoenv::api::OntoEnv;
+use ontoenv::api::{OntoEnv, ResolveTarget};
+use ontoenv::ToUriString;
+use oxigraph::model::NamedNode;
 use std::path::PathBuf;
 use std::fs;
 use std::io::Write;
+use std::collections::HashSet;
 
 # fn main() -> anyhow::Result<()> {
 // Set up a temporary directory for the example
@@ -191,14 +214,23 @@ if test_dir.exists() {
 fs::create_dir_all(&test_dir)?;
 let root = test_dir.canonicalize()?;
 
-// Create a dummy ontology file
-let ontology_path = root.join("my_ontology.ttl");
-let mut file = fs::File::create(&ontology_path)?;
-writeln!(file, r#"
+// Create a dummy ontology file for ontology A
+let ontology_a_path = root.join("ontology_a.ttl");
+let mut file_a = fs::File::create(&ontology_a_path)?;
+writeln!(file_a, r#"
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix : <http://example.com/my_ontology#> .
+@prefix : <http://example.com/ontology_a#> .
+<http://example.com/ontology_a> a owl:Ontology .
+"#)?;
 
-<http://example.com/my_ontology> a owl:Ontology .
+// Create a dummy ontology file for ontology B which imports A
+let ontology_b_path = root.join("ontology_b.ttl");
+let mut file_b = fs::File::create(&ontology_b_path)?;
+writeln!(file_b, r#"
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix : <http://example.com/ontology_b#> .
+<http://example.com/ontology_b> a owl:Ontology ;
+    owl:imports <http://example.com/ontology_a> .
 "#)?;
 
 // Configure ontoenv
@@ -212,11 +244,22 @@ let config = Config::builder()
 let mut env = OntoEnv::init(config, false)?;
 env.update()?;
 
-// Check that our ontology was loaded
+// Check that our ontologies were loaded
 let ontologies = env.ontologies();
-assert_eq!(ontologies.len(), 1);
-let ont_name = ontologies.keys().next().unwrap().name();
-assert_eq!(ont_name.as_str(), "http://example.com/my_ontology");
+assert_eq!(ontologies.len(), 2);
+
+// Get the dependency closure for ontology B
+let ont_b_name = NamedNode::new("http://example.com/ontology_b")?;
+let ont_b_id = env.resolve(ResolveTarget::Graph(ont_b_name)).unwrap();
+let closure = env.get_dependency_closure(&ont_b_id)?;
+
+// The closure should contain both ontology A and B
+assert_eq!(closure.len(), 2);
+let closure_names: HashSet<String> = closure.iter().map(|id| id.to_uri_string()).collect();
+println!("Closure contains: {:?}", closure_names);
+assert!(closure_names.contains("http://example.com/ontology_a"));
+assert!(closure_names.contains("http://example.com/ontology_b"));
+
 
 // Clean up
 fs::remove_dir_all(&test_dir)?;
