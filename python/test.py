@@ -175,6 +175,35 @@ class TestOntoEnvAPI(unittest.TestCase):
         g = env2.get(name)
         self.assertGreater(len(g), 0)
 
+    def test_close(self):
+        """Test that the environment can be closed and methods fail."""
+        env = OntoEnv(path=self.test_dir)
+        name = env.add(str(self.brick_file_path))
+        self.assertIn(name, env.get_ontology_names())
+        env.close()
+
+        # check that methods raise a ValueError
+        with self.assertRaises(ValueError):
+            env.get_ontology_names()
+        with self.assertRaises(ValueError):
+            env.get(name)
+        with self.assertRaises(ValueError):
+            env.add(str(self.brick_file_path))
+
+        # check __repr__
+        self.assertIn("closed", repr(env))
+
+        # store path should be None
+        self.assertIsNone(env.store_path())
+
+        # closing again should be fine
+        env.close()
+
+        # check that we can still create a new env from the same directory,
+        # which should load the persisted state.
+        env2 = OntoEnv(path=self.test_dir)
+        self.assertIn(name, env2.get_ontology_names())
+
 
 if __name__ == "__main__":
     unittest.main()
