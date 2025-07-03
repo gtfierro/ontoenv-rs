@@ -177,7 +177,7 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (config=None, path=Some(Path::new(".").to_owned()), recreate=false, read_only=false))]
+    #[pyo3(signature = (config=None, path=None, recreate=false, read_only=false))]
     fn new(
         _py: Python,
         config: Option<Config>,
@@ -191,8 +191,8 @@ impl OntoEnv {
             env_logger::init();
         });
 
-        let config_path = path.unwrap_or_else(|| PathBuf::from("."));
         let env = if let Some(c) = config {
+            let config_path = path.unwrap_or_else(|| PathBuf::from("."));
             // if temporary is true, create a new OntoEnv
             if c.cfg.temporary {
                 OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
@@ -203,9 +203,24 @@ impl OntoEnv {
                 // if temporary is false and recreate is true or the directory doesn't exist, create a new OntoEnv
                 OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
             }
+        } else if let Some(p) = path {
+            if !recreate {
+                if let Some(root) = ::ontoenv::api::find_ontoenv_root_from(&p) {
+                    OntoEnvRs::load_from_directory(root, read_only).map_err(anyhow_to_pyerr)
+                } else {
+                    let cfg = config::Config::default(p).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                    })?;
+                    OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)
+                }
+            } else {
+                let cfg = config::Config::default(p).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                })?;
+                OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)
+            }
         } else {
-            // If no config but a valid path is given, attempt to load from the directory
-            OntoEnvRs::load_from_directory(config_path, read_only).map_err(anyhow_to_pyerr)
+            OntoEnvRs::new_offline().map_err(anyhow_to_pyerr)
         }?;
 
         let inner = Arc::new(Mutex::new(env));
@@ -436,14 +451,14 @@ impl OntoEnv {
     }
 
     /// Add a new ontology to the OntoEnv
-    fn add(&self, location: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn add(&self, location: &Bound<'_, PyAny>) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut env = inner.lock().unwrap();
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
-        env.add(location, true).map_err(anyhow_to_pyerr)?;
+        let graph_id = env.add(location, true).map_err(anyhow_to_pyerr)?;
         env.save_to_directory().map_err(anyhow_to_pyerr)?;
-        Ok(())
+        Ok(graph_id.to_uri_string())
     }
 
     /// Refresh the OntoEnv by re-loading all remote graphs and loading
@@ -467,8 +482,8 @@ impl OntoEnv {
         Ok(names)
     }
 
-    /// Export the graph with the given URI to an rdflib.Graph
-    fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
+    /// Get the graph with the given URI as an rdflib.Graph
+    fn get(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri.to_string())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -483,7 +498,7 @@ impl OntoEnv {
                     ))
                 })?;
             println!("graphid: {graphid:?}");
-            
+
             env.get_graph(&graphid).map_err(anyhow_to_pyerr)?
         };
         let res = rdflib.getattr("Graph")?.call0()?;
