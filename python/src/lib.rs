@@ -1,4 +1,3 @@
-#[doc = include_str!("../../README.md")]
 use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
