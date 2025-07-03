@@ -18,7 +18,8 @@ brick = Graph()
 brick.parse("../brick/Brick.ttl", format="turtle")
 env.import_dependencies(brick)
 print(len(brick))
-env.add("https://brickschema.org/schema/1.4/Brick.ttl")
+brick_name = env.add("https://brickschema.org/schema/1.4/Brick.ttl")
+print(f"Added {brick_name}")
 del env
 
 print("new env")
@@ -26,7 +27,7 @@ env2 = OntoEnv()
 print(env2.store_path())
 
 print("get brick again from URL")
-brick = env2.get_graph("https://brickschema.org/schema/1.4/Brick")
+brick = env2.get("https://brickschema.org/schema/1.4/Brick")
 print(len(brick))
 print(brick)
 print(type(brick))
