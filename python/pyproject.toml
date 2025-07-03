@@ -24,3 +24,7 @@ build-backend = "maturin"
 dev = [
     "pytest>=8.3.5",
 ]
+
+[tool.uv]
+# Rebuild package when any rust files change
+cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]
