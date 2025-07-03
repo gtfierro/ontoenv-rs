@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - '**'  # Triggers on push to all branches
+  pull_request:
+    branches:
+      - '**'  # Triggers on pull request to all branches
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      #- run: cd python && python -m unittest test.py
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: '**/requirements.dev.txt'
+      - uses: ./.github/actions/setup-rust
+        with:
+          target: aarch64-unknown-linux-gnu
+          version: stable
+      - run: |
+          sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu libssl-dev
+          mkdir .cargo
+          echo -e "[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"" >> .cargo/config.toml
+      - name: Build rust stuff
+        run: cargo build --workspace --release
+      - name: Run rust tests
+        run: cargo test --workspace --release
+      - name: Build python stuff
+        run: pip install -r python/requirements.dev.txt
+      - name: Build python package
+        run: maturin build --release --features abi3
+        working-directory: ./python
+      - name: Test python package
+        run: python -m unittest test.py
+        working-directory: ./python
+
