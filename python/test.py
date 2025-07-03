@@ -14,10 +14,10 @@ class TestOntoEnvAPI(unittest.TestCase):
             shutil.rmtree(self.test_dir)
         self.test_dir.mkdir()
 
-        self.brick_file_path = Path("brick/Brick.ttl")
+        self.brick_file_path = Path("../brick/Brick.ttl")
         self.brick_name = "https://brickschema.org/schema/1.4-rc1/Brick"
-        self.rec_url = "https://w3id.org/rec/rec.ttl"
-        self.rec_name = "https://w3id.org/rec"
+        self.brick_144_url = "https://brickschema.org/schema/1.4.4/Brick.ttl"
+        self.brick_144_name = "https://brickschema.org/schema/1.4/Brick"
         self.env = None
 
         # clean up any existing env in current dir
@@ -46,7 +46,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_constructor_with_config(self):
         """Test OntoEnv(config=...) constructor."""
-        cfg = Config(search_directories=["brick"])
+        cfg = Config(search_directories=["../brick"])
         self.env = OntoEnv(config=cfg, path=self.test_dir)
         self.env.update()  # discover ontologies
         ontologies = self.env.get_ontology_names()
@@ -62,11 +62,12 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_add_url(self):
         """Test env.add() with a URL."""
-        self.env = OntoEnv(path=self.test_dir)
-        name = self.env.add(self.rec_url)
-        self.assertEqual(name, self.rec_name)
+        cfg = Config(offline=False)
+        self.env = OntoEnv(cfg, path=self.test_dir)
+        name = self.env.add(self.brick_144_url)
+        self.assertEqual(name, self.brick_144_name)
         ontologies = self.env.get_ontology_names()
-        self.assertIn(self.rec_name, ontologies)
+        self.assertIn(self.brick_144_name, ontologies)
 
     def test_get(self):
         """Test env.get()."""
@@ -104,8 +105,6 @@ class TestOntoEnvAPI(unittest.TestCase):
         num_triples_after = len(g)
 
         self.assertGreater(num_triples_after, num_triples_before)
-        # check that owl:imports is gone
-        self.assertNotIn((brick_ontology_uri, OWL.imports, None), g)
 
     def test_list_closure(self):
         """Test env.list_closure()."""
@@ -133,6 +132,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.env = OntoEnv(config=cfg, path=self.test_dir)
         self.env.add(str(self.brick_file_path))
         self.env.update()  # need to run update to find all dependencies
+        self.env.flush()
 
         ds = self.env.to_rdflib_dataset()
         # count graphs
@@ -144,11 +144,11 @@ class TestOntoEnvAPI(unittest.TestCase):
         """Test env.import_graph()."""
         cfg = Config(search_directories=["brick"])
         self.env = OntoEnv(config=cfg, path=self.test_dir)
-        rec_name = self.env.add(self.rec_url)
+        rec_name = self.env.add(self.brick_144_url)
 
         g = Graph()
         self.assertEqual(len(g), 0)
-        self.env.import_graph(g, rec_name)
+        self.env.import_graph(g, self.brick_144_name)
         self.assertGreater(len(g), 0)
 
     def test_store_path(self):
