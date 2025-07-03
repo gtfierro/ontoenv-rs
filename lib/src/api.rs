@@ -22,11 +22,10 @@ use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 
-/// Searches for the .ontoenv directory in the current directory and then recursively up its parent directories.
+/// Searches for the .ontoenv directory in the given directory and then recursively up its parent directories.
 /// Returns the path to the directory containing the .ontoenv directory if found.
-pub fn find_ontoenv_root() -> Option<PathBuf> {
-    let start_dir = std::env::current_dir().ok()?;
-    let mut current_dir = Some(start_dir.as_path());
+pub fn find_ontoenv_root_from(start_dir: &Path) -> Option<PathBuf> {
+    let mut current_dir = Some(start_dir);
     while let Some(dir) = current_dir {
         if dir.join(".ontoenv").is_dir() {
             return Some(dir.to_path_buf());
@@ -34,6 +33,13 @@ pub fn find_ontoenv_root() -> Option<PathBuf> {
         current_dir = dir.parent();
     }
     None
+}
+
+/// Searches for the .ontoenv directory in the current directory and then recursively up its parent directories.
+/// Returns the path to the directory containing the .ontoenv directory if found.
+pub fn find_ontoenv_root() -> Option<PathBuf> {
+    let start_dir = std::env::current_dir().ok()?;
+    find_ontoenv_root_from(&start_dir)
 }
 
 /// These are the different ways to refer to an ontology: either
