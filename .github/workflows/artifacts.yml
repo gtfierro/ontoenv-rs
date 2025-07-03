@@ -128,6 +128,7 @@ jobs:
           cache: pip
           cache-dependency-path: '**/requirements.dev.txt'
       - run: pip install -r python/requirements.dev.txt
+      - run: cd python && python -m unittest test.py
       - run: maturin build -m python/Cargo.toml
       - run: pip install --no-index --find-links=target/wheels/ pyontoenv
       - run: rm -r target/wheels
