@@ -39,7 +39,7 @@ jobs:
       - name: Run rust tests
         run: cargo test --workspace --release
       - name: Build python package
-        run: maturin build --release --features abi3
+        run: uv run maturin build --release --features abi3
         working-directory: ./python
       - name: Test python package
         run: uv run python -m unittest test.py
