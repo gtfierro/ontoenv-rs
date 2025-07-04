@@ -54,6 +54,43 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+enum ConfigCommands {
+    /// Set a configuration value.
+    Set {
+        /// The configuration key to set.
+        key: String,
+        /// The value to set for the key.
+        value: String,
+    },
+    /// Get a configuration value.
+    Get {
+        /// The configuration key to get.
+        key: String,
+    },
+    /// Unset a configuration value, reverting to its default.
+    Unset {
+        /// The configuration key to unset.
+        key: String,
+    },
+    /// Add a value to a list-based configuration key.
+    Add {
+        /// The configuration key to add to.
+        key: String,
+        /// The value to add.
+        value: String,
+    },
+    /// Remove a value from a list-based configuration key.
+    Remove {
+        /// The configuration key to remove from.
+        key: String,
+        /// The value to remove.
+        value: String,
+    },
+    /// List all configuration values.
+    List,
+}
+
+#[derive(Debug, Subcommand)]
 enum ListCommands {
     /// List all ontology locations found in the search paths
     Locations,
@@ -131,13 +168,9 @@ enum Commands {
         #[clap(long, short, action = clap::ArgAction::SetTrue, default_value = "false")]
         force: bool,
     },
-    /// Set a configuration value
-    Set {
-        /// The configuration key to set
-        key: String,
-        /// The value to set for the key
-        value: String,
-    },
+    /// Manage ontoenv configuration.
+    #[command(subcommand)]
+    Config(ConfigCommands),
 }
 
 impl ToString for Commands {
@@ -155,9 +188,163 @@ impl ToString for Commands {
             Commands::Dependents { .. } => "Dependents".to_string(),
             Commands::Doctor => "Doctor".to_string(),
             Commands::Reset { .. } => "Reset".to_string(),
-            Commands::Set { .. } => "Set".to_string(),
+            Commands::Config { .. } => "Config".to_string(),
         }
     }
+}
+
+fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<()> {
+    if temporary {
+        return Err(anyhow::anyhow!("Cannot manage config in temporary mode."));
+    }
+    let root = ontoenv::api::find_ontoenv_root()
+        .ok_or_else(|| anyhow::anyhow!("Not in an ontoenv. Use `ontoenv init` to create one."))?;
+    let config_path = root.join(".ontoenv").join("ontoenv.json");
+    if !config_path.exists() {
+        return Err(anyhow::anyhow!(
+            "No ontoenv.json found. Use `ontoenv init`."
+        ));
+    }
+
+    match config_cmd {
+        ConfigCommands::List => {
+            let config_str = std::fs::read_to_string(&config_path)?;
+            let config_json: serde_json::Value = serde_json::from_str(&config_str)?;
+            let pretty_json = serde_json::to_string_pretty(&config_json)?;
+            println!("{}", pretty_json);
+            return Ok(());
+        }
+        ConfigCommands::Get { ref key } => {
+            let config_str = std::fs::read_to_string(&config_path)?;
+            let config_json: serde_json::Value = serde_json::from_str(&config_str)?;
+            let object = config_json
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("Invalid config format: not a JSON object."))?;
+
+            if let Some(value) = object.get(key) {
+                if let Some(s) = value.as_str() {
+                    println!("{}", s);
+                } else if let Some(arr) = value.as_array() {
+                    for item in arr {
+                        println!(
+                            "{}",
+                            item.as_str().unwrap_or_else(|| item.to_string().as_str())
+                        );
+                    }
+                } else {
+                    println!("{}", value);
+                }
+            } else {
+                println!("Configuration key '{}' not set.", key);
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    // Modifying commands continue here.
+    let config_str = std::fs::read_to_string(&config_path)?;
+    let mut config_json: serde_json::Value = serde_json::from_str(&config_str)?;
+
+    let object = config_json
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("Invalid config format: not a JSON object."))?;
+
+    match config_cmd {
+        ConfigCommands::Set { key, value } => {
+            match key.as_str() {
+                "offline" | "strict" | "require_ontology_names" | "no_search" => {
+                    let bool_val = value.parse::<bool>().map_err(|_| {
+                        anyhow::anyhow!("Invalid boolean value for {}: {}", key, value)
+                    })?;
+                    object.insert(key.to_string(), serde_json::Value::Bool(bool_val));
+                }
+                "resolution_policy" => {
+                    object.insert(key.to_string(), serde_json::Value::String(value.clone()));
+                }
+                "locations" | "includes" | "excludes" => {
+                    return Err(anyhow::anyhow!(
+                        "Use `ontoenv config add/remove {} <value>` to modify list values.",
+                        key
+                    ));
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Setting configuration for '{}' is not supported.",
+                        key
+                    ));
+                }
+            }
+            println!("Set {} to {}", key, value);
+        }
+        ConfigCommands::Unset { key } => {
+            if object.remove(&key).is_some() {
+                println!("Unset '{}'.", key);
+            } else {
+                return Err(anyhow::anyhow!("Configuration key '{}' not set.", key));
+            }
+        }
+        ConfigCommands::Add { key, value } => {
+            match key.as_str() {
+                "locations" | "includes" | "excludes" => {
+                    let entry = object
+                        .entry(key.clone())
+                        .or_insert_with(|| serde_json::Value::Array(vec![]));
+                    if let Some(arr) = entry.as_array_mut() {
+                        let new_val = serde_json::Value::String(value.clone());
+                        if !arr.contains(&new_val) {
+                            arr.push(new_val);
+                        } else {
+                            println!("Value '{}' already exists in {}.", value, key);
+                            return Ok(());
+                        }
+                    }
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Cannot add to configuration key '{}'. It is not a list.",
+                        key
+                    ));
+                }
+            }
+            println!("Added '{}' to {}", value, key);
+        }
+        ConfigCommands::Remove { key, value } => {
+            match key.as_str() {
+                "locations" | "includes" | "excludes" => {
+                    if let Some(entry) = object.get_mut(&key) {
+                        if let Some(arr) = entry.as_array_mut() {
+                            let val_to_remove = serde_json::Value::String(value.clone());
+                            if let Some(pos) = arr.iter().position(|x| *x == val_to_remove) {
+                                arr.remove(pos);
+                            } else {
+                                return Err(anyhow::anyhow!(
+                                    "Value '{}' not found in {}",
+                                    value,
+                                    key
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(anyhow::anyhow!("Configuration key '{}' not set.", key));
+                    }
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Cannot remove from configuration key '{}'. It is not a list.",
+                        key
+                    ));
+                }
+            }
+            println!("Removed '{}' from {}", value, key);
+        }
+        _ => unreachable!(), // Get and List are handled above
+    }
+
+    let new_config_str = serde_json::to_string_pretty(&config_json)?;
+    std::fs::write(config_path, new_config_str)?;
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -407,49 +594,8 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Set { key, value } => {
-            if cmd.temporary {
-                return Err(anyhow::anyhow!(
-                    "Cannot set config values in temporary mode."
-                ));
-            }
-            let root = ontoenv::api::find_ontoenv_root().ok_or_else(|| {
-                anyhow::anyhow!("Not in an ontoenv. Use `ontoenv init` to create one.")
-            })?;
-            let config_path = root.join(".ontoenv").join("ontoenv.json");
-            if !config_path.exists() {
-                return Err(anyhow::anyhow!(
-                    "No ontoenv.json found. Use `ontoenv init`."
-                ));
-            }
-
-            let config_str = std::fs::read_to_string(&config_path)?;
-            let mut config_json: serde_json::Value = serde_json::from_str(&config_str)?;
-
-            let object = config_json
-                .as_object_mut()
-                .ok_or_else(|| anyhow::anyhow!("Invalid config format: not a JSON object."))?;
-
-            match key.as_str() {
-                "offline" | "strict" | "require_ontology_names" | "no_search" => {
-                    let bool_val = value.parse::<bool>().map_err(|_| {
-                        anyhow::anyhow!("Invalid boolean value for {}: {}", key, value)
-                    })?;
-                    object.insert(key.to_string(), serde_json::Value::Bool(bool_val));
-                }
-                "resolution_policy" => {
-                    object.insert(key.to_string(), serde_json::Value::String(value.clone()));
-                }
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "Setting configuration for '{}' is not supported.",
-                        key
-                    ));
-                }
-            }
-            let new_config_str = serde_json::to_string_pretty(&config_json)?;
-            std::fs::write(config_path, new_config_str)?;
-            println!("Set {} to {}", key, value);
+        Commands::Config(config_cmd) => {
+            handle_config_command(config_cmd, cmd.temporary)?;
         }
         Commands::Reset { .. } => {
             // This command is handled before the environment is loaded.
