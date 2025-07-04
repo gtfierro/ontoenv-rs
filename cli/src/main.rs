@@ -487,7 +487,7 @@ fn main() -> Result<()> {
             let graphid = env
                 .resolve(ResolveTarget::Graph(iri.clone()))
                 .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
-            let closure = env.get_dependency_closure(&graphid)?;
+            let closure = env.get_closure(&graphid)?;
             let union = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
             if let Some(failed_imports) = union.failed_imports {
                 for imp in failed_imports {

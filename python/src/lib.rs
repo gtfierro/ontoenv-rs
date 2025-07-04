@@ -352,7 +352,7 @@ impl OntoEnv {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
         })?;
         let closure = env
-            .get_dependency_closure(ont.id())
+            .get_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
         let names: Vec<String> = closure.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
@@ -369,7 +369,7 @@ impl OntoEnv {
         destination_graph: Option<&Bound<'a, PyAny>>,
         rewrite_sh_prefixes: bool,
         remove_owl_imports: bool,
-    ) -> PyResult<Bound<'a, PyAny>> {
+    ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -389,8 +389,9 @@ impl OntoEnv {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
         })?;
         let closure = env
-            .get_dependency_closure(ont.id())
+            .get_closure(ont.id())
             .map_err(anyhow_to_pyerr)?;
+        let closure_names: Vec<String> = closure.iter().map(|ont| ont.to_uri_string()).collect();
         // if destination_graph is null, create a new rdflib.Graph()
         let destination_graph = match destination_graph {
             Some(g) => g.clone(),
@@ -403,38 +404,34 @@ impl OntoEnv {
                 Some(remove_owl_imports),
             )
             .map_err(anyhow_to_pyerr)?;
-        Python::with_gil(|_py| {
-            for triple in union.dataset.into_iter() {
-                let s: Term = triple.subject.into();
-                let p: Term = triple.predicate.into();
-                let o: Term = triple.object.into();
-                let t = PyTuple::new(
-                    py,
-                    &[
-                        term_to_python(py, &rdflib, s)?,
-                        term_to_python(py, &rdflib, p)?,
-                        term_to_python(py, &rdflib, o)?,
-                    ],
-                )?;
-                destination_graph.getattr("add")?.call1((t,))?;
-            }
+        for triple in union.dataset.into_iter() {
+            let s: Term = triple.subject.into();
+            let p: Term = triple.predicate.into();
+            let o: Term = triple.object.into();
+            let t = PyTuple::new(
+                py,
+                &[
+                    term_to_python(py, &rdflib, s)?,
+                    term_to_python(py, &rdflib, p)?,
+                    term_to_python(py, &rdflib, o)?,
+                ],
+            )?;
+            destination_graph.getattr("add")?.call1((t,))?;
+        }
 
-            // Remove each successful_imports url in the closure from the destination_graph
-            if remove_owl_imports {
-                for graphid in union.graph_ids {
-                    let iri = term_to_python(py, &rdflib, Term::NamedNode(graphid.into()))?;
-                    let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
-                    // remove triples with (None, pred, iri)
-                    let remove_tuple = PyTuple::new(py, &[py.None(), pred.into(), iri.into()])?;
-                    destination_graph
-                        .getattr("remove")?
-                        .call1((remove_tuple,))?;
-                }
+        // Remove each successful_imports url in the closure from the destination_graph
+        if remove_owl_imports {
+            for graphid in union.graph_ids {
+                let iri = term_to_python(py, &rdflib, Term::NamedNode(graphid.into()))?;
+                let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
+                // remove triples with (None, pred, iri)
+                let remove_tuple = PyTuple::new(py, &[py.None(), pred.into(), iri.into()])?;
+                destination_graph
+                    .getattr("remove")?
+                    .call1((remove_tuple,))?;
             }
-
-            // Remove each url in the closure from the destination_graph
-            Ok::<Bound<'_, PyAny>, PyErr>(destination_graph)
-        })
+        }
+        Ok((destination_graph, closure_names))
     }
 
     /// Print the contents of the OntoEnv
@@ -473,7 +470,8 @@ impl OntoEnv {
 
         let ontology = ontology.to_string();
 
-        self.get_closure(py, &ontology, Some(graph), true, true)
+        let (graph, _) = self.get_closure(py, &ontology, Some(graph), true, true)?;
+        Ok(graph)
     }
 
     /// Add a new ontology to the OntoEnv
