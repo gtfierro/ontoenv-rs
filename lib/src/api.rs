@@ -820,7 +820,7 @@ impl OntoEnv {
     }
 
     /// Returns the names of all graphs within the dependency closure of the provided graph
-    pub fn get_dependency_closure(&self, id: &GraphIdentifier) -> Result<Vec<GraphIdentifier>> {
+    pub fn get_closure(&self, id: &GraphIdentifier) -> Result<Vec<GraphIdentifier>> {
         let mut closure: HashSet<GraphIdentifier> = HashSet::new();
         let mut stack: VecDeque<GraphIdentifier> = VecDeque::new();
 
