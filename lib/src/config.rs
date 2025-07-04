@@ -55,6 +55,8 @@ pub struct Config {
     pub resolution_policy: String,
     // if true, do not store the ontoenv store on disk
     pub temporary: bool,
+    // if true, do not search for ontologies in the search directories
+    pub no_search: bool,
 }
 
 impl Config {
@@ -134,6 +136,7 @@ impl Config {
         println!("  Offline: {}", self.offline);
         println!("  Resolution Policy: {}", self.resolution_policy);
         println!("  Temporary: {}", self.temporary);
+        println!("  No Search: {}", self.no_search);
     }
 }
 
@@ -299,6 +302,7 @@ impl ConfigBuilder {
                 .resolution_policy
                 .unwrap_or_else(|| DefaultPolicy.policy_name().to_string()),
             temporary: self.temporary.unwrap_or(false),
+            no_search: self.no_search,
         })
     }
 }
