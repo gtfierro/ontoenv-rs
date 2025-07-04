@@ -497,8 +497,8 @@ impl OntoEnv {
         }
     }
 
-    /// Get the names of all ontologies that depend on the given ontology
-    fn get_dependents(&self, uri: &str) -> PyResult<Vec<String>> {
+    /// Get the names of all ontologies that import the given ontology
+    fn get_importers(&self, uri: &str) -> PyResult<Vec<String>> {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
@@ -506,8 +506,8 @@ impl OntoEnv {
         let env = guard.as_ref().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
         })?;
-        let dependents = env.get_dependents(&iri).map_err(anyhow_to_pyerr)?;
-        let names: Vec<String> = dependents.iter().map(|ont| ont.to_uri_string()).collect();
+        let importers = env.get_importers(&iri).map_err(anyhow_to_pyerr)?;
+        let names: Vec<String> = importers.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
     }
 
