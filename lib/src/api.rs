@@ -724,34 +724,30 @@ impl OntoEnv {
                 if self.failed_resolutions.contains(import) {
                     continue;
                 }
-                // check to see if we have a file defining this ontology first
-                let location_res = if let Some(imp) = self.env.get_ontology_by_name(import.into()) {
-                    // if we have already re-visited it, skip
-                    if seen.contains(imp.id()) || stack.contains(imp.id()) {
-                        continue;
-                    }
-                    imp.location()
-                        .ok_or_else(|| anyhow!("Parsing imports: Ontology {} location not found", imp))
-                        .cloned()
-                } else {
-                    // otherwise, try to find the ontology by location
-                    OntologyLocation::from_str(import.as_str())
-                };
 
-                let location = match location_res {
+                // Check if we already have an ontology with this name in the environment
+                if let Some(imp) = self.env.get_ontology_by_name(import.into()) {
+                    if !seen.contains(imp.id()) && !stack.contains(imp.id()) {
+                        stack.push_back(imp.id().clone());
+                    }
+                    continue;
+                }
+
+                // If not, we need to locate and add it.
+                // Treat the import IRI as a location.
+                let location = match OntologyLocation::from_str(import.as_str()) {
                     Ok(loc) => loc,
                     Err(e) => {
                         self.failed_resolutions.insert(import.clone());
                         if self.config.strict {
                             return Err(e);
-                        } else {
-                            warn!(
-                                "Failed to resolve location for import {}: {}",
-                                import.as_str(),
-                                e
-                            );
-                            continue;
                         }
+                        warn!(
+                            "Failed to resolve location for import {}: {}",
+                            import.as_str(),
+                            e
+                        );
+                        continue;
                     }
                 };
 
@@ -765,12 +761,11 @@ impl OntoEnv {
                         self.failed_resolutions.insert(import.clone());
                         if self.config.strict {
                             return Err(e);
-                        } else {
-                            warn!("Failed to read ontology file {}: {}", import.as_str(), e);
-                            continue;
                         }
+                        warn!("Failed to read ontology file {}: {}", import.as_str(), e);
+                        continue;
                     }
-                };
+                }
             }
         }
         //
