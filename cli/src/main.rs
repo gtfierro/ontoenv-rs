@@ -222,8 +222,7 @@ fn main() -> Result<()> {
     // - if temporary is false, load the env from the .ontoenv directory if it exists
     let env: Option<OntoEnv> = if cmd.temporary {
         // Create a new OntoEnv object in temporary mode
-        let mut e = OntoEnv::init(config.clone(), false)?;
-        e.update()?;
+        let e = OntoEnv::init(config.clone(), false)?;
         Some(e)
     } else if cmd.command.to_string() != "Init" && ontoenv_exists {
         // if .ontoenv exists, load it
@@ -257,9 +256,7 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            let mut env = OntoEnv::init(config, overwrite)?;
-
-            env.update()?;
+            let env = OntoEnv::init(config, overwrite)?;
             env.save_to_directory()?;
         }
         Commands::Version => {
@@ -277,12 +274,6 @@ fn main() -> Result<()> {
             println!("{status}");
         }
         Commands::Refresh => {
-            // if temporary, raise an error
-            if cmd.temporary {
-                return Err(anyhow::anyhow!(
-                    "Cannot refresh in temporary mode. Run `ontoenv init` to create a new OntoEnv."
-                ));
-            }
             let mut env = require_ontoenv(env)?;
             env.update()?;
             env.save_to_directory()?;
