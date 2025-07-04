@@ -227,7 +227,6 @@ impl OntoEnv {
         {
             let mut guard = inner.lock().unwrap();
             let env = guard.as_mut().unwrap();
-            env.update().map_err(anyhow_to_pyerr)?;
             env.save_to_directory().map_err(anyhow_to_pyerr)?;
         }
 
