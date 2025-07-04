@@ -407,6 +407,50 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Set { key, value } => {
+            if cmd.temporary {
+                return Err(anyhow::anyhow!(
+                    "Cannot set config values in temporary mode."
+                ));
+            }
+            let root = ontoenv::api::find_ontoenv_root().ok_or_else(|| {
+                anyhow::anyhow!("Not in an ontoenv. Use `ontoenv init` to create one.")
+            })?;
+            let config_path = root.join(".ontoenv").join("ontoenv.json");
+            if !config_path.exists() {
+                return Err(anyhow::anyhow!(
+                    "No ontoenv.json found. Use `ontoenv init`."
+                ));
+            }
+
+            let config_str = std::fs::read_to_string(&config_path)?;
+            let mut config_json: serde_json::Value = serde_json::from_str(&config_str)?;
+
+            let object = config_json
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("Invalid config format: not a JSON object."))?;
+
+            match key.as_str() {
+                "offline" | "strict" | "require_ontology_names" | "no_search" => {
+                    let bool_val = value.parse::<bool>().map_err(|_| {
+                        anyhow::anyhow!("Invalid boolean value for {}: {}", key, value)
+                    })?;
+                    object.insert(key.to_string(), serde_json::Value::Bool(bool_val));
+                }
+                "resolution_policy" => {
+                    object.insert(key.to_string(), serde_json::Value::String(value.clone()));
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Setting configuration for '{}' is not supported.",
+                        key
+                    ));
+                }
+            }
+            let new_config_str = serde_json::to_string_pretty(&config_json)?;
+            std::fs::write(config_path, new_config_str)?;
+            println!("Set {} to {}", key, value);
+        }
         Commands::Reset { .. } => {
             // This command is handled before the environment is loaded.
         }
