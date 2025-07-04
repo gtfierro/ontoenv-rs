@@ -662,6 +662,9 @@ impl OntoEnv {
     /// Lists all ontologies in the search directories which match
     /// the patterns
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
+        if self.config.no_search {
+            return Ok(Vec::new());
+        }
         let mut files = HashSet::new();
         for location in &self.config.locations {
             // if location does not exist, skip it

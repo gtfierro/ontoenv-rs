@@ -239,8 +239,8 @@ impl ConfigBuilder {
         self
     }
 
-    /// If set to `true`, the root directory will not be used as a default search location.
-    /// Defaults to `false`.
+    /// If set to `true`, no search for local ontologies will be performed. This will override
+    /// any specified search locations. Defaults to `false`.
     pub fn no_search(mut self, no_search: bool) -> Self {
         self.no_search = no_search;
         self
@@ -263,13 +263,11 @@ impl ConfigBuilder {
             .root
             .ok_or_else(|| anyhow::anyhow!("Config 'root' is required"))?;
 
-        let locations = self.locations.unwrap_or_else(|| {
-            if self.no_search {
-                vec![]
-            } else {
-                vec![root.clone()]
-            }
-        });
+        let locations = if self.no_search {
+            vec![]
+        } else {
+            self.locations.unwrap_or_else(|| vec![root.clone()])
+        };
 
         let includes_str = self.includes.unwrap_or_else(|| {
             vec![
