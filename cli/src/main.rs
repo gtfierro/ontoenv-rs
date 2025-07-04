@@ -156,9 +156,9 @@ enum Commands {
         #[clap(long, short)]
         output: Option<String>,
     },
-    /// Lists all ontologies which depend on the given ontology
-    Dependents {
-        /// The name (URI) of the ontology to find dependents for
+    /// Lists which ontologies import the given ontology
+    Why {
+        /// The name (URI) of the ontology to find importers for
         ontologies: Vec<String>,
     },
     /// Run the doctor to check the environment for issues
@@ -185,7 +185,7 @@ impl ToString for Commands {
             Commands::List(..) => "List".to_string(),
             Commands::Dump { .. } => "Dump".to_string(),
             Commands::DepGraph { .. } => "DepGraph".to_string(),
-            Commands::Dependents { .. } => "Dependents".to_string(),
+            Commands::Why { .. } => "Why".to_string(),
             Commands::Doctor => "Doctor".to_string(),
             Commands::Reset { .. } => "Reset".to_string(),
             Commands::Config { .. } => "Config".to_string(),
@@ -570,13 +570,13 @@ fn main() -> Result<()> {
                 ));
             }
         }
-        Commands::Dependents { ontologies } => {
+        Commands::Why { ontologies } => {
             let env = require_ontoenv(env)?;
             for ont in ontologies {
                 let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let dependents = env.get_dependents(&iri)?;
-                println!("Dependents of {}: ", iri.to_uri_string());
-                for dep in dependents {
+                let importers = env.get_importers(&iri)?;
+                println!("Imported by {}: ", iri.to_uri_string());
+                for dep in importers {
                     println!("{}", dep.to_uri_string());
                 }
             }

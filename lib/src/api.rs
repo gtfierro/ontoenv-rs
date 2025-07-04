@@ -915,11 +915,11 @@ impl OntoEnv {
             .ok_or_else(|| anyhow!("Ontology not found"))
     }
 
-    /// Returns a list of all ontologies that depend on the given ontology
-    pub fn get_dependents(&self, id: &NamedNode) -> Result<Vec<GraphIdentifier>> {
+    /// Returns a list of all ontologies that import the given ontology
+    pub fn get_importers(&self, id: &NamedNode) -> Result<Vec<GraphIdentifier>> {
         // find all nodes in the dependency_graph which have an edge to the given node
         // and return the list of nodes
-        let mut dependents: Vec<GraphIdentifier> = Vec::new();
+        let mut importers: Vec<GraphIdentifier> = Vec::new();
         let node = self
             .env
             .get_ontology_by_name(id.into())
@@ -933,10 +933,10 @@ impl OntoEnv {
             .dependency_graph
             .edges_directed(index, petgraph::Direction::Incoming)
         {
-            let dependent = self.dependency_graph[edge.source()].clone();
-            dependents.push(dependent);
+            let importer = self.dependency_graph[edge.source()].clone();
+            importers.push(importer);
         }
-        Ok(dependents)
+        Ok(importers)
     }
 
     /// Returns the GraphViz dot representation of the dependency graph
