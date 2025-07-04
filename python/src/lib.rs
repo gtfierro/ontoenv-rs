@@ -595,6 +595,132 @@ impl OntoEnv {
         Ok(store.into())
     }
 
+    // Config accessors
+    fn is_offline(&self) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_ref() {
+            Ok(env.is_offline())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn set_offline(&mut self, offline: bool) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_mut() {
+            env.set_offline(offline);
+            env.save_to_directory().map_err(anyhow_to_pyerr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn is_strict(&self) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_ref() {
+            Ok(env.is_strict())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn set_strict(&mut self, strict: bool) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_mut() {
+            env.set_strict(strict);
+            env.save_to_directory().map_err(anyhow_to_pyerr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn requires_ontology_names(&self) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_ref() {
+            Ok(env.requires_ontology_names())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_mut() {
+            env.set_require_ontology_names(require);
+            env.save_to_directory().map_err(anyhow_to_pyerr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn no_search(&self) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_ref() {
+            Ok(env.no_search())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn set_no_search(&mut self, no_search: bool) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_mut() {
+            env.set_no_search(no_search);
+            env.save_to_directory().map_err(anyhow_to_pyerr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn get_resolution_policy(&self) -> PyResult<String> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_ref() {
+            Ok(env.resolution_policy().to_string())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
+    fn set_resolution_policy(&mut self, policy: String) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        if let Some(env) = guard.as_mut() {
+            env.set_resolution_policy(policy);
+            env.save_to_directory().map_err(anyhow_to_pyerr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ))
+        }
+    }
+
     pub fn store_path(&self) -> PyResult<Option<String>> {
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
