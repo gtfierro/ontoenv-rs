@@ -226,10 +226,11 @@ fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<
                     println!("{}", s);
                 } else if let Some(arr) = value.as_array() {
                     for item in arr {
-                        println!(
-                            "{}",
-                            item.as_str().unwrap_or_else(|| item.to_string().as_str())
-                        );
+                        if let Some(s) = item.as_str() {
+                            println!("{}", s);
+                        } else {
+                            println!("{}", item);
+                        }
                     }
                 } else {
                     println!("{}", value);
