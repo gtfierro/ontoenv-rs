@@ -7,6 +7,7 @@ use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
 use ontoenv::ToUriString;
 use oxigraph::model::NamedNode;
+use serde_json;
 use std::env::current_dir;
 use std::path::PathBuf;
 
@@ -130,6 +131,13 @@ enum Commands {
         #[clap(long, short, action = clap::ArgAction::SetTrue, default_value = "false")]
         force: bool,
     },
+    /// Set a configuration value
+    Set {
+        /// The configuration key to set
+        key: String,
+        /// The value to set for the key
+        value: String,
+    },
 }
 
 impl ToString for Commands {
@@ -147,6 +155,7 @@ impl ToString for Commands {
             Commands::Dependents { .. } => "Dependents".to_string(),
             Commands::Doctor => "Doctor".to_string(),
             Commands::Reset { .. } => "Reset".to_string(),
+            Commands::Set { .. } => "Set".to_string(),
         }
     }
 }
