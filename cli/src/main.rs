@@ -75,7 +75,7 @@ enum Commands {
     /// Prints the status of the ontology environment
     Status,
     /// Update the ontology environment
-    Refresh,
+    Update,
     /// Compute the owl:imports closure of an ontology and write it to a file
     Closure {
         /// The name (URI) of the ontology to compute the closure for
@@ -138,7 +138,7 @@ impl ToString for Commands {
             Commands::Init { .. } => "Init".to_string(),
             Commands::Version => "Version".to_string(),
             Commands::Status => "Status".to_string(),
-            Commands::Refresh => "Refresh".to_string(),
+            Commands::Update => "Update".to_string(),
             Commands::Closure { .. } => "Closure".to_string(),
             Commands::Add { .. } => "Add".to_string(),
             Commands::List(..) => "List".to_string(),
@@ -247,7 +247,7 @@ fn main() -> Result<()> {
                     "An ontology environment already exists in: {}",
                     root.display()
                 );
-                println!("Use --overwrite to re-initialize or `ontoenv refresh` to update.");
+                println!("Use --overwrite to re-initialize or `ontoenv update` to update.");
 
                 let env = OntoEnv::load_from_directory(root, false)?;
                 let status = env.status()?;
@@ -273,7 +273,7 @@ fn main() -> Result<()> {
             // pretty print the status
             println!("{status}");
         }
-        Commands::Refresh => {
+        Commands::Update => {
             let mut env = require_ontoenv(env)?;
             env.update()?;
             env.save_to_directory()?;
