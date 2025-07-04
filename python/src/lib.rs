@@ -456,7 +456,7 @@ impl OntoEnv {
         &self,
         py: Python<'a>,
         graph: &Bound<'a, PyAny>,
-    ) -> PyResult<Bound<'a, PyAny>> {
+    ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
         let rdflib = py.import("rdflib")?;
         let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
         let py_ontology = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into()))?;
@@ -465,13 +465,12 @@ impl OntoEnv {
         let ontology = value_fun.call(py, (), Some(&kwargs))?;
 
         if ontology.is_none(py) {
-            return Ok(graph.clone());
+            return Ok((graph.clone(), Vec::new()));
         }
 
         let ontology = ontology.to_string();
 
-        let (graph, _) = self.get_closure(py, &ontology, Some(graph), true, true)?;
-        Ok(graph)
+        self.get_closure(py, &ontology, Some(graph), true, true)
     }
 
     /// Add a new ontology to the OntoEnv
