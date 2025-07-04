@@ -453,8 +453,9 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            let env = OntoEnv::init(config, overwrite)?;
-            env.save_to_directory()?;
+            // The call to `init` will create and update the environment.
+            // `update` will also save it to the directory.
+            let _ = OntoEnv::init(config, overwrite)?;
         }
         Commands::Version => {
             println!(

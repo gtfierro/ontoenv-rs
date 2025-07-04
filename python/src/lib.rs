@@ -224,11 +224,6 @@ impl OntoEnv {
         }?;
 
         let inner = Arc::new(Mutex::new(Some(env)));
-        {
-            let mut guard = inner.lock().unwrap();
-            let env = guard.as_mut().unwrap();
-            env.save_to_directory().map_err(anyhow_to_pyerr)?;
-        }
 
         Ok(OntoEnv {
             inner: inner.clone(),

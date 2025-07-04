@@ -196,7 +196,9 @@ impl OntoEnv {
             .no_search(false)
             .build()?;
 
-        Ok(Self::new(Environment::new(), io, config))
+        let mut ontoenv = Self::new(Environment::new(), io, config);
+        ontoenv.update()?;
+        Ok(ontoenv)
     }
 
     pub fn io(&self) -> &Box<dyn GraphIO> {
@@ -426,13 +428,17 @@ impl OntoEnv {
             )?),
         };
 
-        Ok(OntoEnv {
+        let mut ontoenv = OntoEnv {
             env,
             io,
             dependency_graph: DiGraph::new(),
             config,
             failed_resolutions: HashSet::new(),
-        })
+        };
+
+        ontoenv.update()?;
+
+        Ok(ontoenv)
     }
 
     /// Deletes the .ontoenv directory, searching from the current directory upwards.
