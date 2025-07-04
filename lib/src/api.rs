@@ -1069,4 +1069,45 @@ impl OntoEnv {
             println!("└────────────────────────────────────────────────────────────────────────");
         }
     }
+
+    // Config accessors
+    pub fn is_offline(&self) -> bool {
+        self.config.offline
+    }
+
+    pub fn set_offline(&mut self, offline: bool) {
+        self.config.offline = offline;
+    }
+
+    pub fn is_strict(&self) -> bool {
+        self.config.strict
+    }
+
+    pub fn set_strict(&mut self, strict: bool) {
+        self.config.strict = strict;
+    }
+
+    pub fn requires_ontology_names(&self) -> bool {
+        self.config.require_ontology_names
+    }
+
+    pub fn set_require_ontology_names(&mut self, require: bool) {
+        self.config.require_ontology_names = require;
+    }
+
+    pub fn no_search(&self) -> bool {
+        self.config.no_search
+    }
+
+    pub fn set_no_search(&mut self, no_search: bool) {
+        self.config.no_search = no_search;
+    }
+
+    pub fn resolution_policy(&self) -> &str {
+        &self.config.resolution_policy
+    }
+
+    pub fn set_resolution_policy(&mut self, policy: String) {
+        self.config.resolution_policy = policy;
+    }
 }
