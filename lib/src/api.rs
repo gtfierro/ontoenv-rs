@@ -470,9 +470,9 @@ impl OntoEnv {
     }
 
     /// Add the ontology from the given location to the environment, but do not
-    /// explore its dependencies. It will be added to the dependency graph and
+    /// explore its owl:imports. It will be added to the dependency graph and
     /// edges will be created if its imports are already present in the environment.
-    pub fn add_no_deps(
+    pub fn add_no_imports(
         &mut self,
         location: OntologyLocation,
         overwrite: bool,
