@@ -356,7 +356,7 @@ impl OntoEnv {
     /// Merge all graphs in the imports closure of the given ontology into a single graph. If
     /// destination_graph is provided, add the merged graph to the destination_graph. If not,
     /// return the merged graph.
-    #[pyo3(signature = (uri, destination_graph=None, rewrite_sh_prefixes=false, remove_owl_imports=false))]
+    #[pyo3(signature = (uri, destination_graph=None, rewrite_sh_prefixes=true, remove_owl_imports=true))]
     fn get_closure<'a>(
         &self,
         py: Python<'a>,
