@@ -135,6 +135,9 @@ enum Commands {
         /// The path to the file to add
         #[clap(long, short)]
         file: Option<String>,
+        /// Do not explore dependencies of the added ontology
+        #[clap(long, action)]
+        no_deps: bool,
     },
     /// List various properties of the environment
     #[command(subcommand)]
@@ -499,15 +502,22 @@ fn main() -> Result<()> {
             let destination = destination.unwrap_or_else(|| "output.ttl".to_string());
             write_dataset_to_file(&union.dataset, &destination)?;
         }
-        Commands::Add { url, file } => {
+        Commands::Add {
+            url,
+            file,
+            no_deps,
+        } => {
             let location: OntologyLocation = match (url, file) {
                 (Some(url), None) => OntologyLocation::Url(url),
                 (None, Some(file)) => OntologyLocation::File(PathBuf::from(file)),
                 _ => return Err(anyhow::anyhow!("Must specify either --url or --file")),
             };
             let mut env = require_ontoenv(env)?;
-            let _ = env.add(location, true)?;
-            env.save_to_directory()?;
+            if no_deps {
+                let _ = env.add_no_deps(location, true)?;
+            } else {
+                let _ = env.add(location, true)?;
+            }
         }
         Commands::List(list_cmd) => {
             let env = require_ontoenv(env)?;

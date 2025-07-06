@@ -469,6 +469,23 @@ impl OntoEnv {
         Ok(id)
     }
 
+    /// Add the ontology from the given location to the environment, but do not
+    /// explore its dependencies. It will be added to the dependency graph and
+    /// edges will be created if its imports are already present in the environment.
+    pub fn add_no_deps(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: bool,
+    ) -> Result<GraphIdentifier> {
+        self.failed_resolutions.clear();
+        let ont = self.io.add(location, overwrite)?;
+        let id = ont.id().clone();
+        self.env.add_ontology(ont);
+        self.add_ids_to_dependency_graph(vec![])?;
+        self.save_to_directory()?;
+        Ok(id)
+    }
+
     /// Load all graphs from the search directories. There are several things that can happen:
     ///
     /// 1. files have been added from the search directories
