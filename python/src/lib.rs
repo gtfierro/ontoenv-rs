@@ -478,7 +478,19 @@ impl OntoEnv {
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
         let graph_id = env.add(location, true).map_err(anyhow_to_pyerr)?;
-        env.save_to_directory().map_err(anyhow_to_pyerr)?;
+        Ok(graph_id.to_uri_string())
+    }
+
+    /// Add a new ontology to the OntoEnv without exploring dependencies.
+    fn add_no_deps(&self, location: &Bound<'_, PyAny>) -> PyResult<String> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let env = guard.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+        })?;
+        let location =
+            OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
+        let graph_id = env.add_no_deps(location, true).map_err(anyhow_to_pyerr)?;
         Ok(graph_id.to_uri_string())
     }
 
