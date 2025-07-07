@@ -129,12 +129,8 @@ enum Commands {
     },
     /// Add an ontology to the environment
     Add {
-        /// The URL of the ontology to add
-        #[clap(long, short)]
-        url: Option<String>,
-        /// The path to the file to add
-        #[clap(long, short)]
-        file: Option<String>,
+        /// The location of the ontology to add (file path or URL)
+        location: String,
         /// Do not explore owl:imports of the added ontology
         #[clap(long, action)]
         no_imports: bool,
@@ -503,14 +499,13 @@ fn main() -> Result<()> {
             write_dataset_to_file(&union.dataset, &destination)?;
         }
         Commands::Add {
-            url,
-            file,
+            location,
             no_imports,
         } => {
-            let location: OntologyLocation = match (url, file) {
-                (Some(url), None) => OntologyLocation::Url(url),
-                (None, Some(file)) => OntologyLocation::File(PathBuf::from(file)),
-                _ => return Err(anyhow::anyhow!("Must specify either --url or --file")),
+            let location = if location.starts_with("http") {
+                OntologyLocation::Url(location)
+            } else {
+                OntologyLocation::File(PathBuf::from(location))
             };
             let mut env = require_ontoenv(env)?;
             if no_imports {
