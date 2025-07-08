@@ -2,6 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
+use crate::ToUriString;
 use crate::doctor::{ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem};
 use crate::environment::Environment;
 use crate::transform;
