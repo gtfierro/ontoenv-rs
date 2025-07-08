@@ -13,6 +13,8 @@ class Config:
         root: Root directory for the environment.
         includes: Optional list of patterns to include.
         excludes: Optional list of patterns to exclude.
+        temporary: Flag to create a temporary environment.
+        no_search: Flag to disable searching for ontologies in local directories.
     """
     def __init__(
         self,
@@ -24,6 +26,8 @@ class Config:
         root: str = ".",
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
+        temporary: bool = False,
+        no_search: bool = False,
     ) -> None:
         """
         Initialize the Config object with the given parameters.
