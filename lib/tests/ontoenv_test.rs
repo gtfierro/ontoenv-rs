@@ -414,9 +414,9 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 2);
     let union = env.get_union_graph(&closure, None, None)?;
-    assert_eq!(union.len(), 3);
-    let union = env.get_union_graph(&closure, None, Some(false))?;
     assert_eq!(union.len(), 4);
+    let union = env.get_union_graph(&closure, None, Some(false))?;
+    assert_eq!(union.len(), 5);
 
     // ont3 => {ont3, ont2, ont1}
     let ont3 = NamedNodeRef::new("http://example.org/ontology3")?;
@@ -424,9 +424,9 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 3);
     let union = env.get_union_graph(&closure, None, None)?;
-    assert_eq!(union.len(), 4);
+    assert_eq!(union.len(), 5);
     let union = env.get_union_graph(&closure, None, Some(false))?;
-    assert_eq!(union.len(), 6);
+    assert_eq!(union.len(), 8);
 
     // ont5 => {ont5, ont4, ont3, ont2, ont1}
     let ont5 = NamedNodeRef::new("http://example.org/ontology5")?;
@@ -434,22 +434,36 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 5);
     let union = env.get_union_graph(&closure, None, None)?;
-    assert_eq!(union.len(), 6);
+    assert_eq!(union.len(), 7);
     let union = env.get_union_graph(&closure, None, Some(false))?;
     // print the union
-    assert_eq!(union.len(), 10);
+    assert_eq!(union.len(), 14);
 
     // check recursion depths
     let closure = env.get_closure(&ont_graph, 0).unwrap();
     assert_eq!(closure.len(), 1);
-
-    let closure = env.get_closure(&ont_graph, 1).unwrap();
-    assert_eq!(closure.len(), 3); // ont5, ont4, ont3
     let closure_names: std::collections::HashSet<String> =
         closure.iter().map(|ont| ont.name().to_string()).collect();
-    assert!(closure_names.contains("http://example.org/ontology5"));
-    assert!(closure_names.contains("http://example.org/ontology4"));
-    assert!(closure_names.contains("http://example.org/ontology3"));
+    assert!(closure_names.contains("<http://example.org/ontology5>"));
+
+    let closure = env.get_closure(&ont_graph, 1).unwrap();
+    assert_eq!(closure.len(), 4); // ont5, ont4, ont3, ont2
+    let closure_names: std::collections::HashSet<String> =
+        closure.iter().map(|ont| ont.name().to_string()).collect();
+    assert!(closure_names.contains("<http://example.org/ontology5>"));
+    assert!(closure_names.contains("<http://example.org/ontology4>"));
+    assert!(closure_names.contains("<http://example.org/ontology3>"));
+    assert!(closure_names.contains("<http://example.org/ontology2>"));
+
+    let closure = env.get_closure(&ont_graph, -1).unwrap();
+    assert_eq!(closure.len(), 5); // ont5, ont4, ont3, ont2, ont1
+    let closure_names: std::collections::HashSet<String> =
+        closure.iter().map(|ont| ont.name().to_string()).collect();
+    assert!(closure_names.contains("<http://example.org/ontology5>"));
+    assert!(closure_names.contains("<http://example.org/ontology4>"));
+    assert!(closure_names.contains("<http://example.org/ontology3>"));
+    assert!(closure_names.contains("<http://example.org/ontology2>"));
+    assert!(closure_names.contains("<http://example.org/ontology1>"));
 
     Ok(())
 }
