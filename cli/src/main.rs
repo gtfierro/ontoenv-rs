@@ -126,6 +126,10 @@ enum Commands {
         remove_owl_imports: Option<bool>,
         /// The file to write the closure to, defaults to 'output.ttl'
         destination: Option<String>,
+        /// The recursion depth for exploring owl:imports. <0: unlimited, 0: no imports, >0:
+        /// specific depth.
+        #[clap(long, default_value = "-1")]
+        recursion_depth: i32,
     },
     /// Add an ontology to the environment
     Add {
@@ -480,6 +484,7 @@ fn main() -> Result<()> {
             rewrite_sh_prefixes,
             remove_owl_imports,
             destination,
+            recursion_depth,
         } => {
             // make ontology an IRI
             let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -487,7 +492,7 @@ fn main() -> Result<()> {
             let graphid = env
                 .resolve(ResolveTarget::Graph(iri.clone()))
                 .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
-            let closure = env.get_closure(&graphid)?;
+            let closure = env.get_closure(&graphid, recursion_depth)?;
             let union = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
             if let Some(failed_imports) = union.failed_imports {
                 for imp in failed_imports {

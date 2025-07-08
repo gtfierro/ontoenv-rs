@@ -841,19 +841,29 @@ impl OntoEnv {
     }
 
     /// Returns the names of all graphs within the dependency closure of the provided graph
-    pub fn get_closure(&self, id: &GraphIdentifier) -> Result<Vec<GraphIdentifier>> {
+    pub fn get_closure(
+        &self,
+        id: &GraphIdentifier,
+        recursion_depth: i32,
+    ) -> Result<Vec<GraphIdentifier>> {
         let mut closure: HashSet<GraphIdentifier> = HashSet::new();
-        let mut stack: VecDeque<GraphIdentifier> = VecDeque::new();
+        let mut stack: VecDeque<(GraphIdentifier, i32)> = VecDeque::new();
 
         // TODO: how to handle a graph which is not in the environment?
 
-        stack.push_back(id.clone());
-        while let Some(graph) = stack.pop_front() {
-            closure.insert(graph.clone());
-            let ontology = self
-                .ontologies()
-                .get(&graph)
-                .ok_or_else(|| anyhow!("Ontology not found"))?;
+        stack.push_back((id.clone(), 0));
+        while let Some((graph, depth)) = stack.pop_front() {
+            if !closure.insert(graph.clone()) {
+                continue;
+            }
+
+            if recursion_depth >= 0 && depth >= recursion_depth {
+                continue;
+            }
+
+            let ontology = self.ontologies().get(&graph).ok_or_else(|| {
+                anyhow!("Ontology {} not found", graph.to_uri_string())
+            })?;
             for import in &ontology.imports {
                 // get graph identifier for import
                 let import = match self.env.get_ontology_by_name(import.into()) {
@@ -867,14 +877,16 @@ impl OntoEnv {
                     }
                 };
                 if !closure.contains(&import) {
-                    stack.push_back(import);
+                    stack.push_back((import, depth + 1));
                 }
             }
         }
         // remove the original graph from the closure
-        closure.remove(id);
         let mut closure: Vec<GraphIdentifier> = closure.into_iter().collect();
-        closure.insert(0, id.clone());
+        if let Some(pos) = closure.iter().position(|x| x == id) {
+            let root = closure.remove(pos);
+            closure.insert(0, root);
+        }
         info!("Dependency closure for {:?}: {:?}", id, closure.len());
         Ok(closure)
     }

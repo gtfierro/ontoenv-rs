@@ -346,9 +346,7 @@ impl OntoEnv {
         let ont = env.ontologies().get(&graphid).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
         })?;
-        let closure = env
-            .get_closure(ont.id())
-            .map_err(anyhow_to_pyerr)?;
+        let closure = env.get_closure(ont.id(), -1).map_err(anyhow_to_pyerr)?;
         let names: Vec<String> = closure.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
     }
@@ -356,7 +354,7 @@ impl OntoEnv {
     /// Merge all graphs in the imports closure of the given ontology into a single graph. If
     /// destination_graph is provided, add the merged graph to the destination_graph. If not,
     /// return the merged graph.
-    #[pyo3(signature = (uri, destination_graph=None, rewrite_sh_prefixes=true, remove_owl_imports=true))]
+    #[pyo3(signature = (uri, destination_graph=None, rewrite_sh_prefixes=true, remove_owl_imports=true, recursion_depth=-1))]
     fn get_closure<'a>(
         &self,
         py: Python<'a>,
@@ -364,6 +362,7 @@ impl OntoEnv {
         destination_graph: Option<&Bound<'a, PyAny>>,
         rewrite_sh_prefixes: bool,
         remove_owl_imports: bool,
+        recursion_depth: i32,
     ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
@@ -384,7 +383,7 @@ impl OntoEnv {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
         })?;
         let closure = env
-            .get_closure(ont.id())
+            .get_closure(ont.id(), recursion_depth)
             .map_err(anyhow_to_pyerr)?;
         let closure_names: Vec<String> = closure.iter().map(|ont| ont.to_uri_string()).collect();
         // if destination_graph is null, create a new rdflib.Graph()
@@ -446,11 +445,12 @@ impl OntoEnv {
 
     /// Import the dependencies of the given graph into the graph. Removes the owl:imports
     /// of all imported ontologies.
-    #[pyo3(signature = (graph))]
+    #[pyo3(signature = (graph, recursion_depth=-1))]
     fn import_dependencies<'a>(
         &self,
         py: Python<'a>,
         graph: &Bound<'a, PyAny>,
+        recursion_depth: i32,
     ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
         let rdflib = py.import("rdflib")?;
         let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
@@ -465,7 +465,7 @@ impl OntoEnv {
 
         let ontology = ontology.to_string();
 
-        self.get_closure(py, &ontology, Some(graph), true, true)
+        self.get_closure(py, &ontology, Some(graph), true, true, recursion_depth)
     }
 
     /// Add a new ontology to the OntoEnv
