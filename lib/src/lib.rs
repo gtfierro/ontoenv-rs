@@ -68,7 +68,7 @@
 //! // Get the dependency closure for ontology B
 //! let ont_b_name = NamedNode::new("http://example.com/ontology_b")?;
 //! let ont_b_id = env.resolve(ResolveTarget::Graph(ont_b_name)).unwrap();
-//! let closure_ids = env.get_dependency_closure(&ont_b_id)?;
+//! let closure_ids = env.get_closure(&ont_b_id, -1)?;
 //!
 //! // The closure should contain both ontology A and B
 //! assert_eq!(closure_ids.len(), 2);

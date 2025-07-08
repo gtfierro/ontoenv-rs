@@ -383,7 +383,7 @@ fn test_ontoenv_dependency_closure() -> Result<()> {
 
     let ont1 = NamedNodeRef::new("https://brickschema.org/schema/1.3/Brick")?;
     let ont_graph = env.resolve(ResolveTarget::Graph(ont1.into())).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph).unwrap();
+    let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 19);
     teardown(dir);
     Ok(())
@@ -411,7 +411,7 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     // get the graph for ontology2
     let ont2 = NamedNodeRef::new("http://example.org/ontology2")?;
     let ont_graph = env.resolve(ResolveTarget::Graph(ont2.into())).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph).unwrap();
+    let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 2);
     let union = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 4);
@@ -421,7 +421,7 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     // ont3 => {ont3, ont2, ont1}
     let ont3 = NamedNodeRef::new("http://example.org/ontology3")?;
     let ont_graph = env.resolve(ResolveTarget::Graph(ont3.into())).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph).unwrap();
+    let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 3);
     let union = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 5);
@@ -431,13 +431,25 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     // ont5 => {ont5, ont4, ont3, ont2, ont1}
     let ont5 = NamedNodeRef::new("http://example.org/ontology5")?;
     let ont_graph = env.resolve(ResolveTarget::Graph(ont5.into())).unwrap();
-    let closure = env.get_dependency_closure(&ont_graph).unwrap();
+    let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 5);
     let union = env.get_union_graph(&closure, None, None)?;
     assert_eq!(union.len(), 7);
     let union = env.get_union_graph(&closure, None, Some(false))?;
     // print the union
     assert_eq!(union.len(), 14);
+
+    // check recursion depths
+    let closure = env.get_closure(&ont_graph, 0).unwrap();
+    assert_eq!(closure.len(), 1);
+
+    let closure = env.get_closure(&ont_graph, 1).unwrap();
+    assert_eq!(closure.len(), 3); // ont5, ont4, ont3
+    let closure_names: std::collections::HashSet<String> =
+        closure.iter().map(|ont| ont.name().to_string()).collect();
+    assert!(closure_names.contains("http://example.org/ontology5"));
+    assert!(closure_names.contains("http://example.org/ontology4"));
+    assert!(closure_names.contains("http://example.org/ontology3"));
 
     Ok(())
 }
