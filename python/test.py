@@ -84,8 +84,13 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.env = OntoEnv(config=cfg, path=self.test_dir)
         name = self.env.add(str(self.brick_file_path))
         g = self.env.get(name)
-        closure_g = self.env.get_closure(name)
+        closure_g, imported_graphs = self.env.get_closure(name, recursion_depth=0)
         self.assertIsInstance(closure_g, Graph)
+        self.assertEqual(len(imported_graphs), 1)
+
+        closure_g, imported_graphs = self.env.get_closure(name)
+        self.assertIsInstance(closure_g, Graph)
+        self.assertGreater(len(imported_graphs), 1)
         self.assertGreater(len(closure_g), len(g))
 
     def test_import_dependencies(self):
@@ -117,13 +122,13 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn("http://qudt.org/2.1/schema/qudt", closure_list)
         self.assertIn("http://qudt.org/2.1/vocab/quantitykind", closure_list)
 
-    def test_get_dependents(self):
-        """Test env.get_dependents()."""
+    def test_get_importers(self):
+        """Test env.get_importers()."""
         cfg = Config(search_directories=["brick"])
         self.env = OntoEnv(config=cfg, path=self.test_dir)
         self.env.add(str(self.brick_file_path))
 
-        dependents = self.env.get_dependents("http://qudt.org/2.1/vocab/quantitykind")
+        dependents = self.env.get_importers("http://qudt.org/2.1/vocab/quantitykind")
         self.assertIn(self.brick_name, dependents)
 
     def test_to_rdflib_dataset(self):
