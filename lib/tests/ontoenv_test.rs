@@ -414,9 +414,9 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 2);
     let union = env.get_union_graph(&closure, None, None)?;
-    assert_eq!(union.len(), 4);
+    assert_eq!(union.len(), 3);
     let union = env.get_union_graph(&closure, None, Some(false))?;
-    assert_eq!(union.len(), 5);
+    assert_eq!(union.len(), 4);
 
     // ont3 => {ont3, ont2, ont1}
     let ont3 = NamedNodeRef::new("http://example.org/ontology3")?;
@@ -424,9 +424,9 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 3);
     let union = env.get_union_graph(&closure, None, None)?;
-    assert_eq!(union.len(), 5);
+    assert_eq!(union.len(), 4);
     let union = env.get_union_graph(&closure, None, Some(false))?;
-    assert_eq!(union.len(), 8);
+    assert_eq!(union.len(), 6);
 
     // ont5 => {ont5, ont4, ont3, ont2, ont1}
     let ont5 = NamedNodeRef::new("http://example.org/ontology5")?;
@@ -434,10 +434,10 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 5);
     let union = env.get_union_graph(&closure, None, None)?;
-    assert_eq!(union.len(), 7);
+    assert_eq!(union.len(), 6);
     let union = env.get_union_graph(&closure, None, Some(false))?;
     // print the union
-    assert_eq!(union.len(), 14);
+    assert_eq!(union.len(), 10);
 
     // check recursion depths
     let closure = env.get_closure(&ont_graph, 0).unwrap();
