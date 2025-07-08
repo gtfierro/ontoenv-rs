@@ -69,11 +69,11 @@ class TestOntoEnvAPI(unittest.TestCase):
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_144_name, ontologies)
 
-    def test_get(self):
-        """Test env.get()."""
+    def test_get_graph(self):
+        """Test env.get_graph()."""
         self.env = OntoEnv(path=self.test_dir)
         name = self.env.add(str(self.brick_file_path))
-        g = self.env.get(name)
+        g = self.env.get_graph(name)
         self.assertIsInstance(g, Graph)
         self.assertGreater(len(g), 0)
         self.assertIn((URIRef(self.brick_name), RDF.type, OWL.Ontology), g)
@@ -83,7 +83,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         cfg = Config(search_directories=["brick"])
         self.env = OntoEnv(config=cfg, path=self.test_dir)
         name = self.env.add(str(self.brick_file_path))
-        g = self.env.get(name)
+        g = self.env.get_graph(name)
         closure_g, imported_graphs = self.env.get_closure(name, recursion_depth=0)
         self.assertIsInstance(closure_g, Graph)
         self.assertEqual(len(imported_graphs), 1)
@@ -106,7 +106,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/2.1/schema/qudt")))
 
         num_triples_before = len(g)
-        self.env.import_dependencies(g)
+        g, _ = self.env.import_dependencies(g)
         num_triples_after = len(g)
 
         self.assertGreater(num_triples_after, num_triples_before)
@@ -147,13 +147,14 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_import_graph(self):
         """Test env.import_graph()."""
-        cfg = Config(search_directories=["brick"])
+        cfg = Config(offline=False)
         self.env = OntoEnv(config=cfg, path=self.test_dir)
-        rec_name = self.env.add(self.brick_144_url)
+        name = self.env.add(self.brick_144_url)
+        self.assertEqual(name, self.brick_144_name)
 
         g = Graph()
         self.assertEqual(len(g), 0)
-        self.env.import_graph(g, self.brick_144_name)
+        self.env.import_graph(g, name)
         self.assertGreater(len(g), 0)
 
     def test_store_path(self):
@@ -181,7 +182,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         # load it again from the same path
         self.env = OntoEnv(path=self.test_dir)
         self.assertIn(name, self.env.get_ontology_names())
-        g = self.env.get(name)
+        g = self.env.get_graph(name)
         self.assertGreater(len(g), 0)
 
     def test_close(self):
@@ -195,7 +196,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.env.get_ontology_names()
         with self.assertRaises(ValueError):
-            self.env.get(name)
+            self.env.get_graph(name)
         with self.assertRaises(ValueError):
             self.env.add(str(self.brick_file_path))
 
