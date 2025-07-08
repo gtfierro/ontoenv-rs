@@ -327,8 +327,8 @@ impl OntoEnv {
     }
 
     /// List the ontologies in the imports closure of the given ontology
-    #[pyo3(signature = (uri))]
-    fn list_closure(&self, _py: Python, uri: &str) -> PyResult<Vec<String>> {
+    #[pyo3(signature = (uri, recursion_depth = -1))]
+    fn list_closure(&self, _py: Python, uri: &str, recursion_depth: i32) -> PyResult<Vec<String>> {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
@@ -346,7 +346,9 @@ impl OntoEnv {
         let ont = env.ontologies().get(&graphid).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
         })?;
-        let closure = env.get_closure(ont.id(), -1).map_err(anyhow_to_pyerr)?;
+        let closure = env
+            .get_closure(ont.id(), recursion_depth)
+            .map_err(anyhow_to_pyerr)?;
         let names: Vec<String> = closure.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
     }
@@ -521,20 +523,6 @@ impl OntoEnv {
         Ok(graph_id.to_uri_string())
     }
 
-    /// Refresh the OntoEnv by re-loading all remote graphs and loading
-    /// any local graphs which have changed since the last update
-    fn refresh(&self) -> PyResult<()> {
-        let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_mut() {
-            env.update().map_err(anyhow_to_pyerr)?;
-            env.save_to_directory().map_err(anyhow_to_pyerr)
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "OntoEnv is closed",
-            ))
-        }
-    }
 
     /// Get the names of all ontologies that import the given ontology
     fn get_importers(&self, uri: &str) -> PyResult<Vec<String>> {
@@ -551,7 +539,7 @@ impl OntoEnv {
     }
 
     /// Get the graph with the given URI as an rdflib.Graph
-    fn get(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
+    fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri.to_string())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -727,7 +715,7 @@ impl OntoEnv {
         }
     }
 
-    fn get_resolution_policy(&self) -> PyResult<String> {
+    fn resolution_policy(&self) -> PyResult<String> {
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
         if let Some(env) = guard.as_ref() {
