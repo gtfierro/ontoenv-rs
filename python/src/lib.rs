@@ -480,8 +480,8 @@ impl OntoEnv {
         let typestr = location.get_type().name()?.to_string();
 
         if typestr == "Graph" || typestr == "ConjunctiveGraph" {
-            let kwargs = [("format", "turtle")].into_py_dict(py);
-            let serialized_result = location.call_method("serialize", (), Some(kwargs))?;
+            let kwargs = [("format", "turtle")].into_py_dict(py)?;
+            let serialized_result = location.call_method("serialize", (), Some(&kwargs))?;
             let serialized: String = serialized_result.extract()?;
 
             let nanos = std::time::SystemTime::now()
