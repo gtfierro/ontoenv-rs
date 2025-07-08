@@ -11,7 +11,7 @@ use pyo3::{
     types::{IntoPyDict, PyString, PyTuple},
 };
 use std::borrow::Borrow;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Once};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
