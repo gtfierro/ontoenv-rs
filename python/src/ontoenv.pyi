@@ -1,4 +1,6 @@
-from typing import Optional, List, Union
+from pathlib import Path
+from typing import Optional, List, Union, Any
+from rdflib import Graph
 
 class Config:
     """
@@ -47,7 +49,7 @@ class OntoEnv:
     def __init__(
         self,
         config: Optional[Config] = None,
-        path: Optional[Union[str, Path]] = ".",
+        path: Optional[Union[str, Path]] = None,
         recreate: bool = False,
         read_only: bool = False,
     ) -> None:
@@ -62,22 +64,13 @@ class OntoEnv:
         """
         ...
 
-    def is_read_only(self) -> bool:
-        """
-        Check if the ontology environment is read-only.
-
-        Returns:
-            A boolean indicating if the environment is read-only.
-        """
-        ...
-
     def __repr__(self) -> str:
         """
         Return a string representation of the OntoEnv object.
         """
         ...
 
-    def import_graph(self, destination_graph, uri: str) -> None:
+    def import_graph(self, destination_graph: Any, uri: str) -> None:
         """
         Import a graph from the given URI into the destination graph.
 
@@ -87,13 +80,13 @@ class OntoEnv:
         """
         ...
 
-    def list_closure(self, uri: str) -> List[str]:
+    def list_closure(self, uri: str, recursion_depth: int = -1) -> List[str]:
         """
         List the ontologies in the imports closure of the given ontology.
 
         Args:
             uri: The URI of the ontology.
-
+            recursion_depth: The maximum depth for recursive import resolution.
         Returns:
             A list of ontology names in the closure.
         """
@@ -102,10 +95,11 @@ class OntoEnv:
     def get_closure(
         self,
         uri: str,
-        destination_graph: Optional = None,
-        rewrite_sh_prefixes: bool = False,
-        remove_owl_imports: bool = False,
-    ) -> None:
+        destination_graph: Optional[Any] = None,
+        rewrite_sh_prefixes: bool = True,
+        remove_owl_imports: bool = True,
+        recursion_depth: int = -1,
+    ) -> tuple[Graph, List[str]]:
         """
         Merge all graphs in the imports closure of the given ontology into a single graph.
 
@@ -114,6 +108,9 @@ class OntoEnv:
             destination_graph: Optional graph to add the merged graph to.
             rewrite_sh_prefixes: Flag to rewrite SH prefixes.
             remove_owl_imports: Flag to remove OWL imports.
+            recursion_depth: The maximum depth for recursive import resolution.
+        Returns:
+            A tuple containing the merged rdflib.Graph and a list of ontology names in the closure.
         """
         ...
 
@@ -126,36 +123,59 @@ class OntoEnv:
         """
         ...
 
-    def import_dependencies(self, graph) -> None:
+    def import_dependencies(self, graph: Any, recursion_depth: int = -1) -> tuple[Any, List[str]]:
         """
         Import the dependencies of the given graph into the graph.
 
         Args:
             graph: The graph to import dependencies into.
+            recursion_depth: The maximum depth for recursive import resolution.
+        Returns:
+            A tuple containing the updated rdflib.Graph and a list of imported ontology names.
         """
         ...
 
-    def add(self, location) -> None:
+    def add(self, location: Any) -> str:
         """
         Add a new ontology to the OntoEnv.
 
         Args:
-            location: The location of the ontology to add.
+            location: The location of the ontology to add (file path, URL, or rdflib.Graph).
+        Returns:
+            The URI string of the added ontology.
         """
         ...
 
-    def refresh(self) -> None:
+    def add_no_imports(self, location: Any) -> str:
         """
-        Refresh the OntoEnv by re-loading all remote graphs and loading any local graphs which have changed.
+        Add a new ontology to the OntoEnv without exploring owl:imports.
+
+        Args:
+            location: The location of the ontology to add (file path, URL, or rdflib.Graph).
+        Returns:
+            The URI string of the added ontology.
         """
         ...
 
-    def get_graph(self, uri: str) -> None:
+    def get_importers(self, uri: str) -> List[str]:
+        """
+        Get the names of all ontologies that import the given ontology.
+
+        Args:
+            uri: The URI of the ontology.
+        Returns:
+            A list of ontology names that import the given ontology.
+        """
+        ...
+
+    def get_graph(self, uri: str) -> Graph:
         """
         Export the graph with the given URI to an rdflib.Graph.
 
         Args:
             uri: The URI of the graph to export.
+        Returns:
+            An rdflib.Graph object representing the requested graph.
         """
         ...
 
@@ -168,8 +188,87 @@ class OntoEnv:
         """
         ...
 
-    def to_rdflib_dataset(self) -> None:
+    def to_rdflib_dataset(self) -> Any:
         """
         Convert the OntoEnv to an rdflib.Dataset.
+        """
+        ...
+
+    # Config accessors
+    def is_offline(self) -> bool:
+        """
+        Checks if the environment is in offline mode.
+        """
+        ...
+
+    def set_offline(self, offline: bool) -> None:
+        """
+        Sets the offline mode for the environment.
+        """
+        ...
+
+    def is_strict(self) -> bool:
+        """
+        Checks if the environment is in strict mode.
+        """
+        ...
+
+    def set_strict(self, strict: bool) -> None:
+        """
+        Sets the strict mode for the environment.
+        """
+        ...
+
+    def requires_ontology_names(self) -> bool:
+        """
+        Checks if the environment requires unique ontology names.
+        """
+        ...
+
+    def set_require_ontology_names(self, require: bool) -> None:
+        """
+        Sets whether the environment requires unique ontology names.
+        """
+        ...
+
+    def no_search(self) -> bool:
+        """
+        Checks if the environment disables local file search.
+        """
+        ...
+
+    def set_no_search(self, no_search: bool) -> None:
+        """
+        Sets whether the environment disables local file search.
+        """
+        ...
+
+    def resolution_policy(self) -> str:
+        """
+        Returns the current resolution policy.
+        """
+        ...
+
+    def set_resolution_policy(self, policy: str) -> None:
+        """
+        Sets the resolution policy for the environment.
+        """
+        ...
+
+    def store_path(self) -> Optional[str]:
+        """
+        Returns the path to the underlying graph store, if applicable.
+        """
+        ...
+
+    def close(self) -> None:
+        """
+        Closes the ontology environment, saving changes and flushing the store.
+        """
+        ...
+
+    def flush(self) -> None:
+        """
+        Flushes any pending writes to the underlying graph store.
         """
         ...
