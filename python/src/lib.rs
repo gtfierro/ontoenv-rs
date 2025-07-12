@@ -556,7 +556,6 @@ impl OntoEnv {
                         "Failed to resolve graph for URI: {uri}"
                     ))
                 })?;
-            println!("graphid: {graphid:?}");
 
             env.get_graph(&graphid).map_err(anyhow_to_pyerr)?
         };
