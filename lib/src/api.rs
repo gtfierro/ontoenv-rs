@@ -892,21 +892,26 @@ impl OntoEnv {
         Ok(closure)
     }
 
-    pub fn get_union_graph(
+    pub fn get_union_graph<'a, I>(
         &self,
-        graph_ids: &[GraphIdentifier],
+        graph_ids: I,
         rewrite_sh_prefixes: Option<bool>,
         remove_owl_imports: Option<bool>,
-    ) -> Result<UnionGraph> {
+    ) -> Result<UnionGraph>
+    where
+        I: IntoIterator<Item = &'a GraphIdentifier>,
+    {
+        let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
+
         // TODO: figure out failed imports
-        let mut dataset = self.io.union_graph(graph_ids);
+        let mut dataset = self.io.union_graph(&graph_ids);
         let first_id = graph_ids
             .first()
             .ok_or_else(|| anyhow!("No graphs found"))?;
         let root_ontology: SubjectRef = SubjectRef::NamedNode(first_id.name());
 
         let mut namespace_map = HashMap::new();
-        for graph_id in graph_ids {
+        for graph_id in &graph_ids {
             let ontology = self.get_ontology(graph_id)?;
             namespace_map.extend(
                 ontology
@@ -929,7 +934,7 @@ impl OntoEnv {
         transform::remove_ontology_declarations(&mut dataset, root_ontology);
         Ok(UnionGraph {
             dataset,
-            graph_ids: graph_ids.to_vec(),
+            graph_ids,
             failed_imports: None, // TODO: Populate this correctly
             namespace_map,
         })

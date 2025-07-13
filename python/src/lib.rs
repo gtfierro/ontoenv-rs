@@ -504,12 +504,8 @@ impl OntoEnv {
             }
         }
 
-        let to_be_imported: Vec<GraphIdentifier> = all_ontologies
-            .into_iter()
-            .collect();
-
         let union = env
-            .get_union_graph(&to_be_imported, Some(true), Some(true))
+            .get_union_graph(&all_ontologies, Some(true), Some(true))
             .map_err(anyhow_to_pyerr)?;
 
         for triple in union.dataset.into_iter() {
