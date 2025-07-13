@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Optional, List, Union, Any
-from rdflib import Graph
+from rdflib import Graph, Dataset
 
 class Config:
     """
@@ -99,7 +99,7 @@ class OntoEnv:
         rewrite_sh_prefixes: bool = True,
         remove_owl_imports: bool = True,
         recursion_depth: int = -1,
-    ) -> tuple[Graph, List[str]]:
+    ) -> tuple[Any, List[str]]:
         """
         Merge all graphs in the imports closure of the given ontology into a single graph.
 
@@ -110,7 +110,7 @@ class OntoEnv:
             remove_owl_imports: Flag to remove OWL imports.
             recursion_depth: The maximum depth for recursive import resolution.
         Returns:
-            A tuple containing the merged rdflib.Graph and a list of ontology names in the closure.
+            A tuple containing the merged graph and a list of ontology names in the closure.
         """
         ...
 
@@ -170,10 +170,10 @@ class OntoEnv:
 
     def get_graph(self, uri: str) -> Graph:
         """
-        Export the graph with the given URI to an rdflib.Graph.
+        Get the graph with the given URI as an rdflib.Graph.
 
         Args:
-            uri: The URI of the graph to export.
+            uri: The URI of the graph to get.
         Returns:
             An rdflib.Graph object representing the requested graph.
         """
@@ -188,7 +188,7 @@ class OntoEnv:
         """
         ...
 
-    def to_rdflib_dataset(self) -> Any:
+    def to_rdflib_dataset(self) -> Dataset:
         """
         Convert the OntoEnv to an rdflib.Dataset.
         """
