@@ -2,7 +2,7 @@ use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ToUriString;
-use ::ontoenv::ontology::OntologyLocation;
+use ::ontoenv::ontology::{OntologyLocation, GraphIdentifier};
 use ::ontoenv::transform;
 use anyhow::Error;
 use oxigraph::model::{BlankNode, Literal, NamedNode, SubjectRef, Term};
@@ -500,17 +500,16 @@ impl OntoEnv {
                 .map_err(anyhow_to_pyerr)?;
             for c_ont in closure {
                 all_closure_names.push(c_ont.to_uri_string());
-                all_ontologies.insert(c_ont.id().clone());
+                all_ontologies.insert(c_ont.clone());
             }
         }
 
-        let ontologies_to_merge: Vec<_> = all_ontologies
-            .iter()
-            .map(|id| env.ontologies().get(id).unwrap())
+        let to_be_imported: Vec<GraphIdentifier> = all_ontologies
+            .into_iter()
             .collect();
 
         let union = env
-            .get_union_graph(&ontologies_to_merge, Some(true), Some(true))
+            .get_union_graph(&to_be_imported, Some(true), Some(true))
             .map_err(anyhow_to_pyerr)?;
 
         for triple in union.dataset.into_iter() {
@@ -531,7 +530,7 @@ impl OntoEnv {
         // Remove all owl:imports from the original graph
         let py_imports_pred_for_remove = term_to_python(py, &rdflib, IMPORTS.into())?;
         let remove_tuple =
-            PyTuple::new(py, &[py.None(), py_imports_pred_for_remove, py.None()])?;
+            PyTuple::new(py, &[py.None(), py_imports_pred_for_remove.into(), py.None()])?;
         graph.getattr("remove")?.call1((remove_tuple,))?;
 
         all_closure_names.sort();
