@@ -219,6 +219,7 @@ pub struct Ontology {
     pub last_updated: Option<DateTime<Utc>>,
     #[serde_as(as = "HashMap<LocalType, _>")]
     version_properties: HashMap<NamedNode, String>,
+    #[serde(default)]
     namespace_map: HashMap<String, String>,
 }
 
