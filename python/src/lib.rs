@@ -207,23 +207,28 @@ impl OntoEnv {
         } else if let Some(p) = path {
             if !recreate {
                 if let Some(root) = ::ontoenv::api::find_ontoenv_root_from(&p) {
+                    println!("Loading OntoEnv from directory: {}", root.display());
                     OntoEnvRs::load_from_directory(root, read_only).map_err(anyhow_to_pyerr)
                 } else {
                     let cfg = config::Config::default(p).map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
                     })?;
+                    println!("Creating new OntoEnv in directory with config {:?}", cfg);
                     OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)
                 }
             } else {
                 let cfg = config::Config::default(p).map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
                 })?;
+                println!("Creating new OntoEnv in directory with config {:?} (recreate)",  cfg);
                 OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)
             }
         } else {
+            println!("Creating new offline OntoEnv");
             OntoEnvRs::new_offline().map_err(anyhow_to_pyerr)
         }?;
 
+        println!("OntoEnv initialized successfully");
         let inner = Arc::new(Mutex::new(Some(env)));
 
         Ok(OntoEnv {
