@@ -126,82 +126,50 @@ struct Config {
 
 #[pymethods]
 impl Config {
-    #[staticmethod]
-    fn builder() -> PyConfigBuilder {
-        PyConfigBuilder::new()
-    }
-}
-
-#[pyclass(name = "ConfigBuilder")]
-struct PyConfigBuilder {
-    builder: config::ConfigBuilder,
-}
-
-#[pymethods]
-impl PyConfigBuilder {
     #[new]
-    fn new() -> Self {
-        Self {
-            builder: config::ConfigBuilder::new(),
+    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
+    fn new(
+        search_directories: Option<Vec<String>>,
+        require_ontology_names: bool,
+        strict: bool,
+        offline: bool,
+        resolution_policy: String,
+        root: String,
+        includes: Option<Vec<String>>,
+        excludes: Option<Vec<String>>,
+        temporary: bool,
+        no_search: bool,
+    ) -> PyResult<Self> {
+        let mut builder = config::Config::builder()
+            .root(root.into())
+            .require_ontology_names(require_ontology_names)
+            .strict(strict)
+            .offline(offline)
+            .resolution_policy(resolution_policy)
+            .temporary(temporary)
+            .no_search(no_search);
+
+        if let Some(dirs) = search_directories {
+            let paths = dirs.into_iter().map(PathBuf::from).collect();
+            builder = builder.locations(paths);
         }
-    }
 
-    fn root<'a>(mut slf: PyRefMut<'a, Self>, root: &str) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().root(root.into());
-        slf
-    }
+        if let Some(includes) = includes {
+            builder = builder.includes(includes);
+        }
 
-    fn locations<'a>(mut slf: PyRefMut<'a, Self>, locations: Vec<String>) -> PyRefMut<'a, Self> {
-        let paths = locations.into_iter().map(PathBuf::from).collect();
-        slf.builder = slf.builder.clone().locations(paths);
-        slf
-    }
+        if let Some(excludes) = excludes {
+            builder = builder.excludes(excludes);
+        }
 
-    fn includes<'a>(mut slf: PyRefMut<'a, Self>, includes: Vec<String>) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().includes(includes);
-        slf
-    }
+        let cfg = builder
+            .build()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-    fn excludes<'a>(mut slf: PyRefMut<'a, Self>, excludes: Vec<String>) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().excludes(excludes);
-        slf
-    }
-
-    fn require_ontology_names<'a>(mut slf: PyRefMut<'a, Self>, require: bool) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().require_ontology_names(require);
-        slf
-    }
-
-    fn strict<'a>(mut slf: PyRefMut<'a, Self>, strict: bool) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().strict(strict);
-        slf
-    }
-
-    fn offline<'a>(mut slf: PyRefMut<'a, Self>, offline: bool) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().offline(offline);
-        slf
-    }
-
-    fn resolution_policy<'a>(mut slf: PyRefMut<'a, Self>, policy: String) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().resolution_policy(policy);
-        slf
-    }
-
-    fn no_search<'a>(mut slf: PyRefMut<'a, Self>, no_search: bool) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().no_search(no_search);
-        slf
-    }
-
-    fn temporary<'a>(mut slf: PyRefMut<'a, Self>, temporary: bool) -> PyRefMut<'a, Self> {
-        slf.builder = slf.builder.clone().temporary(temporary);
-        slf
-    }
-
-    fn build(&self) -> PyResult<Config> {
-        let config = self.builder.clone().build().map_err(anyhow_to_pyerr)?;
-        Ok(Config { cfg: config })
+        Ok(Config { cfg })
     }
 }
+
 
 #[pyclass]
 struct OntoEnv {
@@ -892,7 +860,6 @@ impl OntoEnv {
 #[pymodule]
 fn ontoenv(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Config>()?;
-    m.add_class::<PyConfigBuilder>()?;
     m.add_class::<OntoEnv>()?;
     // add version attribute
     m.add("version", env!("CARGO_PKG_VERSION"))?;
