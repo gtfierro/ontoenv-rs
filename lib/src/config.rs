@@ -141,6 +141,7 @@ impl Config {
 }
 
 /// A builder for creating `Config` instances.
+#[derive(Clone)]
 pub struct ConfigBuilder {
     root: Option<PathBuf>,
     locations: Option<Vec<PathBuf>>,
