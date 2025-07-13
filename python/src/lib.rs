@@ -460,7 +460,8 @@ impl OntoEnv {
 
         let kwargs = [("predicate", py_imports_pred)].into_py_dict(py)?;
         let objects_iter = graph.call_method("objects", (), Some(&kwargs))?;
-        let imports: Vec<String> = objects_iter.extract()?;
+        let objects_list = py.import_builtins().getattr("list")?.call1((objects_iter,))?;
+        let imports: Vec<String> = objects_list.extract()?;
 
         if imports.is_empty() {
             return Ok((graph.clone(), Vec::new()));
