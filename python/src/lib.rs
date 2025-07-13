@@ -11,6 +11,7 @@ use pyo3::{
     types::{IntoPyDict, PyString, PyTuple},
 };
 use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Once};
 
@@ -455,19 +456,88 @@ impl OntoEnv {
         recursion_depth: i32,
     ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
         let rdflib = py.import("rdflib")?;
-        let py_rdf_type = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into()))?;
-        let py_ontology = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into()))?;
-        let value_fun: Py<PyAny> = graph.getattr("value")?.into();
-        let kwargs = [("predicate", py_rdf_type), ("object", py_ontology)].into_py_dict(py)?;
-        let ontology = value_fun.call(py, (), Some(&kwargs))?;
+        let py_imports_pred = term_to_python(py, &rdflib, Term::NamedNode(IMPORTS.into()))?;
 
-        if ontology.is_none(py) {
+        let kwargs = [("predicate", py_imports_pred)].into_py_dict(py)?;
+        let objects_iter = graph.call_method("objects", (), Some(&kwargs))?;
+        let imports: Vec<String> = objects_iter.extract()?;
+
+        if imports.is_empty() {
             return Ok((graph.clone(), Vec::new()));
         }
 
-        let ontology = ontology.to_string();
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+        })?;
 
-        self.get_closure(py, &ontology, Some(graph), true, true, recursion_depth)
+        let mut all_ontologies = HashSet::new();
+        let mut all_closure_names: Vec<String> = Vec::new();
+
+        for uri in &imports {
+            let iri = NamedNode::new(uri.as_str())
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+            let graphid = env
+                .resolve(ResolveTarget::Graph(iri.clone()))
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to resolve graph for URI: {}",
+                        uri
+                    ))
+                })?;
+
+            let ont = env.ontologies().get(&graphid).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Ontology {} not found",
+                    uri
+                ))
+            })?;
+
+            let closure = env
+                .get_closure(ont.id(), recursion_depth)
+                .map_err(anyhow_to_pyerr)?;
+            for c_ont in closure {
+                all_closure_names.push(c_ont.to_uri_string());
+                all_ontologies.insert(c_ont.id().clone());
+            }
+        }
+
+        let ontologies_to_merge: Vec<_> = all_ontologies
+            .iter()
+            .map(|id| env.ontologies().get(id).unwrap())
+            .collect();
+
+        let union = env
+            .get_union_graph(&ontologies_to_merge, Some(true), Some(true))
+            .map_err(anyhow_to_pyerr)?;
+
+        for triple in union.dataset.into_iter() {
+            let s: Term = triple.subject.into();
+            let p: Term = triple.predicate.into();
+            let o: Term = triple.object.into();
+            let t = PyTuple::new(
+                py,
+                &[
+                    term_to_python(py, &rdflib, s)?,
+                    term_to_python(py, &rdflib, p)?,
+                    term_to_python(py, &rdflib, o)?,
+                ],
+            )?;
+            graph.getattr("add")?.call1((t,))?;
+        }
+
+        // Remove all owl:imports from the original graph
+        let py_imports_pred_for_remove = term_to_python(py, &rdflib, IMPORTS.into())?;
+        let remove_tuple =
+            PyTuple::new(py, &[py.None(), py_imports_pred_for_remove, py.None()])?;
+        graph.getattr("remove")?.call1((remove_tuple,))?;
+
+        all_closure_names.sort();
+        all_closure_names.dedup();
+
+        Ok((graph.clone(), all_closure_names))
     }
 
     /// Add a new ontology to the OntoEnv
