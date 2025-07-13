@@ -28,4 +28,4 @@ dev = [
 
 [tool.uv]
 # Rebuild package when any rust files change
-cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]
+cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}, {file = "../lib/ontoenv/Cargo.toml"}, {file = "../lib/**/*.rs"}]
