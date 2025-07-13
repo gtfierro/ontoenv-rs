@@ -56,6 +56,7 @@ pub struct Config {
     // if true, do not store the ontoenv store on disk
     pub temporary: bool,
     // if true, do not search for ontologies in the search directories
+    #[serde(skip_deserializing, default)]
     pub no_search: bool,
 }
 
