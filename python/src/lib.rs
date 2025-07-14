@@ -475,6 +475,7 @@ impl OntoEnv {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
         })?;
 
+        let is_strict = env.is_strict();
         let mut all_ontologies = HashSet::new();
         let mut all_closure_names: Vec<String> = Vec::new();
 
@@ -482,14 +483,18 @@ impl OntoEnv {
             let iri = NamedNode::new(uri.as_str())
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-            let graphid = env
-                .resolve(ResolveTarget::Graph(iri.clone()))
-                .ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Failed to resolve graph for URI: {}",
-                        uri
-                    ))
-                })?;
+            let graphid = match env.resolve(ResolveTarget::Graph(iri.clone())) {
+                Some(id) => id,
+                None => {
+                    if is_strict {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Failed to resolve graph for URI: {}",
+                            uri
+                        )));
+                    }
+                    continue;
+                }
+            };
 
             let ont = env.ontologies().get(&graphid).ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
