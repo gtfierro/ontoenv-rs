@@ -2,7 +2,7 @@ use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ToUriString;
-use ::ontoenv::ontology::{OntologyLocation, GraphIdentifier};
+use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation, GraphIdentifier};
 use ::ontoenv::transform;
 use anyhow::Error;
 use oxigraph::model::{BlankNode, Literal, NamedNode, SubjectRef, Term};
@@ -11,7 +11,7 @@ use pyo3::{
     types::{IntoPyDict, PyString, PyTuple},
 };
 use std::borrow::Borrow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Once};
 
@@ -170,6 +170,67 @@ impl Config {
     }
 }
 
+
+#[pyclass(name = "Ontology")]
+#[derive(Clone)]
+struct PyOntology {
+    inner: OntologyRs,
+}
+
+#[pymethods]
+impl PyOntology {
+    #[getter]
+    fn id(&self) -> PyResult<String> {
+        Ok(self.inner.id().to_uri_string())
+    }
+
+    #[getter]
+    fn name(&self) -> PyResult<String> {
+        Ok(self.inner.name().to_uri_string())
+    }
+
+    #[getter]
+    fn imports(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .imports
+            .iter()
+            .map(|i| i.to_uri_string())
+            .collect())
+    }
+
+    #[getter]
+    fn location(&self) -> PyResult<Option<String>> {
+        Ok(self.inner.location().map(|l| l.to_string()))
+    }
+
+    #[getter]
+    fn last_updated(&self) -> PyResult<Option<String>> {
+        Ok(self.inner.last_updated.map(|dt| dt.to_rfc3339()))
+    }
+
+    #[getter]
+    fn version_properties(&self) -> PyResult<HashMap<String, String>> {
+        Ok(self
+            .inner
+            .version_properties()
+            .iter()
+            .map(|(k, v)| (k.to_uri_string(), v.clone()))
+            .collect())
+    }
+
+    #[getter]
+    fn namespace_map(&self) -> PyResult<HashMap<String, String>> {
+        Ok(self.inner.namespace_map().clone())
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!(
+            "<Ontology: {}>",
+            self.inner.name().to_uri_string()
+        ))
+    }
+}
 
 #[pyclass]
 struct OntoEnv {
@@ -544,7 +605,8 @@ impl OntoEnv {
     }
 
     /// Add a new ontology to the OntoEnv
-    fn add(&self, location: &Bound<'_, PyAny>) -> PyResult<String> {
+    #[pyo3(signature = (location, overwrite = false))]
+    fn add(&self, location: &Bound<'_, PyAny>, overwrite: bool) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let env = guard.as_mut().ok_or_else(|| {
@@ -570,7 +632,7 @@ impl OntoEnv {
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
             let location_to_add = OntologyLocation::File(path.clone());
-            let result = env.add(location_to_add, true);
+            let result = env.add(location_to_add, overwrite);
             let _ = std::fs::remove_file(&path);
             result
                 .map(|id| id.to_uri_string())
@@ -578,13 +640,14 @@ impl OntoEnv {
         } else {
             let location =
                 OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
-            let graph_id = env.add(location, true).map_err(anyhow_to_pyerr)?;
+            let graph_id = env.add(location, overwrite).map_err(anyhow_to_pyerr)?;
             Ok(graph_id.to_uri_string())
         }
     }
 
     /// Add a new ontology to the OntoEnv without exploring owl:imports.
-    fn add_no_imports(&self, location: &Bound<'_, PyAny>) -> PyResult<String> {
+    #[pyo3(signature = (location, overwrite = false))]
+    fn add_no_imports(&self, location: &Bound<'_, PyAny>, overwrite: bool) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let env = guard.as_mut().ok_or_else(|| {
@@ -592,7 +655,9 @@ impl OntoEnv {
         })?;
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
-        let graph_id = env.add_no_imports(location, true).map_err(anyhow_to_pyerr)?;
+        let graph_id = env
+            .add_no_imports(location, overwrite)
+            .map_err(anyhow_to_pyerr)?;
         Ok(graph_id.to_uri_string())
     }
 
@@ -609,6 +674,26 @@ impl OntoEnv {
         let importers = env.get_importers(&iri).map_err(anyhow_to_pyerr)?;
         let names: Vec<String> = importers.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
+    }
+
+    /// Get the ontology metadata with the given URI
+    fn get_ontology(&self, uri: &str) -> PyResult<PyOntology> {
+        let iri = NamedNode::new(uri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+        })?;
+        let graphid = env
+            .resolve(ResolveTarget::Graph(iri.clone()))
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Failed to resolve graph for URI: {uri}"
+                ))
+            })?;
+        let ont = env.get_ontology(&graphid).map_err(anyhow_to_pyerr)?;
+        Ok(PyOntology { inner: ont })
     }
 
     /// Get the graph with the given URI as an rdflib.Graph
@@ -861,6 +946,7 @@ impl OntoEnv {
 fn ontoenv(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Config>()?;
     m.add_class::<OntoEnv>()?;
+    m.add_class::<PyOntology>()?;
     // add version attribute
     m.add("version", env!("CARGO_PKG_VERSION"))?;
     Ok(())
