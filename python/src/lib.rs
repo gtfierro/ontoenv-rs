@@ -573,6 +573,10 @@ impl OntoEnv {
             }
         }
 
+        if all_ontologies.is_empty() {
+            return Ok((graph.clone(), Vec::new()));
+        }
+
         let union = env
             .get_union_graph(&all_ontologies, Some(true), Some(true))
             .map_err(anyhow_to_pyerr)?;
