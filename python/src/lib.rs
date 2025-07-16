@@ -516,7 +516,7 @@ impl OntoEnv {
         py: Python<'a>,
         graph: &Bound<'a, PyAny>,
         recursion_depth: i32,
-    ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
+    ) -> PyResult<Vec<String>> {
         let rdflib = py.import("rdflib")?;
         let py_imports_pred = term_to_python(py, &rdflib, Term::NamedNode(IMPORTS.into()))?;
 
@@ -527,7 +527,7 @@ impl OntoEnv {
         let imports: Vec<String> = objects_list.extract()?;
 
         if imports.is_empty() {
-            return Ok((graph.clone(), Vec::new()));
+            return Ok(Vec::new());
         }
 
         let inner = self.inner.clone();
@@ -574,7 +574,7 @@ impl OntoEnv {
         }
 
         if all_ontologies.is_empty() {
-            return Ok((graph.clone(), Vec::new()));
+            return Ok(Vec::new());
         }
 
         let union = env
@@ -605,7 +605,7 @@ impl OntoEnv {
         all_closure_names.sort();
         all_closure_names.dedup();
 
-        Ok((graph.clone(), all_closure_names))
+        Ok(all_closure_names)
     }
 
     /// Add a new ontology to the OntoEnv
