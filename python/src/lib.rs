@@ -395,8 +395,8 @@ impl OntoEnv {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
-        let env = guard.as_ref().ok_or_else(|| {
+        let mut guard = inner.lock().unwrap();
+        let env = guard.as_mut().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
         })?;
         let graphid = env
@@ -552,13 +552,17 @@ impl OntoEnv {
             if graphid.is_none() && fetch_missing {
                 let location =
                     OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                if let Err(e) = env.add(location, false) {
-                    if is_strict {
-                        return Err(anyhow_to_pyerr(e));
+                match env.add(location, false) {
+                    Ok(new_id) => {
+                        graphid = Some(new_id);
                     }
-                    println!("Failed to fetch {uri}: {e}");
+                    Err(e) => {
+                        if is_strict {
+                            return Err(anyhow_to_pyerr(e));
+                        }
+                        println!("Failed to fetch {uri}: {e}");
+                    }
                 }
-                graphid = env.resolve(ResolveTarget::Graph(iri.clone()));
             }
 
             let graphid = match graphid {
