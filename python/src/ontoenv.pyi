@@ -123,13 +123,14 @@ class OntoEnv:
         """
         ...
 
-    def import_dependencies(self, graph: Any, recursion_depth: int = -1) -> List[str]:
+    def import_dependencies(self, graph: Any, recursion_depth: int = -1, fetch_missing: bool = False) -> List[str]:
         """
         Import the dependencies of the given graph into the graph.
 
         Args:
             graph: The graph to import dependencies into.
             recursion_depth: The maximum depth for recursive import resolution.
+            fetch_missing: If True, will fetch ontologies that are not in the environment.
         Returns:
             A list of imported ontology names.
         """

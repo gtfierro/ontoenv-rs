@@ -335,8 +335,8 @@ impl OntoEnv {
         uri: &str,
     ) -> PyResult<()> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
-        let env = guard.as_ref().ok_or_else(|| {
+        let mut guard = inner.lock().unwrap();
+        let env = guard.as_mut().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
         })?;
         let rdflib = py.import("rdflib")?;
@@ -510,12 +510,13 @@ impl OntoEnv {
 
     /// Import the dependencies of the given graph into the graph. Removes the owl:imports
     /// of all imported ontologies.
-    #[pyo3(signature = (graph, recursion_depth=-1))]
+    #[pyo3(signature = (graph, recursion_depth=-1, fetch_missing=false))]
     fn import_dependencies<'a>(
         &self,
         py: Python<'a>,
         graph: &Bound<'a, PyAny>,
         recursion_depth: i32,
+        fetch_missing: bool,
     ) -> PyResult<Vec<String>> {
         println!("running import_dependencies");
         let rdflib = py.import("rdflib")?;
@@ -546,7 +547,21 @@ impl OntoEnv {
             let iri = NamedNode::new(uri.as_str())
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-            let graphid = match env.resolve(ResolveTarget::Graph(iri.clone())) {
+            let mut graphid = env.resolve(ResolveTarget::Graph(iri.clone()));
+
+            if graphid.is_none() && fetch_missing {
+                let location =
+                    OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
+                if let Err(e) = env.add(location, false) {
+                    if is_strict {
+                        return Err(anyhow_to_pyerr(e));
+                    }
+                    println!("Failed to fetch {uri}: {e}");
+                }
+                graphid = env.resolve(ResolveTarget::Graph(iri.clone()));
+            }
+
+            let graphid = match graphid {
                 Some(id) => id,
                 None => {
                     if is_strict {
