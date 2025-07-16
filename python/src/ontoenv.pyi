@@ -123,7 +123,7 @@ class OntoEnv:
         """
         ...
 
-    def import_dependencies(self, graph: Any, recursion_depth: int = -1) -> tuple[Any, List[str]]:
+    def import_dependencies(self, graph: Any, recursion_depth: int = -1) -> List[str]:
         """
         Import the dependencies of the given graph into the graph.
 
@@ -131,7 +131,7 @@ class OntoEnv:
             graph: The graph to import dependencies into.
             recursion_depth: The maximum depth for recursive import resolution.
         Returns:
-            A tuple containing the updated rdflib.Graph and a list of imported ontology names.
+            A list of imported ontology names.
         """
         ...
 
