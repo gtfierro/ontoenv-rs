@@ -518,7 +518,6 @@ impl OntoEnv {
         recursion_depth: i32,
         fetch_missing: bool,
     ) -> PyResult<Vec<String>> {
-        println!("running import_dependencies");
         let rdflib = py.import("rdflib")?;
         let py_imports_pred = term_to_python(py, &rdflib, Term::NamedNode(IMPORTS.into()))?;
 
@@ -528,7 +527,6 @@ impl OntoEnv {
         let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
         let imports: Vec<String> = objects_list.extract()?;
 
-        println!("imports: {imports:?}");
         if imports.is_empty() {
             return Ok(Vec::new());
         }
