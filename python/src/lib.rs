@@ -2,7 +2,7 @@ use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ToUriString;
-use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation, GraphIdentifier};
+use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation};
 use ::ontoenv::transform;
 use anyhow::Error;
 use oxigraph::model::{BlankNode, Literal, NamedNode, SubjectRef, Term};
@@ -552,7 +552,7 @@ impl OntoEnv {
             if graphid.is_none() && fetch_missing {
                 let location =
                     OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, false, true) {
+                match env.add(location, false) {
                     Ok(new_id) => {
                         graphid = Some(new_id);
                     }
@@ -663,7 +663,11 @@ impl OntoEnv {
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
             let location_to_add = OntologyLocation::File(path.clone());
-            let result = env.add(location_to_add, overwrite, fetch_imports);
+            let result = if fetch_imports {
+                env.add(location_to_add, overwrite)
+            } else {
+                env.add_no_imports(location_to_add, overwrite)
+            };
             let _ = std::fs::remove_file(&path);
             result
                 .map(|id| id.to_uri_string())
@@ -671,9 +675,12 @@ impl OntoEnv {
         } else {
             let location =
                 OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
-            let graph_id = env
-                .add(location, overwrite, fetch_imports)
-                .map_err(anyhow_to_pyerr)?;
+            let graph_id = if fetch_imports {
+                env.add(location, overwrite)
+            } else {
+                env.add_no_imports(location, overwrite)
+            }
+            .map_err(anyhow_to_pyerr)?;
             Ok(graph_id.to_uri_string())
         }
     }
