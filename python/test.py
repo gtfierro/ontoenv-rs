@@ -106,7 +106,8 @@ class TestOntoEnvAPI(unittest.TestCase):
         g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/2.1/schema/qudt")))
 
         num_triples_before = len(g)
-        g, _ = self.env.import_dependencies(g)
+        imported = self.env.import_dependencies(g)
+        self.assertGreater(len(imported), 0)
         num_triples_after = len(g)
 
         self.assertGreater(num_triples_after, num_triples_before)
