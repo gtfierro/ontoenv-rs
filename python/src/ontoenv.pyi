@@ -141,7 +141,7 @@ class OntoEnv:
         Add a new ontology to the OntoEnv.
 
         Args:
-            location: The location of the ontology to add (file path, URL, or rdflib.Graph).
+            location: The location of the ontology to add (file path or URL).
             overwrite: If True, will overwrite an existing ontology at the same location.
             fetch_imports: If True, will recursively fetch missing owl:imports.
         Returns:

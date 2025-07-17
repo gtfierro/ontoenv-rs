@@ -644,45 +644,15 @@ impl OntoEnv {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
         })?;
 
-        let py = location.py();
-        let typestr = location.get_type().name()?.to_string();
-
-        if typestr == "Graph" || typestr == "ConjunctiveGraph" {
-            let kwargs = [("format", "turtle")].into_py_dict(py)?;
-            let serialized_result = location.call_method("serialize", (), Some(&kwargs))?;
-            let serialized: String = serialized_result.extract()?;
-
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let filename = format!("ontoenv-temp-{}-{}.ttl", std::process::id(), nanos);
-            let path = std::env::temp_dir().join(filename);
-
-            std::fs::write(&path, &serialized)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-
-            let location_to_add = OntologyLocation::File(path.clone());
-            let result = if fetch_imports {
-                env.add(location_to_add, overwrite)
-            } else {
-                env.add_no_imports(location_to_add, overwrite)
-            };
-            let _ = std::fs::remove_file(&path);
-            result
-                .map(|id| id.to_uri_string())
-                .map_err(anyhow_to_pyerr)
+        let location =
+            OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
+        let graph_id = if fetch_imports {
+            env.add(location, overwrite)
         } else {
-            let location =
-                OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
-            let graph_id = if fetch_imports {
-                env.add(location, overwrite)
-            } else {
-                env.add_no_imports(location, overwrite)
-            }
-            .map_err(anyhow_to_pyerr)?;
-            Ok(graph_id.to_uri_string())
+            env.add_no_imports(location, overwrite)
         }
+        .map_err(anyhow_to_pyerr)?;
+        Ok(graph_id.to_uri_string())
     }
 
     /// Add a new ontology to the OntoEnv without exploring owl:imports.
