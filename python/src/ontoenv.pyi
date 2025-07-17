@@ -136,12 +136,14 @@ class OntoEnv:
         """
         ...
 
-    def add(self, location: Any) -> str:
+    def add(self, location: Any, overwrite: bool = False, fetch_imports: bool = True) -> str:
         """
         Add a new ontology to the OntoEnv.
 
         Args:
             location: The location of the ontology to add (file path, URL, or rdflib.Graph).
+            overwrite: If True, will overwrite an existing ontology at the same location.
+            fetch_imports: If True, will recursively fetch missing owl:imports.
         Returns:
             The URI string of the added ontology.
         """
