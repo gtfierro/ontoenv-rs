@@ -53,21 +53,39 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn(self.brick_name, ontologies)
 
     def test_add_local_file(self):
-        """Test env.add() with a local file."""
-        self.env = OntoEnv(path=self.test_dir)
+        """Test env.add() with a local file and fetching imports."""
+        # requires offline=False to fetch QUDT from web
+        cfg = Config(offline=False)
+        self.env = OntoEnv(config=cfg, path=self.test_dir)
         name = self.env.add(str(self.brick_file_path))
         self.assertEqual(name, self.brick_name)
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_name, ontologies)
+        # check that dependencies were added because fetch_imports is true by default
+        self.assertIn("http://qudt.org/2.1/schema/qudt", ontologies)
 
     def test_add_url(self):
         """Test env.add() with a URL."""
         cfg = Config(offline=False)
-        self.env = OntoEnv(cfg, path=self.test_dir)
+        self.env = OntoEnv(config=cfg, path=self.test_dir)
         name = self.env.add(self.brick_144_url)
         self.assertEqual(name, self.brick_144_name)
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_144_name, ontologies)
+        # check that dependencies were added because fetch_imports is true by default
+        self.assertIn("http://qudt.org/2.1/schema/qudt", ontologies)
+
+    def test_add_no_fetch_imports(self):
+        """Test env.add() with fetch_imports=False."""
+        self.env = OntoEnv(path=self.test_dir)
+        # With fetch_imports=False, Brick should be added but its dependencies
+        # should not be processed.
+        name = self.env.add(str(self.brick_file_path), fetch_imports=False)
+        self.assertEqual(name, self.brick_name)
+        ontologies = self.env.get_ontology_names()
+        self.assertIn(self.brick_name, ontologies)
+        # check that dependencies were not added
+        self.assertEqual(len(ontologies), 1)
 
     def test_get_graph(self):
         """Test env.get_graph()."""
@@ -111,6 +129,36 @@ class TestOntoEnvAPI(unittest.TestCase):
         num_triples_after = len(g)
 
         self.assertGreater(num_triples_after, num_triples_before)
+
+    def test_import_dependencies_fetch_missing(self):
+        """Test env.import_dependencies() with fetch_missing=True."""
+        # offline=False is required to fetch from URL
+        cfg = Config(offline=False)
+        # empty env
+        self.env = OntoEnv(config=cfg, path=self.test_dir)
+
+        g = Graph()
+        # Add an import to a known ontology URL that is not in the environment
+        g.add(
+            (
+                URIRef("http://example.org/my-ontology"),
+                OWL.imports,
+                URIRef(self.brick_144_url),
+            )
+        )
+
+        num_triples_before = len(g)
+        # With fetch_missing=True, this should download Brick and its dependencies
+        imported = self.env.import_dependencies(g, fetch_missing=True)
+        self.assertGreater(len(imported), 0)
+        self.assertIn(self.brick_144_name, imported)
+        num_triples_after = len(g)
+
+        self.assertGreater(num_triples_after, num_triples_before)
+
+        # check that the fetched ontologies are now in the environment
+        ontologies = self.env.get_ontology_names()
+        self.assertIn(self.brick_144_name, ontologies)
 
     def test_list_closure(self):
         """Test env.list_closure()."""
