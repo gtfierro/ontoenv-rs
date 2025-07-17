@@ -552,7 +552,7 @@ impl OntoEnv {
             if graphid.is_none() && fetch_missing {
                 let location =
                     OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, false) {
+                match env.add(location, false, true) {
                     Ok(new_id) => {
                         graphid = Some(new_id);
                     }
@@ -631,8 +631,13 @@ impl OntoEnv {
     }
 
     /// Add a new ontology to the OntoEnv
-    #[pyo3(signature = (location, overwrite = false))]
-    fn add(&self, location: &Bound<'_, PyAny>, overwrite: bool) -> PyResult<String> {
+    #[pyo3(signature = (location, overwrite = false, fetch_imports = true))]
+    fn add(
+        &self,
+        location: &Bound<'_, PyAny>,
+        overwrite: bool,
+        fetch_imports: bool,
+    ) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let env = guard.as_mut().ok_or_else(|| {
@@ -658,7 +663,7 @@ impl OntoEnv {
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
             let location_to_add = OntologyLocation::File(path.clone());
-            let result = env.add(location_to_add, overwrite);
+            let result = env.add(location_to_add, overwrite, fetch_imports);
             let _ = std::fs::remove_file(&path);
             result
                 .map(|id| id.to_uri_string())
@@ -666,7 +671,9 @@ impl OntoEnv {
         } else {
             let location =
                 OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
-            let graph_id = env.add(location, overwrite).map_err(anyhow_to_pyerr)?;
+            let graph_id = env
+                .add(location, overwrite, fetch_imports)
+                .map_err(anyhow_to_pyerr)?;
             Ok(graph_id.to_uri_string())
         }
     }
