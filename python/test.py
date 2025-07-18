@@ -73,7 +73,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_144_name, ontologies)
         # check that dependencies were added because fetch_imports is true by default
-        self.assertIn("http://qudt.org/2.1/schema/qudt", ontologies)
+        self.assertIn("http://qudt.org/3.1.0/schema/qudt", ontologies)
 
     def test_add_no_fetch_imports(self):
         """Test env.add() with fetch_imports=False."""
