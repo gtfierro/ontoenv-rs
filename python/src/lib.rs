@@ -13,13 +13,11 @@ use pyo3::{
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
 }
-
-static INIT: Once = Once::new();
 
 #[allow(dead_code)]
 struct MyTerm(Term);
@@ -248,12 +246,6 @@ impl OntoEnv {
         recreate: bool,
         read_only: bool,
     ) -> PyResult<Self> {
-        // wrap env_logger::init() in a Once to ensure it's only called once. This can
-        // happen if a user script creates multiple OntoEnv instances
-        INIT.call_once(|| {
-            env_logger::init();
-        });
-
         let env = if let Some(c) = config {
             let config_path = path.unwrap_or_else(|| PathBuf::from("."));
             // if temporary is true, create a new OntoEnv
@@ -952,6 +944,11 @@ impl OntoEnv {
 
 #[pymodule]
 fn ontoenv(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize logging when the python module is loaded.
+    ::ontoenv::api::init_logging();
+    // Use try_init to avoid panic if logging is already initialized.
+    let _ = env_logger::try_init();
+
     m.add_class::<Config>()?;
     m.add_class::<OntoEnv>()?;
     m.add_class::<PyOntology>()?;

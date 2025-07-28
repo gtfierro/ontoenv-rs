@@ -352,11 +352,19 @@ fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<
 }
 
 fn main() -> Result<()> {
+    ontoenv::api::init_logging();
     let cmd = Cli::parse();
 
-    let log_level = if cmd.verbose { "info" } else { "warn" };
-    let log_level = if cmd.debug { "debug" } else { log_level };
-    std::env::set_var("RUST_LOG", log_level);
+    // The RUST_LOG env var is set by `init_logging` if ONTOENV_LOG is present.
+    // CLI flags for verbosity take precedence. If nothing is set, we default to "warn".
+    if cmd.debug {
+        std::env::set_var("RUST_LOG", "debug");
+    } else if cmd.verbose {
+        std::env::set_var("RUST_LOG", "info");
+    } else if std::env::var("RUST_LOG").is_err() {
+        // If no CLI flags and no env var is set, default to "warn".
+        std::env::set_var("RUST_LOG", "warn");
+    }
     env_logger::init();
 
     let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
