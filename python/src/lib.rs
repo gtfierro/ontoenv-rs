@@ -283,7 +283,7 @@ impl OntoEnv {
                 OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)
             }
         } else {
-            OntoEnvRs::new_offline().map_err(anyhow_to_pyerr)
+            OntoEnvRs::new_online().map_err(anyhow_to_pyerr)
         }?;
 
         let inner = Arc::new(Mutex::new(Some(env)));
@@ -572,7 +572,7 @@ impl OntoEnv {
                             uri
                         )));
                     }
-                    println!("could not find {uri:?}");
+                    println!("Could not find {uri:?}");
                     continue;
                 }
             };
