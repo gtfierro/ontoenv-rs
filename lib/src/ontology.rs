@@ -80,6 +80,15 @@ impl GraphIdentifier {
             name: name.into(),
         }
     }
+    pub fn new_with_location(
+        name: NamedNodeRef,
+        location: OntologyLocation,
+    ) -> Self {
+        GraphIdentifier {
+            location,
+            name: name.into(),
+        }
+    }
     pub fn location(&self) -> &OntologyLocation {
         &self.location
     }
@@ -456,7 +465,7 @@ impl Ontology {
         }
 
         info!(
-            "1Fetched graph {ontology_subject} from location: {location:?}"
+            "Fetched graph {ontology_subject} from location: {location:?}"
         );
 
         let ontology_name: NamedNode = match ontology_subject {
