@@ -110,6 +110,28 @@ impl OntoEnv {
         }
     }
 
+    /// Creates a new online OntoEnv that searches for ontologies in the current directory.
+    /// If an environment already exists, it will be loaded.
+    /// The environment will be persisted to disk in the `.ontoenv` directory.
+    pub fn new_online() -> Result<Self> {
+        if let Some(root) = find_ontoenv_root() {
+            // Don't load as read_only
+            Self::load_from_directory(root, false)
+        } else {
+            let root = std::env::current_dir()?;
+            let config = Config::builder()
+                .root(root)
+                .require_ontology_names(false)
+                .strict(false)
+                .offline(false)
+                .temporary(false)
+                .no_search(false)
+                .build()?;
+            // overwrite should be false, but init will create it.
+            Self::init(config, false)
+        }
+    }
+
     /// Creates a new offline OntoEnv that searches for ontologies in the current directory.
     /// If an environment already exists, it will be loaded.
     /// The environment will be persisted to disk in the `.ontoenv` directory.
