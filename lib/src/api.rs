@@ -23,6 +23,18 @@ use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 
+/// Initializes logging for the ontoenv library.
+///
+/// This function checks for the `ONTOENV_LOG` environment variable. If it is set,
+/// `RUST_LOG` is set to its value. `ONTOENV_LOG` takes precedence over `RUST_LOG`.
+/// The logger initialization (e.g., `env_logger::init()`) must be called after
+/// this function for the log level to take effect.
+pub fn init_logging() {
+    if let Ok(log_level) = std::env::var("ONTOENV_LOG") {
+        std::env::set_var("RUST_LOG", log_level);
+    }
+}
+
 /// Searches for the .ontoenv directory in the given directory and then recursively up its parent directories.
 /// Returns the path to the directory containing the .ontoenv directory if found.
 pub fn find_ontoenv_root_from(start_dir: &Path) -> Option<PathBuf> {
