@@ -264,6 +264,43 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn(name, env2.get_ontology_names())
         env2.close()
 
+    def test_get_dependencies_graph(self):
+        """Test env.get_dependencies_graph()."""
+        cfg = Config(offline=False)
+        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env.add(str(self.brick_file_path))
+
+        g = Graph()
+        brick_ontology_uri = URIRef(self.brick_name)
+        g.add((brick_ontology_uri, RDF.type, OWL.Ontology))
+        # add an import to be resolved
+        qudt_uri = "http://qudt.org/2.1/schema/qudt"
+        g.add((brick_ontology_uri, OWL.imports, URIRef(qudt_uri)))
+
+        num_triples_before = len(g)
+        deps_g, imported = self.env.get_dependencies_graph(g)
+        num_triples_after = len(g)
+
+        # original graph should not be modified
+        self.assertEqual(num_triples_before, num_triples_after)
+
+        # new graph should have content
+        self.assertGreater(len(deps_g), 0)
+        self.assertGreater(len(imported), 0)
+        self.assertIn(qudt_uri, imported)
+        self.assertIn("http://qudt.org/2.1/vocab/quantitykind", imported)
+
+        # test with destination graph
+        dest_g = Graph()
+        self.assertEqual(len(dest_g), 0)
+        deps_g2, imported2 = self.env.get_dependencies_graph(g, destination_graph=dest_g)
+
+        # check that the returned graph is the same object as the destination graph
+        self.assertIs(deps_g2, dest_g)
+        self.assertGreater(len(dest_g), 0)
+        self.assertEqual(len(deps_g), len(dest_g))
+        self.assertEqual(sorted(imported), sorted(imported2))
+
 
 if __name__ == "__main__":
     unittest.main()
