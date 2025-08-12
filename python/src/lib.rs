@@ -621,6 +621,26 @@ impl OntoEnv {
     }
 
     /// Get the dependency closure of a given graph and return it as a new graph.
+    ///
+    /// This method will look for `owl:imports` statements in the provided `graph`,
+    /// then find those ontologies within the `OntoEnv` and compute the full
+    /// dependency closure. The triples of all ontologies in the closure are
+    /// returned as a new graph. The original graph is not modified.
+    ///
+    /// Args:
+    ///     graph (rdflib.Graph): The graph to find dependencies for.
+    ///     destination_graph (Optional[rdflib.Graph]): If provided, the dependency graph will be added to this
+    ///         graph instead of creating a new one.
+    ///     recursion_depth (int): The maximum depth for recursive import resolution. A
+    ///         negative value (default) means no limit.
+    ///     fetch_missing (bool): If True, will fetch ontologies that are not in the environment.
+    ///     rewrite_sh_prefixes (bool): If True, will rewrite SHACL prefixes to be unique.
+    ///     remove_owl_imports (bool): If True, will remove `owl:imports` statements from the
+    ///         returned graph.
+    ///
+    /// Returns:
+    ///     tuple[rdflib.Graph, list[str]]: A tuple containing the graph of dependencies and a list of the URIs of the
+    ///     imported ontologies.
     #[pyo3(signature = (graph, destination_graph=None, recursion_depth=-1, fetch_missing=false, rewrite_sh_prefixes=true, remove_owl_imports=true))]
     fn get_dependencies_graph<'a>(
         &self,
