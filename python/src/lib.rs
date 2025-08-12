@@ -620,6 +620,142 @@ impl OntoEnv {
         Ok(all_closure_names)
     }
 
+    /// Get the dependency closure of a given graph and return it as a new graph.
+    #[pyo3(signature = (graph, destination_graph=None, recursion_depth=-1, fetch_missing=false, rewrite_sh_prefixes=true, remove_owl_imports=true))]
+    fn get_dependencies_graph<'a>(
+        &self,
+        py: Python<'a>,
+        graph: &Bound<'a, PyAny>,
+        destination_graph: Option<&Bound<'a, PyAny>>,
+        recursion_depth: i32,
+        fetch_missing: bool,
+        rewrite_sh_prefixes: bool,
+        remove_owl_imports: bool,
+    ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
+        let rdflib = py.import("rdflib")?;
+        let py_imports_pred = term_to_python(py, &rdflib, Term::NamedNode(IMPORTS.into()))?;
+
+        let kwargs = [("predicate", py_imports_pred)].into_py_dict(py)?;
+        let objects_iter = graph.call_method("objects", (), Some(&kwargs))?;
+        let builtins = py.import("builtins")?;
+        let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
+        let imports: Vec<String> = objects_list.extract()?;
+
+        let destination_graph = match destination_graph {
+            Some(g) => g.clone(),
+            None => rdflib.getattr("Graph")?.call0()?,
+        };
+
+        if imports.is_empty() {
+            return Ok((destination_graph, Vec::new()));
+        }
+
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let env = guard.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+        })?;
+
+        let is_strict = env.is_strict();
+        let mut all_ontologies = HashSet::new();
+        let mut all_closure_names: Vec<String> = Vec::new();
+
+        for uri in &imports {
+            let iri = NamedNode::new(uri.as_str())
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+            let mut graphid = env.resolve(ResolveTarget::Graph(iri.clone()));
+
+            if graphid.is_none() && fetch_missing {
+                let location =
+                    OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
+                match env.add(location, false) {
+                    Ok(new_id) => {
+                        graphid = Some(new_id);
+                    }
+                    Err(e) => {
+                        if is_strict {
+                            return Err(anyhow_to_pyerr(e));
+                        }
+                        println!("Failed to fetch {uri}: {e}");
+                    }
+                }
+            }
+
+            let graphid = match graphid {
+                Some(id) => id,
+                None => {
+                    if is_strict {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Failed to resolve graph for URI: {}",
+                            uri
+                        )));
+                    }
+                    println!("Could not find {uri:?}");
+                    continue;
+                }
+            };
+
+            let ont = env.ontologies().get(&graphid).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Ontology {} not found",
+                    uri
+                ))
+            })?;
+
+            let closure = env
+                .get_closure(ont.id(), recursion_depth)
+                .map_err(anyhow_to_pyerr)?;
+            for c_ont in closure {
+                all_closure_names.push(c_ont.to_uri_string());
+                all_ontologies.insert(c_ont.clone());
+            }
+        }
+
+        if all_ontologies.is_empty() {
+            return Ok((destination_graph, Vec::new()));
+        }
+
+        let union = env
+            .get_union_graph(
+                &all_ontologies,
+                Some(rewrite_sh_prefixes),
+                Some(remove_owl_imports),
+            )
+            .map_err(anyhow_to_pyerr)?;
+
+        for triple in union.dataset.into_iter() {
+            let s: Term = triple.subject.into();
+            let p: Term = triple.predicate.into();
+            let o: Term = triple.object.into();
+            let t = PyTuple::new(
+                py,
+                &[
+                    term_to_python(py, &rdflib, s)?,
+                    term_to_python(py, &rdflib, p)?,
+                    term_to_python(py, &rdflib, o)?,
+                ],
+            )?;
+            destination_graph.getattr("add")?.call1((t,))?;
+        }
+
+        if remove_owl_imports {
+            for graphid in union.graph_ids {
+                let iri = term_to_python(py, &rdflib, Term::NamedNode(graphid.into()))?;
+                let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
+                let remove_tuple = PyTuple::new(py, &[py.None(), pred.into(), iri.into()])?;
+                destination_graph
+                    .getattr("remove")?
+                    .call1((remove_tuple,))?;
+            }
+        }
+
+        all_closure_names.sort();
+        all_closure_names.dedup();
+
+        Ok((destination_graph, all_closure_names))
+    }
+
     /// Add a new ontology to the OntoEnv
     #[pyo3(signature = (location, overwrite = false, fetch_imports = true))]
     fn add(
