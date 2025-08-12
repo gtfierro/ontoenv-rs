@@ -274,8 +274,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         brick_ontology_uri = URIRef(self.brick_name)
         g.add((brick_ontology_uri, RDF.type, OWL.Ontology))
         # add an import to be resolved
-        qudt_uri = "http://qudt.org/2.1/schema/qudt"
-        g.add((brick_ontology_uri, OWL.imports, URIRef(qudt_uri)))
+        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/2.1/vocab/quantitykind")))
 
         num_triples_before = len(g)
         deps_g, imported = self.env.get_dependencies_graph(g)
@@ -287,8 +286,8 @@ class TestOntoEnvAPI(unittest.TestCase):
         # new graph should have content
         self.assertGreater(len(deps_g), 0)
         self.assertGreater(len(imported), 0)
-        self.assertIn(qudt_uri, imported)
         self.assertIn("http://qudt.org/2.1/vocab/quantitykind", imported)
+        self.assertIn("http://qudt.org/2.1/vocab/dimensionvector", imported)
 
         # test with destination graph
         dest_g = Graph()
