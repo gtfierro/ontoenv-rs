@@ -113,7 +113,11 @@ enum Commands {
     /// Prints the status of the ontology environment
     Status,
     /// Update the ontology environment
-    Update,
+    Update {
+        /// Suppress per-ontology update output
+        #[clap(long, short = 'q', action)]
+        quiet: bool,
+    },
     /// Compute the owl:imports closure of an ontology and write it to a file
     Closure {
         /// The name (URI) of the ontology to compute the closure for
@@ -182,7 +186,7 @@ impl ToString for Commands {
             Commands::Init { .. } => "Init".to_string(),
             Commands::Version => "Version".to_string(),
             Commands::Status => "Status".to_string(),
-            Commands::Update => "Update".to_string(),
+            Commands::Update { .. } => "Update".to_string(),
             Commands::Closure { .. } => "Closure".to_string(),
             Commands::Add { .. } => "Add".to_string(),
             Commands::List(..) => "List".to_string(),
@@ -482,9 +486,21 @@ fn main() -> Result<()> {
             // pretty print the status
             println!("{status}");
         }
-        Commands::Update => {
+        Commands::Update { quiet } => {
             let mut env = require_ontoenv(env)?;
-            env.update()?;
+            let updated = env.update()?;
+            if !quiet {
+                for id in updated {
+                    if let Some(ont) = env.ontologies().get(&id) {
+                        let name = ont.name().to_string();
+                        let loc = ont
+                            .location()
+                            .map(|l| l.to_string())
+                            .unwrap_or_else(|| "N/A".to_string());
+                        println!("{} @ {}", name, loc);
+                    }
+                }
+            }
             env.save_to_directory()?;
         }
         Commands::Closure {
