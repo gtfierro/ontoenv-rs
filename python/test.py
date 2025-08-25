@@ -300,6 +300,26 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertEqual(len(deps_g), len(dest_g))
         self.assertEqual(sorted(imported), sorted(imported2))
 
+    def test_update_all_flag(self):
+        """Test env.update(all=True) forces reloading of all ontologies."""
+        cfg = Config(search_directories=["../brick"])
+        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        # Initial discovery of ontologies
+        self.env.update()
+        self.assertIn(self.brick_name, self.env.get_ontology_names())
+
+        ont1 = self.env.get_ontology(self.brick_name)
+        ts1 = ont1.last_updated
+        self.assertIsNotNone(ts1)
+
+        # Force update of all ontologies
+        self.env.update(all=True)
+
+        ont2 = self.env.get_ontology(self.brick_name)
+        ts2 = ont2.last_updated
+        self.assertIsNotNone(ts2)
+        self.assertNotEqual(ts1, ts2)
+
 
 if __name__ == "__main__":
     unittest.main()
