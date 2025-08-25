@@ -232,7 +232,7 @@ impl OntoEnv {
             .build()?;
 
         let mut ontoenv = Self::new(Environment::new(), io, config);
-        let _ = ontoenv.update()?;
+        let _ = ontoenv.update(false)?;
         Ok(ontoenv)
     }
 
@@ -471,7 +471,7 @@ impl OntoEnv {
             failed_resolutions: HashSet::new(),
         };
 
-        let _ = ontoenv.update()?;
+        let _ = ontoenv.update(false)?;
 
         Ok(ontoenv)
     }
@@ -540,7 +540,7 @@ impl OntoEnv {
     /// Then, it reads all the new and updated files and adds them to the environment.
     ///
     /// Finally, it updates the dependency graph for all the updated ontologies.
-    pub fn update(&mut self) -> Result<Vec<GraphIdentifier>> {
+    pub fn update(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
         self.failed_resolutions.clear();
         // remove ontologies which are no longer present in the search directories
         // remove ontologies which are no longer present in the search directories
@@ -551,7 +551,20 @@ impl OntoEnv {
 
         // now, find all the new and updated ontologies in the search directories
         // and add them to the environment
-        let updated_files = self.get_updated_locations()?;
+        let updated_files: Vec<OntologyLocation> = if all {
+            let mut set: HashSet<OntologyLocation> = self
+                .env
+                .ontologies()
+                .values()
+                .filter_map(|o| o.location().cloned())
+                .collect();
+            for loc in self.find_files()? {
+                set.insert(loc);
+            }
+            set.into_iter().collect()
+        } else {
+            self.get_updated_locations()?
+        };
 
         // load all of these files into the environment
         let mut ontologies: Vec<Ontology> = vec![];
