@@ -117,6 +117,9 @@ enum Commands {
         /// Suppress per-ontology update output
         #[clap(long, short = 'q', action)]
         quiet: bool,
+        /// Update all ontologies, ignoring modification times
+        #[clap(long, short = 'a', action)]
+        all: bool,
     },
     /// Compute the owl:imports closure of an ontology and write it to a file
     Closure {
@@ -486,9 +489,9 @@ fn main() -> Result<()> {
             // pretty print the status
             println!("{status}");
         }
-        Commands::Update { quiet } => {
+        Commands::Update { quiet, all } => {
             let mut env = require_ontoenv(env)?;
-            let updated = env.update()?;
+            let updated = env.update(all)?;
             if !quiet {
                 for id in updated {
                     if let Some(ont) = env.ontologies().get(&id) {
