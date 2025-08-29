@@ -10,9 +10,11 @@ use log::{debug, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, Quad};
 use oxigraph::store::Store;
+use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
+use fs2::FileExt;
 
 #[derive(Debug, Clone)]
 pub struct StoreStats {
@@ -208,17 +210,30 @@ pub struct PersistentGraphIO {
     offline: bool,
     strict: bool,
     store_path: PathBuf,
+    // Keep the interprocess lock alive for the lifetime of this IO
+    lock_file: File,
 }
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
+        // Acquire exclusive lock for writer; will block if any readers/writers hold the lock
+        let lock_path = path.join("store.lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+        lock_file.lock_exclusive()?;
+
         let store_path = path.join("store.db");
         let store = Store::open(store_path.clone())?;
+
         Ok(Self {
             store,
             offline,
             strict,
             store_path,
+            lock_file,
         })
     }
 }
@@ -249,17 +264,43 @@ pub struct ReadOnlyPersistentGraphIO {
     store: Store,
     offline: bool,
     store_path: PathBuf,
+    // Keep the shared interprocess lock alive for the lifetime of this IO
+    lock_file: File,
 }
 
 impl ReadOnlyPersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool) -> Result<Self> {
+        // Acquire shared lock for readers; will block while a writer holds the exclusive lock
+        let lock_path = path.join("store.lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+        lock_file.lock_shared()?;
+
         let store_path = path.join("store.db");
         let store = Store::open_read_only(store_path.clone())?;
         Ok(Self {
             store,
             offline,
             store_path,
+            lock_file,
         })
+    }
+}
+
+impl Drop for PersistentGraphIO {
+    fn drop(&mut self) {
+        // Best-effort unlock on drop
+        let _ = self.lock_file.unlock();
+    }
+}
+
+impl Drop for ReadOnlyPersistentGraphIO {
+    fn drop(&mut self) {
+        // Best-effort unlock on drop
+        let _ = self.lock_file.unlock();
     }
 }
 
