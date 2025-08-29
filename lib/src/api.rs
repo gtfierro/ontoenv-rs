@@ -232,7 +232,7 @@ impl OntoEnv {
             .build()?;
 
         let mut ontoenv = Self::new(Environment::new(), io, config);
-        let _ = ontoenv.update(false)?;
+        let _ = ontoenv.update_all(false)?;
         Ok(ontoenv)
     }
 
@@ -294,6 +294,11 @@ impl OntoEnv {
 
     pub fn flush(&mut self) -> Result<()> {
         self.io.flush()
+    }
+
+    /// Backwards-compatibility: update only changed/added files (same as update_all(false))
+    pub fn update(&mut self) -> Result<Vec<GraphIdentifier>> {
+        self.update_all(false)
     }
 
     pub fn new_temporary(&self) -> Result<Self> {
@@ -471,7 +476,7 @@ impl OntoEnv {
             failed_resolutions: HashSet::new(),
         };
 
-        let _ = ontoenv.update(false)?;
+        let _ = ontoenv.update_all(false)?;
 
         Ok(ontoenv)
     }
@@ -540,7 +545,7 @@ impl OntoEnv {
     /// Then, it reads all the new and updated files and adds them to the environment.
     ///
     /// Finally, it updates the dependency graph for all the updated ontologies.
-    pub fn update(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
+    pub fn update_all(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
         self.failed_resolutions.clear();
         // remove ontologies which are no longer present in the search directories
         // remove ontologies which are no longer present in the search directories
