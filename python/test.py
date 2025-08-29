@@ -1,7 +1,7 @@
 import unittest
 import shutil
 from pathlib import Path
-from ontoenv import OntoEnv, Config
+from ontoenv import OntoEnv
 from rdflib import Graph, URIRef
 from rdflib.namespace import RDF, OWL
 
@@ -45,9 +45,8 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertTrue((self.test_dir / ".ontoenv").is_dir())
 
     def test_constructor_with_config(self):
-        """Test OntoEnv(config=...) constructor."""
-        cfg = Config(search_directories=["../brick"])
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        """Test OntoEnv(...flags...) constructor."""
+        self.env = OntoEnv(path=self.test_dir, search_directories=["../brick"])
         self.env.update()  # discover ontologies
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_name, ontologies)
@@ -55,8 +54,7 @@ class TestOntoEnvAPI(unittest.TestCase):
     def test_add_local_file(self):
         """Test env.add() with a local file and fetching imports."""
         # requires offline=False to fetch QUDT from web
-        cfg = Config(offline=False)
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, offline=False)
         name = self.env.add(str(self.brick_file_path))
         self.assertEqual(name, self.brick_name)
         ontologies = self.env.get_ontology_names()
@@ -66,8 +64,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_add_url(self):
         """Test env.add() with a URL."""
-        cfg = Config(offline=False)
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, offline=False)
         name = self.env.add(self.brick_144_url)
         self.assertEqual(name, self.brick_144_name)
         ontologies = self.env.get_ontology_names()
@@ -98,8 +95,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_get_closure(self):
         """Test env.get_closure()."""
-        cfg = Config(search_directories=["brick"])
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, search_directories=["brick"])
         name = self.env.add(str(self.brick_file_path))
         g = self.env.get_graph(name)
         closure_g, imported_graphs = self.env.get_closure(name, recursion_depth=0)
@@ -113,8 +109,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_import_dependencies(self):
         """Test env.import_dependencies()."""
-        cfg = Config(search_directories=["brick"])
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
 
         g = Graph()
@@ -133,9 +128,8 @@ class TestOntoEnvAPI(unittest.TestCase):
     def test_import_dependencies_fetch_missing(self):
         """Test env.import_dependencies() with fetch_missing=True."""
         # offline=False is required to fetch from URL
-        cfg = Config(offline=False)
         # empty env
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, offline=False)
 
         g = Graph()
         # Add an import to a known ontology URL that is not in the environment
@@ -162,8 +156,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_list_closure(self):
         """Test env.list_closure()."""
-        cfg = Config(search_directories=["brick"])
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, search_directories=["brick"])
         name = self.env.add(str(self.brick_file_path))
         closure_list = self.env.list_closure(name)
         self.assertIn(name, closure_list)
@@ -173,8 +166,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_get_importers(self):
         """Test env.get_importers()."""
-        cfg = Config(search_directories=["brick"])
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
 
         dependents = self.env.get_importers("http://qudt.org/2.1/vocab/quantitykind")
@@ -182,8 +174,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_to_rdflib_dataset(self):
         """Test env.to_rdflib_dataset()."""
-        cfg = Config(search_directories=["brick"])
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
         self.env.update()  # need to run update to find all dependencies
         self.env.flush()
@@ -196,8 +187,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_import_graph(self):
         """Test env.import_graph()."""
-        cfg = Config(offline=False)
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, offline=False)
         name = self.env.add(self.brick_144_url)
         self.assertEqual(name, self.brick_144_name)
 
@@ -215,8 +205,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn(".ontoenv", path)
 
         # for in-memory, it should be None
-        cfg = Config(temporary=True)
-        mem_env = OntoEnv(config=cfg)
+        mem_env = OntoEnv(temporary=True)
         self.assertIsNone(mem_env.store_path())
         mem_env.close()
 
@@ -302,8 +291,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_update_all_flag(self):
         """Test env.update(all=True) forces reloading of all ontologies."""
-        cfg = Config(search_directories=["../brick"])
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, search_directories=["../brick"])
         # Initial discovery of ontologies
         self.env.update()
         self.assertIn(self.brick_name, self.env.get_ontology_names())
