@@ -1,12 +1,10 @@
-from ontoenv import Config, OntoEnv, version
+from ontoenv import OntoEnv, version
 from rdflib import Graph
 print(version)
 
 
-cfg = Config(["../brick"], strict=False, offline=False)
-
 print("Make env")
-env = OntoEnv(cfg)
+env = OntoEnv(search_directories=["../brick"], strict=False, offline=False)
 print(env)
 print("get brick")
 g = Graph()
