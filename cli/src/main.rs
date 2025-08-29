@@ -491,7 +491,7 @@ fn main() -> Result<()> {
         }
         Commands::Update { quiet, all } => {
             let mut env = require_ontoenv(env)?;
-            let updated = env.update(all)?;
+            let updated = env.update_all(all)?;
             if !quiet {
                 for id in updated {
                     if let Some(ont) = env.ontologies().get(&id) {
