@@ -116,57 +116,6 @@ fn term_to_python<'a>(
     Ok(res)
 }
 
-#[pyclass]
-#[derive(Clone)]
-struct Config {
-    cfg: config::Config,
-}
-
-#[pymethods]
-impl Config {
-    #[new]
-    #[pyo3(signature = (search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
-    fn new(
-        search_directories: Option<Vec<String>>,
-        require_ontology_names: bool,
-        strict: bool,
-        offline: bool,
-        resolution_policy: String,
-        root: String,
-        includes: Option<Vec<String>>,
-        excludes: Option<Vec<String>>,
-        temporary: bool,
-        no_search: bool,
-    ) -> PyResult<Self> {
-        let mut builder = config::Config::builder()
-            .root(root.into())
-            .require_ontology_names(require_ontology_names)
-            .strict(strict)
-            .offline(offline)
-            .resolution_policy(resolution_policy)
-            .temporary(temporary)
-            .no_search(no_search);
-
-        if let Some(dirs) = search_directories {
-            let paths = dirs.into_iter().map(PathBuf::from).collect();
-            builder = builder.locations(paths);
-        }
-
-        if let Some(includes) = includes {
-            builder = builder.includes(includes);
-        }
-
-        if let Some(excludes) = excludes {
-            builder = builder.excludes(excludes);
-        }
-
-        let cfg = builder
-            .build()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-
-        Ok(Config { cfg })
-    }
-}
 
 
 #[pyclass(name = "Ontology")]
@@ -238,45 +187,54 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (config=None, path=None, recreate=false, read_only=false))]
+    #[pyo3(signature = (path=None, recreate=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
     fn new(
         _py: Python,
-        config: Option<Config>,
         path: Option<PathBuf>,
         recreate: bool,
         read_only: bool,
+        search_directories: Option<Vec<String>>,
+        require_ontology_names: bool,
+        strict: bool,
+        offline: bool,
+        resolution_policy: String,
+        root: String,
+        includes: Option<Vec<String>>,
+        excludes: Option<Vec<String>>,
+        temporary: bool,
+        no_search: bool,
     ) -> PyResult<Self> {
-        let env = if let Some(c) = config {
-            let config_path = path.unwrap_or_else(|| PathBuf::from("."));
-            // if temporary is true, create a new OntoEnv
-            if c.cfg.temporary {
-                OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
-            } else if !recreate && config_path.join(".ontoenv").exists() {
-                // if temporary is false, load from the directory
-                OntoEnvRs::load_from_directory(config_path, read_only).map_err(anyhow_to_pyerr)
-            } else {
-                // if temporary is false and recreate is true or the directory doesn't exist, create a new OntoEnv
-                OntoEnvRs::init(c.cfg, recreate).map_err(anyhow_to_pyerr)
-            }
-        } else if let Some(p) = path {
-            if !recreate {
-                if let Some(root) = ::ontoenv::api::find_ontoenv_root_from(&p) {
-                    OntoEnvRs::load_from_directory(root, read_only).map_err(anyhow_to_pyerr)
-                } else {
-                    let cfg = config::Config::default(p).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                    })?;
-                    OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)
-                }
-            } else {
-                let cfg = config::Config::default(p).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                })?;
-                OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)
-            }
+        let root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
+
+        let mut builder = config::Config::builder()
+            .root(root_path.clone())
+            .require_ontology_names(require_ontology_names)
+            .strict(strict)
+            .offline(offline)
+            .resolution_policy(resolution_policy)
+            .temporary(temporary)
+            .no_search(no_search);
+
+        if let Some(dirs) = search_directories {
+            let paths = dirs.into_iter().map(PathBuf::from).collect();
+            builder = builder.locations(paths);
+        }
+        if let Some(incl) = includes {
+            builder = builder.includes(incl);
+        }
+        if let Some(excl) = excludes {
+            builder = builder.excludes(excl);
+        }
+
+        let cfg = builder
+            .build()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+        let env = if !cfg.temporary && !recreate && root_path.join(".ontoenv").exists() {
+            OntoEnvRs::load_from_directory(root_path, read_only).map_err(anyhow_to_pyerr)?
         } else {
-            OntoEnvRs::new_online().map_err(anyhow_to_pyerr)
-        }?;
+            OntoEnvRs::init(cfg, recreate).map_err(anyhow_to_pyerr)?
+        };
 
         let inner = Arc::new(Mutex::new(Some(env)));
 
@@ -1106,7 +1064,6 @@ fn ontoenv(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Use try_init to avoid panic if logging is already initialized.
     let _ = env_logger::try_init();
 
-    m.add_class::<Config>()?;
     m.add_class::<OntoEnv>()?;
     m.add_class::<PyOntology>()?;
     // add version attribute
