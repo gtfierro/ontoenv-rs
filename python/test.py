@@ -255,8 +255,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_get_dependencies_graph(self):
         """Test env.get_dependencies_graph()."""
-        cfg = Config(offline=False)
-        self.env = OntoEnv(config=cfg, path=self.test_dir)
+        self.env = OntoEnv(path=self.test_dir, offline=False)
         self.env.add(str(self.brick_file_path))
 
         g = Graph()
