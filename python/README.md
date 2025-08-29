@@ -24,18 +24,18 @@ brick_name = env.add("../brick/Brick.ttl")
 print(f"Added ontology {brick_name}")
 
 # get the graph of the ontology we just added
-# env.get returns an rdflib.Graph
-brick_graph = env.get(brick_name)
+# env.get_graph returns an rdflib.Graph
+brick_graph = env.get_graph(brick_name)
 print(f"Brick graph has {len(brick_graph)} triples")
 
 # get the full closure of the ontology, including all of its imports
-# also returns an rdflib.Graph
-brick_closure_graph = env.get_closure(brick_name)
+# returns a tuple (rdflib.Graph, list[str])
+brick_closure_graph, _ = env.get_closure(brick_name)
 print(f"Brick closure has {len(brick_closure_graph)} triples")
 
 # you can also add ontologies from a URL
 rec_name = env.add("https://w3id.org/rec/rec.ttl")
-rec_graph = env.get(rec_name)
+rec_graph = env.get_graph(rec_name)
 print(f"REC graph has {len(rec_graph)} triples")
 
 # if you have an rdflib.Graph with an owl:Ontology declaration,
