@@ -248,7 +248,7 @@ impl OntoEnv {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         if let Some(env) = guard.as_mut() {
-            env.update(all).map_err(anyhow_to_pyerr)?;
+            env.update_all(all).map_err(anyhow_to_pyerr)?;
             env.save_to_directory().map_err(anyhow_to_pyerr)
         } else {
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
