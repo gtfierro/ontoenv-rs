@@ -138,7 +138,7 @@ Here is a basic example of how to use the `pyontoenv` Python library. This examp
 ```python
 import tempfile
 from pathlib import Path
-from ontoenv import Config, OntoEnv
+from ontoenv import OntoEnv
 from rdflib import Graph
 
 # create a temporary directory to store our ontology files
@@ -161,10 +161,8 @@ with tempfile.TemporaryDirectory() as temp_dir:
 """
     (root / "ontology_b.ttl").write_text(ontology_b_content)
 
-    # create config object. We use temporary=True so it doesn't create a .ontoenv dir
-    cfg = Config(search_directories=[str(root)], strict=False, offline=True, temporary=True)
-    # make the environment
-    env = OntoEnv(config=cfg)
+    # make the environment. We use temporary=True so it doesn't create a .ontoenv dir
+    env = OntoEnv(search_directories=[str(root)], strict=False, offline=True, temporary=True)
 
     # list the ontologies found
     print("Ontologies found:", env.get_ontology_names())
