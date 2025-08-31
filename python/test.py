@@ -1,9 +1,28 @@
 import unittest
 import shutil
+import multiprocessing
 from pathlib import Path
 from ontoenv import OntoEnv
 from rdflib import Graph, URIRef
 from rdflib.namespace import RDF, OWL
+
+
+# Worker function for multiprocessing tests
+def _open_env_readonly_worker(path_str, result_queue):
+    try:
+        from pathlib import Path
+        from ontoenv import OntoEnv
+        # Open the same store in read-only mode and perform a simple operation
+        env = OntoEnv(path=Path(path_str), read_only=True)
+        _ = env.get_ontology_names()
+        # Hold briefly to increase overlap
+        import time
+        time.sleep(0.2)
+        env.close()
+        result_queue.put("ok")
+    except Exception as e:
+        # Propagate error info back to parent
+        result_queue.put(f"error: {e}")
 
 
 class TestOntoEnvAPI(unittest.TestCase):
@@ -306,6 +325,36 @@ class TestOntoEnvAPI(unittest.TestCase):
         ts2 = ont2.last_updated
         self.assertIsNotNone(ts2)
         self.assertNotEqual(ts1, ts2)
+
+    def test_concurrent_open_same_store(self):
+        """Attempt to open the same ontoenv store in two different processes."""
+        # Pre-create a persistent store with some content
+        env = OntoEnv(path=self.test_dir)
+        env.add(str(self.brick_file_path), fetch_imports=False)
+        env.flush()
+        env.close()
+
+        ctx = multiprocessing.get_context("spawn")
+        q = ctx.Queue()
+        p1 = ctx.Process(target=_open_env_readonly_worker, args=(str(self.test_dir), q))
+        p2 = ctx.Process(target=_open_env_readonly_worker, args=(str(self.test_dir), q))
+
+        p1.start()
+        p2.start()
+
+        r1 = q.get(timeout=30)
+        r2 = q.get(timeout=30)
+
+        p1.join(timeout=30)
+        p2.join(timeout=30)
+
+        # Verify both processes finished and succeeded
+        self.assertFalse(p1.is_alive())
+        self.assertFalse(p2.is_alive())
+        self.assertEqual(p1.exitcode, 0)
+        self.assertEqual(p2.exitcode, 0)
+        self.assertEqual(r1, "ok")
+        self.assertEqual(r2, "ok")
 
 
 if __name__ == "__main__":
