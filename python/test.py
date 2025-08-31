@@ -8,21 +8,25 @@ from rdflib.namespace import RDF, OWL
 
 
 # Worker function for multiprocessing tests
-def _open_env_readonly_worker(path_str, result_queue):
+def _open_env_readonly_worker(path_str, graph_uri, result_queue):
     try:
         from pathlib import Path
         from ontoenv import OntoEnv
-        # Open the same store in read-only mode and perform a simple operation
+        from rdflib import URIRef
+        from rdflib.namespace import RDF, OWL
+        # Open the same store in read-only mode and load a specific graph
         env = OntoEnv(path=Path(path_str), read_only=True)
-        _ = env.get_ontology_names()
+        g = env.get_graph(graph_uri)
+        # Verify expected ontology triple exists
+        ok = (URIRef(graph_uri), RDF.type, OWL.Ontology) in g and len(g) > 0
         # Hold briefly to increase overlap
         import time
-        time.sleep(1.2)
+        time.sleep(1.0)
         env.close()
-        result_queue.put("ok")
+        result_queue.put(("ok", graph_uri) if ok else ("missing", graph_uri))
     except Exception as e:
         # Propagate error info back to parent
-        result_queue.put(f"error: {e}")
+        result_queue.put(("error", graph_uri, str(e)))
 
 
 class TestOntoEnvAPI(unittest.TestCase):
@@ -327,17 +331,39 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertNotEqual(ts1, ts2)
 
     def test_concurrent_open_same_store(self):
-        """Attempt to open the same ontoenv store in two different processes."""
-        # Pre-create a persistent store with some content
+        """Attempt to open the same ontoenv store in two different processes, each loading a different graph."""
+        # Pre-create a persistent store with two different ontologies
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        a_uri = "http://example.org/ont/A"
+        b_uri = "http://example.org/ont/B"
+        a_path.write_text(
+            "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            f"<{a_uri}> a owl:Ontology .\n"
+            f"<{a_uri}#Class1> a owl:Class .\n",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            f"<{b_uri}> a owl:Ontology .\n"
+            f"<{b_uri}#Class2> a owl:Class .\n",
+            encoding="utf-8",
+        )
+
         env = OntoEnv(path=self.test_dir)
-        env.add(str(self.brick_file_path), fetch_imports=False)
+        name_a = env.add(str(a_path), fetch_imports=False)
+        name_b = env.add(str(b_path), fetch_imports=False)
+        self.assertEqual(name_a, a_uri)
+        self.assertEqual(name_b, b_uri)
         env.flush()
         env.close()
 
         ctx = multiprocessing.get_context("spawn")
         q = ctx.Queue()
-        p1 = ctx.Process(target=_open_env_readonly_worker, args=(str(self.test_dir), q))
-        p2 = ctx.Process(target=_open_env_readonly_worker, args=(str(self.test_dir), q))
+        p1 = ctx.Process(target=_open_env_readonly_worker, args=(str(self.test_dir), name_a, q))
+        p2 = ctx.Process(target=_open_env_readonly_worker, args=(str(self.test_dir), name_b, q))
 
         p1.start()
         p2.start()
@@ -348,13 +374,15 @@ class TestOntoEnvAPI(unittest.TestCase):
         p1.join(timeout=30)
         p2.join(timeout=30)
 
-        # Verify both processes finished and succeeded
+        # Verify both processes finished and successfully loaded their respective graphs
         self.assertFalse(p1.is_alive())
         self.assertFalse(p2.is_alive())
         self.assertEqual(p1.exitcode, 0)
         self.assertEqual(p2.exitcode, 0)
-        self.assertEqual(r1, "ok")
-        self.assertEqual(r2, "ok")
+
+        results = {r1, r2}
+        self.assertIn(("ok", name_a), results)
+        self.assertIn(("ok", name_b), results)
 
 
 if __name__ == "__main__":
