@@ -17,7 +17,7 @@ def _open_env_readonly_worker(path_str, result_queue):
         _ = env.get_ontology_names()
         # Hold briefly to increase overlap
         import time
-        time.sleep(0.2)
+        time.sleep(1.2)
         env.close()
         result_queue.put("ok")
     except Exception as e:
