@@ -17,13 +17,15 @@ def _open_env_readonly_worker(path_str, graph_uri, result_queue):
         # Open the same store in read-only mode and load a specific graph
         env = OntoEnv(path=Path(path_str), read_only=True)
         g = env.get_graph(graph_uri)
-        # Verify expected ontology triple exists
-        ok = (URIRef(graph_uri), RDF.type, OWL.Ontology) in g and len(g) > 0
+        # Verify expected ontology triple exists and that ontology metadata can be fetched from the store
+        ok_graph = (URIRef(graph_uri), RDF.type, OWL.Ontology) in g and len(g) > 0
+        ont = env.get_ontology(graph_uri)
+        ok_meta = (ont.id == graph_uri)
         # Hold briefly to increase overlap
         import time
         time.sleep(1.0)
         env.close()
-        result_queue.put(("ok", graph_uri) if ok else ("missing", graph_uri))
+        result_queue.put(("ok", graph_uri) if (ok_graph and ok_meta) else ("missing", graph_uri))
     except Exception as e:
         # Propagate error info back to parent
         result_queue.put(("error", graph_uri, str(e)))
