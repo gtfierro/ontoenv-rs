@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -8,6 +7,7 @@ use oxigraph::model::NamedNode;
 
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::ontology::OntologyLocation;
+use ontoenv::ToUriString;
 
 /// Helper to write a small ontology TTL file.
 fn write_ttl(path: &Path, ontology_uri: &str, extra: &str) {
@@ -148,7 +148,7 @@ fn rust_read_only_concurrency() {
     let (name_a, name_b) = init_store_with_two_graphs(&root, a_uri, b_uri);
 
     let exe = current_test_exe();
-    let mut p1 = Command::new(&exe)
+    let p1 = Command::new(&exe)
         .arg("--exact")
         .arg("worker_ro")
         .arg("--ignored")
@@ -159,7 +159,7 @@ fn rust_read_only_concurrency() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn p1");
-    let mut p2 = Command::new(&exe)
+    let p2 = Command::new(&exe)
         .arg("--exact")
         .arg("worker_ro")
         .arg("--ignored")
@@ -195,7 +195,7 @@ fn rust_read_write_locking() {
     let (name_a, name_b) = init_store_with_two_graphs(&root, a_uri, b_uri);
 
     let exe = current_test_exe();
-    let mut p1 = Command::new(&exe)
+    let p1 = Command::new(&exe)
         .arg("--exact")
         .arg("worker_rw")
         .arg("--ignored")
@@ -206,7 +206,7 @@ fn rust_read_write_locking() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn p1");
-    let mut p2 = Command::new(&exe)
+    let p2 = Command::new(&exe)
         .arg("--exact")
         .arg("worker_rw")
         .arg("--ignored")
