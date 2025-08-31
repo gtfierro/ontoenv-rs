@@ -705,6 +705,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fuchsia-cprng"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1822,13 +1832,14 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
 name = "ontoenv"
-version = "0.3.1-a2"
+version = "0.3.1-a3"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
  "derive_builder",
  "env_logger",
+ "fs2",
  "glob",
  "json-ld",
  "lazy_static",
@@ -1849,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "ontoenv-cli"
-version = "0.3.1-a2"
+version = "0.3.1-a3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2254,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "pyontoenv"
-version = "0.3.1-a2"
+version = "0.3.1-a3"
 dependencies = [
  "anyhow",
  "env_logger",

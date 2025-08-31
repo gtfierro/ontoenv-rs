@@ -1,6 +1,5 @@
 import unittest
 import shutil
-import multiprocessing
 from pathlib import Path
 from ontoenv import OntoEnv
 from rdflib import Graph, URIRef
