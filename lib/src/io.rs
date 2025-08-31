@@ -216,14 +216,19 @@ pub struct PersistentGraphIO {
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
-        // Acquire exclusive lock for writer; will block if any readers/writers hold the lock
+        // Try to acquire an exclusive lock for writer; if any readers/writers hold the lock, error out immediately
         let lock_path = path.join("store.lock");
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .open(&lock_path)?;
-        lock_file.lock_exclusive()?;
+        if let Err(e) = lock_file.try_lock_exclusive() {
+            return Err(anyhow!(
+                "Failed to open OntoEnv store for write: could not acquire exclusive lock on {:?}: {}. If another process has the store open (even read-only), open this instance in read-only mode.",
+                lock_path, e
+            ));
+        }
 
         let store_path = path.join("store.db");
         let store = Store::open(store_path.clone())?;
