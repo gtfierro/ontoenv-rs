@@ -182,15 +182,30 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
         p1.join(timeout=30)
         p2.join(timeout=30)
 
-        # Verify both processes finished and successfully loaded their respective graphs
+        # Verify both processes finished; one should succeed and one should report a lock error
         self.assertFalse(p1.is_alive())
         self.assertFalse(p2.is_alive())
         self.assertEqual(p1.exitcode, 0)
         self.assertEqual(p2.exitcode, 0)
 
-        results = {r1, r2}
-        self.assertIn(("ok", name_a), results)
-        self.assertIn(("ok", name_b), results)
+        results = [r1, r2]
+        ok_results = [r for r in results if r[0] == "ok"]
+        error_results = [r for r in results if r[0] == "error"]
+
+        # At least one process should fail to acquire the exclusive lock
+        self.assertGreaterEqual(len(ok_results), 1)
+        self.assertGreaterEqual(len(error_results), 1)
+
+        # The successful open(s) should be for one of the graphs we added
+        for tag, uri in ok_results:
+            self.assertIn(uri, {name_a, name_b})
+
+        # The error should mention failure to acquire exclusive lock for write
+        err_msg = error_results[0][2]
+        self.assertTrue(
+            "Failed to open OntoEnv store for write" in err_msg or "exclusive lock" in err_msg,
+            msg=f"Unexpected error message: {err_msg}",
+        )
 
 
 if __name__ == "__main__":
