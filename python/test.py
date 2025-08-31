@@ -14,8 +14,8 @@ def _open_env_readonly_worker(path_str, graph_uri, result_queue):
         from ontoenv import OntoEnv
         from rdflib import URIRef
         from rdflib.namespace import RDF, OWL
-        # Open the same store in read-only mode and load a specific graph
-        env = OntoEnv(path=Path(path_str), read_only=True)
+        # Open the same store in read-write mode and load a specific graph
+        env = OntoEnv(path=Path(path_str))
         g = env.get_graph(graph_uri)
         # Verify expected ontology triple exists and that ontology metadata can be fetched from the store
         ok_graph = (URIRef(graph_uri), RDF.type, OWL.Ontology) in g and len(g) > 0
