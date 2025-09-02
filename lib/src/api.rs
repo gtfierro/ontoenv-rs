@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::{anyhow, Result};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -769,7 +769,7 @@ impl OntoEnv {
         let mut seen: HashSet<GraphIdentifier> = HashSet::new();
 
         while let Some(graphid) = stack.pop_front() {
-            info!("Building dependency graph for: {graphid:?}");
+            debug!("Building dependency graph for: {graphid:?}");
             if seen.contains(&graphid) {
                 continue;
             }
@@ -1026,6 +1026,64 @@ impl OntoEnv {
         Ok(importers)
     }
 
+    /// Returns all importer paths that terminate at the given ontology.
+    /// Each path is ordered from the most distant importer down to `id`.
+    pub fn get_import_paths(
+        &self,
+        id: &NamedNode,
+    ) -> Result<Vec<Vec<GraphIdentifier>>> {
+        let target = self
+            .env
+            .get_ontology_by_name(id.into())
+            .ok_or_else(|| anyhow!("Ontology not found"))?;
+        // Find the node index for the target
+        let target_idx = self
+            .dependency_graph
+            .node_indices()
+            .find(|i| self.dependency_graph[*i] == *target.id())
+            .ok_or_else(|| anyhow!("Node not found"))?;
+
+        let mut results: Vec<Vec<GraphIdentifier>> = Vec::new();
+        let mut path: Vec<GraphIdentifier> = Vec::new();
+        let mut seen: std::collections::HashSet<GraphIdentifier> = std::collections::HashSet::new();
+
+        fn dfs(
+            g: &petgraph::Graph<GraphIdentifier, (), petgraph::Directed>,
+            idx: petgraph::graph::NodeIndex,
+            path: &mut Vec<GraphIdentifier>,
+            seen: &mut std::collections::HashSet<GraphIdentifier>,
+            results: &mut Vec<Vec<GraphIdentifier>>,
+        ) {
+            let current = g[idx].clone();
+            if !seen.insert(current.clone()) {
+                return; // avoid cycles
+            }
+            path.push(current.clone());
+
+            let mut incoming = g
+                .neighbors_directed(idx, petgraph::Direction::Incoming)
+                .detach();
+
+            let mut has_incoming = false;
+            while let Some((_, src)) = incoming.next(g) {
+                has_incoming = true;
+                dfs(g, src, path, seen, results);
+            }
+            if !has_incoming {
+                // Reached a root importer, record path from root -> ... -> target
+                let mut p = path.clone();
+                p.reverse();
+                results.push(p);
+            }
+
+            path.pop();
+            seen.remove(&current);
+        }
+
+        dfs(&self.dependency_graph, target_idx, &mut path, &mut seen, &mut results);
+        Ok(results)
+    }
+
     /// Returns the GraphViz dot representation of the dependency graph
     pub fn dep_graph_to_dot(&self) -> Result<String> {
         self.rooted_dep_graph_to_dot(self.ontologies().keys().cloned().collect())
@@ -1059,7 +1117,7 @@ impl OntoEnv {
                 let import = match self.env.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),
                     None => {
-                        error!("Import not found: {import}");
+                        warn!("Import not found: {import}");
                         continue;
                     }
                 };
@@ -1106,7 +1164,7 @@ impl OntoEnv {
                 let g = match self.io.get_graph(ontology.id()) {
                     Ok(g) => g,
                     Err(e) => {
-                        error!("Could not get graph for {}: {e}", ontology.id());
+                        warn!("Could not get graph for {}: {e}", ontology.id());
                         continue;
                     }
                 };
