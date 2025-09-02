@@ -53,11 +53,11 @@ fn add_ontology_to_store(
     tmp_store
         .bulk_loader()
         .load_from_reader(parser, bytes.as_slice())?;
-    info!(
-        "Loaded {} into staging store in {:?}",
-        location.as_str(),
-        t0.elapsed()
-    );
+        debug!(
+            "Loaded {} into staging store in {:?}",
+            location.as_str(),
+            t0.elapsed()
+        );
 
     // Build ontology metadata from the staging store
     let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location);

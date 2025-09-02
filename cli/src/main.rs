@@ -10,6 +10,7 @@ use oxigraph::model::NamedNode;
 use serde_json;
 use std::env::current_dir;
 use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Parser)]
 #[command(name = "ontoenv")]
@@ -49,7 +50,7 @@ struct Cli {
     #[clap(long = "no-search", short = 'n', action, global = true)]
     no_search: bool,
     /// Directories to search for ontologies. If not provided, the current directory is used.
-    #[clap(global = true)]
+    #[clap(global = true, last = true)]
     locations: Option<Vec<PathBuf>>,
 }
 
@@ -111,7 +112,11 @@ enum Commands {
     /// Prints the version of the ontoenv binary
     Version,
     /// Prints the status of the ontology environment
-    Status,
+    Status {
+        /// Output JSON instead of text
+        #[clap(long, action, default_value = "false")]
+        json: bool,
+    },
     /// Update the ontology environment
     Update {
         /// Suppress per-ontology update output
@@ -120,6 +125,9 @@ enum Commands {
         /// Update all ontologies, ignoring modification times
         #[clap(long, short = 'a', action)]
         all: bool,
+        /// Output JSON instead of text
+        #[clap(long, action, default_value = "false")]
+        json: bool,
     },
     /// Compute the owl:imports closure of an ontology and write it to a file
     Closure {
@@ -147,8 +155,14 @@ enum Commands {
         no_imports: bool,
     },
     /// List various properties of the environment
-    #[command(subcommand)]
-    List(ListCommands),
+    /// List various properties of the environment
+    List {
+        #[command(subcommand)]
+        list_cmd: ListCommands,
+        /// Output JSON instead of text
+        #[clap(long, action, default_value = "false")]
+        json: bool,
+    },
     // TODO: dump all ontologies; nest by ontology name (sorted), w/n each ontology name list all
     // the places where that graph can be found. List basic stats: the metadata field in the
     // Ontology struct and # of triples in the graph; last updated; etc
@@ -170,9 +184,16 @@ enum Commands {
     Why {
         /// The name (URI) of the ontology to find importers for
         ontologies: Vec<String>,
+        /// Output JSON instead of text
+        #[clap(long, action, default_value = "false")]
+        json: bool,
     },
     /// Run the doctor to check the environment for issues
-    Doctor,
+    Doctor {
+        /// Output JSON instead of text
+        #[clap(long, action, default_value = "false")]
+        json: bool,
+    },
     /// Reset the ontology environment by removing the .ontoenv directory
     Reset {
         #[clap(long, short, action = clap::ArgAction::SetTrue, default_value = "false")]
@@ -188,15 +209,15 @@ impl ToString for Commands {
         match self {
             Commands::Init { .. } => "Init".to_string(),
             Commands::Version => "Version".to_string(),
-            Commands::Status => "Status".to_string(),
+            Commands::Status { .. } => "Status".to_string(),
             Commands::Update { .. } => "Update".to_string(),
             Commands::Closure { .. } => "Closure".to_string(),
             Commands::Add { .. } => "Add".to_string(),
-            Commands::List(..) => "List".to_string(),
+            Commands::List { .. } => "List".to_string(),
             Commands::Dump { .. } => "Dump".to_string(),
             Commands::DepGraph { .. } => "DepGraph".to_string(),
             Commands::Why { .. } => "Why".to_string(),
-            Commands::Doctor => "Doctor".to_string(),
+            Commands::Doctor { .. } => "Doctor".to_string(),
             Commands::Reset { .. } => "Reset".to_string(),
             Commands::Config { .. } => "Config".to_string(),
         }
@@ -482,17 +503,49 @@ fn main() -> Result<()> {
                 env!("GIT_HASH")
             );
         }
-        Commands::Status => {
+        Commands::Status { json } => {
             let env = require_ontoenv(env)?;
-            // load env from .ontoenv/ontoenv.json
-            let status = env.status()?;
-            // pretty print the status
-            println!("{status}");
+            if json {
+                // Recompute status details similar to env.status()
+                let ontoenv_dir = current_dir()?.join(".ontoenv");
+                let last_updated = if ontoenv_dir.exists() {
+                    Some(std::fs::metadata(&ontoenv_dir)?.modified()?.into()) as Option<std::time::SystemTime>
+                } else { None };
+                let size: u64 = if ontoenv_dir.exists() {
+                    walkdir::WalkDir::new(&ontoenv_dir)
+                        .into_iter()
+                        .filter_map(Result::ok)
+                        .filter(|e| e.file_type().is_file())
+                        .filter_map(|e| e.metadata().ok())
+                        .map(|m| m.len())
+                        .sum()
+                } else { 0 };
+                let missing: Vec<String> = env
+                    .missing_imports()
+                    .into_iter()
+                    .map(|n| n.to_uri_string())
+                    .collect();
+                let last_str = last_updated.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
+                let obj = serde_json::json!({
+                    "exists": true,
+                    "num_ontologies": env.ontologies().len(),
+                    "last_updated": last_str,
+                    "store_size_bytes": size,
+                    "missing_imports": missing,
+                });
+                println!("{}", serde_json::to_string_pretty(&obj)?);
+            } else {
+                let status = env.status()?;
+                println!("{status}");
+            }
         }
-        Commands::Update { quiet, all } => {
+        Commands::Update { quiet, all, json } => {
             let mut env = require_ontoenv(env)?;
             let updated = env.update_all(all)?;
-            if !quiet {
+            if json {
+                let arr: Vec<String> = updated.iter().map(|id| id.to_uri_string()).collect();
+                println!("{}", serde_json::to_string_pretty(&arr)?);
+            } else if !quiet {
                 for id in updated {
                     if let Some(ont) = env.ontologies().get(&id) {
                         let name = ont.name().to_string();
@@ -546,14 +599,18 @@ fn main() -> Result<()> {
                 let _ = env.add(location, true)?;
             }
         }
-        Commands::List(list_cmd) => {
+        Commands::List { list_cmd, json } => {
             let env = require_ontoenv(env)?;
             match list_cmd {
                 ListCommands::Locations => {
                     let mut locations = env.find_files()?;
                     locations.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-                    for loc in locations {
-                        println!("{}", loc);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&locations)?);
+                    } else {
+                        for loc in locations {
+                            println!("{}", loc);
+                        }
                     }
                 }
                 ListCommands::Ontologies => {
@@ -561,15 +618,27 @@ fn main() -> Result<()> {
                     let mut ontologies: Vec<&GraphIdentifier> = env.ontologies().keys().collect();
                     ontologies.sort_by(|a, b| a.name().cmp(&b.name()));
                     ontologies.dedup_by(|a, b| a.name() == b.name());
-                    for ont in ontologies {
-                        println!("{}", ont.to_uri_string());
+                    if json {
+                        let out: Vec<String> =
+                            ontologies.into_iter().map(|o| o.to_uri_string()).collect();
+                        println!("{}", serde_json::to_string_pretty(&out)?);
+                    } else {
+                        for ont in ontologies {
+                            println!("{}", ont.to_uri_string());
+                        }
                     }
                 }
                 ListCommands::Missing => {
                     let mut missing_imports = env.missing_imports();
                     missing_imports.sort();
-                    for import in missing_imports {
-                        println!("{}", import.to_uri_string());
+                    if json {
+                        let out: Vec<String> =
+                            missing_imports.into_iter().map(|n| n.to_uri_string()).collect();
+                        println!("{}", serde_json::to_string_pretty(&out)?);
+                    } else {
+                        for import in missing_imports {
+                            println!("{}", import.to_uri_string());
+                        }
                     }
                 }
             }
@@ -607,28 +676,67 @@ fn main() -> Result<()> {
                 ));
             }
         }
-        Commands::Why { ontologies } => {
+        Commands::Why { ontologies, json } => {
             let env = require_ontoenv(env)?;
-            for ont in ontologies {
-                let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let importers = env.get_importers(&iri)?;
-                println!("Imported by {}: ", iri.to_uri_string());
-                for dep in importers {
-                    println!("{}", dep.to_uri_string());
+            if json {
+                let mut all: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
+                for ont in ontologies {
+                    let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    let paths = env.get_import_paths(&iri)?;
+                    let mut unique: BTreeSet<Vec<String>> = BTreeSet::new();
+                    for p in paths {
+                        unique.insert(p.into_iter().map(|id| id.to_uri_string()).collect());
+                    }
+                    let arr: Vec<Vec<String>> = unique.into_iter().collect();
+                    all.insert(iri.to_uri_string(), arr);
+                }
+                println!("{}", serde_json::to_string_pretty(&all)?);
+            } else {
+                for ont in ontologies {
+                    let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    let paths = env.get_import_paths(&iri)?;
+                    if paths.is_empty() {
+                        println!("No importers found for {}", iri.to_uri_string());
+                        continue;
+                    }
+                    println!("Why {}:", iri.to_uri_string());
+                    let mut lines: BTreeSet<String> = BTreeSet::new();
+                    for p in paths {
+                        let line = p
+                            .into_iter()
+                            .map(|id| id.to_uri_string())
+                            .collect::<Vec<_>>()
+                            .join(" -> ");
+                        lines.insert(line);
+                    }
+                    for line in lines {
+                        println!("{}", line);
+                    }
                 }
             }
         }
-        Commands::Doctor => {
+        Commands::Doctor { json } => {
             let env = require_ontoenv(env)?;
             let problems = env.doctor()?;
-            if problems.is_empty() {
-                println!("No issues found.");
+            if json {
+                let out: Vec<serde_json::Value> = problems
+                    .into_iter()
+                    .map(|p| serde_json::json!({
+                        "message": p.message,
+                        "locations": p.locations.into_iter().map(|loc| loc.to_string()).collect::<Vec<_>>()
+                    }))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
-                println!("Found {} issues:", problems.len());
-                for problem in problems {
-                    println!("- {}", problem.message);
-                    for location in problem.locations {
-                        println!("  - {location}");
+                if problems.is_empty() {
+                    println!("No issues found.");
+                } else {
+                    println!("Found {} issues:", problems.len());
+                    for problem in problems {
+                        println!("- {}", problem.message);
+                        for location in problem.locations {
+                            println!("  - {location}");
+                        }
                     }
                 }
             }

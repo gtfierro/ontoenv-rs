@@ -15,7 +15,7 @@ use oxigraph::model::{GraphNameRef, Quad, Triple, TripleRef};
 
 use std::io::BufReader;
 
-use log::{debug, error, info};
+use log::{debug, warn, info};
 
 pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
     let b = std::fs::read(path)?;
@@ -38,7 +38,7 @@ pub fn get_url_contents(url: &str) -> Result<(Vec<u8>, Option<RdfFormat>)> {
         .header(CONTENT_TYPE, "application/x-turtle")
         .send()?;
     if !resp.status().is_success() {
-        error!("Failed to fetch ontology from {} ({})", url, resp.status());
+        warn!("Failed to fetch ontology from {} ({})", url, resp.status());
         return Err(anyhow::anyhow!(
             "Failed to fetch ontology from {} ({})",
             url,
@@ -154,7 +154,7 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
         .header(CONTENT_TYPE, "application/x-turtle")
         .send()?;
     if !resp.status().is_success() {
-        error!("Failed to fetch ontology from {} ({})", file, resp.status());
+        warn!("Failed to fetch ontology from {} ({})", file, resp.status());
         return Err(anyhow::anyhow!(
             "Failed to fetch ontology from {} ({})",
             file,
@@ -188,4 +188,3 @@ pub fn graph_to_quads<'a>(
         .into_iter()
         .map(move |triple| triple.in_graph(graph_name))
 }
-
