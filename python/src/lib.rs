@@ -867,23 +867,42 @@ impl OntoEnv {
         Ok(names)
     }
 
-    /// Convert the OntoEnv to an rdflib.Dataset
+    /// Convert the OntoEnv to an in-memory rdflib.Dataset populated with all named graphs
     fn to_rdflib_dataset(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // rdflib.ConjunctiveGraph(store="Oxigraph")
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
         let env = guard.as_ref().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
         })?;
         let rdflib = py.import("rdflib")?;
-        let dataset = rdflib.getattr("Dataset")?;
+        let dataset_cls = rdflib.getattr("Dataset")?;
+        let ds = dataset_cls.call0()?;
+        let uriref = rdflib.getattr("URIRef")?;
 
-        // call Dataset(store="Oxigraph")
-        let kwargs = [("store", "Oxigraph")].into_py_dict(py)?;
-        let store = dataset.call((), Some(&kwargs))?;
-        let path = env.store_path().unwrap();
-        store.getattr("open")?.call1((path,))?;
-        Ok(store.into())
+        for (_gid, ont) in env.ontologies().iter() {
+            let id_str = ont.id().name().as_str();
+            let id_py = uriref.call1((id_str,))?;
+            let kwargs = [("identifier", id_py.clone())].into_py_dict(py)?;
+            let ctx = ds.getattr("graph")?.call((), Some(&kwargs))?;
+
+            let graph = env.get_graph(ont.id()).map_err(anyhow_to_pyerr)?;
+            for t in graph.iter() {
+                let s: Term = t.subject.into();
+                let p: Term = t.predicate.into();
+                let o: Term = t.object.into();
+                let triple = PyTuple::new(
+                    py,
+                    &[
+                        term_to_python(py, &rdflib, s)?,
+                        term_to_python(py, &rdflib, p)?,
+                        term_to_python(py, &rdflib, o)?,
+                    ],
+                )?;
+                ctx.getattr("add")?.call1((triple,))?;
+            }
+        }
+
+        Ok(ds.into())
     }
 
     // Config accessors
@@ -1017,7 +1036,10 @@ impl OntoEnv {
         let guard = inner.lock().unwrap();
         if let Some(env) = guard.as_ref() {
             match env.store_path() {
-                Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+                Some(path) => {
+                    let dir = path.parent().unwrap_or(path);
+                    Ok(Some(dir.to_string_lossy().to_string()))
+                }
                 None => Ok(None), // Return None if the path doesn't exist (e.g., temporary env)
             }
         } else {

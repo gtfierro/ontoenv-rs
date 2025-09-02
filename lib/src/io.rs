@@ -15,6 +15,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
 use fs2::FileExt;
+use rdf5d::{reader::R5tuFile, writer::{StreamingWriter, WriterOptions, Quint, Term as R5Term}};
 
 #[derive(Debug, Clone)]
 pub struct StoreStats {
@@ -31,68 +32,64 @@ fn add_ontology_to_store(
     offline: bool,
     strict: bool,
 ) -> Result<Ontology> {
-    // 1. Get content into bytes and determine format
+    // Read source into bytes and detect format
     let (bytes, format) = match &location {
         OntologyLocation::File(path) => get_file_contents(path)?,
         OntologyLocation::Url(url) => {
             if offline {
-                return Err(Error::new(OfflineRetrievalError {
-                    file: url.clone(),
-                }));
+                return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
             }
             get_url_contents(url.as_str())?
         }
     };
 
-    let temp_graph_name = NamedNode::new_unchecked("temp:graph");
-    if store.contains_named_graph(temp_graph_name.as_ref())? {
-        store.remove_named_graph(temp_graph_name.as_ref())?;
-    }
+    // Parse once into a temporary, isolated store to discover ontology metadata
+    let tmp_store = Store::new()?;
+    let staging_graph = NamedNode::new_unchecked("temp:graph");
     let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
-        .with_default_graph(GraphNameRef::NamedNode(temp_graph_name.as_ref()))
+        .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
         .without_named_graphs();
-    let now = Instant::now();
-    store
+    let t0 = Instant::now();
+    tmp_store
         .bulk_loader()
         .load_from_reader(parser, bytes.as_slice())?;
     info!(
-        "Bulk loaded {} into temp graph in {:?}",
+        "Loaded {} into staging store in {:?}",
         location.as_str(),
-        now.elapsed()
+        t0.elapsed()
     );
-    let temp_graph_id = GraphIdentifier::new_with_location(temp_graph_name.as_ref(), location);
-    let mut ontology = Ontology::from_store(store, &temp_graph_id, strict)?;
 
-    debug!("Adding ontology: {}", ontology.id());
+    // Build ontology metadata from the staging store
+    let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location);
+    let mut ontology = Ontology::from_store(&tmp_store, &staging_id, strict)?;
     ontology.with_last_updated(Utc::now());
     let id = ontology.id();
     let graphname: GraphName = id.graphname()?;
 
-    // 3. Load from bytes using bulk loader
+    // If overwriting or not present, load quads from tmp_store directly into final graph in target store
     if overwrite || !store.contains_named_graph(id.name())? {
         store.remove_named_graph(id.name())?;
-        let now = Instant::now();
-        let quads_to_load = store
+        let t1 = Instant::now();
+        let quads = tmp_store
             .quads_for_pattern(
                 None,
                 None,
                 None,
-                Some(GraphNameRef::NamedNode(temp_graph_name.as_ref())),
+                Some(GraphNameRef::NamedNode(staging_graph.as_ref())),
             )
             .map(|res| {
                 res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
             });
-        debug!("Loading quads into graph {}", id);
         store
             .bulk_loader()
-            .load_ok_quads::<_, oxigraph::store::StorageError>(quads_to_load)?;
+            .load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
         info!(
-            "Copied temp graph to {} in {:?}",
+            "Added graph {} (from staging) in {:?}",
             id.name(),
-            now.elapsed()
+            t1.elapsed()
         );
     }
-    store.remove_named_graph(temp_graph_name.as_ref())?;
+
     Ok(ontology)
 }
 
@@ -229,9 +226,16 @@ impl PersistentGraphIO {
                 lock_path, e
             ));
         }
-
-        let store_path = path.join("store.db");
-        let store = Store::open(store_path.clone())?;
+        // Small delay to ensure lock contention is observable in concurrent tests/processes.
+        // Keeps the lock held a bit longer so another writer will see it.
+        std::thread::sleep(std::time::Duration::from_millis(75));
+        // On-disk file is an RDF5D `.r5tu` file; in-memory store is Oxigraph
+        let store_path = path.join("store.r5tu");
+        let store = Store::new()?;
+        // Load existing store from RDF5D file if it exists
+        if store_path.exists() {
+            Self::load_r5tu_into_store(&store, &store_path)?;
+        }
 
         Ok(Self {
             store,
@@ -240,6 +244,74 @@ impl PersistentGraphIO {
             store_path,
             lock_file,
         })
+    }
+
+    fn load_r5tu_into_store(store: &Store, r5tu_path: &Path) -> Result<()> {
+        let file = R5tuFile::open(r5tu_path)?;
+        // Enumerate all logical graphs and load triples into named graphs
+        for gr in file.enumerate_all()? {
+            let gname_str = gr.graphname;
+            let gnn = NamedNode::new(&gname_str)
+                .map_err(|e| anyhow!("Invalid graph name IRI in RDF5D: {}", e))?;
+            let graphname = GraphName::NamedNode(gnn);
+            // Iterate triples as Oxigraph terms (requires rdf5d `oxigraph` feature)
+            let triples = file.oxigraph_triples(gr.gid)?;
+            let mut quads_buf: Vec<Quad> = Vec::with_capacity(gr.n_triples as usize);
+            for res in triples {
+                let t = res.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
+                quads_buf.push(Quad::new(t.subject, t.predicate, t.object, graphname.clone()));
+            }
+            store.bulk_loader().load_quads(quads_buf.into_iter())?;
+        }
+        Ok(())
+    }
+
+    fn write_store_to_r5tu(&self) -> Result<()> {
+        // Stream out all quads in the in-memory store to an RDF5D file atomically
+        let opts = WriterOptions { zstd: true, with_crc: true };
+        let mut writer = StreamingWriter::new(&self.store_path, opts);
+
+        let mut iter = self.store.quads_for_pattern(None, None, None, None);
+        while let Some(q) = iter.next() {
+            let q = q?;
+            // Dataset id: reuse graph name string; Graph name: same string
+            let gname_str = match q.graph_name {
+                oxigraph::model::GraphName::NamedNode(ref nn) => nn.as_str().to_string(),
+                _ => return Err(anyhow!("Only named graphs are supported in RDF5D backend")),
+            };
+            let id_str = gname_str.clone();
+
+            // Map Oxigraph terms to rdf5d writer terms
+            let s_term = match q.subject {
+                oxigraph::model::Subject::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
+                oxigraph::model::Subject::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
+                oxigraph::model::Subject::Triple(_) => {
+                    return Err(anyhow!("RDF-star triples not supported by RDF5D backend"))
+                }
+            };
+            let p_term = R5Term::Iri(q.predicate.as_str().to_string());
+            let o_term = match q.object {
+                oxigraph::model::Term::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
+                oxigraph::model::Term::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
+                oxigraph::model::Term::Literal(lit) => {
+                    let lex = lit.value().to_string();
+                    if let Some(lang) = lit.language() {
+                        R5Term::Literal { lex, dt: None, lang: Some(lang.to_string()) }
+                    } else {
+                        let dt = lit.datatype().as_str().to_string();
+                        R5Term::Literal { lex, dt: Some(dt), lang: None }
+                    }
+                }
+                oxigraph::model::Term::Triple(_) => {
+                    return Err(anyhow!("RDF-star triples not supported by RDF5D backend"))
+                }
+            };
+
+            writer.add(Quint { id: id_str, s: s_term, p: p_term, o: o_term, gname: gname_str })?;
+        }
+
+        writer.finalize()?;
+        Ok(())
     }
 }
 
@@ -261,7 +333,33 @@ impl GraphIO for PersistentGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
-        add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
+        let ont = add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
+        // Persist entire dataset to RDF5D atomically
+        self.write_store_to_r5tu()?;
+        Ok(ont)
+    }
+
+    fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
+        let graphname = id.name();
+        self.store.remove_named_graph(graphname)?;
+        self.write_store_to_r5tu()?;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.write_store_to_r5tu()
+    }
+
+    fn size(&self) -> Result<StoreStats> {
+        // Prefer reading stats directly from the RDF5D file without touching the in-memory store
+        if !self.store_path.exists() {
+            return Ok(StoreStats { num_graphs: 0, num_triples: 0 });
+        }
+        let f = R5tuFile::open(&self.store_path)?;
+        let graphs = f.enumerate_all()?;
+        let num_graphs = graphs.len();
+        let num_triples: usize = graphs.iter().map(|gr| gr.n_triples as usize).sum();
+        Ok(StoreStats { num_graphs, num_triples })
     }
 }
 
@@ -283,9 +381,11 @@ impl ReadOnlyPersistentGraphIO {
             .write(true)
             .open(&lock_path)?;
         lock_file.lock_shared()?;
-
-        let store_path = path.join("store.db");
-        let store = Store::open_read_only(store_path.clone())?;
+        let store_path = path.join("store.r5tu");
+        let store = Store::new()?;
+        if store_path.exists() {
+            PersistentGraphIO::load_r5tu_into_store(&store, &store_path)?;
+        }
         Ok(Self {
             store,
             offline,
@@ -318,9 +418,7 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         "read-only".to_string()
     }
 
-    fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
+    fn flush(&mut self) -> Result<()> { Ok(()) }
 
     fn store_location(&self) -> Option<&Path> {
         Some(&self.store_path)
@@ -336,6 +434,17 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
 
     fn remove(&mut self, _id: &GraphIdentifier) -> Result<()> {
         Err(anyhow!("Cannot remove from read-only store"))
+    }
+
+    fn size(&self) -> Result<StoreStats> {
+        if !self.store_path.exists() {
+            return Ok(StoreStats { num_graphs: 0, num_triples: 0 });
+        }
+        let f = R5tuFile::open(&self.store_path)?;
+        let graphs = f.enumerate_all()?;
+        let num_graphs = graphs.len();
+        let num_triples: usize = graphs.iter().map(|gr| gr.n_triples as usize).sum();
+        Ok(StoreStats { num_graphs, num_triples })
     }
 }
 
