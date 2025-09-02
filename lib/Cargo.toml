@@ -25,6 +25,7 @@ clap.workspace = true
 derive_builder.workspace = true
 serde.workspace = true
 oxigraph.workspace = true
+rdf5d.workspace = true
 lazy_static = "1.4.0"
 serde_with = "3.7.0"
 tempfile = "3.10.1"

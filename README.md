@@ -1,10 +1,15 @@
 # OntoEnv
 
-`ontoenv` is an environment manager for ontology management. It eventually wants to be a package manager for RDF ontologies and graphs.
+`ontoenv` is a lightweight environment manager for RDF ontologies and their imports. It helps you:
 
-- A CLI tool (`cargo install ontoenv-cli`)
-- `ontoenv`, a [Rust library](https://docs.rs/ontoenv/latest/ontoenv/)
-- `pyontoenv`, a [Python library](https://pypi.org/project/pyontoenv/)
+- Discover ontologies locally and on the web
+- Resolve and materialize `owl:imports` closures
+- Query and export graphs
+
+Project components:
+- CLI: `ontoenv` (installable via `cargo install ontoenv-cli`)
+- Rust library: [`ontoenv`](https://docs.rs/ontoenv/latest/ontoenv/)
+- Python bindings: [`pyontoenv`](https://pypi.org/project/pyontoenv/)
 
 ## Overview
 
@@ -30,10 +35,9 @@ Specifically, `ontoenv` looks for patterns like the following inside local ontol
                 <http://qudt.org/2.1/vocab/quantitykind> .
 ```
 
-When initialized, `ontoenv` searches for all local files defining ontologies, identifies their dependencies, and then recursively pulls in those dependencies, *their* dependencies, and so on.
-It saves this in a local [Oxigraph](https://github.com/oxigraph/oxigraph) database inside the local `.ontoenv`.
+When initialized, `ontoenv` searches the specified directories for ontology declarations, identifies their `owl:imports`, and recursively pulls in dependencies. Runtime queries operate on an in‑memory Oxigraph store. Persistent on‑disk state uses a compact RDF5D file at `.ontoenv/store.r5tu` with single‑writer, shared reader locking.
 
-## Command Line Interface
+## CLI
 
 ### Installation
 
@@ -42,7 +46,7 @@ It saves this in a local [Oxigraph](https://github.com/oxigraph/oxigraph) databa
 
 ### Usage
 
-#### Initialization
+#### init
 
 Begin by initializing an `ontoenv` workspace in a directory containing some ontology files (Turtle files, etc).
 
@@ -50,7 +54,7 @@ Begin by initializing an `ontoenv` workspace in a directory containing some onto
 ontoenv init
 ```
 
-This may take a couple minutes. `ontoenv` searches for all local files defining ontologies, identifies their dependencies, and then recursively pulls in those dependencies, *their* dependencies, and so on. It is possible to adjust which directories `ontoenv` searches for, which files it traverses, and whether it pulls ontologies from the web.
+Initializes `.ontoenv/`, discovers ontologies, and loads dependencies. Tune search paths and behavior with flags.
 
 ```ignore
 $ ontoenv init -h
@@ -77,23 +81,22 @@ Offline mode in particular is helpful when you want to limit which ontologies ge
 
 #### Local State
 
-`ontoenv` stores its configuration and internal database in a `.ontoenv` directory placed in directory from where you ran `ontoenv init`.
+- Directory: `.ontoenv/`
+- Persistent store: `.ontoenv/store.r5tu` (RDF5D)
+- Lock file: `.ontoenv/store.lock` (single writer, shared readers)
 
-#### Refreshing
+#### update
 
-Refresh the workspace to account for changes to local files. `ontoenv` will use the timestamps on the local files to determine which files to load. This means that refreshing the workspace is often much faster than a full initialization.
+- Refreshes the environment based on file timestamps and configuration.
+- Re‑run `init` to change search paths or flags.
 
-Refreshing the graph uses the same parameters as given during `ontoenv init`.
-To change these parameters, just run `ontoenv init` again with the desired flags and parameters.
+Examples:
+- `ontoenv update` — refresh only changed/added files
+- `ontoenv init --overwrite` — rebuild from scratch
 
-#### Importing Dependencies
+#### closure
 
-`ontoenv` can import all dependencies (immediate and transitive) into a unified graph.
-This is often helpful for passing to reasoners or query processors; while many of these can deal with importing multiple graphs, it is much more convenient to have a single file one can ship around.
-We refer to the resulting "unified graph" as the *imports closure*.
-
-`ontoenv closure <root ontology name>` computes the imports closure and places it into an `output.ttl` file (or a location of your choice).
-There are a several flags one can provide for this process
+Compute and optionally write the imports closure (union of a graph and its transitive imports). Useful for reasoning, exchange, or exporting a single file.
 
 ```ignore
 $ Compute the owl:imports closure of an ontology and write it to a file
@@ -113,27 +116,21 @@ Options:
           Print help
 ```
 
-#### Listing Ontologies
+#### Other commands
 
-`ontoenv list-ontologies` will display a list of ontology names in the workspace.
+- `ontoenv list-ontologies` — list ontology IRIs known to the environment
+- `ontoenv dump` — show ontologies, imports, sizes, and metadata
+- `ontoenv dep-graph` — export a GraphViz import dependency graph (PDF) if GraphViz is available
 
-`ontoenv dump` will print out an alphabetized list of all ontologies in the workspace, their imports, number of triples, and other metadata.
-
-If GraphViz is installed, `ontoenv dep-graph` will output a PDF graph representation of the imports closure.
-
-## Python Library
+## Python API (`pyontoenv`)
 
 ##### Installation
 
 `pip install pyontoenv`
 
-#### Usage
+### Basic usage
 
-Here is a basic example of how to use the `pyontoenv` Python library. This example will:
-1. Create a temporary directory.
-2. Write two simple ontologies to files in that directory, where one imports the other.
-3. Configure and initialize `ontoenv` to use this directory.
-4. Compute the dependency closure of one ontology to demonstrate that `ontoenv` correctly resolves and includes the imported ontology.
+Example: create a temporary environment, discover ontologies, and compute a closure.
 
 ```python
 import tempfile
@@ -180,6 +177,34 @@ with tempfile.TemporaryDirectory() as temp_dir:
     print(f"Graph of ontology_a has {len(g_a)} triples")
     assert len(g_a) == 1
 ```
+
+### Key methods
+
+- Constructor: `OntoEnv(path=None, recreate=False, read_only=False, search_directories=None, require_ontology_names=False, strict=False, offline=False, resolution_policy="default", root=".", includes=None, excludes=None, temporary=False, no_search=False)`
+  - `offline`: don’t fetch remote ontologies
+  - `temporary`: in‑memory only (no `.ontoenv/`)
+- `update(all=False)`: refresh discovered ontologies
+- `add(location, fetch_imports=True) -> str`: add graph from file or URL; returns graph IRI
+- `get_graph(name) -> rdflib.Graph`: get just one ontology graph
+- `get_closure(name, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1) -> (Graph, list[str])`
+- `import_dependencies(graph, fetch_missing=False) -> list[str]`: load imports into an rdflib graph
+- `list_closure(name, recursion_depth=-1) -> list[str]`: list IRIs in the closure
+- `get_importers(name) -> list[str]`: ontologies that import `name`
+- `to_rdflib_dataset() -> rdflib.Dataset`: in‑memory Dataset with one named graph per ontology
+- `store_path() -> Optional[str]`: path to `.ontoenv/` (persistent envs) or `None` (temporary)
+- `close()`: persist (if applicable) and release resources
+
+#### get_closure vs import_dependencies
+
+- `get_closure(name, ...)` computes the transitive imports closure for the ontology identified by `name` and builds the union of all graphs in that closure.
+  - Returns: a new rdflib Graph (or writes into `destination_graph` if provided) plus the ordered list of ontology IRIs in the closure.
+  - Options: can rewrite SHACL prefix blocks to the chosen base ontology and remove `owl:imports` statements in the merged result.
+  - Use when you need a single, self‑contained graph representing an ontology and all of its imports (for reasoning, exchange, or export).
+
+- `import_dependencies(graph, fetch_missing=False)` scans an existing rdflib Graph for ontology declarations and `owl:imports`, then augments that same Graph by loading the referenced ontologies (from the environment, or from the web if `fetch_missing=True`).
+  - Returns: the list of ontology IRIs that were imported.
+  - Mutates: the provided rdflib Graph in‑place (does not create a union graph per se; it enriches the given graph with imported triples).
+  - Use when you already have a Graph and want to populate it with the triples from its declared imports, respecting your environment’s offline/strict settings.
 
 ## Rust Library
 
@@ -264,3 +289,17 @@ fs::remove_dir_all(&test_dir)?;
 # Ok(())
 # }
 ```
+
+### Core Rust API (selected)
+
+- `OntoEnv::init(config, overwrite) -> OntoEnv`
+- `OntoEnv::load_from_directory(root, read_only) -> OntoEnv`
+- `OntoEnv::update_all(all: bool)`
+- `OntoEnv::add(location, overwrite) -> GraphIdentifier`
+- `OntoEnv::get_graph(id) -> Graph`
+- `OntoEnv::get_union_graph(ids)` and `get_closure(id, recursion_depth)`
+- `OntoEnv::save_to_directory()`, `flush()` (persists to `.ontoenv/store.r5tu`)
+
+Persistent storage details
+- On-disk: RDF5D file `.ontoenv/store.r5tu` (single writer, shared readers, atomic writes)
+- Runtime: in-memory Oxigraph store for fast queries
