@@ -206,6 +206,11 @@ impl OntoEnv {
     ) -> PyResult<Self> {
         let root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
 
+        // Strict Git-like behavior:
+        // - temporary=True: create a temporary (in-memory) env
+        // - recreate=True: create (or overwrite) an env at root_path
+        // - otherwise: discover upward; if not found, error
+
         let mut builder = config::Config::builder()
             .root(root_path.clone())
             .require_ontology_names(require_ontology_names)
@@ -230,10 +235,25 @@ impl OntoEnv {
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-        let env = if !cfg.temporary && !recreate && root_path.join(".ontoenv").exists() {
-            OntoEnvRs::load_from_directory(root_path, read_only).map_err(anyhow_to_pyerr)?
+        let env = if cfg.temporary {
+            // Explicit in-memory env
+            OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
+        } else if recreate {
+            // Explicit create/overwrite at root_path
+            OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
         } else {
-            OntoEnvRs::init(cfg, recreate).map_err(anyhow_to_pyerr)?
+            // Discover upward from root_path; load if found, else error.
+            match ::ontoenv::api::find_ontoenv_root_from(&root_path) {
+                Some(found_root) => {
+                    OntoEnvRs::load_from_directory(found_root, read_only).map_err(anyhow_to_pyerr)?
+                }
+                None => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "OntoEnv directory not found at: \"{}\"",
+                        root_path.join(".ontoenv").to_string_lossy()
+                    )));
+                }
+            }
         };
 
         let inner = Arc::new(Mutex::new(Some(env)));
