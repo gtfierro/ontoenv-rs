@@ -133,12 +133,12 @@ enum Commands {
     Closure {
         /// The name (URI) of the ontology to compute the closure for
         ontology: String,
-        /// Rewrite the sh:prefixes declarations to point to the chosen ontology, defaults to true
-        #[clap(long, short, action, default_value = "true")]
-        rewrite_sh_prefixes: Option<bool>,
-        /// Remove owl:imports statements from the closure, defaults to true
-        #[clap(long, short, action, default_value = "true")]
-        remove_owl_imports: Option<bool>,
+        /// Do NOT rewrite sh:prefixes (rewrite is ON by default)
+        #[clap(long, action, default_value = "false")]
+        no_rewrite_sh_prefixes: bool,
+        /// Keep owl:imports statements (removal is ON by default)
+        #[clap(long, action, default_value = "false")]
+        keep_owl_imports: bool,
         /// The file to write the closure to, defaults to 'output.ttl'
         destination: Option<String>,
         /// The recursion depth for exploring owl:imports. <0: unlimited, 0: no imports, >0:
@@ -448,7 +448,20 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let ontoenv_exists = ontoenv::api::find_ontoenv_root()
+    // Discover environment root: ONTOENV_DIR takes precedence, else walk parents
+    let env_dir_var = std::env::var("ONTOENV_DIR").ok().map(PathBuf::from);
+    let discovered_root = if let Some(dir) = env_dir_var.clone() {
+        // If ONTOENV_DIR points to the .ontoenv directory, take its parent as root
+        if dir.file_name().map(|n| n == ".ontoenv").unwrap_or(false) {
+            dir.parent().map(|p| p.to_path_buf())
+        } else {
+            Some(dir)
+        }
+    } else {
+        ontoenv::api::find_ontoenv_root()
+    };
+    let ontoenv_exists = discovered_root
+        .as_ref()
         .map(|root| root.join(".ontoenv").join("ontoenv.json").exists())
         .unwrap_or(false);
     info!("OntoEnv exists: {ontoenv_exists}");
@@ -461,8 +474,8 @@ fn main() -> Result<()> {
         let e = OntoEnv::init(config.clone(), false)?;
         Some(e)
     } else if cmd.command.to_string() != "Init" && ontoenv_exists {
-        // if .ontoenv exists, load it
-        Some(OntoEnv::load_from_directory(current_dir()?, false)?) // no read-only
+        // if .ontoenv exists, load it from discovered root
+        Some(OntoEnv::load_from_directory(discovered_root.unwrap(), false)?) // no read-only
     } else {
         None
     };
@@ -561,8 +574,8 @@ fn main() -> Result<()> {
         }
         Commands::Closure {
             ontology,
-            rewrite_sh_prefixes,
-            remove_owl_imports,
+            no_rewrite_sh_prefixes,
+            keep_owl_imports,
             destination,
             recursion_depth,
         } => {
@@ -573,7 +586,10 @@ fn main() -> Result<()> {
                 .resolve(ResolveTarget::Graph(iri.clone()))
                 .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
             let closure = env.get_closure(&graphid, recursion_depth)?;
-            let union = env.get_union_graph(&closure, rewrite_sh_prefixes, remove_owl_imports)?;
+            // Defaults: rewrite prefixes = ON, remove owl:imports = ON; flags disable these.
+            let rewrite = !no_rewrite_sh_prefixes;
+            let remove = !keep_owl_imports;
+            let union = env.get_union_graph(&closure, Some(rewrite), Some(remove))?;
             if let Some(failed_imports) = union.failed_imports {
                 for imp in failed_imports {
                     eprintln!("{imp}");

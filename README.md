@@ -54,7 +54,7 @@ Begin by initializing an `ontoenv` workspace in a directory containing some onto
 ontoenv init
 ```
 
-Initializes `.ontoenv/`, discovers ontologies, and loads dependencies. Tune search paths and behavior with flags.
+Initializes `.ontoenv/` in the current directory (or specified root), discovers ontologies, and loads dependencies. You must run `init` once per environment. Subsequent commands will auto‑discover the nearest `.ontoenv/` in parent directories.
 
 ```ignore
 $ ontoenv init -h
@@ -79,11 +79,23 @@ Options:
 
 Offline mode in particular is helpful when you want to limit which ontologies get loaded. Simply download the ontologies you want, and then enable offline mode.
 
+Examples:
+- `ontoenv init` — initialize in current directory
+- `ontoenv init ./ontologies ./models` — initialize and search these directories
+- `ontoenv init --overwrite --offline ./ontologies` — rebuild from scratch and work offline
+
 #### Local State
 
 - Directory: `.ontoenv/`
 - Persistent store: `.ontoenv/store.r5tu` (RDF5D)
 - Lock file: `.ontoenv/store.lock` (single writer, shared readers)
+
+### Behavior
+
+- Discovery: Commands (except `init`) discover an environment by walking up parent directories from the current working directory, looking for `.ontoenv/`.
+- Override: Set `ONTOENV_DIR` to point to a specific environment; if it points at a `.ontoenv` directory the parent of that directory is used as the root.
+- Creation: Only `ontoenv init` creates an environment on disk. Other commands will error if no environment is found.
+- Temporary mode: Pass `--temporary` to run with an in‑memory environment (no `.ontoenv/`).
 
 #### update
 
@@ -92,35 +104,28 @@ Offline mode in particular is helpful when you want to limit which ontologies ge
 
 Examples:
 - `ontoenv update` — refresh only changed/added files
-- `ontoenv init --overwrite` — rebuild from scratch
+- `ontoenv update --all` — rebuild the in‑memory view from sources
 
 #### closure
 
 Compute and optionally write the imports closure (union of a graph and its transitive imports). Useful for reasoning, exchange, or exporting a single file.
 
-```ignore
-$ Compute the owl:imports closure of an ontology and write it to a file
-
-Usage: ontoenv closure [OPTIONS] <ONTOLOGY> [DESTINATION]
-
-Arguments:
-  <ONTOLOGY>     The name (URI) of the ontology to compute the closure for
-  [DESTINATION]  The file to write the closure to, defaults to 'output.ttl'
-
-Options:
-      --rewrite-sh-prefixes <REWRITE_SH_PREFIXES>
-          Rewrite the sh:prefixes declarations to point to the chosen ontology, defaults to true [default: true] [possible values: true, false]
-      --remove-owl-imports <REMOVE_OWL_IMPORTS>
-          Remove owl:imports statements from the closure, defaults to true [default: true] [possible values: true, false]
-  -h, --help
-          Print help
-```
+Examples:
+- `ontoenv closure http://example.org/ont/MyOntology` (writes `output.ttl`)
+- `ontoenv closure http://example.org/ont/MyOntology result.ttl` (auto‑rewrites SHACL prefixes and removes owl:imports)
+- To disable either behavior:
+  - `ontoenv closure http://example.org/ont/MyOntology --no-rewrite-sh-prefixes`
+  - `ontoenv closure http://example.org/ont/MyOntology --keep-owl-imports`
 
 #### Other commands
 
-- `ontoenv list-ontologies` — list ontology IRIs known to the environment
 - `ontoenv dump` — show ontologies, imports, sizes, and metadata
 - `ontoenv dep-graph` — export a GraphViz import dependency graph (PDF) if GraphViz is available
+- `ontoenv status` — human-friendly status; add `--json` for machine‑readable
+- `ontoenv update` — refresh discovered ontologies
+- `ontoenv list ontologies` — ontology names in the environment; add `--json` for JSON array
+- `ontoenv list missing` — missing imports (i.e. not found in environment); add `--json` for JSON array
+- `ontoenv why <IRI> [<IRI> ...]` — show who imports the given ontology as paths; add `--json` to emit a single JSON document mapping each IRI to path arrays
 
 ## Python API (`pyontoenv`)
 
@@ -193,6 +198,14 @@ with tempfile.TemporaryDirectory() as temp_dir:
 - `to_rdflib_dataset() -> rdflib.Dataset`: in‑memory Dataset with one named graph per ontology
 - `store_path() -> Optional[str]`: path to `.ontoenv/` (persistent envs) or `None` (temporary)
 - `close()`: persist (if applicable) and release resources
+
+### Behavior
+
+- Strict Git‑like:
+  - Temporary environment: `OntoEnv(temporary=True)` creates an in‑memory environment (no `.ontoenv/`).
+  - Create/overwrite on disk: `OntoEnv(path=..., recreate=True)` explicitly creates a new environment at `path` (or overwrites if it exists).
+  - Discover and load: Otherwise, the constructor walks up from `path` (or `root=.` if `path` is None) to find an existing `.ontoenv/`. If found, it loads it; if not, it raises `ValueError` with a hint to use `recreate=True` or `temporary=True`.
+  - Flags such as `offline`, `strict`, `search_directories`, `includes`, `excludes` apply to created environments; loading respects the saved configuration.
 
 #### get_closure vs import_dependencies
 
@@ -303,3 +316,14 @@ fs::remove_dir_all(&test_dir)?;
 Persistent storage details
 - On-disk: RDF5D file `.ontoenv/store.r5tu` (single writer, shared readers, atomic writes)
 - Runtime: in-memory Oxigraph store for fast queries
+
+### Behavior
+
+- Discovery helpers:
+  - `find_ontoenv_root()` and `find_ontoenv_root_from(path)`: walk up parent directories to locate the root that contains `.ontoenv/`.
+  - Load: `OntoEnv::load_from_directory(root, read_only)` loads an existing environment.
+- Creation:
+  - `OntoEnv::init(config, overwrite)` explicitly creates (or overwrites) an environment on disk.
+- Recommended pattern:
+  - Try discovery (`find_ontoenv_root()`), then `load_from_directory`; if not found, prompt/init explicitly.
+  - Use `config.temporary = true` (via `Config::builder`) and `OntoEnv::init` for in‑memory use cases.
