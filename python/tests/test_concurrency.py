@@ -125,7 +125,7 @@ class TestOntoEnvReadOnlyConcurrency(unittest.TestCase):
         )
 
         # Create the store and add ontologies (single writer)
-        env = OntoEnv(path=self.test_dir)
+        env = OntoEnv(path=self.test_dir, recreate=True)
         name_a = env.add(str(a_path), fetch_imports=False)
         name_b = env.add(str(b_path), fetch_imports=False)
         self.assertEqual(name_a, a_uri)
@@ -196,7 +196,7 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
             encoding="utf-8",
         )
 
-        env = OntoEnv(path=self.test_dir)
+        env = OntoEnv(path=self.test_dir, recreate=True)
         name_a = env.add(str(a_path), fetch_imports=False)
         name_b = env.add(str(b_path), fetch_imports=False)
         self.assertEqual(name_a, a_uri)
@@ -253,7 +253,7 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
             f"<{a_uri}> a owl:Ontology .\n",
             encoding="utf-8",
         )
-        env = OntoEnv(path=self.test_dir)
+        env = OntoEnv(path=self.test_dir, recreate=True)
         env.add(str(a_path), fetch_imports=False)
         env.flush()
         env.close()
