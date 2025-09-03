@@ -117,6 +117,18 @@ fn term_to_python<'a>(
 }
 
 
+/// Call the pure-Python CLI entry in `ontoenv.init`.
+#[pyfunction]
+fn init_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
+    let module = py.import("ontoenv.init")?;
+    let main = module.getattr("main")?;
+    let ret = match args {
+        Some(argv) => main.call1((argv,))?,
+        None => main.call0()?,
+    };
+    ret.extract::<i32>()
+}
+
 
 #[pyclass(name = "Ontology")]
 #[derive(Clone)]
@@ -1108,6 +1120,7 @@ fn ontoenv(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<OntoEnv>()?;
     m.add_class::<PyOntology>()?;
+    m.add_function(wrap_pyfunction!(init_cli, m)?)?;
     // add version attribute
     m.add("version", env!("CARGO_PKG_VERSION"))?;
     Ok(())
