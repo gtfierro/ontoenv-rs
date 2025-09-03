@@ -7,7 +7,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0-a2"
+version = "0.4.0-a3"
 authors = ["Gabe Fierro <gtfierro@mines.edu>"]
 license = "BSD-3-Clause"
 edition = "2021"
@@ -36,7 +36,7 @@ derive_builder = "0.20"
 oxigraph = "0.4.11"
 rdf5d = { version = "0.1.2", features = ["oxigraph", "zstd"] }
 
-ontoenv = { version = "0.4.0-a2", path = "lib" }
+ontoenv = { version = "0.4.0-a3", path = "lib" }
 
 [profile.profiling]
 inherits = "release"
