@@ -133,3 +133,111 @@ fn why_lists_importers_paths() {
     assert!(stdout.contains(&format!("{} -> {} -> {}", c_uri, a_uri, b_uri)));
 }
 
+// Get command: default Turtle to STDOUT by IRI
+#[test]
+fn get_stdout_turtle() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("get_turtle");
+    let iri = "http://example.org/ont/Only";
+    let path = root.join("only.ttl");
+    write_ttl(&path, iri, "");
+
+    // init
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .output()
+        .expect("run init");
+    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    // get to stdout
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("get")
+        .arg(iri)
+        .output()
+        .expect("run get");
+    assert!(out.status.success(), "get failed: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Expect to see the ontology triple in some form
+    assert!(stdout.contains(iri), "stdout did not contain IRI: {}", stdout);
+}
+
+// Get command: JSON-LD output
+#[test]
+fn get_jsonld_output() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("get_jsonld");
+    let iri = "http://example.org/ont/JL";
+    let path = root.join("jl.ttl");
+    write_ttl(&path, iri, "");
+
+    // init
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .output()
+        .expect("run init");
+    assert!(out.status.success());
+
+    // get jsonld to stdout
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("get")
+        .arg(iri)
+        .arg("--format")
+        .arg("jsonld")
+        .output()
+        .expect("run get jsonld");
+    assert!(out.status.success(), "get jsonld failed: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(iri), "jsonld output missing iri; got: {}", stdout);
+    assert!(stdout.trim_start().starts_with("{") || stdout.trim_start().starts_with("["), "not JSON-LD? {}", stdout);
+}
+
+// Get command: disambiguate with --location when same IRI at two locations
+#[test]
+fn get_with_location_disambiguates() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("get_loc");
+    let iri = "http://example.org/ont/Dup";
+    let p1 = root.join("dup_v1.ttl");
+    let p2 = root.join("dup_v2.ttl");
+    // add distinguishing triples
+    write_ttl(&p1, iri, "<http://example.org/x> <http://example.org/p> \"v1\" .");
+    write_ttl(&p2, iri, "<http://example.org/x> <http://example.org/p> \"v2\" .");
+
+    // init
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .output()
+        .expect("run init");
+    assert!(out.status.success());
+
+    // get with location pointing to v1
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("get")
+        .arg(iri)
+        .arg("--location")
+        .arg(p1.to_str().unwrap())
+        .output()
+        .expect("run get v1");
+    assert!(out.status.success(), "get v1 failed: {}", String::from_utf8_lossy(&out.stderr));
+    let s1 = String::from_utf8_lossy(&out.stdout);
+    assert!(s1.contains("\"v1\""), "expected v1 triple, got: {}", s1);
+
+    // get with location pointing to v2
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("get")
+        .arg(iri)
+        .arg("-l")
+        .arg(p2.to_str().unwrap())
+        .output()
+        .expect("run get v2");
+    assert!(out.status.success(), "get v2 failed: {}", String::from_utf8_lossy(&out.stderr));
+    let s2 = String::from_utf8_lossy(&out.stdout);
+    assert!(s2.contains("\"v2\""), "expected v2 triple, got: {}", s2);
+}
