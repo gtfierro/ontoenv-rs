@@ -7,6 +7,7 @@ use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
 use ontoenv::ToUriString;
 use oxigraph::model::NamedNode;
+use oxigraph::io::{RdfFormat, JsonLdProfileSet};
 use serde_json;
 use std::env::current_dir;
 use std::path::PathBuf;
@@ -49,9 +50,6 @@ struct Cli {
     /// Do not search for ontologies in the search directories
     #[clap(long = "no-search", short = 'n', action, global = true)]
     no_search: bool,
-    /// Directories to search for ontologies. If not provided, the current directory is used.
-    #[clap(global = true, last = true)]
-    locations: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -108,6 +106,9 @@ enum Commands {
         /// Overwrite the environment if it already exists
         #[clap(long, default_value = "false")]
         overwrite: bool,
+        /// Directories to search for ontologies. If not provided, the current directory is used.
+        #[clap(last = true)]
+        locations: Option<Vec<PathBuf>>,
     },
     /// Prints the version of the ontoenv binary
     Version,
@@ -145,6 +146,20 @@ enum Commands {
         /// specific depth.
         #[clap(long, default_value = "-1")]
         recursion_depth: i32,
+    },
+    /// Retrieve a single graph from the environment and write it to STDOUT or a file
+    Get {
+        /// Ontology IRI (name)
+        ontology: String,
+        /// Optional source location (file path or URL) to disambiguate
+        #[clap(long, short = 'l')]
+        location: Option<String>,
+        /// Output file path; if omitted, writes to STDOUT
+        #[clap(long)]
+        output: Option<String>,
+        /// Serialization format: one of [turtle, ntriples, rdfxml, jsonld] (default: turtle)
+        #[clap(long, short = 'f')]
+        format: Option<String>,
     },
     /// Add an ontology to the environment
     Add {
@@ -212,6 +227,7 @@ impl ToString for Commands {
             Commands::Status { .. } => "Status".to_string(),
             Commands::Update { .. } => "Update".to_string(),
             Commands::Closure { .. } => "Closure".to_string(),
+            Commands::Get { .. } => "Get".to_string(),
             Commands::Add { .. } => "Add".to_string(),
             Commands::List { .. } => "List".to_string(),
             Commands::Dump { .. } => "Dump".to_string(),
@@ -406,8 +422,9 @@ fn main() -> Result<()> {
         .temporary(cmd.temporary)
         .no_search(cmd.no_search);
 
-    if let Some(locations) = cmd.locations {
-        builder = builder.locations(locations);
+    // Locations only apply to `init`; other commands ignore positional LOCATIONS
+    if let Commands::Init { locations: Some(locs), .. } = &cmd.command {
+        builder = builder.locations(locs.clone());
     }
     // only set includes if they are provided on the command line, otherwise use builder defaults
     if !cmd.includes.is_empty() {
@@ -469,20 +486,30 @@ fn main() -> Result<()> {
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
     // - if temporary is false, load the env from the .ontoenv directory if it exists
+    // Determine if this command needs write access to the store
+    let needs_rw = matches!(
+        cmd.command,
+        Commands::Add { .. } | Commands::Update { .. }
+    );
+
     let env: Option<OntoEnv> = if cmd.temporary {
         // Create a new OntoEnv object in temporary mode
         let e = OntoEnv::init(config.clone(), false)?;
         Some(e)
     } else if cmd.command.to_string() != "Init" && ontoenv_exists {
         // if .ontoenv exists, load it from discovered root
-        Some(OntoEnv::load_from_directory(discovered_root.unwrap(), false)?) // no read-only
+        // Open read-only unless the command requires write access
+        Some(OntoEnv::load_from_directory(
+            discovered_root.unwrap(),
+            !needs_rw,
+        )?)
     } else {
         None
     };
     info!("OntoEnv loaded: {}", env.is_some());
 
     match cmd.command {
-        Commands::Init { overwrite } => {
+        Commands::Init { overwrite, .. } => {
             // if temporary, raise an error
             if cmd.temporary {
                 return Err(anyhow::anyhow!(
@@ -508,6 +535,68 @@ fn main() -> Result<()> {
             // The call to `init` will create and update the environment.
             // `update` will also save it to the directory.
             let _ = OntoEnv::init(config, overwrite)?;
+        }
+        Commands::Get {
+            ontology,
+            location,
+            output,
+            format,
+        } => {
+            let env = require_ontoenv(env)?;
+
+            // If a location is provided, resolve by location. Otherwise resolve by name (IRI).
+            let graph = if let Some(loc) = location {
+                let oloc = if loc.starts_with("http://") || loc.starts_with("https://") {
+                    OntologyLocation::Url(loc)
+                } else {
+                    // Normalize to absolute path
+                    ontoenv::ontology::OntologyLocation::from_str(&loc).unwrap_or_else(|_| OntologyLocation::File(PathBuf::from(loc)))
+                };
+                // Read directly from the specified location to disambiguate
+                oloc.graph()?
+            } else {
+                let iri = NamedNode::new(ontology)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let graphid = env
+                    .resolve(ResolveTarget::Graph(iri))
+                    .ok_or(anyhow::anyhow!("Ontology not found"))?;
+                env.get_graph(&graphid)?
+            };
+
+            let fmt = match format
+                .as_deref()
+                .unwrap_or("turtle")
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "turtle" | "ttl" => RdfFormat::Turtle,
+                "ntriples" | "nt" => RdfFormat::NTriples,
+                "rdfxml" | "xml" => RdfFormat::RdfXml,
+                "jsonld" | "json-ld" => RdfFormat::JsonLd { profile: JsonLdProfileSet::default() },
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "Unsupported format '{}'. Use one of: turtle, ntriples, rdfxml, jsonld",
+                        other
+                    ))
+                }
+            };
+
+            if let Some(path) = output {
+                let mut file = std::fs::File::create(path)?;
+                let mut serializer = oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut file);
+                for t in graph.iter() {
+                    serializer.serialize_triple(t)?;
+                }
+                serializer.finish()?;
+            } else {
+                let stdout = std::io::stdout();
+                let mut handle = stdout.lock();
+                let mut serializer = oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut handle);
+                for t in graph.iter() {
+                    serializer.serialize_triple(t)?;
+                }
+                serializer.finish()?;
+            }
         }
         Commands::Version => {
             println!(

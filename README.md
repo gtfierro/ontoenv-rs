@@ -95,6 +95,7 @@ Examples:
 - Discovery: Commands (except `init`) discover an environment by walking up parent directories from the current working directory, looking for `.ontoenv/`.
 - Override: Set `ONTOENV_DIR` to point to a specific environment; if it points at a `.ontoenv` directory the parent of that directory is used as the root.
 - Creation: Only `ontoenv init` creates an environment on disk. Other commands will error if no environment is found.
+- Positional search directories: Only `ontoenv init` accepts positional search directories (LOCATIONS). Other commands ignore trailing positionals.
 - Temporary mode: Pass `--temporary` to run with an in‑memory environment (no `.ontoenv/`).
 
 #### update
@@ -116,6 +117,23 @@ Examples:
 - To disable either behavior:
   - `ontoenv closure http://example.org/ont/MyOntology --no-rewrite-sh-prefixes`
   - `ontoenv closure http://example.org/ont/MyOntology --keep-owl-imports`
+
+#### get
+
+Retrieve a single ontology graph from the environment and write it to STDOUT or a file in a chosen serialization format.
+
+Examples:
+- `ontoenv get http://example.org/ont/MyOntology` — prints Turtle to STDOUT
+- `ontoenv get http://example.org/ont/MyOntology --format jsonld` — prints JSON‑LD to STDOUT
+- `ontoenv get http://example.org/ont/MyOntology --output my.ttl` — writes Turtle to `my.ttl`
+- Disambiguate when multiple copies share the same IRI (different locations):
+  - `ontoenv get http://example.org/ont/MyOntology --location ./ontologies/MyOntology-1.4.ttl`
+  - `ontoenv get http://example.org/ont/MyOntology -l https://example.org/MyOntology-1.3.ttl`
+
+Notes:
+- Supported formats: `turtle` (default), `ntriples`, `rdfxml`, `jsonld`.
+- `--output` writes to a file; omit to print to STDOUT.
+- `--location` accepts a file path or URL and is only needed to disambiguate when multiple sources exist for the same IRI.
 
 #### Other commands
 
