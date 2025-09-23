@@ -326,7 +326,8 @@ fs::remove_dir_all(&test_dir)?;
 - `OntoEnv::init(config, overwrite) -> OntoEnv`
 - `OntoEnv::load_from_directory(root, read_only) -> OntoEnv`
 - `OntoEnv::update_all(all: bool)`
-- `OntoEnv::add(location, overwrite) -> GraphIdentifier`
+- `OntoEnv::add(location, Overwrite, RefreshStrategy) -> GraphIdentifier`
+- `OntoEnv::add_no_imports(location, Overwrite, RefreshStrategy) -> GraphIdentifier`
 - `OntoEnv::get_graph(id) -> Graph`
 - `OntoEnv::get_union_graph(ids)` and `get_closure(id, recursion_depth)`
 - `OntoEnv::save_to_directory()`, `flush()` (persists to `.ontoenv/store.r5tu`)
@@ -342,6 +343,17 @@ Persistent storage details
   - Load: `OntoEnv::load_from_directory(root, read_only)` loads an existing environment.
 - Creation:
   - `OntoEnv::init(config, overwrite)` explicitly creates (or overwrites) an environment on disk.
+  - `OntoEnv::add(..., Overwrite::Allow, RefreshStrategy::UseCache)` is the common way to add an ontology, while `RefreshStrategy::Force` skips cache reuse.
 - Recommended pattern:
   - Try discovery (`find_ontoenv_root()`), then `load_from_directory`; if not found, prompt/init explicitly.
   - Use `config.temporary = true` (via `Config::builder`) and `OntoEnv::init` for in‑memory use cases.
+
+### Option enums
+
+The Rust API now exposes expressive enums instead of opaque booleans:
+
+- `Overwrite::{Allow, Preserve}` — replace existing graphs or keep the original.
+- `RefreshStrategy::{Force, UseCache}` — bypass or reuse cached ontologies.
+- `CacheMode::{Enabled, Disabled}` — persisted in `Config` and mirrored in Python as the `use_cached_ontologies` boolean.
+
+From older code that passed `true`/`false`, use `Overwrite::Allow`/`Preserve` and `RefreshStrategy::Force`/`UseCache`. `bool` values still convert via `Into`, so existing code can migrate incrementally.
