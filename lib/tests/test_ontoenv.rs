@@ -3,7 +3,10 @@ use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::Config;
 use ontoenv::ontology::OntologyLocation;
 use oxigraph::model::NamedNodeRef;
+use std::fs;
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 use tempdir::TempDir;
 
 // the tests directory contains a number of test files that are used to test the OntoEnv.

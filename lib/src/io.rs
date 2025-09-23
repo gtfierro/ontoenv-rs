@@ -6,16 +6,19 @@ use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::util::{get_file_contents, get_url_contents};
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
+use fs2::FileExt;
 use log::{debug, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, Quad};
 use oxigraph::store::Store;
+use rdf5d::{
+    reader::R5tuFile,
+    writer::{Quint, StreamingWriter, Term as R5Term, WriterOptions},
+};
 use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
-use fs2::FileExt;
-use rdf5d::{reader::R5tuFile, writer::{StreamingWriter, WriterOptions, Quint, Term as R5Term}};
 
 #[derive(Debug, Clone)]
 pub struct StoreStats {
@@ -53,11 +56,11 @@ fn add_ontology_to_store(
     tmp_store
         .bulk_loader()
         .load_from_reader(parser, bytes.as_slice())?;
-        debug!(
-            "Loaded {} into staging store in {:?}",
-            location.as_str(),
-            t0.elapsed()
-        );
+    debug!(
+        "Loaded {} into staging store in {:?}",
+        location.as_str(),
+        t0.elapsed()
+    );
 
     // Build ontology metadata from the staging store
     let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location);
@@ -77,9 +80,7 @@ fn add_ontology_to_store(
                 None,
                 Some(GraphNameRef::NamedNode(staging_graph.as_ref())),
             )
-            .map(|res| {
-                res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone()))
-            });
+            .map(|res| res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone())));
         store
             .bulk_loader()
             .load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
@@ -259,7 +260,12 @@ impl PersistentGraphIO {
             let mut quads_buf: Vec<Quad> = Vec::with_capacity(gr.n_triples as usize);
             for res in triples {
                 let t = res.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
-                quads_buf.push(Quad::new(t.subject, t.predicate, t.object, graphname.clone()));
+                quads_buf.push(Quad::new(
+                    t.subject,
+                    t.predicate,
+                    t.object,
+                    graphname.clone(),
+                ));
             }
             store.bulk_loader().load_quads(quads_buf.into_iter())?;
         }
@@ -268,7 +274,10 @@ impl PersistentGraphIO {
 
     fn write_store_to_r5tu(&self) -> Result<()> {
         // Stream out all quads in the in-memory store to an RDF5D file atomically
-        let opts = WriterOptions { zstd: true, with_crc: true };
+        let opts = WriterOptions {
+            zstd: true,
+            with_crc: true,
+        };
         let mut writer = StreamingWriter::new(&self.store_path, opts);
 
         let mut iter = self.store.quads_for_pattern(None, None, None, None);
@@ -296,10 +305,18 @@ impl PersistentGraphIO {
                 oxigraph::model::Term::Literal(lit) => {
                     let lex = lit.value().to_string();
                     if let Some(lang) = lit.language() {
-                        R5Term::Literal { lex, dt: None, lang: Some(lang.to_string()) }
+                        R5Term::Literal {
+                            lex,
+                            dt: None,
+                            lang: Some(lang.to_string()),
+                        }
                     } else {
                         let dt = lit.datatype().as_str().to_string();
-                        R5Term::Literal { lex, dt: Some(dt), lang: None }
+                        R5Term::Literal {
+                            lex,
+                            dt: Some(dt),
+                            lang: None,
+                        }
                     }
                 }
                 oxigraph::model::Term::Triple(_) => {
@@ -307,7 +324,13 @@ impl PersistentGraphIO {
                 }
             };
 
-            writer.add(Quint { id: id_str, s: s_term, p: p_term, o: o_term, gname: gname_str })?;
+            writer.add(Quint {
+                id: id_str,
+                s: s_term,
+                p: p_term,
+                o: o_term,
+                gname: gname_str,
+            })?;
         }
 
         writer.finalize()?;
@@ -333,7 +356,8 @@ impl GraphIO for PersistentGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
-        let ont = add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
+        let ont =
+            add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
         // Persist entire dataset to RDF5D atomically
         self.write_store_to_r5tu()?;
         Ok(ont)
@@ -353,13 +377,19 @@ impl GraphIO for PersistentGraphIO {
     fn size(&self) -> Result<StoreStats> {
         // Prefer reading stats directly from the RDF5D file without touching the in-memory store
         if !self.store_path.exists() {
-            return Ok(StoreStats { num_graphs: 0, num_triples: 0 });
+            return Ok(StoreStats {
+                num_graphs: 0,
+                num_triples: 0,
+            });
         }
         let f = R5tuFile::open(&self.store_path)?;
         let graphs = f.enumerate_all()?;
         let num_graphs = graphs.len();
         let num_triples: usize = graphs.iter().map(|gr| gr.n_triples as usize).sum();
-        Ok(StoreStats { num_graphs, num_triples })
+        Ok(StoreStats {
+            num_graphs,
+            num_triples,
+        })
     }
 }
 
@@ -418,7 +448,9 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         "read-only".to_string()
     }
 
-    fn flush(&mut self) -> Result<()> { Ok(()) }
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
 
     fn store_location(&self) -> Option<&Path> {
         Some(&self.store_path)
@@ -438,13 +470,19 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
 
     fn size(&self) -> Result<StoreStats> {
         if !self.store_path.exists() {
-            return Ok(StoreStats { num_graphs: 0, num_triples: 0 });
+            return Ok(StoreStats {
+                num_graphs: 0,
+                num_triples: 0,
+            });
         }
         let f = R5tuFile::open(&self.store_path)?;
         let graphs = f.enumerate_all()?;
         let num_graphs = graphs.len();
         let num_triples: usize = graphs.iter().map(|gr| gr.n_triples as usize).sum();
-        Ok(StoreStats { num_graphs, num_triples })
+        Ok(StoreStats {
+            num_graphs,
+            num_triples,
+        })
     }
 }
 
@@ -504,14 +542,11 @@ impl MemoryGraphIO {
     pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
         let graphname = id.graphname()?;
         self.store.remove_named_graph(id.name())?;
-        self.store.bulk_loader().load_quads(graph.iter().map(|t| {
-            Quad::new(
-                t.subject,
-                t.predicate,
-                t.object,
-                graphname.clone(),
-            )
-        }))?;
+        self.store.bulk_loader().load_quads(
+            graph
+                .iter()
+                .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
+        )?;
         Ok(())
     }
 }

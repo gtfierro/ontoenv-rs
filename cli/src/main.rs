@@ -6,12 +6,12 @@ use ontoenv::config::Config;
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::util::write_dataset_to_file;
 use ontoenv::ToUriString;
+use oxigraph::io::{JsonLdProfileSet, RdfFormat};
 use oxigraph::model::NamedNode;
-use oxigraph::io::{RdfFormat, JsonLdProfileSet};
 use serde_json;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env::current_dir;
 use std::path::PathBuf;
-use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Parser)]
 #[command(name = "ontoenv")]
@@ -423,7 +423,11 @@ fn main() -> Result<()> {
         .no_search(cmd.no_search);
 
     // Locations only apply to `init`; other commands ignore positional LOCATIONS
-    if let Commands::Init { locations: Some(locs), .. } = &cmd.command {
+    if let Commands::Init {
+        locations: Some(locs),
+        ..
+    } = &cmd.command
+    {
         builder = builder.locations(locs.clone());
     }
     // only set includes if they are provided on the command line, otherwise use builder defaults
@@ -487,10 +491,7 @@ fn main() -> Result<()> {
     // - if temporary is true, create a new env object each time
     // - if temporary is false, load the env from the .ontoenv directory if it exists
     // Determine if this command needs write access to the store
-    let needs_rw = matches!(
-        cmd.command,
-        Commands::Add { .. } | Commands::Update { .. }
-    );
+    let needs_rw = matches!(cmd.command, Commands::Add { .. } | Commands::Update { .. });
 
     let env: Option<OntoEnv> = if cmd.temporary {
         // Create a new OntoEnv object in temporary mode
@@ -550,13 +551,13 @@ fn main() -> Result<()> {
                     OntologyLocation::Url(loc)
                 } else {
                     // Normalize to absolute path
-                    ontoenv::ontology::OntologyLocation::from_str(&loc).unwrap_or_else(|_| OntologyLocation::File(PathBuf::from(loc)))
+                    ontoenv::ontology::OntologyLocation::from_str(&loc)
+                        .unwrap_or_else(|_| OntologyLocation::File(PathBuf::from(loc)))
                 };
                 // Read directly from the specified location to disambiguate
                 oloc.graph()?
             } else {
-                let iri = NamedNode::new(ontology)
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let graphid = env
                     .resolve(ResolveTarget::Graph(iri))
                     .ok_or(anyhow::anyhow!("Ontology not found"))?;
@@ -572,7 +573,9 @@ fn main() -> Result<()> {
                 "turtle" | "ttl" => RdfFormat::Turtle,
                 "ntriples" | "nt" => RdfFormat::NTriples,
                 "rdfxml" | "xml" => RdfFormat::RdfXml,
-                "jsonld" | "json-ld" => RdfFormat::JsonLd { profile: JsonLdProfileSet::default() },
+                "jsonld" | "json-ld" => RdfFormat::JsonLd {
+                    profile: JsonLdProfileSet::default(),
+                },
                 other => {
                     return Err(anyhow::anyhow!(
                         "Unsupported format '{}'. Use one of: turtle, ntriples, rdfxml, jsonld",
@@ -583,7 +586,8 @@ fn main() -> Result<()> {
 
             if let Some(path) = output {
                 let mut file = std::fs::File::create(path)?;
-                let mut serializer = oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut file);
+                let mut serializer =
+                    oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut file);
                 for t in graph.iter() {
                     serializer.serialize_triple(t)?;
                 }
@@ -591,7 +595,8 @@ fn main() -> Result<()> {
             } else {
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
-                let mut serializer = oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut handle);
+                let mut serializer =
+                    oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut handle);
                 for t in graph.iter() {
                     serializer.serialize_triple(t)?;
                 }
@@ -611,8 +616,11 @@ fn main() -> Result<()> {
                 // Recompute status details similar to env.status()
                 let ontoenv_dir = current_dir()?.join(".ontoenv");
                 let last_updated = if ontoenv_dir.exists() {
-                    Some(std::fs::metadata(&ontoenv_dir)?.modified()?.into()) as Option<std::time::SystemTime>
-                } else { None };
+                    Some(std::fs::metadata(&ontoenv_dir)?.modified()?.into())
+                        as Option<std::time::SystemTime>
+                } else {
+                    None
+                };
                 let size: u64 = if ontoenv_dir.exists() {
                     walkdir::WalkDir::new(&ontoenv_dir)
                         .into_iter()
@@ -621,13 +629,16 @@ fn main() -> Result<()> {
                         .filter_map(|e| e.metadata().ok())
                         .map(|m| m.len())
                         .sum()
-                } else { 0 };
+                } else {
+                    0
+                };
                 let missing: Vec<String> = env
                     .missing_imports()
                     .into_iter()
                     .map(|n| n.to_uri_string())
                     .collect();
-                let last_str = last_updated.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
+                let last_str =
+                    last_updated.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
                 let obj = serde_json::json!({
                     "exists": true,
                     "num_ontologies": env.ontologies().len(),
@@ -737,8 +748,10 @@ fn main() -> Result<()> {
                     let mut missing_imports = env.missing_imports();
                     missing_imports.sort();
                     if json {
-                        let out: Vec<String> =
-                            missing_imports.into_iter().map(|n| n.to_uri_string()).collect();
+                        let out: Vec<String> = missing_imports
+                            .into_iter()
+                            .map(|n| n.to_uri_string())
+                            .collect();
                         println!("{}", serde_json::to_string_pretty(&out)?);
                     } else {
                         for import in missing_imports {

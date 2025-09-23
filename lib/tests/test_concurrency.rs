@@ -228,11 +228,23 @@ fn rust_read_write_locking() {
     let s2 = String::from_utf8_lossy(&o2.stdout);
 
     // Ensure we saw one acquire and one lock error (order not guaranteed)
-    let acquired = s1.contains("worker_rw acquired") as usize + s2.contains("worker_rw acquired") as usize;
-    let lockerror = s1.contains("worker_rw lockerror") as usize + s2.contains("worker_rw lockerror") as usize;
+    let acquired =
+        s1.contains("worker_rw acquired") as usize + s2.contains("worker_rw acquired") as usize;
+    let lockerror =
+        s1.contains("worker_rw lockerror") as usize + s2.contains("worker_rw lockerror") as usize;
 
-    assert!(acquired >= 1, "expected at least one acquisition; stdout1: {}, stdout2: {}", s1, s2);
-    assert!(lockerror >= 1, "expected at least one lock error; stdout1: {}, stdout2: {}", s1, s2);
+    assert!(
+        acquired >= 1,
+        "expected at least one acquisition; stdout1: {}, stdout2: {}",
+        s1,
+        s2
+    );
+    assert!(
+        lockerror >= 1,
+        "expected at least one lock error; stdout1: {}, stdout2: {}",
+        s1,
+        s2
+    );
 
     // cleanup
     fs::remove_dir_all(&root).ok();

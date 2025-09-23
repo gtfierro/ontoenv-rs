@@ -1,9 +1,9 @@
 use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
-use ::ontoenv::ToUriString;
 use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation};
 use ::ontoenv::transform;
+use ::ontoenv::ToUriString;
 use anyhow::Error;
 use oxigraph::model::{BlankNode, Literal, NamedNode, SubjectRef, Term};
 use pyo3::{
@@ -116,7 +116,6 @@ fn term_to_python<'a>(
     Ok(res)
 }
 
-
 /// Call the pure-Python CLI entry in `ontoenv.init`.
 #[pyfunction]
 fn init_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
@@ -128,7 +127,6 @@ fn init_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
     };
     ret.extract::<i32>()
 }
-
 
 #[pyclass(name = "Ontology")]
 #[derive(Clone)]
@@ -184,10 +182,7 @@ impl PyOntology {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!(
-            "<Ontology: {}>",
-            self.inner.name().to_uri_string()
-        ))
+        Ok(format!("<Ontology: {}>", self.inner.name().to_uri_string()))
     }
 }
 
@@ -256,9 +251,8 @@ impl OntoEnv {
         } else {
             // Discover upward from root_path; load if found, else error.
             match ::ontoenv::api::find_ontoenv_root_from(&root_path) {
-                Some(found_root) => {
-                    OntoEnvRs::load_from_directory(found_root, read_only).map_err(anyhow_to_pyerr)?
-                }
+                Some(found_root) => OntoEnvRs::load_from_directory(found_root, read_only)
+                    .map_err(anyhow_to_pyerr)?,
                 None => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "OntoEnv directory not found at: \"{}\"",
@@ -319,9 +313,9 @@ impl OntoEnv {
     ) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        let env = guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -379,9 +373,9 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        let env = guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let graphid = env
             .resolve(ResolveTarget::Graph(iri.clone()))
             .ok_or_else(|| {
@@ -417,15 +411,13 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        let env = guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let graphid = env
             .resolve(ResolveTarget::Graph(iri.clone()))
             .ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "No graph with URI: {uri}"
-                ))
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("No graph with URI: {uri}"))
             })?;
         let ont = env.ontologies().get(&graphid).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
@@ -516,9 +508,9 @@ impl OntoEnv {
 
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        let env = guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
         let is_strict = env.is_strict();
         let mut all_ontologies = HashSet::new();
@@ -601,8 +593,10 @@ impl OntoEnv {
 
         // Remove all owl:imports from the original graph
         let py_imports_pred_for_remove = term_to_python(py, &rdflib, IMPORTS.into())?;
-        let remove_tuple =
-            PyTuple::new(py, &[py.None(), py_imports_pred_for_remove.into(), py.None()])?;
+        let remove_tuple = PyTuple::new(
+            py,
+            &[py.None(), py_imports_pred_for_remove.into(), py.None()],
+        )?;
         graph.getattr("remove")?.call1((remove_tuple,))?;
 
         all_closure_names.sort();
@@ -663,9 +657,9 @@ impl OntoEnv {
 
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        let env = guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
         let is_strict = env.is_strict();
         let mut all_ontologies = HashSet::new();
@@ -768,46 +762,51 @@ impl OntoEnv {
     }
 
     /// Add a new ontology to the OntoEnv
-    #[pyo3(signature = (location, overwrite = false, fetch_imports = true))]
+    #[pyo3(signature = (location, overwrite = false, fetch_imports = true, force = false))]
     fn add(
         &self,
         location: &Bound<'_, PyAny>,
         overwrite: bool,
         fetch_imports: bool,
+        force: bool,
     ) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        let env = guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
         let graph_id = if fetch_imports {
-            env.add(location, overwrite)
+            env.add(location, overwrite, force)
         } else {
-            env.add_no_imports(location, overwrite)
+            env.add_no_imports(location, overwrite, force)
         }
         .map_err(anyhow_to_pyerr)?;
         Ok(graph_id.to_uri_string())
     }
 
     /// Add a new ontology to the OntoEnv without exploring owl:imports.
-    #[pyo3(signature = (location, overwrite = false))]
-    fn add_no_imports(&self, location: &Bound<'_, PyAny>, overwrite: bool) -> PyResult<String> {
+    #[pyo3(signature = (location, overwrite = false, force = false))]
+    fn add_no_imports(
+        &self,
+        location: &Bound<'_, PyAny>,
+        overwrite: bool,
+        force: bool,
+    ) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        let env = guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
         let graph_id = env
-            .add_no_imports(location, overwrite)
+            .add_no_imports(location, overwrite, force)
             .map_err(anyhow_to_pyerr)?;
         Ok(graph_id.to_uri_string())
     }
-
 
     /// Get the names of all ontologies that import the given ontology
     fn get_importers(&self, uri: &str) -> PyResult<Vec<String>> {
@@ -815,9 +814,9 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
-        let env = guard.as_ref().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let importers = env.get_importers(&iri).map_err(anyhow_to_pyerr)?;
         let names: Vec<String> = importers.iter().map(|ont| ont.to_uri_string()).collect();
         Ok(names)
@@ -829,9 +828,9 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
-        let env = guard.as_ref().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let graphid = env
             .resolve(ResolveTarget::Graph(iri.clone()))
             .ok_or_else(|| {
@@ -854,13 +853,11 @@ impl OntoEnv {
             let env = guard.as_ref().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
-            let graphid = env
-                .resolve(ResolveTarget::Graph(iri))
-                .ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Failed to resolve graph for URI: {uri}"
-                    ))
-                })?;
+            let graphid = env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Failed to resolve graph for URI: {uri}"
+                ))
+            })?;
 
             env.get_graph(&graphid).map_err(anyhow_to_pyerr)?
         };
@@ -888,14 +885,10 @@ impl OntoEnv {
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
-        let env = guard.as_ref().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
-        let names: Vec<String> = env
-            .ontologies()
-            .keys()
-            .map(|k| k.to_uri_string())
-            .collect();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        let names: Vec<String> = env.ontologies().keys().map(|k| k.to_uri_string()).collect();
         Ok(names)
     }
 
@@ -903,9 +896,9 @@ impl OntoEnv {
     fn to_rdflib_dataset(&self, py: Python) -> PyResult<Py<PyAny>> {
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
-        let env = guard.as_ref().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })?;
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let rdflib = py.import("rdflib")?;
         let dataset_cls = rdflib.getattr("Dataset")?;
         let ds = dataset_cls.call0()?;

@@ -7,13 +7,21 @@ fn ontoenv_bin() -> PathBuf {
         .join("..")
         .join("target")
         .join("debug")
-        .join(if cfg!(windows) { "ontoenv.exe" } else { "ontoenv" });
+        .join(if cfg!(windows) {
+            "ontoenv.exe"
+        } else {
+            "ontoenv"
+        });
     if !p.exists() {
         p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("target")
             .join("release")
-            .join(if cfg!(windows) { "ontoenv.exe" } else { "ontoenv" });
+            .join(if cfg!(windows) {
+                "ontoenv.exe"
+            } else {
+                "ontoenv"
+            });
     }
     assert!(p.exists(), "ontoenv binary not found at {:?}", p);
     p
@@ -21,8 +29,14 @@ fn ontoenv_bin() -> PathBuf {
 
 fn tmp_dir(name: &str) -> PathBuf {
     let mut d = std::env::current_dir().unwrap();
-    d.push(format!("target/cli_integration_{}_{}", name, std::process::id()));
-    if d.exists() { let _ = fs::remove_dir_all(&d); }
+    d.push(format!(
+        "target/cli_integration_{}_{}",
+        name,
+        std::process::id()
+    ));
+    if d.exists() {
+        let _ = fs::remove_dir_all(&d);
+    }
     fs::create_dir_all(&d).unwrap();
     d
 }
@@ -63,7 +77,11 @@ fn discovery_from_subdirectory() {
         .arg("init")
         .output()
         .expect("run init");
-    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let nested = root.join("nested");
     fs::create_dir_all(&nested).unwrap();
     let out = Command::new(&exe)
@@ -72,7 +90,11 @@ fn discovery_from_subdirectory() {
         .arg("ontologies")
         .output()
         .expect("run list");
-    assert!(out.status.success(), "list failed in subdir: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "list failed in subdir: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -84,7 +106,11 @@ fn ontoenv_dir_override() {
         .arg("init")
         .output()
         .expect("run init");
-    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let elsewhere = tmp_dir("elsewhere");
     let out = Command::new(&exe)
         .current_dir(&elsewhere)
@@ -93,7 +119,11 @@ fn ontoenv_dir_override() {
         .arg("ontologies")
         .output()
         .expect("run list");
-    assert!(out.status.success(), "list failed with ONTOENV_DIR: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "list failed with ONTOENV_DIR: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // Why subcommand integration
@@ -109,8 +139,16 @@ fn why_lists_importers_paths() {
     let b_path = root.join("B.ttl");
     let c_path = root.join("C.ttl");
     write_ttl(&b_path, b_uri, "");
-    write_ttl(&a_path, a_uri, &format!("<{}> owl:imports <{}> .", a_uri, b_uri));
-    write_ttl(&c_path, c_uri, &format!("<{}> owl:imports <{}> .", c_uri, a_uri));
+    write_ttl(
+        &a_path,
+        a_uri,
+        &format!("<{}> owl:imports <{}> .", a_uri, b_uri),
+    );
+    write_ttl(
+        &c_path,
+        c_uri,
+        &format!("<{}> owl:imports <{}> .", c_uri, a_uri),
+    );
 
     // init
     let out = Command::new(&exe)
@@ -148,7 +186,11 @@ fn get_stdout_turtle() {
         .arg("init")
         .output()
         .expect("run init");
-    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // get to stdout
     let out = Command::new(&exe)
@@ -157,10 +199,18 @@ fn get_stdout_turtle() {
         .arg(iri)
         .output()
         .expect("run get");
-    assert!(out.status.success(), "get failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "get failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Expect to see the ontology triple in some form
-    assert!(stdout.contains(iri), "stdout did not contain IRI: {}", stdout);
+    assert!(
+        stdout.contains(iri),
+        "stdout did not contain IRI: {}",
+        stdout
+    );
 }
 
 // Get command: JSON-LD output
@@ -189,10 +239,22 @@ fn get_jsonld_output() {
         .arg("jsonld")
         .output()
         .expect("run get jsonld");
-    assert!(out.status.success(), "get jsonld failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "get jsonld failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains(iri), "jsonld output missing iri; got: {}", stdout);
-    assert!(stdout.trim_start().starts_with("{") || stdout.trim_start().starts_with("["), "not JSON-LD? {}", stdout);
+    assert!(
+        stdout.contains(iri),
+        "jsonld output missing iri; got: {}",
+        stdout
+    );
+    assert!(
+        stdout.trim_start().starts_with("{") || stdout.trim_start().starts_with("["),
+        "not JSON-LD? {}",
+        stdout
+    );
 }
 
 // Get command: disambiguate with --location when same IRI at two locations
@@ -204,8 +266,16 @@ fn get_with_location_disambiguates() {
     let p1 = root.join("dup_v1.ttl");
     let p2 = root.join("dup_v2.ttl");
     // add distinguishing triples
-    write_ttl(&p1, iri, "<http://example.org/x> <http://example.org/p> \"v1\" .");
-    write_ttl(&p2, iri, "<http://example.org/x> <http://example.org/p> \"v2\" .");
+    write_ttl(
+        &p1,
+        iri,
+        "<http://example.org/x> <http://example.org/p> \"v1\" .",
+    );
+    write_ttl(
+        &p2,
+        iri,
+        "<http://example.org/x> <http://example.org/p> \"v2\" .",
+    );
 
     // init
     let out = Command::new(&exe)
@@ -224,7 +294,11 @@ fn get_with_location_disambiguates() {
         .arg(p1.to_str().unwrap())
         .output()
         .expect("run get v1");
-    assert!(out.status.success(), "get v1 failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "get v1 failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s1 = String::from_utf8_lossy(&out.stdout);
     assert!(s1.contains("\"v1\""), "expected v1 triple, got: {}", s1);
 
@@ -237,7 +311,11 @@ fn get_with_location_disambiguates() {
         .arg(p2.to_str().unwrap())
         .output()
         .expect("run get v2");
-    assert!(out.status.success(), "get v2 failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "get v2 failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s2 = String::from_utf8_lossy(&out.stdout);
     assert!(s2.contains("\"v2\""), "expected v2 triple, got: {}", s2);
 }
