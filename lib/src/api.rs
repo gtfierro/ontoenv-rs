@@ -499,6 +499,10 @@ impl OntoEnv {
 
     /// Add the ontology from the given location to the environment,
     /// then add it to the dependency graph.
+    ///
+    /// * `overwrite` selects whether an existing graph at the same identifier should be replaced.
+    /// * `refresh` controls whether cached metadata may be reused (`RefreshStrategy::UseCache`) or
+    ///   the source should always be fetched (`RefreshStrategy::Force`).
     pub fn add(
         &mut self,
         location: OntologyLocation,
@@ -511,6 +515,7 @@ impl OntoEnv {
     /// Add the ontology from the given location to the environment, but do not
     /// explore its owl:imports. It will be added to the dependency graph and
     /// edges will be created if its imports are already present in the environment.
+    /// Parameters mirror [`OntoEnv::add`] for overwrite and refresh behavior.
     pub fn add_no_imports(
         &mut self,
         location: OntologyLocation,
