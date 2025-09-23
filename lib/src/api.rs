@@ -502,14 +502,9 @@ impl OntoEnv {
         &mut self,
         location: OntologyLocation,
         overwrite: bool,
+        force: bool,
     ) -> Result<GraphIdentifier> {
-        self.failed_resolutions.clear();
-        let ont = self.io.add(location, overwrite)?;
-        let id = ont.id().clone();
-        self.env.add_ontology(ont);
-        self.add_ids_to_dependency_graph(vec![id.clone()])?;
-        self.save_to_directory()?;
-        Ok(id)
+        self.add_with_options(location, overwrite, force, true)
     }
 
     /// Add the ontology from the given location to the environment, but do not
@@ -519,14 +514,82 @@ impl OntoEnv {
         &mut self,
         location: OntologyLocation,
         overwrite: bool,
+        force: bool,
+    ) -> Result<GraphIdentifier> {
+        self.add_with_options(location, overwrite, force, false)
+    }
+
+    fn add_with_options(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: bool,
+        force: bool,
+        update_dependencies: bool,
     ) -> Result<GraphIdentifier> {
         self.failed_resolutions.clear();
-        let ont = self.io.add(location, overwrite)?;
+
+        if let Some(existing_id) = self.try_reuse_cached(&location, force)? {
+            debug!(
+                "Reusing cached ontology {} for location {}",
+                existing_id, location
+            );
+            return Ok(existing_id);
+        }
+
+        let ont = self.io.add(location.clone(), overwrite)?;
         let id = ont.id().clone();
         self.env.add_ontology(ont);
-        self.add_ids_to_dependency_graph(vec![])?;
+        if update_dependencies {
+            self.add_ids_to_dependency_graph(vec![id.clone()])?;
+        } else {
+            self.add_ids_to_dependency_graph(vec![])?;
+        }
         self.save_to_directory()?;
         Ok(id)
+    }
+
+    fn try_reuse_cached(
+        &self,
+        location: &OntologyLocation,
+        force: bool,
+    ) -> Result<Option<GraphIdentifier>> {
+        if !self.config.use_cached_ontologies || force {
+            return Ok(None);
+        }
+
+        let existing = match self.env.get_ontology_by_location(location) {
+            Some(ontology) => ontology,
+            None => return Ok(None),
+        };
+
+        let existing_id = existing.id().clone();
+
+        if location.is_file() {
+            let last_updated = match existing.last_updated {
+                Some(ts) => ts,
+                None => return Ok(None),
+            };
+
+            match self.io.source_last_modified(existing.id()) {
+                Ok(source_modified) => {
+                    if source_modified <= last_updated {
+                        return Ok(Some(existing_id));
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to determine modification time for {} ({}); using cached version",
+                        existing_id, err
+                    );
+                    return Ok(Some(existing_id));
+                }
+            }
+
+            Ok(None)
+        } else {
+            // For URLs, reuse the cached ontology unless the caller forces a refresh
+            Ok(Some(existing_id))
+        }
     }
 
     /// Load all graphs from the search directories. There are several things that can happen:

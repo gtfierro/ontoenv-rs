@@ -59,11 +59,13 @@ fn init_store_with_two_graphs(root: &Path, a_uri: &str, b_uri: &str) -> (String,
         .add(
             OntologyLocation::from_str(a_path.to_str().unwrap()).expect("loc a"),
             false,
+            false,
         )
         .expect("add A");
     let name_b = env
         .add(
             OntologyLocation::from_str(b_path.to_str().unwrap()).expect("loc b"),
+            false,
             false,
         )
         .expect("add B");

@@ -710,9 +710,9 @@ fn main() -> Result<()> {
             };
             let mut env = require_ontoenv(env)?;
             if no_imports {
-                let _ = env.add_no_imports(location, true)?;
+                let _ = env.add_no_imports(location, true, false)?;
             } else {
-                let _ = env.add(location, true)?;
+                let _ = env.add(location, true, false)?;
             }
         }
         Commands::List { list_cmd, json } => {

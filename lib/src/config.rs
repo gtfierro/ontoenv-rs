@@ -53,6 +53,8 @@ pub struct Config {
     pub offline: bool,
     // resolution policy
     pub resolution_policy: String,
+    #[serde(default)]
+    pub use_cached_ontologies: bool,
     // if true, do not store the ontoenv store on disk
     pub temporary: bool,
     // if true, do not search for ontologies in the search directories
@@ -135,6 +137,7 @@ impl Config {
         println!("  Require Ontology Names: {}", self.require_ontology_names);
         println!("  Strict: {}", self.strict);
         println!("  Offline: {}", self.offline);
+        println!("  Use Cached Ontologies: {}", self.use_cached_ontologies);
         println!("  Resolution Policy: {}", self.resolution_policy);
         println!("  Temporary: {}", self.temporary);
         println!("  No Search: {}", self.no_search);
@@ -153,6 +156,7 @@ pub struct ConfigBuilder {
     resolution_policy: Option<String>,
     no_search: bool,
     temporary: Option<bool>,
+    use_cached_ontologies: Option<bool>,
 }
 
 impl ConfigBuilder {
@@ -169,6 +173,7 @@ impl ConfigBuilder {
             resolution_policy: None,
             no_search: false,
             temporary: None,
+            use_cached_ontologies: None,
         }
     }
 
@@ -234,6 +239,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Sets whether to reuse cached ontologies when possible. Defaults to `false`.
+    pub fn use_cached_ontologies(mut self, use_cached: bool) -> Self {
+        self.use_cached_ontologies = Some(use_cached);
+        self
+    }
+
     /// Sets the resolution policy. Defaults to `"default"`.
     pub fn resolution_policy(mut self, policy: String) -> Self {
         self.resolution_policy = Some(policy);
@@ -296,6 +307,7 @@ impl ConfigBuilder {
             resolution_policy: self
                 .resolution_policy
                 .unwrap_or_else(|| DefaultPolicy.policy_name().to_string()),
+            use_cached_ontologies: self.use_cached_ontologies.unwrap_or(false),
             temporary: self.temporary.unwrap_or(false),
             no_search: self.no_search,
         })

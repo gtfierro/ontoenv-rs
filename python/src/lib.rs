@@ -194,7 +194,7 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
+    #[pyo3(signature = (path=None, recreate=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
@@ -204,6 +204,7 @@ impl OntoEnv {
         require_ontology_names: bool,
         strict: bool,
         offline: bool,
+        use_cached_ontologies: bool,
         resolution_policy: String,
         root: String,
         includes: Option<Vec<String>>,
@@ -223,6 +224,7 @@ impl OntoEnv {
             .require_ontology_names(require_ontology_names)
             .strict(strict)
             .offline(offline)
+            .use_cached_ontologies(use_cached_ontologies)
             .resolution_policy(resolution_policy)
             .temporary(temporary)
             .no_search(no_search);
@@ -523,9 +525,8 @@ impl OntoEnv {
             let mut graphid = env.resolve(ResolveTarget::Graph(iri.clone()));
 
             if graphid.is_none() && fetch_missing {
-                let location =
-                    OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, false) {
+                let location = OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
+                match env.add(location, false, false) {
                     Ok(new_id) => {
                         graphid = Some(new_id);
                     }
@@ -672,9 +673,8 @@ impl OntoEnv {
             let mut graphid = env.resolve(ResolveTarget::Graph(iri.clone()));
 
             if graphid.is_none() && fetch_missing {
-                let location =
-                    OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, false) {
+                let location = OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
+                match env.add(location, false, false) {
                     Ok(new_id) => {
                         graphid = Some(new_id);
                     }
