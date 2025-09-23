@@ -7,6 +7,7 @@ use oxigraph::model::NamedNode;
 
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::ontology::OntologyLocation;
+use ontoenv::options::{Overwrite, RefreshStrategy};
 use ontoenv::ToUriString;
 
 /// Helper to write a small ontology TTL file.
@@ -58,15 +59,15 @@ fn init_store_with_two_graphs(root: &Path, a_uri: &str, b_uri: &str) -> (String,
     let name_a = env
         .add(
             OntologyLocation::from_str(a_path.to_str().unwrap()).expect("loc a"),
-            false,
-            false,
+            Overwrite::Preserve,
+            RefreshStrategy::UseCache,
         )
         .expect("add A");
     let name_b = env
         .add(
             OntologyLocation::from_str(b_path.to_str().unwrap()).expect("loc b"),
-            false,
-            false,
+            Overwrite::Preserve,
+            RefreshStrategy::UseCache,
         )
         .expect("add B");
 

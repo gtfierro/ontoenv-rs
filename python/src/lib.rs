@@ -2,6 +2,7 @@ use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation};
+use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ::ontoenv::transform;
 use ::ontoenv::ToUriString;
 use anyhow::Error;
@@ -224,7 +225,7 @@ impl OntoEnv {
             .require_ontology_names(require_ontology_names)
             .strict(strict)
             .offline(offline)
-            .use_cached_ontologies(use_cached_ontologies)
+            .use_cached_ontologies(CacheMode::from(use_cached_ontologies))
             .resolution_policy(resolution_policy)
             .temporary(temporary)
             .no_search(no_search);
@@ -526,7 +527,7 @@ impl OntoEnv {
 
             if graphid.is_none() && fetch_missing {
                 let location = OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, false, false) {
+                match env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache) {
                     Ok(new_id) => {
                         graphid = Some(new_id);
                     }
@@ -674,7 +675,7 @@ impl OntoEnv {
 
             if graphid.is_none() && fetch_missing {
                 let location = OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, false, false) {
+                match env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache) {
                     Ok(new_id) => {
                         graphid = Some(new_id);
                     }
@@ -778,10 +779,12 @@ impl OntoEnv {
 
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
+        let overwrite_flag: Overwrite = overwrite.into();
+        let refresh: RefreshStrategy = force.into();
         let graph_id = if fetch_imports {
-            env.add(location, overwrite, force)
+            env.add(location, overwrite_flag, refresh)
         } else {
-            env.add_no_imports(location, overwrite, force)
+            env.add_no_imports(location, overwrite_flag, refresh)
         }
         .map_err(anyhow_to_pyerr)?;
         Ok(graph_id.to_uri_string())
@@ -802,8 +805,10 @@ impl OntoEnv {
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let location =
             OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
+        let overwrite_flag: Overwrite = overwrite.into();
+        let refresh: RefreshStrategy = force.into();
         let graph_id = env
-            .add_no_imports(location, overwrite, force)
+            .add_no_imports(location, overwrite_flag, refresh)
             .map_err(anyhow_to_pyerr)?;
         Ok(graph_id.to_uri_string())
     }

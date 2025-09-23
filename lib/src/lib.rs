@@ -99,6 +99,7 @@ pub mod environment;
 pub mod errors;
 pub mod io;
 pub mod ontology;
+pub mod options;
 pub mod policy;
 #[macro_use]
 pub mod util;

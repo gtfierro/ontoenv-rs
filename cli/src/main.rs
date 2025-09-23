@@ -4,6 +4,7 @@ use log::info;
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::Config;
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
+use ontoenv::options::{Overwrite, RefreshStrategy};
 use ontoenv::util::write_dataset_to_file;
 use ontoenv::ToUriString;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat};
@@ -710,9 +711,10 @@ fn main() -> Result<()> {
             };
             let mut env = require_ontoenv(env)?;
             if no_imports {
-                let _ = env.add_no_imports(location, true, false)?;
+                let _ =
+                    env.add_no_imports(location, Overwrite::Allow, RefreshStrategy::UseCache)?;
             } else {
-                let _ = env.add(location, true, false)?;
+                let _ = env.add(location, Overwrite::Allow, RefreshStrategy::UseCache)?;
             }
         }
         Commands::List { list_cmd, json } => {
