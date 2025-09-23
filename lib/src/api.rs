@@ -2,10 +2,12 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
-use crate::ToUriString;
-use crate::doctor::{ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem};
+use crate::doctor::{
+    ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
+};
 use crate::environment::Environment;
 use crate::transform;
+use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
 use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, SubjectRef};
@@ -218,9 +220,7 @@ impl OntoEnv {
     }
 
     pub fn new_from_store(strict: bool, offline: bool, store: Store) -> Result<Self> {
-        let io = Box::new(crate::io::ExternalStoreGraphIO::new(
-            store, offline, strict,
-        ));
+        let io = Box::new(crate::io::ExternalStoreGraphIO::new(store, offline, strict));
         let root = std::env::current_dir()?;
         let config = Config::builder()
             .root(root)
@@ -361,8 +361,10 @@ impl OntoEnv {
         // copy the graphs from the persistent store to the memory store if we are a 'temporary'
         // environment
         if config.temporary {
-            let mut new_io =
-                Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?);
+            let mut new_io = Box::new(crate::io::MemoryGraphIO::new(
+                config.offline,
+                config.strict,
+            )?);
             for ontology in env.ontologies().values() {
                 let graph = io.get_graph(ontology.id())?;
                 new_io.add_graph(ontology.id().clone(), graph)?;
@@ -442,9 +444,7 @@ impl OntoEnv {
 
         if !config.temporary && ontoenv_dir.exists() {
             if overwrite {
-                info!(
-                    "Directory exists and will be overwritten: {ontoenv_dir:?}"
-                );
+                info!("Directory exists and will be overwritten: {ontoenv_dir:?}");
                 fs::remove_dir_all(&ontoenv_dir)?;
             } else {
                 return Err(anyhow::anyhow!(
@@ -460,7 +460,10 @@ impl OntoEnv {
 
         let env = Environment::new();
         let io: Box<dyn GraphIO> = match config.temporary {
-            true => Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?),
+            true => Box::new(crate::io::MemoryGraphIO::new(
+                config.offline,
+                config.strict,
+            )?),
             false => Box::new(crate::io::PersistentGraphIO::new(
                 ontoenv_dir,
                 config.offline,
@@ -850,7 +853,10 @@ impl OntoEnv {
         // traverse the ontologies and add edges to the graph
         for ontology in self.env.ontologies().keys() {
             let index = indexes.get(ontology).ok_or_else(|| {
-                anyhow!("Programming error: ontology id {:?} not in index map", ontology)
+                anyhow!(
+                    "Programming error: ontology id {:?} not in index map",
+                    ontology
+                )
             })?;
             let ont = match self.env.ontologies().get(ontology) {
                 Some(ont) => ont,
@@ -914,9 +920,10 @@ impl OntoEnv {
                 continue;
             }
 
-            let ontology = self.ontologies().get(&graph).ok_or_else(|| {
-                anyhow!("Ontology {} not found", graph.to_uri_string())
-            })?;
+            let ontology = self
+                .ontologies()
+                .get(&graph)
+                .ok_or_else(|| anyhow!("Ontology {} not found", graph.to_uri_string()))?;
             for import in &ontology.imports {
                 // get graph identifier for import
                 let import = match self.env.get_ontology_by_name(import.into()) {
@@ -1028,10 +1035,7 @@ impl OntoEnv {
 
     /// Returns all importer paths that terminate at the given ontology.
     /// Each path is ordered from the most distant importer down to `id`.
-    pub fn get_import_paths(
-        &self,
-        id: &NamedNode,
-    ) -> Result<Vec<Vec<GraphIdentifier>>> {
+    pub fn get_import_paths(&self, id: &NamedNode) -> Result<Vec<Vec<GraphIdentifier>>> {
         let target = self
             .env
             .get_ontology_by_name(id.into())
@@ -1080,7 +1084,13 @@ impl OntoEnv {
             seen.remove(&current);
         }
 
-        dfs(&self.dependency_graph, target_idx, &mut path, &mut seen, &mut results);
+        dfs(
+            &self.dependency_graph,
+            target_idx,
+            &mut path,
+            &mut seen,
+            &mut results,
+        );
         Ok(results)
     }
 
@@ -1107,12 +1117,7 @@ impl OntoEnv {
             let ont = self
                 .ontologies()
                 .get(&ontology)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Listing ontologies: Ontology {} not found",
-                        ontology
-                    )
-                })?;
+                .ok_or_else(|| anyhow!("Listing ontologies: Ontology {} not found", ontology))?;
             for import in &ont.imports {
                 let import = match self.env.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),

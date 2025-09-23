@@ -138,7 +138,6 @@ impl ToUriString for &GraphIdentifier {
     }
 }
 
-
 pub struct FailedImport {
     ontology: GraphIdentifier,
     error: String,

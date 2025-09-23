@@ -270,13 +270,9 @@ impl ConfigBuilder {
             self.locations.unwrap_or_else(|| vec![root.clone()])
         };
 
-        let includes_str = self.includes.unwrap_or_else(|| {
-            vec![
-                "*.ttl".to_string(),
-                "*.xml".to_string(),
-                "*.n3".to_string(),
-            ]
-        });
+        let includes_str = self
+            .includes
+            .unwrap_or_else(|| vec!["*.ttl".to_string(), "*.xml".to_string(), "*.n3".to_string()]);
         let excludes_str = self.excludes.unwrap_or_default();
 
         let includes = includes_str

@@ -15,19 +15,20 @@ use oxigraph::model::{GraphNameRef, Quad, Triple, TripleRef};
 
 use std::io::BufReader;
 
-use log::{debug, warn, info};
+use log::{debug, info, warn};
 
 pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
     let b = std::fs::read(path)?;
-    let format = path.extension().and_then(|ext| ext.to_str()).and_then(|ext| {
-        match ext {
+    let format = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(|ext| match ext {
             "ttl" => Some(RdfFormat::Turtle),
             "xml" => Some(RdfFormat::RdfXml),
             "n3" => Some(RdfFormat::Turtle),
             "nt" => Some(RdfFormat::NTriples),
             _ => None,
-        }
-    });
+        });
     Ok((b, format))
 }
 
@@ -46,19 +47,18 @@ pub fn get_url_contents(url: &str) -> Result<(Vec<u8>, Option<RdfFormat>)> {
         ));
     }
     let content_type = resp.headers().get("Content-Type");
-    let format =
-        content_type
-            .and_then(|ct| ct.to_str().ok())
-            .and_then(|ext| match ext {
-                "application/x-turtle" => Some(RdfFormat::Turtle),
-                "text/turtle" => Some(RdfFormat::Turtle),
-                "application/rdf+xml" => Some(RdfFormat::RdfXml),
-                "text/rdf+n3" => Some(RdfFormat::NTriples),
-                _ => {
-                    debug!("Unknown content type: {ext}");
-                    None
-                }
-            });
+    let format = content_type
+        .and_then(|ct| ct.to_str().ok())
+        .and_then(|ext| match ext {
+            "application/x-turtle" => Some(RdfFormat::Turtle),
+            "text/turtle" => Some(RdfFormat::Turtle),
+            "application/rdf+xml" => Some(RdfFormat::RdfXml),
+            "text/rdf+n3" => Some(RdfFormat::NTriples),
+            _ => {
+                debug!("Unknown content type: {ext}");
+                None
+            }
+        });
     Ok((resp.bytes()?.to_vec(), format))
 }
 

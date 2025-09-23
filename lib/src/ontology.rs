@@ -80,10 +80,7 @@ impl GraphIdentifier {
             name: name.into(),
         }
     }
-    pub fn new_with_location(
-        name: NamedNodeRef,
-        location: OntologyLocation,
-    ) -> Self {
+    pub fn new_with_location(name: NamedNodeRef, location: OntologyLocation) -> Self {
         GraphIdentifier {
             location,
             name: name.into(),
@@ -267,7 +264,6 @@ impl Default for Ontology {
 }
 
 impl Ontology {
-
     pub fn with_last_updated(&mut self, last_updated: DateTime<Utc>) {
         self.last_updated = Some(last_updated);
     }
@@ -390,33 +386,44 @@ impl Ontology {
         }
 
         let imports: Vec<Term> = store
-            .quads_for_pattern(Some(ontology_subject_ref), Some(IMPORTS), None, Some(graph_name))
+            .quads_for_pattern(
+                Some(ontology_subject_ref),
+                Some(IMPORTS),
+                None,
+                Some(graph_name),
+            )
             .filter_map(Result::ok)
             .map(|q| q.object)
             .collect::<Vec<_>>();
 
         // get each of the ONNTOLOGY_VERSION_IRIS values, if they exist on the ontology
-        let mut version_properties: HashMap<NamedNode, String> = ONTOLOGY_VERSION_IRIS
-            .iter()
-            .fold(HashMap::new(), |mut acc, &iri| {
-                if let Some(o) = store
-                    .quads_for_pattern(Some(ontology_subject_ref), Some(iri), None, Some(graph_name))
-                    .filter_map(Result::ok)
-                    .map(|q| q.object)
-                    .next()
-                {
-                    match o {
-                        Term::NamedNode(s) => {
-                            acc.insert(iri.into(), s.to_string());
+        let mut version_properties: HashMap<NamedNode, String> =
+            ONTOLOGY_VERSION_IRIS
+                .iter()
+                .fold(HashMap::new(), |mut acc, &iri| {
+                    if let Some(o) = store
+                        .quads_for_pattern(
+                            Some(ontology_subject_ref),
+                            Some(iri),
+                            None,
+                            Some(graph_name),
+                        )
+                        .filter_map(Result::ok)
+                        .map(|q| q.object)
+                        .next()
+                    {
+                        match o {
+                            Term::NamedNode(s) => {
+                                acc.insert(iri.into(), s.to_string());
+                            }
+                            Term::Literal(lit) => {
+                                acc.insert(iri.into(), lit.to_string());
+                            }
+                            _ => (),
                         }
-                        Term::Literal(lit) => {
-                            acc.insert(iri.into(), lit.to_string());
-                        }
-                        _ => (),
                     }
-                }
-                acc
-            });
+                    acc
+                });
 
         // check if any of the ONTOLOGY_VERSION_IRIS exist on the other side of a
         // vaem:hasGraphMetadata predicate
@@ -464,9 +471,7 @@ impl Ontology {
             debug!("{k}: {v}");
         }
 
-        info!(
-            "Fetched graph {ontology_subject} from location: {location:?}"
-        );
+        info!("Fetched graph {ontology_subject} from location: {location:?}");
 
         let ontology_name: NamedNode = match ontology_subject {
             Subject::NamedNode(s) => s,
@@ -540,9 +545,7 @@ impl Ontology {
                     location
                 ));
             }
-            warn!(
-                "No ontology declaration found in {location}. Using this as the ontology name"
-            );
+            warn!("No ontology declaration found in {location}. Using this as the ontology name");
             let ontology_subject = Subject::NamedNode(location.to_iri());
             Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
         } else {
@@ -559,9 +562,7 @@ impl Ontology {
         }
     }
 
-
     pub fn from_str(s: &str) -> Result<Self> {
         Ok(serde_json::from_str(s)?)
     }
 }
-
