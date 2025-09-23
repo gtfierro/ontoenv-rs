@@ -2,6 +2,7 @@ use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::Config;
 use ontoenv::ontology::OntologyLocation;
+use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use oxigraph::model::NamedNodeRef;
 use std::fs;
 use std::path::PathBuf;
@@ -86,7 +87,7 @@ fn cached_env(dir: &TempDir) -> Result<OntoEnv> {
         .offline(true)
         .temporary(true)
         .no_search(true)
-        .use_cached_ontologies(true)
+        .use_cached_ontologies(CacheMode::Enabled)
         .build()?;
     OntoEnv::init(config, true)
 }
@@ -319,7 +320,7 @@ fn test_ontoenv_add() -> Result<()> {
             .to_str()
             .ok_or(anyhow::anyhow!("Failed to convert to string"))?,
     )?;
-    env.add(loc, true, false)?;
+    env.add(loc, Overwrite::Allow, RefreshStrategy::UseCache)?;
     assert_eq!(env.stats()?.num_graphs, 5);
     teardown(dir);
     Ok(())
@@ -646,7 +647,7 @@ fn test_init_read_only() -> Result<()> {
 
     // The OntoEnv::add method requires &mut self.
     // The underlying ReadOnlyPersistentGraphIO::add should return an error.
-    let add_result = loaded_env.add(location, false, false);
+    let add_result = loaded_env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache);
 
     assert!(add_result.is_err());
     // Check if the error message indicates read-only restriction
@@ -718,7 +719,7 @@ fn test_init_temporary() -> Result<()> {
     )?;
     let location = OntologyLocation::File(dummy_ont_path);
 
-    let add_result = env.add(location, false, false);
+    let add_result = env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache);
     assert!(add_result.is_ok()); // Should succeed in memory
 
     // Verify the ontology was added (in memory)
@@ -744,7 +745,11 @@ fn test_cached_add_skips_unchanged_file() -> Result<()> {
 
     let mut env = cached_env(&dir)?;
     let location = OntologyLocation::File(ttl_path.clone());
-    let id = env.add(location.clone(), false, false)?;
+    let id = env.add(
+        location.clone(),
+        Overwrite::Preserve,
+        RefreshStrategy::UseCache,
+    )?;
     let first_updated = env
         .ontologies()
         .get(&id)
@@ -754,7 +759,11 @@ fn test_cached_add_skips_unchanged_file() -> Result<()> {
 
     thread::sleep(Duration::from_secs(1));
 
-    let reused_id = env.add(location.clone(), false, false)?;
+    let reused_id = env.add(
+        location.clone(),
+        Overwrite::Preserve,
+        RefreshStrategy::UseCache,
+    )?;
     let reused_updated = env
         .ontologies()
         .get(&reused_id)
@@ -781,7 +790,11 @@ fn test_cached_add_reloads_on_file_change() -> Result<()> {
 
     let mut env = cached_env(&dir)?;
     let location = OntologyLocation::File(ttl_path.clone());
-    let id = env.add(location.clone(), false, false)?;
+    let id = env.add(
+        location.clone(),
+        Overwrite::Preserve,
+        RefreshStrategy::UseCache,
+    )?;
     let first_updated = env
         .ontologies()
         .get(&id)
@@ -795,7 +808,11 @@ fn test_cached_add_reloads_on_file_change() -> Result<()> {
         "<urn:cached_reload> a <http://www.w3.org/2002/07/owl#Ontology> .\n<urn:cached_reload> <http://example.com/p> \"updated\" .",
     )?;
 
-    let refreshed_id = env.add(location.clone(), false, false)?;
+    let refreshed_id = env.add(
+        location.clone(),
+        Overwrite::Preserve,
+        RefreshStrategy::UseCache,
+    )?;
     let refreshed_updated = env
         .ontologies()
         .get(&refreshed_id)
@@ -821,7 +838,11 @@ fn test_cached_add_force_refreshes() -> Result<()> {
 
     let mut env = cached_env(&dir)?;
     let location = OntologyLocation::File(ttl_path.clone());
-    let id = env.add(location.clone(), false, false)?;
+    let id = env.add(
+        location.clone(),
+        Overwrite::Preserve,
+        RefreshStrategy::UseCache,
+    )?;
     let first_updated = env
         .ontologies()
         .get(&id)
@@ -830,7 +851,11 @@ fn test_cached_add_force_refreshes() -> Result<()> {
 
     thread::sleep(Duration::from_secs(1));
 
-    let forced_id = env.add(location.clone(), false, true)?;
+    let forced_id = env.add(
+        location.clone(),
+        Overwrite::Preserve,
+        RefreshStrategy::Force,
+    )?;
     let forced_updated = env
         .ontologies()
         .get(&forced_id)

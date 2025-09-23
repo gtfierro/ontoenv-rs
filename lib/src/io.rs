@@ -3,6 +3,7 @@
 
 use crate::errors::OfflineRetrievalError;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
+use crate::options::Overwrite;
 use crate::util::{get_file_contents, get_url_contents};
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
@@ -31,7 +32,7 @@ pub struct StoreStats {
 fn add_ontology_to_store(
     store: &Store,
     location: OntologyLocation,
-    overwrite: bool,
+    overwrite: Overwrite,
     offline: bool,
     strict: bool,
 ) -> Result<Ontology> {
@@ -70,7 +71,7 @@ fn add_ontology_to_store(
     let graphname: GraphName = id.graphname()?;
 
     // If overwriting or not present, load quads from tmp_store directly into final graph in target store
-    if overwrite || !store.contains_named_graph(id.name())? {
+    if overwrite.as_bool() || !store.contains_named_graph(id.name())? {
         store.remove_named_graph(id.name())?;
         let t1 = Instant::now();
         let quads = tmp_store
@@ -108,9 +109,9 @@ pub trait GraphIO: Send + Sync {
     /// Returns a reference to the underlying store
     fn store(&self) -> &Store;
 
-    /// Adds a graph to the store and returns the ontology metadata. Overwrites any existing graph with
-    /// the same identifier if 'overwrite' is true.
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology>;
+    /// Adds a graph to the store and returns the ontology metadata.
+    /// Existing graphs are replaced only when `overwrite` allows it.
+    fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology>;
 
     /// Returns the graph with the given identifier
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
@@ -355,7 +356,7 @@ impl GraphIO for PersistentGraphIO {
         &self.store
     }
 
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
         let ont =
             add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
         // Persist entire dataset to RDF5D atomically
@@ -460,7 +461,7 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         &self.store
     }
 
-    fn add(&mut self, _location: OntologyLocation, _overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, _location: OntologyLocation, _overwrite: Overwrite) -> Result<Ontology> {
         Err(anyhow!("Cannot add to read-only store"))
     }
 
@@ -519,7 +520,7 @@ impl GraphIO for ExternalStoreGraphIO {
         &self.store
     }
 
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
         add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
     }
 }
@@ -568,7 +569,7 @@ impl GraphIO for MemoryGraphIO {
         &self.store
     }
 
-    fn add(&mut self, location: OntologyLocation, overwrite: bool) -> Result<Ontology> {
+    fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
         add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
     }
 }

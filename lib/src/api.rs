@@ -6,6 +6,7 @@ use crate::doctor::{
     ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
 };
 use crate::environment::Environment;
+use crate::options::{Overwrite, RefreshStrategy};
 use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
@@ -501,10 +502,10 @@ impl OntoEnv {
     pub fn add(
         &mut self,
         location: OntologyLocation,
-        overwrite: bool,
-        force: bool,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
     ) -> Result<GraphIdentifier> {
-        self.add_with_options(location, overwrite, force, true)
+        self.add_with_options(location, overwrite, refresh, true)
     }
 
     /// Add the ontology from the given location to the environment, but do not
@@ -513,22 +514,22 @@ impl OntoEnv {
     pub fn add_no_imports(
         &mut self,
         location: OntologyLocation,
-        overwrite: bool,
-        force: bool,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
     ) -> Result<GraphIdentifier> {
-        self.add_with_options(location, overwrite, force, false)
+        self.add_with_options(location, overwrite, refresh, false)
     }
 
     fn add_with_options(
         &mut self,
         location: OntologyLocation,
-        overwrite: bool,
-        force: bool,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
         update_dependencies: bool,
     ) -> Result<GraphIdentifier> {
         self.failed_resolutions.clear();
 
-        if let Some(existing_id) = self.try_reuse_cached(&location, force)? {
+        if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
             debug!(
                 "Reusing cached ontology {} for location {}",
                 existing_id, location
@@ -551,9 +552,9 @@ impl OntoEnv {
     fn try_reuse_cached(
         &self,
         location: &OntologyLocation,
-        force: bool,
+        refresh: RefreshStrategy,
     ) -> Result<Option<GraphIdentifier>> {
-        if !self.config.use_cached_ontologies || force {
+        if !self.config.use_cached_ontologies.is_enabled() || refresh.is_force() {
             return Ok(None);
         }
 
@@ -643,7 +644,7 @@ impl OntoEnv {
             // if 'strict' mode then fail on any errors when adding the ontology
             // otherwise just warn
 
-            let result = self.io.add(location.clone(), true);
+            let result = self.io.add(location.clone(), Overwrite::Allow);
             if result.is_err() {
                 if self.config.strict {
                     return Err(result.unwrap_err());
@@ -887,7 +888,7 @@ impl OntoEnv {
                     }
                 };
 
-                match self.io.add(location, false) {
+                match self.io.add(location, Overwrite::Preserve) {
                     Ok(new_ont) => {
                         let id = new_ont.id().clone();
                         self.env.add_ontology(new_ont);

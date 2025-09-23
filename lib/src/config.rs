@@ -1,6 +1,7 @@
 //! Defines the configuration structures for the OntoEnv environment.
 //! This includes the main `Config` struct and related structs for ontology locations and environment setup.
 
+use crate::options::CacheMode;
 use crate::policy::{DefaultPolicy, ResolutionPolicy};
 use anyhow::Result;
 use glob::{Pattern, PatternError};
@@ -28,6 +29,21 @@ where
     patterns.map_err(serde::de::Error::custom)
 }
 
+fn cache_mode_ser<S>(mode: &CacheMode, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_bool(mode.is_enabled())
+}
+
+fn cache_mode_de<'de, D>(deserializer: D) -> Result<CacheMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = bool::deserialize(deserializer)?;
+    Ok(CacheMode::from(value))
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Config {
     pub root: PathBuf,
@@ -53,8 +69,12 @@ pub struct Config {
     pub offline: bool,
     // resolution policy
     pub resolution_policy: String,
-    #[serde(default)]
-    pub use_cached_ontologies: bool,
+    #[serde(
+        default,
+        serialize_with = "cache_mode_ser",
+        deserialize_with = "cache_mode_de"
+    )]
+    pub use_cached_ontologies: CacheMode,
     // if true, do not store the ontoenv store on disk
     pub temporary: bool,
     // if true, do not search for ontologies in the search directories
@@ -137,7 +157,10 @@ impl Config {
         println!("  Require Ontology Names: {}", self.require_ontology_names);
         println!("  Strict: {}", self.strict);
         println!("  Offline: {}", self.offline);
-        println!("  Use Cached Ontologies: {}", self.use_cached_ontologies);
+        println!(
+            "  Use Cached Ontologies: {}",
+            self.use_cached_ontologies.is_enabled()
+        );
         println!("  Resolution Policy: {}", self.resolution_policy);
         println!("  Temporary: {}", self.temporary);
         println!("  No Search: {}", self.no_search);
@@ -156,7 +179,7 @@ pub struct ConfigBuilder {
     resolution_policy: Option<String>,
     no_search: bool,
     temporary: Option<bool>,
-    use_cached_ontologies: Option<bool>,
+    use_cached_ontologies: Option<CacheMode>,
 }
 
 impl ConfigBuilder {
@@ -239,9 +262,9 @@ impl ConfigBuilder {
         self
     }
 
-    /// Sets whether to reuse cached ontologies when possible. Defaults to `false`.
-    pub fn use_cached_ontologies(mut self, use_cached: bool) -> Self {
-        self.use_cached_ontologies = Some(use_cached);
+    /// Sets whether to reuse cached ontologies when possible. Defaults to disabled.
+    pub fn use_cached_ontologies(mut self, mode: CacheMode) -> Self {
+        self.use_cached_ontologies = Some(mode);
         self
     }
 
@@ -307,7 +330,7 @@ impl ConfigBuilder {
             resolution_policy: self
                 .resolution_policy
                 .unwrap_or_else(|| DefaultPolicy.policy_name().to_string()),
-            use_cached_ontologies: self.use_cached_ontologies.unwrap_or(false),
+            use_cached_ontologies: self.use_cached_ontologies.unwrap_or_default(),
             temporary: self.temporary.unwrap_or(false),
             no_search: self.no_search,
         })
