@@ -75,6 +75,22 @@ fn copy_file(src_path: &PathBuf, dst_path: &PathBuf) -> Result<(), std::io::Erro
     Ok(())
 }
 
+fn cached_env(dir: &TempDir) -> Result<OntoEnv> {
+    let config = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .includes(&["*.ttl"])
+        .excludes(&[] as &[&str])
+        .require_ontology_names(false)
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .no_search(true)
+        .use_cached_ontologies(true)
+        .build()?;
+    OntoEnv::init(config, true)
+}
+
 fn default_config(dir: &TempDir) -> Config {
     Config::builder()
         .root(dir.path().into())
@@ -303,7 +319,7 @@ fn test_ontoenv_add() -> Result<()> {
             .to_str()
             .ok_or(anyhow::anyhow!("Failed to convert to string"))?,
     )?;
-    env.add(loc, true)?;
+    env.add(loc, true, false)?;
     assert_eq!(env.stats()?.num_graphs, 5);
     teardown(dir);
     Ok(())
@@ -630,7 +646,7 @@ fn test_init_read_only() -> Result<()> {
 
     // The OntoEnv::add method requires &mut self.
     // The underlying ReadOnlyPersistentGraphIO::add should return an error.
-    let add_result = loaded_env.add(location, false);
+    let add_result = loaded_env.add(location, false, false);
 
     assert!(add_result.is_err());
     // Check if the error message indicates read-only restriction
@@ -702,7 +718,7 @@ fn test_init_temporary() -> Result<()> {
     )?;
     let location = OntologyLocation::File(dummy_ont_path);
 
-    let add_result = env.add(location, false);
+    let add_result = env.add(location, false, false);
     assert!(add_result.is_ok()); // Should succeed in memory
 
     // Verify the ontology was added (in memory)
@@ -713,6 +729,118 @@ fn test_init_temporary() -> Result<()> {
         ))
         .is_some());
 
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_cached_add_skips_unchanged_file() -> Result<()> {
+    let dir = TempDir::new("ontoenv_cached_skip")?;
+    let ttl_path = dir.path().join("cached.ttl");
+    fs::write(
+        &ttl_path,
+        "<urn:cached> a <http://www.w3.org/2002/07/owl#Ontology> .",
+    )?;
+
+    let mut env = cached_env(&dir)?;
+    let location = OntologyLocation::File(ttl_path.clone());
+    let id = env.add(location.clone(), false, false)?;
+    let first_updated = env
+        .ontologies()
+        .get(&id)
+        .and_then(|ont| ont.last_updated.clone())
+        .expect("last_updated set");
+    assert_eq!(env.stats()?.num_ontologies, 1);
+
+    thread::sleep(Duration::from_secs(1));
+
+    let reused_id = env.add(location.clone(), false, false)?;
+    let reused_updated = env
+        .ontologies()
+        .get(&reused_id)
+        .and_then(|ont| ont.last_updated.clone())
+        .expect("last_updated still set");
+
+    assert_eq!(id, reused_id);
+    assert_eq!(first_updated, reused_updated);
+    assert_eq!(env.stats()?.num_ontologies, 1);
+
+    drop(env);
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_cached_add_reloads_on_file_change() -> Result<()> {
+    let dir = TempDir::new("ontoenv_cached_reload")?;
+    let ttl_path = dir.path().join("cached_reload.ttl");
+    fs::write(
+        &ttl_path,
+        "<urn:cached_reload> a <http://www.w3.org/2002/07/owl#Ontology> .",
+    )?;
+
+    let mut env = cached_env(&dir)?;
+    let location = OntologyLocation::File(ttl_path.clone());
+    let id = env.add(location.clone(), false, false)?;
+    let first_updated = env
+        .ontologies()
+        .get(&id)
+        .and_then(|ont| ont.last_updated.clone())
+        .expect("last_updated set");
+
+    thread::sleep(Duration::from_secs(1));
+
+    fs::write(
+        &ttl_path,
+        "<urn:cached_reload> a <http://www.w3.org/2002/07/owl#Ontology> .\n<urn:cached_reload> <http://example.com/p> \"updated\" .",
+    )?;
+
+    let refreshed_id = env.add(location.clone(), false, false)?;
+    let refreshed_updated = env
+        .ontologies()
+        .get(&refreshed_id)
+        .and_then(|ont| ont.last_updated.clone())
+        .expect("last_updated set after refresh");
+
+    assert_eq!(id, refreshed_id);
+    assert!(refreshed_updated > first_updated);
+
+    drop(env);
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_cached_add_force_refreshes() -> Result<()> {
+    let dir = TempDir::new("ontoenv_cached_force")?;
+    let ttl_path = dir.path().join("cached_force.ttl");
+    fs::write(
+        &ttl_path,
+        "<urn:cached_force> a <http://www.w3.org/2002/07/owl#Ontology> .",
+    )?;
+
+    let mut env = cached_env(&dir)?;
+    let location = OntologyLocation::File(ttl_path.clone());
+    let id = env.add(location.clone(), false, false)?;
+    let first_updated = env
+        .ontologies()
+        .get(&id)
+        .and_then(|ont| ont.last_updated.clone())
+        .expect("last_updated set");
+
+    thread::sleep(Duration::from_secs(1));
+
+    let forced_id = env.add(location.clone(), false, true)?;
+    let forced_updated = env
+        .ontologies()
+        .get(&forced_id)
+        .and_then(|ont| ont.last_updated.clone())
+        .expect("last_updated set after force");
+
+    assert_eq!(id, forced_id);
+    assert!(forced_updated > first_updated);
+
+    drop(env);
     teardown(dir);
     Ok(())
 }
