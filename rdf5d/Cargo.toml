@@ -1,0 +1,34 @@
+[package]
+name = "rdf5d"
+version = "0.1.2"
+edition = "2024"
+authors = ["Gabe Fierro <gtfierro@mines.edu>"]
+license = "BSD-3-Clause"
+repository = "https://github.com/gtfierro/r5tu"
+homepage = "https://github.com/gtfierro/r5tu"
+description = "Compact, mmap‑friendly on‑disk format for RDF 5‑tuples"
+readme = "README.md"
+
+[dependencies]
+
+[features]
+default = []
+zstd = ["dep:zstd"]
+oxigraph = ["dep:oxigraph"]
+mmap = ["dep:memmap2"]
+
+[dependencies.zstd]
+version = "0.13"
+optional = true
+
+[dependencies.oxigraph]
+version = "0.4"
+optional = true
+
+[dependencies.memmap2]
+version = "0.9"
+optional = true
+
+[dependencies.clap]
+version = "4"
+features = ["derive"]
