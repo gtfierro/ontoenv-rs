@@ -303,18 +303,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Stat(args) => {
             let file = args.file;
             let f = match {
-                #[cfg(feature = "mmap")]
-                {
-                    if args.no_mmap {
-                        R5tuFile::open(&file)
-                    } else {
-                        R5tuFile::open_mmap(&file)
-                    }
-                }
-                #[cfg(not(feature = "mmap"))]
-                {
-                    R5tuFile::open(&file)
-                }
+                R5tuFile::open(&file)
             } {
                 Ok(f) => f,
                 Err(e) => {

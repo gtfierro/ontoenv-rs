@@ -58,8 +58,10 @@ impl From<bool> for RefreshStrategy {
 
 /// Represents the cache usage policy captured in the configuration.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Default)]
 pub enum CacheMode {
     Enabled,
+    #[default]
     Disabled,
 }
 
@@ -69,11 +71,6 @@ impl CacheMode {
     }
 }
 
-impl Default for CacheMode {
-    fn default() -> Self {
-        CacheMode::Disabled
-    }
-}
 
 impl From<bool> for CacheMode {
     fn from(value: bool) -> Self {

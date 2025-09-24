@@ -9,7 +9,6 @@ use ontoenv::util::write_dataset_to_file;
 use ontoenv::ToUriString;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat};
 use oxigraph::model::NamedNode;
-use serde_json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env::current_dir;
 use std::path::PathBuf;
@@ -617,7 +616,7 @@ fn main() -> Result<()> {
                 // Recompute status details similar to env.status()
                 let ontoenv_dir = current_dir()?.join(".ontoenv");
                 let last_updated = if ontoenv_dir.exists() {
-                    Some(std::fs::metadata(&ontoenv_dir)?.modified()?.into())
+                    Some(std::fs::metadata(&ontoenv_dir)?.modified()?)
                         as Option<std::time::SystemTime>
                 } else {
                     None
@@ -847,16 +846,14 @@ fn main() -> Result<()> {
                     }))
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if problems.is_empty() {
+                println!("No issues found.");
             } else {
-                if problems.is_empty() {
-                    println!("No issues found.");
-                } else {
-                    println!("Found {} issues:", problems.len());
-                    for problem in problems {
-                        println!("- {}", problem.message);
-                        for location in problem.locations {
-                            println!("  - {location}");
-                        }
+                println!("Found {} issues:", problems.len());
+                for problem in problems {
+                    println!("- {}", problem.message);
+                    for location in problem.locations {
+                        println!("  - {location}");
                     }
                 }
             }
