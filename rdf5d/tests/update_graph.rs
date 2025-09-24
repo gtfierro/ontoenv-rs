@@ -1,6 +1,6 @@
 use rdf5d::{
-    replace_graph,
     reader::R5tuFile,
+    replace_graph,
     writer::{Quint, Term, write_file},
 };
 
@@ -33,7 +33,11 @@ fn replace_entire_graph_preserves_others() {
         (
             Term::Iri("ex:s1".into()),
             Term::Iri("ex:p2".into()),
-            Term::Literal { lex: "v2".into(), dt: None, lang: Some("en".into()) },
+            Term::Literal {
+                lex: "v2".into(),
+                dt: None,
+                lang: Some("en".into()),
+            },
         ),
         (
             Term::Iri("ex:s3".into()),
@@ -53,12 +57,18 @@ fn replace_entire_graph_preserves_others() {
     assert_eq!(gs.len(), 2);
 
     // src/A now has 2 triples with the new predicate/object
-    let a = f.resolve_gid("src/A", "g").expect("resolve A").expect("some");
+    let a = f
+        .resolve_gid("src/A", "g")
+        .expect("resolve A")
+        .expect("some");
     let a_triples: Vec<_> = f.triples_ids(a.gid).expect("triples A").collect();
     assert_eq!(a_triples.len(), 2);
 
     // src/B remains unchanged
-    let b = f.resolve_gid("src/B", "g").expect("resolve B").expect("some");
+    let b = f
+        .resolve_gid("src/B", "g")
+        .expect("resolve B")
+        .expect("some");
     let b_triples: Vec<_> = f.triples_ids(b.gid).expect("triples B").collect();
     assert_eq!(b_triples.len(), 1);
     // Check subject string for B stayed the same
@@ -68,4 +78,3 @@ fn replace_entire_graph_preserves_others() {
     let _ = std::fs::remove_file(&in_path);
     let _ = std::fs::remove_file(&out_path);
 }
-
