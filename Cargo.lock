@@ -1762,6 +1762,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
+name = "memmap2"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "843a98750cd611cc2965a8213b53b43e715f13c37a9e096c6408e69990961db7"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2545,10 +2554,9 @@ dependencies = [
 [[package]]
 name = "rdf5d"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28bab39f787b87db29f3ed45d5ed1ce7f6005e75b0d6fb92b135803e0eea04da"
 dependencies = [
  "clap",
+ "memmap2",
  "oxigraph",
  "zstd",
 ]
