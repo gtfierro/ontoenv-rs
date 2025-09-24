@@ -38,7 +38,7 @@ oxigraph = "0.4.11"
 memmap2 = "0.9"
 zstd = "0.13"
 
-rdf5d = { path = "rdf5d", features = ["oxigraph", "zstd"] }
+rdf5d = { version = "0.4.0-a5", path = "rdf5d", features = ["oxigraph", "zstd"] }
 
 ontoenv = { version = "0.4.0-a5", path = "lib" }
 
