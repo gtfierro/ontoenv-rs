@@ -282,7 +282,7 @@ impl PersistentGraphIO {
         let mut writer = StreamingWriter::new(&self.store_path, opts);
 
         let mut iter = self.store.quads_for_pattern(None, None, None, None);
-        while let Some(q) = iter.next() {
+        for q in iter {
             let q = q?;
             // Dataset id: reuse graph name string; Graph name: same string
             let gname_str = match q.graph_name {
