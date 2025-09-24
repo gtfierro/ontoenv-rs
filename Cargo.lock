@@ -2553,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "rdf5d"
-version = "0.1.2"
+version = "0.4.0-a5"
 dependencies = [
  "clap",
  "memmap2",

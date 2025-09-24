@@ -1,6 +1,6 @@
 [package]
 name = "rdf5d"
-version = "0.1.2"
+version.workspace = true
 edition = "2024"
 authors = ["Gabe Fierro <gtfierro@mines.edu>"]
 license = "BSD-3-Clause"
