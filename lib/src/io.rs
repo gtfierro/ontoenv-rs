@@ -4,7 +4,7 @@
 use crate::errors::OfflineRetrievalError;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::options::Overwrite;
-use crate::util::{get_file_contents, get_url_contents};
+use crate::util::get_file_contents;
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use fs2::FileExt;
