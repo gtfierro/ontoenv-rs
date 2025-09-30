@@ -108,6 +108,11 @@ fn term_to_python<'a>(
         Term::BlankNode(id) => rdflib
             .getattr("BNode")?
             .call1((id.clone().into_string(),))?,
+        Term::Triple(_) => {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Triples are not supported",
+            ))
+        }
     };
     Ok(res)
 }
