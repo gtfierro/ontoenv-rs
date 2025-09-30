@@ -142,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 // Load into store via BulkLoader (explicit fast path)
                 let store = Store::new()?;
-                let loader = store.bulk_loader();
+                let mut loader = store.bulk_loader();
                 loader.load_from_reader(rfmt, &mut rdr)?;
                 let gname_auto =
                     rdf5d::writer::detect_graphname_from_store(&store).unwrap_or_else(|| {
