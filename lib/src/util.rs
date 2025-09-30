@@ -14,7 +14,7 @@ use oxigraph::model::{GraphNameRef, Quad, Triple, TripleRef};
 
 use std::io::BufReader;
 
-use log::{debug, info, warn};
+use log::{debug, info};
 
 pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
     let b = std::fs::read(path)?;
