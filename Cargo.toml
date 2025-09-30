@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0-a5"
+version = "0.4.0-a6"
 authors = ["Gabe Fierro <gtfierro@mines.edu>"]
 license = "BSD-3-Clause"
 edition = "2021"
@@ -38,9 +38,9 @@ oxigraph = "0.4.11"
 memmap2 = "0.9"
 zstd = "0.13"
 
-rdf5d = { version = "0.4.0-a5", path = "rdf5d", features = ["oxigraph", "zstd"] }
+rdf5d = { version = "0.4.0-a6", path = "rdf5d", features = ["oxigraph", "zstd"] }
 
-ontoenv = { version = "0.4.0-a5", path = "lib" }
+ontoenv = { version = "0.4.0-a6", path = "lib" }
 
 [profile.profiling]
 inherits = "release"
