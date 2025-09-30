@@ -6,7 +6,6 @@ use anyhow::Result;
 use std::io::{Read, Seek};
 use std::path::Path;
 
-use reqwest::header::CONTENT_TYPE;
 
 use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::graph::Graph as OxigraphGraph;
@@ -33,33 +32,9 @@ pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
 }
 
 pub fn get_url_contents(url: &str) -> Result<(Vec<u8>, Option<RdfFormat>)> {
-    let client = reqwest::blocking::Client::new();
-    let resp = client
-        .get(url)
-        .header(CONTENT_TYPE, "application/x-turtle")
-        .send()?;
-    if !resp.status().is_success() {
-        warn!("Failed to fetch ontology from {} ({})", url, resp.status());
-        return Err(anyhow::anyhow!(
-            "Failed to fetch ontology from {} ({})",
-            url,
-            resp.status()
-        ));
-    }
-    let content_type = resp.headers().get("Content-Type");
-    let format = content_type
-        .and_then(|ct| ct.to_str().ok())
-        .and_then(|ext| match ext {
-            "application/x-turtle" => Some(RdfFormat::Turtle),
-            "text/turtle" => Some(RdfFormat::Turtle),
-            "application/rdf+xml" => Some(RdfFormat::RdfXml),
-            "text/rdf+n3" => Some(RdfFormat::NTriples),
-            _ => {
-                debug!("Unknown content type: {ext}");
-                None
-            }
-        });
-    Ok((resp.bytes()?.to_vec(), format))
+    let opts = crate::fetch::FetchOptions::default();
+    let res = crate::fetch::fetch_rdf(url, &opts)?;
+    Ok((res.bytes, res.format))
 }
 
 pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
@@ -147,35 +122,10 @@ pub fn read_format<T: Read + Seek>(
 
 pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     debug!("Reading url: {file}");
-
-    let client = reqwest::blocking::Client::new();
-    let resp = client
-        .get(file)
-        .header(CONTENT_TYPE, "application/x-turtle")
-        .send()?;
-    if !resp.status().is_success() {
-        warn!("Failed to fetch ontology from {} ({})", file, resp.status());
-        return Err(anyhow::anyhow!(
-            "Failed to fetch ontology from {} ({})",
-            file,
-            resp.status()
-        ));
-    }
-    let content_type = resp.headers().get("Content-Type");
-    let content_type = content_type.and_then(|ct| ct.to_str().ok());
-    let content_type = content_type.and_then(|ext| match ext {
-        "application/x-turtle" => Some(RdfFormat::Turtle),
-        "text/turtle" => Some(RdfFormat::Turtle),
-        "application/rdf+xml" => Some(RdfFormat::RdfXml),
-        "text/rdf+n3" => Some(RdfFormat::NTriples),
-        _ => {
-            debug!("Unknown content type: {ext}");
-            None
-        }
-    });
-
-    let content: BufReader<_> = BufReader::new(std::io::Cursor::new(resp.bytes()?));
-    read_format(content, content_type)
+    let opts = crate::fetch::FetchOptions::default();
+    let res = crate::fetch::fetch_rdf(file, &opts)?;
+    let content: BufReader<_> = BufReader::new(std::io::Cursor::new(res.bytes));
+    read_format(content, res.format)
 }
 
 // return a "impl IntoIterator<Item = impl Into<Quad>>" for a graph. Iter through

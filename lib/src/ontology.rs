@@ -276,12 +276,8 @@ impl Ontology {
         match &self.location {
             Some(OntologyLocation::File(p)) => p.exists(),
             Some(OntologyLocation::Url(u)) => {
-                // check if the URL is reachable
-                let res = reqwest::blocking::get(u);
-                match res {
-                    Ok(r) => r.status().is_success(),
-                    Err(_) => false,
-                }
+                let opts = crate::fetch::FetchOptions::default();
+                crate::fetch::head_exists(u, &opts).unwrap_or(false)
             }
             None => false,
         }

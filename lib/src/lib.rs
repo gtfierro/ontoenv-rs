@@ -101,6 +101,7 @@ pub mod io;
 pub mod ontology;
 pub mod options;
 pub mod policy;
+pub mod fetch;
 #[macro_use]
 pub mod util;
 pub mod transform;
