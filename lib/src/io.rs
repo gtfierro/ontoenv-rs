@@ -310,9 +310,6 @@ impl PersistentGraphIO {
             let s_term = match q.subject {
                 oxigraph::model::Subject::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
                 oxigraph::model::Subject::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
-                oxigraph::model::Subject::Triple(_) => {
-                    return Err(anyhow!("RDF-star triples not supported by RDF5D backend"))
-                }
             };
             let p_term = R5Term::Iri(q.predicate.as_str().to_string());
             let o_term = match q.object {
@@ -334,9 +331,6 @@ impl PersistentGraphIO {
                             lang: None,
                         }
                     }
-                }
-                oxigraph::model::Term::Triple(_) => {
-                    return Err(anyhow!("RDF-star triples not supported by RDF5D backend"))
                 }
             };
 
