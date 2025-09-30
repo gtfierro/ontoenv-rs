@@ -27,6 +27,30 @@ pub struct StoreStats {
     pub num_triples: usize,
 }
 
+fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
+    // Try preferred first, then fall back to other formats with a fresh store each time
+    let mut candidates = vec![RdfFormat::Turtle, RdfFormat::RdfXml, RdfFormat::NTriples];
+    if let Some(p) = preferred {
+        candidates.retain(|f| *f != p);
+        candidates.insert(0, p);
+    }
+    for fmt in candidates {
+        let store = Store::new()?;
+        let staging_graph = NamedNode::new_unchecked("temp:graph");
+        let parser = RdfParser::from_format(fmt)
+            .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
+            .without_named_graphs();
+        if store
+            .bulk_loader()
+            .load_from_reader(parser, std::io::Cursor::new(bytes))
+            .is_ok()
+        {
+            return Ok(store);
+        }
+    }
+    Err(anyhow!("Failed to parse RDF bytes in any supported format"))
+}
+
 /// A helper function to read an ontology from a location, add it to a store,
 /// and return the parsed ontology metadata. This is used by multiple GraphIO implementations.
 fn add_ontology_to_store(
@@ -36,27 +60,23 @@ fn add_ontology_to_store(
     offline: bool,
     strict: bool,
 ) -> Result<Ontology> {
-    // Read source into bytes and detect format
-    let (bytes, format) = match &location {
-        OntologyLocation::File(path) => get_file_contents(path)?,
+    // Read source into bytes (via fetch for URLs) and load into a staging store with format fallback
+    let t0 = Instant::now();
+    let staging_graph = NamedNode::new_unchecked("temp:graph");
+    let tmp_store = match &location {
+        OntologyLocation::File(path) => {
+            let (bytes, format) = get_file_contents(path)?;
+            load_staging_store_from_bytes(&bytes, format)?
+        }
         OntologyLocation::Url(url) => {
             if offline {
                 return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
             }
-            get_url_contents(url.as_str())?
+            let opts = crate::fetch::FetchOptions::default();
+            let fetched = crate::fetch::fetch_rdf(url.as_str(), &opts)?;
+            load_staging_store_from_bytes(&fetched.bytes, fetched.format)?
         }
     };
-
-    // Parse once into a temporary, isolated store to discover ontology metadata
-    let tmp_store = Store::new()?;
-    let staging_graph = NamedNode::new_unchecked("temp:graph");
-    let parser = RdfParser::from_format(format.unwrap_or(RdfFormat::Turtle))
-        .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
-        .without_named_graphs();
-    let t0 = Instant::now();
-    tmp_store
-        .bulk_loader()
-        .load_from_reader(parser, bytes.as_slice())?;
     debug!(
         "Loaded {} into staging store in {:?}",
         location.as_str(),
@@ -180,14 +200,9 @@ pub trait GraphIO: Send + Sync {
                 modified
             }
             OntologyLocation::Url(url) => {
-                let response = reqwest::blocking::Client::new().head(url).send()?;
-                let url_last_modified = response.headers().get("Last-Modified");
-                match url_last_modified {
-                    Some(date) => {
-                        let date = date.to_str()?;
-                        let date = DateTime::parse_from_rfc2822(date)?;
-                        date.with_timezone(&Utc)
-                    }
+                let opts = crate::fetch::FetchOptions::default();
+                match crate::fetch::head_last_modified(url, &opts)? {
+                    Some(dt) => dt,
                     None => Utc::now(),
                 }
             }
