@@ -3,11 +3,11 @@
 
 use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, TYPE};
 use oxigraph::model::{
-    Dataset, Graph, NamedNodeRef, Quad, QuadRef, SubjectRef, TermRef, Triple, TripleRef,
+    Dataset, Graph, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef, TermRef, Triple, TripleRef,
 };
 
 /// Rewrites all sh:prefixes in a graph to point to the provided root
-pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: SubjectRef) {
+pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
     let mut to_remove: Vec<Triple> = vec![];
     let mut to_add: Vec<Triple> = vec![];
     // find all sh:prefixes triples
@@ -63,7 +63,7 @@ pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<
 }
 
 /// Removes owl:Ontology declarations which are not the provided root
-pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: SubjectRef) {
+pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
     // remove owl:Ontology declarations that are not the first graph
     let mut to_remove: Vec<Triple> = vec![];
     for triple in graph.triples_for_object(ONTOLOGY) {
@@ -79,7 +79,7 @@ pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: SubjectRef) {
 }
 
 /// Rewrites all sh:prefixes in the graph to point to the provided root
-pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: SubjectRef) {
+pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
     let mut to_remove: Vec<Quad> = vec![];
     let mut to_add: Vec<Quad> = vec![];
     // find all sh:prefixes quads
@@ -137,7 +137,7 @@ pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[Na
 }
 
 /// Removes owl:Ontology declarations which are not the provided root
-pub fn remove_ontology_declarations(graph: &mut Dataset, root: SubjectRef) {
+pub fn remove_ontology_declarations(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
     // remove owl:Ontology declarations that are not the first graph
     let mut to_remove: Vec<Quad> = vec![];
     for quad in graph.quads_for_object(ONTOLOGY) {

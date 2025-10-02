@@ -605,7 +605,6 @@ fn term_from_ox_term_ref(t: &oxigraph::model::TermRef<'_>) -> Term {
                 }
             }
         }
-        _ => Term::Iri(t.to_string()),
     }
 }
 
@@ -617,12 +616,11 @@ impl StreamingWriter {
         id: &str,
         gname: &str,
     ) -> Result<()> {
-        use oxigraph::model::SubjectRef;
+        use oxigraph::model::NamedOrBlankNodeRef;
         for t in graph.iter() {
             let s = match &t.subject {
-                SubjectRef::NamedNode(n) => Term::Iri(n.as_str().to_string()),
-                SubjectRef::BlankNode(b) => Term::BNode(format!("_:{}", b.as_str())),
-                _ => return Err(R5Error::Invalid("unsupported subject kind")),
+                NamedOrBlankNodeRef::NamedNode(n) => Term::Iri(n.as_str().to_string()),
+                NamedOrBlankNodeRef::BlankNode(b) => Term::BNode(format!("_:{}", b.as_str())),
             };
             let p = Term::Iri(t.predicate.as_str().to_string());
             let o = term_from_ox_term_ref(&t.object);
@@ -653,16 +651,15 @@ pub fn write_graph_from_oxigraph<P: AsRef<Path>>(
 
 #[cfg(feature = "oxigraph")]
 pub fn detect_graphname_from_oxigraph(graph: &oxigraph::model::Graph) -> Option<String> {
-    use oxigraph::model::{NamedNode, SubjectRef, TermRef};
+    use oxigraph::model::{NamedNode, NamedOrBlankNodeRef, TermRef};
     let rdf_type = NamedNode::new("http://www.w3.org/1999/02/22-rdf-syntax-ns#type").ok()?;
     let owl_ontology = NamedNode::new("http://www.w3.org/2002/07/owl#Ontology").ok()?;
     for t in graph.iter() {
         if t.predicate == rdf_type.as_ref() && t.object == TermRef::NamedNode(owl_ontology.as_ref())
         {
             return Some(match t.subject {
-                SubjectRef::NamedNode(n) => n.as_str().to_string(),
-                SubjectRef::BlankNode(b) => format!("_:{}", b.as_str()),
-                _ => return None,
+                NamedOrBlankNodeRef::NamedNode(n) => n.as_str().to_string(),
+                NamedOrBlankNodeRef::BlankNode(b) => format!("_:{}", b.as_str()),
             });
         }
     }
@@ -692,9 +689,8 @@ pub fn detect_graphname_from_store(store: &oxigraph::store::Store) -> Option<Str
     );
     if let Some(Ok(q)) = it.next() {
         return Some(match &q.subject {
-            oxigraph::model::Subject::NamedNode(n) => n.as_str().to_string(),
-            oxigraph::model::Subject::BlankNode(b) => format!("_:{}", b.as_str()),
-            _ => return None,
+            oxigraph::model::NamedOrBlankNode::NamedNode(n) => n.as_str().to_string(),
+            oxigraph::model::NamedOrBlankNode::BlankNode(b) => format!("_:{}", b.as_str()),
         });
     }
     None

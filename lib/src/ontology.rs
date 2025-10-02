@@ -7,8 +7,8 @@ use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, info, warn};
 use oxigraph::model::{
-    Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, Subject, SubjectRef,
-    Term,
+    Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNode,
+    NamedOrBlankNodeRef, Term,
 };
 use oxigraph::store::Store;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -321,7 +321,7 @@ impl Ontology {
     fn build_from_subject_in_store(
         store: &Store,
         graph_name: GraphNameRef,
-        ontology_subject: Subject,
+        ontology_subject: NamedOrBlankNode,
         location: OntologyLocation,
     ) -> Result<Self> {
         debug!("got ontology name: {ontology_subject}");
@@ -345,8 +345,8 @@ impl Ontology {
             .map(|q| q.object)
         {
             let decl_subj = match &decl_obj {
-                Term::NamedNode(n) => Subject::NamedNode(n.clone()),
-                Term::BlankNode(b) => Subject::BlankNode(b.clone()),
+                Term::NamedNode(n) => NamedOrBlankNode::NamedNode(n.clone()),
+                Term::BlankNode(b) => NamedOrBlankNode::BlankNode(b.clone()),
                 _ => continue,
             };
 
@@ -441,7 +441,7 @@ impl Ontology {
             for iri in ONTOLOGY_VERSION_IRIS.iter() {
                 if let Some(value) = store
                     .quads_for_pattern(
-                        Some(SubjectRef::NamedNode(graph_iri.as_ref())),
+                        Some(NamedOrBlankNodeRef::NamedNode(graph_iri.as_ref())),
                         Some(*iri),
                         None,
                         Some(graph_name),
@@ -470,7 +470,7 @@ impl Ontology {
         info!("Fetched graph {ontology_subject} from location: {location:?}");
 
         let ontology_name: NamedNode = match ontology_subject {
-            Subject::NamedNode(s) => s,
+            NamedOrBlankNode::NamedNode(s) => s,
             _ => panic!("Ontology name is not an IRI"),
         };
 
@@ -509,7 +509,7 @@ impl Ontology {
         let location = id.location().clone();
 
         // get the rdf:type owl:Ontology declarations
-        let mut decls: Vec<Subject> = store
+        let mut decls: Vec<NamedOrBlankNode> = store
             .quads_for_pattern(
                 None,
                 Some(TYPE),
@@ -542,12 +542,12 @@ impl Ontology {
                 ));
             }
             warn!("No ontology declaration found in {location}. Using this as the ontology name");
-            let ontology_subject = Subject::NamedNode(location.to_iri());
+            let ontology_subject = NamedOrBlankNode::NamedNode(location.to_iri());
             Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
         } else {
             let decl = decls.into_iter().next().unwrap();
             let ontology_subject = match decl {
-                Subject::NamedNode(s) => Subject::NamedNode(s),
+                NamedOrBlankNode::NamedNode(s) => NamedOrBlankNode::NamedNode(s),
                 _ => {
                     return Err(anyhow::anyhow!(
                         "Ontology declaration subject is not a NamedNode, skipping."
