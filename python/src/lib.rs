@@ -6,7 +6,7 @@ use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ::ontoenv::transform;
 use ::ontoenv::ToUriString;
 use anyhow::Error;
-use oxigraph::model::{BlankNode, Literal, NamedNode, SubjectRef, Term};
+use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
 use pyo3::{
     prelude::*,
     types::{IntoPyDict, PyString, PyTuple},
@@ -108,11 +108,6 @@ fn term_to_python<'a>(
         Term::BlankNode(id) => rdflib
             .getattr("BNode")?
             .call1((id.clone().into_string(),))?,
-        Term::Triple(_) => {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Triples are not supported",
-            ))
-        }
     };
     Ok(res)
 }
@@ -339,7 +334,7 @@ impl OntoEnv {
         if !result.is_none() {
             let ontology = NamedNode::new(result.extract::<String>()?)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-            let base_ontology: SubjectRef = SubjectRef::NamedNode(ontology.as_ref());
+            let base_ontology = NamedOrBlankNodeRef::NamedNode(ontology.as_ref());
 
             transform::rewrite_sh_prefixes_graph(&mut graph, base_ontology);
             transform::remove_ontology_declarations_graph(&mut graph, base_ontology);

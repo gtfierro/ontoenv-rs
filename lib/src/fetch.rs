@@ -38,11 +38,18 @@ pub struct FetchResult {
 }
 
 fn detect_format(ct: &str) -> Option<RdfFormat> {
-    let ct = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let ct = ct
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     match ct.as_str() {
         "text/turtle" | "application/x-turtle" => Some(RdfFormat::Turtle),
         "application/rdf+xml" => Some(RdfFormat::RdfXml),
-        "application/n-triples" | "application/ntriples" | "text/plain" => Some(RdfFormat::NTriples),
+        "application/n-triples" | "application/ntriples" | "text/plain" => {
+            Some(RdfFormat::NTriples)
+        }
         _ => None,
     }
 }
@@ -119,7 +126,13 @@ fn try_get(
     url: &str,
     client: &Client,
     accept: &str,
-) -> Result<(Vec<u8>, Option<String>, Option<String>, String, reqwest::StatusCode)> {
+) -> Result<(
+    Vec<u8>,
+    Option<String>,
+    Option<String>,
+    String,
+    reqwest::StatusCode,
+)> {
     let resp = client.get(url).header(ACCEPT, accept).send()?;
     let status = resp.status();
     let final_url = resp.url().to_string();

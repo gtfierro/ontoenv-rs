@@ -142,8 +142,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 // Load into store via BulkLoader (explicit fast path)
                 let store = Store::new()?;
-                let loader = store.bulk_loader();
+                let mut loader = store.bulk_loader();
                 loader.load_from_reader(rfmt, &mut rdr)?;
+                loader.commit()?;
                 let gname_auto =
                     rdf5d::writer::detect_graphname_from_store(&store).unwrap_or_else(|| {
                         args.graphname
@@ -161,13 +162,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let q = q?;
                     n += 1;
                     let s = match q.subject {
-                        oxigraph::model::Subject::NamedNode(nm) => {
+                        oxigraph::model::NamedOrBlankNode::NamedNode(nm) => {
                             Term::Iri(nm.as_str().to_string())
                         }
-                        oxigraph::model::Subject::BlankNode(b) => {
+                        oxigraph::model::NamedOrBlankNode::BlankNode(b) => {
                             Term::BNode(format!("_:{}", b.as_str()))
                         }
-                        _ => continue,
                     };
                     let p = Term::Iri(q.predicate.as_str().to_string());
                     let o = match q.object {
@@ -191,7 +191,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        _ => continue,
                     };
                     w.add(Quint {
                         id: id.clone(),
@@ -245,13 +244,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let q = q?;
                     n += 1;
                     let s = match q.subject {
-                        oxigraph::model::Subject::NamedNode(nm) => {
+                        oxigraph::model::NamedOrBlankNode::NamedNode(nm) => {
                             Term::Iri(nm.as_str().to_string())
                         }
-                        oxigraph::model::Subject::BlankNode(b) => {
+                        oxigraph::model::NamedOrBlankNode::BlankNode(b) => {
                             Term::BNode(format!("_:{}", b.as_str()))
                         }
-                        _ => continue,
                     };
                     let p = Term::Iri(q.predicate.as_str().to_string());
                     let o = match q.object {
@@ -275,7 +273,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        _ => continue,
                     };
                     let gname = match q.graph_name {
                         oxigraph::model::GraphName::DefaultGraph => default_g.clone(),
@@ -302,9 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Stat(args) => {
             let file = args.file;
-            let f = match {
-                R5tuFile::open(&file)
-            } {
+            let f = match { R5tuFile::open(&file) } {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!(

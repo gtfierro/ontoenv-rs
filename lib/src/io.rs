@@ -10,7 +10,7 @@ use chrono::prelude::*;
 use fs2::FileExt;
 use log::{debug, info};
 use oxigraph::io::{RdfFormat, RdfParser};
-use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, Quad};
+use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad};
 use oxigraph::store::Store;
 use rdf5d::{
     reader::R5tuFile,
@@ -40,12 +40,13 @@ fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> 
         let parser = RdfParser::from_format(fmt)
             .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
             .without_named_graphs();
-        if store
-            .bulk_loader()
-            .load_from_reader(parser, std::io::Cursor::new(bytes))
-            .is_ok()
-        {
-            return Ok(store);
+        let mut loader = store.bulk_loader();
+        match loader.load_from_reader(parser, std::io::Cursor::new(bytes)) {
+            Ok(_) => {
+                loader.commit()?;
+                return Ok(store);
+            }
+            Err(_) => continue,
         }
     }
     Err(anyhow!("Failed to parse RDF bytes in any supported format"))
@@ -102,9 +103,9 @@ fn add_ontology_to_store(
                 Some(GraphNameRef::NamedNode(staging_graph.as_ref())),
             )
             .map(|res| res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone())));
-        store
-            .bulk_loader()
-            .load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
+        let mut loader = store.bulk_loader();
+        loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
+        loader.commit()?;
         info!(
             "Added graph {} (from staging) in {:?}",
             id.name(),
@@ -266,6 +267,7 @@ impl PersistentGraphIO {
     fn load_r5tu_into_store(store: &Store, r5tu_path: &Path) -> Result<()> {
         let file = R5tuFile::open(r5tu_path)?;
         // Enumerate all logical graphs and load triples into named graphs
+        let mut loader = store.bulk_loader();
         for gr in file.enumerate_all()? {
             let gname_str = gr.graphname;
             let gnn = NamedNode::new(&gname_str)
@@ -283,8 +285,9 @@ impl PersistentGraphIO {
                     graphname.clone(),
                 ));
             }
-            store.bulk_loader().load_quads(quads_buf.into_iter())?;
+            loader.load_quads(quads_buf.into_iter())?;
         }
+        loader.commit()?;
         Ok(())
     }
 
@@ -308,11 +311,8 @@ impl PersistentGraphIO {
 
             // Map Oxigraph terms to rdf5d writer terms
             let s_term = match q.subject {
-                oxigraph::model::Subject::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
-                oxigraph::model::Subject::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
-                oxigraph::model::Subject::Triple(_) => {
-                    return Err(anyhow!("RDF-star subjects are not supported in RDF5D backend"))
-                }
+                NamedOrBlankNode::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
+                NamedOrBlankNode::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
             };
             let p_term = R5Term::Iri(q.predicate.as_str().to_string());
             let o_term = match q.object {
@@ -334,9 +334,6 @@ impl PersistentGraphIO {
                             lang: None,
                         }
                     }
-                }
-                oxigraph::model::Term::Triple(_) => {
-                    return Err(anyhow!("RDF-star objects are not supported in RDF5D backend"))
                 }
             };
 
@@ -558,11 +555,13 @@ impl MemoryGraphIO {
     pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
         let graphname = id.graphname()?;
         self.store.remove_named_graph(id.name())?;
-        self.store.bulk_loader().load_quads(
+        let mut loader = self.store.bulk_loader();
+        loader.load_quads(
             graph
                 .iter()
                 .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
         )?;
+        loader.commit()?;
         Ok(())
     }
 }

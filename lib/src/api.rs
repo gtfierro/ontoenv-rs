@@ -11,7 +11,7 @@ use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, SubjectRef};
+use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
 use std::io::{BufReader, Write};
@@ -1036,7 +1036,7 @@ impl OntoEnv {
         let first_id = graph_ids
             .first()
             .ok_or_else(|| anyhow!("No graphs found"))?;
-        let root_ontology: SubjectRef = SubjectRef::NamedNode(first_id.name());
+        let root_ontology = NamedOrBlankNodeRef::NamedNode(first_id.name());
 
         let mut namespace_map = HashMap::new();
         for graph_id in &graph_ids {

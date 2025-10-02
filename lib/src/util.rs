@@ -6,7 +6,6 @@ use anyhow::Result;
 use std::io::{Read, Seek};
 use std::path::Path;
 
-
 use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::graph::Graph as OxigraphGraph;
 use oxigraph::model::Dataset;
