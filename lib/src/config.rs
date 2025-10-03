@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
+const DEFAULT_INCLUDE_PATTERNS: &[&str] = &["*.ttl", "*.xml", "*.n3"];
+
 fn vec_pattern_ser<S>(patterns: &Vec<Pattern>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -304,9 +306,12 @@ impl ConfigBuilder {
             self.locations.unwrap_or_else(|| vec![root.clone()])
         };
 
-        let includes_str = self
-            .includes
-            .unwrap_or_else(|| vec!["*.ttl".to_string(), "*.xml".to_string(), "*.n3".to_string()]);
+        let includes_str = self.includes.unwrap_or_else(|| {
+            DEFAULT_INCLUDE_PATTERNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        });
         let excludes_str = self.excludes.unwrap_or_default();
 
         let includes = includes_str

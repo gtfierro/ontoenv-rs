@@ -99,8 +99,7 @@ pub struct OntoEnv {
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
     config: Config,
     failed_resolutions: HashSet<NamedNode>,
-    fetched_in_session: HashSet<OntologyLocation>,
-    io_batch_depth: usize,
+    batch_state: BatchState,
 }
 
 impl std::fmt::Debug for OntoEnv {
@@ -116,6 +115,33 @@ impl std::fmt::Debug for OntoEnv {
     }
 }
 
+#[derive(Default)]
+struct BatchState {
+    depth: usize,
+    seen_locations: HashSet<OntologyLocation>,
+}
+
+impl BatchState {
+    fn begin(&mut self) {
+        if self.depth == 0 {
+            self.seen_locations.clear();
+        }
+        self.depth += 1;
+    }
+
+    fn end(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    fn has_seen(&self, location: &OntologyLocation) -> bool {
+        self.seen_locations.contains(location)
+    }
+
+    fn mark_seen(&mut self, location: &OntologyLocation) {
+        self.seen_locations.insert(location.clone());
+    }
+}
+
 struct BatchScope<'a> {
     env: &'a mut OntoEnv,
     completed: bool,
@@ -123,11 +149,11 @@ struct BatchScope<'a> {
 
 impl<'a> BatchScope<'a> {
     fn enter(env: &'a mut OntoEnv) -> Result<Self> {
-        if env.io_batch_depth == 0 {
-            env.fetched_in_session.clear();
+        env.batch_state.begin();
+        if let Err(err) = env.io.begin_batch() {
+            env.batch_state.end();
+            return Err(err);
         }
-        env.io_batch_depth += 1;
-        env.io.begin_batch()?;
         Ok(Self {
             env,
             completed: false,
@@ -137,7 +163,7 @@ impl<'a> BatchScope<'a> {
     fn run<T>(mut self, f: impl FnOnce(&mut OntoEnv) -> Result<T>) -> Result<T> {
         let result = f(self.env);
         let end_result = self.env.io.end_batch();
-        self.env.io_batch_depth = self.env.io_batch_depth.saturating_sub(1);
+        self.env.batch_state.end();
         self.completed = true;
         match (result, end_result) {
             (Ok(value), Ok(())) => Ok(value),
@@ -159,8 +185,13 @@ impl<'a> Drop for BatchScope<'a> {
         if let Err(err) = self.env.io.end_batch() {
             error!("Failed to finalize batched RDF write: {err}");
         }
-        self.env.io_batch_depth = self.env.io_batch_depth.saturating_sub(1);
+        self.env.batch_state.end();
     }
+}
+
+enum FetchOutcome {
+    Reused(GraphIdentifier),
+    Loaded(Ontology),
 }
 
 impl OntoEnv {
@@ -171,8 +202,7 @@ impl OntoEnv {
             config,
             dependency_graph: DiGraph::new(),
             failed_resolutions: HashSet::new(),
-            fetched_in_session: HashSet::new(),
-            io_batch_depth: 0,
+            batch_state: BatchState::default(),
         }
     }
 
@@ -437,8 +467,7 @@ impl OntoEnv {
             config,
             dependency_graph,
             failed_resolutions: HashSet::new(),
-            fetched_in_session: HashSet::new(),
-            io_batch_depth: 0,
+            batch_state: BatchState::default(),
         })
     }
 
@@ -538,8 +567,7 @@ impl OntoEnv {
             dependency_graph: DiGraph::new(),
             config,
             failed_resolutions: HashSet::new(),
-            fetched_in_session: HashSet::new(),
-            io_batch_depth: 0,
+            batch_state: BatchState::default(),
         };
 
         let _ = ontoenv.update_all(false)?;
@@ -599,6 +627,28 @@ impl OntoEnv {
         })
     }
 
+    fn fetch_location(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+    ) -> Result<FetchOutcome> {
+        if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
+            self.batch_state.mark_seen(&location);
+            return Ok(FetchOutcome::Reused(existing_id));
+        }
+
+        if !refresh.is_force() && self.batch_state.has_seen(&location) {
+            if let Some(existing) = self.env.get_ontology_by_location(&location) {
+                return Ok(FetchOutcome::Reused(existing.id().clone()));
+            }
+        }
+
+        let ontology = self.io.add(location.clone(), overwrite)?;
+        self.batch_state.mark_seen(&location);
+        Ok(FetchOutcome::Loaded(ontology))
+    }
+
     fn register_ontologies(
         &mut self,
         ontologies: Vec<Ontology>,
@@ -607,7 +657,7 @@ impl OntoEnv {
         let mut ids = Vec::with_capacity(ontologies.len());
         for ontology in ontologies {
             let id = ontology.id().clone();
-            self.env.add_ontology(ontology);
+            self.env.add_ontology(ontology)?;
             ids.push(id);
         }
 
@@ -628,33 +678,19 @@ impl OntoEnv {
     ) -> Result<GraphIdentifier> {
         self.failed_resolutions.clear();
 
-        if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
-            debug!(
-                "Reusing cached ontology {} for location {}",
-                existing_id, location
-            );
-            self.fetched_in_session.insert(location);
-            return Ok(existing_id);
-        }
-
-        if !refresh.is_force() && self.fetched_in_session.contains(&location) {
-            if let Some(existing) = self.env.get_ontology_by_location(&location) {
-                debug!(
-                    "Skipping refetch for {} (already loaded this run)",
-                    location
-                );
-                return Ok(existing.id().clone());
+        match self.fetch_location(location.clone(), overwrite, refresh)? {
+            FetchOutcome::Reused(id) => {
+                debug!("Reusing cached ontology {} for location {}", id, location);
+                Ok(id)
+            }
+            FetchOutcome::Loaded(ont) => {
+                let ids = self.register_ontologies(vec![ont], update_dependencies)?;
+                Ok(ids
+                    .into_iter()
+                    .next()
+                    .expect("registered ontology list should contain new entry"))
             }
         }
-
-        let ont = self.io.add(location.clone(), overwrite)?;
-        let ids = self.register_ontologies(vec![ont], update_dependencies)?;
-        let id = ids
-            .into_iter()
-            .next()
-            .expect("registered ontology list should contain new entry");
-        self.fetched_in_session.insert(location);
-        Ok(id)
     }
 
     fn try_reuse_cached(
@@ -729,53 +765,10 @@ impl OntoEnv {
 
     fn update_all_inner(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
         self.failed_resolutions.clear();
-        // remove ontologies which are no longer present in the search directories
-        // remove ontologies which are no longer present in the search directories
-        for graphid in self.missing_ontologies() {
-            self.io.remove(&graphid)?;
-            self.env.remove_ontology(&graphid);
-        }
+        self.remove_missing_ontologies()?;
 
-        // now, find all the new and updated ontologies in the search directories
-        // and add them to the environment
-        let updated_files: Vec<OntologyLocation> = if all {
-            let mut set: HashSet<OntologyLocation> = self
-                .env
-                .ontologies()
-                .values()
-                .filter_map(|o| o.location().cloned())
-                .collect();
-            for loc in self.find_files()? {
-                set.insert(loc);
-            }
-            set.into_iter().collect()
-        } else {
-            self.get_updated_locations()?
-        };
-
-        // load all of these files into the environment
-        let mut ontologies: Vec<Ontology> = vec![];
-        for location in updated_files {
-            // if 'strict' mode then fail on any errors when adding the ontology
-            // otherwise just warn
-
-            let result = self.io.add(location.clone(), Overwrite::Allow);
-            if result.is_err() {
-                if self.config.strict {
-                    return Err(result.unwrap_err());
-                } else {
-                    warn!(
-                        "Failed to read ontology file {}: {}",
-                        location,
-                        result.unwrap_err()
-                    );
-                    continue;
-                }
-            }
-
-            let new_ont = result.unwrap();
-            ontologies.push(new_ont);
-        }
+        let updated_files = self.collect_updated_files(all)?;
+        let ontologies = self.load_updated_ontologies(updated_files)?;
 
         let update_ids = self.register_ontologies(ontologies, true)?;
         Ok(update_ids)
@@ -840,6 +833,51 @@ impl OntoEnv {
             })
             .map(|(graphid, _)| graphid.clone())
             .collect()
+    }
+
+    fn remove_missing_ontologies(&mut self) -> Result<()> {
+        for graphid in self.missing_ontologies() {
+            self.io.remove(&graphid)?;
+            self.env.remove_ontology(&graphid)?;
+        }
+        Ok(())
+    }
+
+    fn collect_updated_files(&mut self, all: bool) -> Result<Vec<OntologyLocation>> {
+        if all {
+            let mut set: HashSet<OntologyLocation> = self
+                .env
+                .ontologies()
+                .values()
+                .filter_map(|o| o.location().cloned())
+                .collect();
+            for loc in self.find_files()? {
+                set.insert(loc);
+            }
+            Ok(set.into_iter().collect())
+        } else {
+            self.get_updated_locations()
+        }
+    }
+
+    fn load_updated_ontologies(
+        &mut self,
+        updated_files: Vec<OntologyLocation>,
+    ) -> Result<Vec<Ontology>> {
+        let mut ontologies = Vec::with_capacity(updated_files.len());
+        for location in updated_files {
+            match self.io.add(location.clone(), Overwrite::Allow) {
+                Ok(ont) => ontologies.push(ont),
+                Err(err) => {
+                    if self.config.strict {
+                        return Err(err);
+                    } else {
+                        warn!("Failed to read ontology file {}: {}", location, err);
+                    }
+                }
+            }
+        }
+        Ok(ontologies)
     }
 
     /// Returns a list of all files in the environment which have been updated (added or changed)
@@ -998,7 +1036,7 @@ impl OntoEnv {
                 match self.io.add(location, Overwrite::Preserve) {
                     Ok(new_ont) => {
                         let id = new_ont.id().clone();
-                        self.env.add_ontology(new_ont);
+                        self.env.add_ontology(new_ont)?;
                         stack.push_back(id);
                     }
                     Err(e) => {

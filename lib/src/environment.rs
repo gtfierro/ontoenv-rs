@@ -4,8 +4,9 @@
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::policy;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::prelude::*;
+use log::warn;
 use oxigraph::model::{Graph, NamedNodeRef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -84,17 +85,26 @@ impl Environment {
         &self.ontologies
     }
 
-    pub fn add_ontology(&mut self, mut ontology: Ontology) {
+    pub fn add_ontology(&mut self, mut ontology: Ontology) -> Result<()> {
         ontology.last_updated = Some(Utc::now());
-        self.locations
-            .insert(ontology.location().unwrap().clone(), ontology.id().clone());
+        let location = ontology
+            .location()
+            .cloned()
+            .ok_or_else(|| anyhow!("Cannot add ontology {} without a location", ontology.id()))?;
+        self.locations.insert(location, ontology.id().clone());
         self.ontologies.insert(ontology.id().clone(), ontology);
+        Ok(())
     }
 
-    pub fn remove_ontology(&mut self, id: &GraphIdentifier) -> Option<Ontology> {
-        self.locations
-            .remove(self.ontologies.get(id)?.location().unwrap());
-        self.ontologies.remove(id)
+    pub fn remove_ontology(&mut self, id: &GraphIdentifier) -> Result<Option<Ontology>> {
+        if let Some(existing) = self.ontologies.get(id) {
+            if let Some(location) = existing.location() {
+                self.locations.remove(location);
+            } else {
+                warn!("Removing ontology {} without recorded location", id);
+            }
+        }
+        Ok(self.ontologies.remove(id))
     }
 
     pub fn get_modified_time(&self, id: &GraphIdentifier) -> Option<DateTime<Utc>> {
@@ -145,9 +155,7 @@ impl Environment {
 
     /// Returns the first ontology with the given location
     pub fn get_ontology_by_location(&self, location: &OntologyLocation) -> Option<&Ontology> {
-        // choose the first ontology with the given location
-        self.ontologies
-            .values()
-            .find(|&ontology| ontology.location() == Some(location))
+        let id = self.locations.get(location)?;
+        self.ontologies.get(id)
     }
 }
