@@ -8,7 +8,7 @@ use crate::util::get_file_contents;
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use fs2::FileExt;
-use log::{debug, info};
+use log::{debug, error, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad};
 use oxigraph::store::Store;
@@ -188,6 +188,16 @@ pub trait GraphIO: Send + Sync {
             .map_err(|e| anyhow!("Failed to flush store: {}", e))
     }
 
+    /// Begin a batch of mutations; default implementation is a no-op.
+    fn begin_batch(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// End a batch of mutations; default implementation is a no-op.
+    fn end_batch(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     /// Returns the last time the graph with the given identifier was modified at its location
     /// - for on-disk files (file://), if the file has been modified since the last refresh
     /// - for online files (http://), the file's header has a Last-Modified header with a later
@@ -227,6 +237,8 @@ pub struct PersistentGraphIO {
     store_path: PathBuf,
     // Keep the interprocess lock alive for the lifetime of this IO
     lock_file: File,
+    dirty: bool,
+    batch_depth: usize,
 }
 
 impl PersistentGraphIO {
@@ -261,6 +273,8 @@ impl PersistentGraphIO {
             strict,
             store_path,
             lock_file,
+            dirty: false,
+            batch_depth: 0,
         })
     }
 
@@ -291,7 +305,10 @@ impl PersistentGraphIO {
         Ok(())
     }
 
-    fn write_store_to_r5tu(&self) -> Result<()> {
+    fn write_store_to_r5tu(&mut self) -> Result<()> {
+        if !self.dirty {
+            return Ok(());
+        }
         // Stream out all quads in the in-memory store to an RDF5D file atomically
         let opts = WriterOptions {
             zstd: true,
@@ -347,6 +364,15 @@ impl PersistentGraphIO {
         }
 
         writer.finalize()?;
+        self.dirty = false;
+        Ok(())
+    }
+
+    fn on_store_mutated(&mut self) -> Result<()> {
+        self.dirty = true;
+        if self.batch_depth == 0 {
+            self.write_store_to_r5tu()?;
+        }
         Ok(())
     }
 }
@@ -371,20 +397,35 @@ impl GraphIO for PersistentGraphIO {
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
         let ont =
             add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
-        // Persist entire dataset to RDF5D atomically
-        self.write_store_to_r5tu()?;
+        self.on_store_mutated()?;
         Ok(ont)
     }
 
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
         let graphname = id.name();
         self.store.remove_named_graph(graphname)?;
-        self.write_store_to_r5tu()?;
+        self.on_store_mutated()?;
         Ok(())
     }
 
     fn flush(&mut self) -> Result<()> {
         self.write_store_to_r5tu()
+    }
+
+    fn begin_batch(&mut self) -> Result<()> {
+        self.batch_depth = self.batch_depth.saturating_add(1);
+        Ok(())
+    }
+
+    fn end_batch(&mut self) -> Result<()> {
+        if self.batch_depth == 0 {
+            return Err(anyhow!("end_batch called without begin_batch"));
+        }
+        self.batch_depth -= 1;
+        if self.batch_depth == 0 && self.dirty {
+            self.write_store_to_r5tu()?;
+        }
+        Ok(())
     }
 
     fn size(&self) -> Result<StoreStats> {
@@ -440,6 +481,11 @@ impl ReadOnlyPersistentGraphIO {
 
 impl Drop for PersistentGraphIO {
     fn drop(&mut self) {
+        if self.dirty {
+            if let Err(err) = self.write_store_to_r5tu() {
+                error!("Failed to flush RDF5D store on drop: {err}");
+            }
+        }
         // Best-effort unlock on drop
         let _ = self.lock_file.unlock();
     }
