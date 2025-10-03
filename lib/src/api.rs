@@ -116,6 +116,53 @@ impl std::fmt::Debug for OntoEnv {
     }
 }
 
+struct BatchScope<'a> {
+    env: &'a mut OntoEnv,
+    completed: bool,
+}
+
+impl<'a> BatchScope<'a> {
+    fn enter(env: &'a mut OntoEnv) -> Result<Self> {
+        if env.io_batch_depth == 0 {
+            env.fetched_in_session.clear();
+        }
+        env.io_batch_depth += 1;
+        env.io.begin_batch()?;
+        Ok(Self {
+            env,
+            completed: false,
+        })
+    }
+
+    fn run<T>(mut self, f: impl FnOnce(&mut OntoEnv) -> Result<T>) -> Result<T> {
+        let result = f(self.env);
+        let end_result = self.env.io.end_batch();
+        self.env.io_batch_depth = self.env.io_batch_depth.saturating_sub(1);
+        self.completed = true;
+        match (result, end_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(err)) => Err(err),
+            (Err(err), Ok(())) => Err(err),
+            (Err(err), Err(end_err)) => {
+                error!("Failed to finalize batched RDF write: {end_err}");
+                Err(err)
+            }
+        }
+    }
+}
+
+impl<'a> Drop for BatchScope<'a> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        if let Err(err) = self.env.io.end_batch() {
+            error!("Failed to finalize batched RDF write: {err}");
+        }
+        self.env.io_batch_depth = self.env.io_batch_depth.saturating_sub(1);
+    }
+}
+
 impl OntoEnv {
     fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
         Self {
@@ -305,27 +352,7 @@ impl OntoEnv {
     where
         F: FnOnce(&mut Self) -> Result<T>,
     {
-        let was_outer = self.io_batch_depth == 0;
-        if was_outer {
-            self.fetched_in_session.clear();
-        }
-        self.io_batch_depth += 1;
-        if let Err(err) = self.io.begin_batch() {
-            self.io_batch_depth -= 1;
-            return Err(err);
-        }
-        let result = f(self);
-        let end_result = self.io.end_batch();
-        self.io_batch_depth = self.io_batch_depth.saturating_sub(1);
-        match (result, end_result) {
-            (Ok(value), Ok(())) => Ok(value),
-            (Ok(_), Err(err)) => Err(err),
-            (Err(err), Ok(())) => Err(err),
-            (Err(err), Err(end_err)) => {
-                error!("Failed to finalize batched RDF write: {end_err}");
-                Err(err)
-            }
-        }
+        BatchScope::enter(self)?.run(f)
     }
 
     /// Backwards-compatibility: update only changed/added files (same as update_all(false))
@@ -572,6 +599,26 @@ impl OntoEnv {
         })
     }
 
+    fn register_ontologies(
+        &mut self,
+        ontologies: Vec<Ontology>,
+        update_dependencies: bool,
+    ) -> Result<Vec<GraphIdentifier>> {
+        let mut ids = Vec::with_capacity(ontologies.len());
+        for ontology in ontologies {
+            let id = ontology.id().clone();
+            self.env.add_ontology(ontology);
+            ids.push(id);
+        }
+
+        if update_dependencies && !ids.is_empty() {
+            self.add_ids_to_dependency_graph(ids.clone())?;
+        }
+
+        self.save_to_directory()?;
+        Ok(ids)
+    }
+
     fn add_with_options_inner(
         &mut self,
         location: OntologyLocation,
@@ -601,14 +648,11 @@ impl OntoEnv {
         }
 
         let ont = self.io.add(location.clone(), overwrite)?;
-        let id = ont.id().clone();
-        self.env.add_ontology(ont);
-        if update_dependencies {
-            self.add_ids_to_dependency_graph(vec![id.clone()])?;
-        } else {
-            self.add_ids_to_dependency_graph(vec![])?;
-        }
-        self.save_to_directory()?;
+        let ids = self.register_ontologies(vec![ont], update_dependencies)?;
+        let id = ids
+            .into_iter()
+            .next()
+            .expect("registered ontology list should contain new entry");
         self.fetched_in_session.insert(location);
         Ok(id)
     }
@@ -733,15 +777,7 @@ impl OntoEnv {
             ontologies.push(new_ont);
         }
 
-        let mut update_ids: Vec<GraphIdentifier> = Vec::new();
-        // add the ontologies to the environment
-        for ontology in ontologies {
-            let id = ontology.id().clone();
-            self.env.add_ontology(ontology);
-            update_ids.push(id);
-        }
-        self.add_ids_to_dependency_graph(update_ids.clone())?;
-        self.save_to_directory()?;
+        let update_ids = self.register_ontologies(ontologies, true)?;
         Ok(update_ids)
     }
 
