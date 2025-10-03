@@ -99,6 +99,7 @@ pub struct OntoEnv {
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
     config: Config,
     failed_resolutions: HashSet<NamedNode>,
+    fetched_in_session: HashSet<OntologyLocation>,
 }
 
 impl std::fmt::Debug for OntoEnv {
@@ -122,6 +123,7 @@ impl OntoEnv {
             config,
             dependency_graph: DiGraph::new(),
             failed_resolutions: HashSet::new(),
+            fetched_in_session: HashSet::new(),
         }
     }
 
@@ -379,6 +381,7 @@ impl OntoEnv {
             config,
             dependency_graph,
             failed_resolutions: HashSet::new(),
+            fetched_in_session: HashSet::new(),
         })
     }
 
@@ -478,6 +481,7 @@ impl OntoEnv {
             dependency_graph: DiGraph::new(),
             config,
             failed_resolutions: HashSet::new(),
+            fetched_in_session: HashSet::new(),
         };
 
         let _ = ontoenv.update_all(false)?;
@@ -534,11 +538,22 @@ impl OntoEnv {
     ) -> Result<GraphIdentifier> {
         self.failed_resolutions.clear();
 
+        if self.fetched_in_session.contains(&location) {
+            if let Some(existing) = self.env.get_ontology_by_location(&location) {
+                debug!(
+                    "Skipping refetch for {} (already loaded this run)",
+                    location
+                );
+                return Ok(existing.id().clone());
+            }
+        }
+
         if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
             debug!(
                 "Reusing cached ontology {} for location {}",
                 existing_id, location
             );
+            self.fetched_in_session.insert(location);
             return Ok(existing_id);
         }
 
@@ -551,6 +566,7 @@ impl OntoEnv {
             self.add_ids_to_dependency_graph(vec![])?;
         }
         self.save_to_directory()?;
+        self.fetched_in_session.insert(location);
         Ok(id)
     }
 
