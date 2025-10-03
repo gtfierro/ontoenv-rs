@@ -67,6 +67,11 @@ impl Default for Environment {
 }
 
 impl Environment {
+    fn normalize_name(s: &str) -> &str {
+        let trimmed_hash = s.trim_end_matches('#');
+        trimmed_hash.trim_end_matches('/')
+    }
+
     pub fn new() -> Self {
         Self {
             ontologies: HashMap::new(),
@@ -122,10 +127,12 @@ impl Environment {
 
     /// Returns the first ontology with the given name
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
-        // choose the first ontology with the given name
-        self.ontologies
-            .values()
-            .find(|&ontology| ontology.name() == name)
+        let target = Self::normalize_name(name.as_str());
+        self.ontologies.values().find(|ontology| {
+            let binding = ontology.name();
+            let candidate = Self::normalize_name(binding.as_str());
+            candidate == target
+        })
     }
 
     /// Returns the first graph with the given name
