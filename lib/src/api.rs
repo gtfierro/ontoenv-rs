@@ -575,16 +575,19 @@ impl OntoEnv {
         location: &OntologyLocation,
         refresh: RefreshStrategy,
     ) -> Result<Option<GraphIdentifier>> {
-        if !self.config.use_cached_ontologies.is_enabled() || refresh.is_force() {
+        if !self.config.use_cached_ontologies.is_enabled() {
             return Ok(None);
         }
-
         let existing = match self.env.get_ontology_by_location(location) {
             Some(ontology) => ontology,
             None => return Ok(None),
         };
 
         let existing_id = existing.id().clone();
+
+        if refresh.is_force() {
+            return Ok(None);
+        }
 
         if location.is_file() {
             let last_updated = match existing.last_updated {
