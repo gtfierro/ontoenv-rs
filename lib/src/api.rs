@@ -100,6 +100,7 @@ pub struct OntoEnv {
     config: Config,
     failed_resolutions: HashSet<NamedNode>,
     fetched_in_session: HashSet<OntologyLocation>,
+    io_batch_depth: usize,
 }
 
 impl std::fmt::Debug for OntoEnv {
@@ -124,6 +125,7 @@ impl OntoEnv {
             dependency_graph: DiGraph::new(),
             failed_resolutions: HashSet::new(),
             fetched_in_session: HashSet::new(),
+            io_batch_depth: 0,
         }
     }
 
@@ -299,6 +301,33 @@ impl OntoEnv {
         self.io.flush()
     }
 
+    fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self) -> Result<T>,
+    {
+        let was_outer = self.io_batch_depth == 0;
+        if was_outer {
+            self.fetched_in_session.clear();
+        }
+        self.io_batch_depth += 1;
+        if let Err(err) = self.io.begin_batch() {
+            self.io_batch_depth -= 1;
+            return Err(err);
+        }
+        let result = f(self);
+        let end_result = self.io.end_batch();
+        self.io_batch_depth = self.io_batch_depth.saturating_sub(1);
+        match (result, end_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(err)) => Err(err),
+            (Err(err), Ok(())) => Err(err),
+            (Err(err), Err(end_err)) => {
+                error!("Failed to finalize batched RDF write: {end_err}");
+                Err(err)
+            }
+        }
+    }
+
     /// Backwards-compatibility: update only changed/added files (same as update_all(false))
     pub fn update(&mut self) -> Result<Vec<GraphIdentifier>> {
         self.update_all(false)
@@ -382,6 +411,7 @@ impl OntoEnv {
             dependency_graph,
             failed_resolutions: HashSet::new(),
             fetched_in_session: HashSet::new(),
+            io_batch_depth: 0,
         })
     }
 
@@ -482,6 +512,7 @@ impl OntoEnv {
             config,
             failed_resolutions: HashSet::new(),
             fetched_in_session: HashSet::new(),
+            io_batch_depth: 0,
         };
 
         let _ = ontoenv.update_all(false)?;
@@ -536,17 +567,19 @@ impl OntoEnv {
         refresh: RefreshStrategy,
         update_dependencies: bool,
     ) -> Result<GraphIdentifier> {
-        self.failed_resolutions.clear();
+        self.with_io_batch(move |env| {
+            env.add_with_options_inner(location, overwrite, refresh, update_dependencies)
+        })
+    }
 
-        if self.fetched_in_session.contains(&location) {
-            if let Some(existing) = self.env.get_ontology_by_location(&location) {
-                debug!(
-                    "Skipping refetch for {} (already loaded this run)",
-                    location
-                );
-                return Ok(existing.id().clone());
-            }
-        }
+    fn add_with_options_inner(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        update_dependencies: bool,
+    ) -> Result<GraphIdentifier> {
+        self.failed_resolutions.clear();
 
         if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
             debug!(
@@ -555,6 +588,16 @@ impl OntoEnv {
             );
             self.fetched_in_session.insert(location);
             return Ok(existing_id);
+        }
+
+        if !refresh.is_force() && self.fetched_in_session.contains(&location) {
+            if let Some(existing) = self.env.get_ontology_by_location(&location) {
+                debug!(
+                    "Skipping refetch for {} (already loaded this run)",
+                    location
+                );
+                return Ok(existing.id().clone());
+            }
         }
 
         let ont = self.io.add(location.clone(), overwrite)?;
@@ -637,6 +680,10 @@ impl OntoEnv {
     ///
     /// Finally, it updates the dependency graph for all the updated ontologies.
     pub fn update_all(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
+        self.with_io_batch(move |env| env.update_all_inner(all))
+    }
+
+    fn update_all_inner(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
         self.failed_resolutions.clear();
         // remove ontologies which are no longer present in the search directories
         // remove ontologies which are no longer present in the search directories
