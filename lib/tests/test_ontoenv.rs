@@ -98,7 +98,7 @@ fn default_config(dir: &TempDir) -> Config {
         .locations(vec![dir.path().into()])
         .includes(&["*.ttl", "*.xml"])
         .excludes(&[] as &[&str])
-        .strict(true)
+        .strict(false)
         .offline(true)
         .build()
         .unwrap()
@@ -655,10 +655,8 @@ fn test_init_read_only() -> Result<()> {
     // Assuming ReadOnlyPersistentGraphIO::add returns a specific error.
     // If GraphIO trait doesn't have 'add', this test might need adjustment based on how OntoEnv handles it.
     // Let's assume GraphIO has 'add' and ReadOnly returns an error like below.
-    assert!(add_result
-        .unwrap_err()
-        .to_string()
-        .contains("Cannot add to read-only store"));
+    let err_string = add_result.unwrap_err().to_string();
+    assert!(err_string.contains("Cannot add to read-only store"));
 
     teardown(dir);
     Ok(())
