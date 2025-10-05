@@ -801,35 +801,24 @@ fn main() -> Result<()> {
                 let mut all: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
                 for ont in ontologies {
                     let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                    let paths = env.get_import_paths(&iri)?;
-                    let mut unique: BTreeSet<Vec<String>> = BTreeSet::new();
-                    for p in paths {
-                        unique.insert(p.into_iter().map(|id| id.to_uri_string()).collect());
-                    }
-                    let arr: Vec<Vec<String>> = unique.into_iter().collect();
-                    all.insert(iri.to_uri_string(), arr);
+                    let (paths, missing) = match env.explain_import(&iri)? {
+                        ontoenv::api::ImportPaths::Present(paths) => (paths, false),
+                        ontoenv::api::ImportPaths::Missing { importers } => (importers, true),
+                    };
+                    let formatted = format_import_paths(&iri, paths, missing);
+                    all.insert(iri.to_uri_string(), formatted);
                 }
                 println!("{}", serde_json::to_string_pretty(&all)?);
             } else {
                 for ont in ontologies {
                     let iri = NamedNode::new(ont).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                    let paths = env.get_import_paths(&iri)?;
-                    if paths.is_empty() {
-                        println!("No importers found for {}", iri.to_uri_string());
-                        continue;
-                    }
-                    println!("Why {}:", iri.to_uri_string());
-                    let mut lines: BTreeSet<String> = BTreeSet::new();
-                    for p in paths {
-                        let line = p
-                            .into_iter()
-                            .map(|id| id.to_uri_string())
-                            .collect::<Vec<_>>()
-                            .join(" -> ");
-                        lines.insert(line);
-                    }
-                    for line in lines {
-                        println!("{}", line);
+                    match env.explain_import(&iri)? {
+                        ontoenv::api::ImportPaths::Present(paths) => {
+                            print_import_paths(&iri, paths, false);
+                        }
+                        ontoenv::api::ImportPaths::Missing { importers } => {
+                            print_import_paths(&iri, importers, true);
+                        }
                     }
                 }
             }
@@ -873,4 +862,59 @@ fn require_ontoenv(env: Option<OntoEnv>) -> Result<OntoEnv> {
     env.ok_or_else(|| {
         anyhow::anyhow!("OntoEnv not found. Run `ontoenv init` to create a new OntoEnv or use -t/--temporary to use a temporary environment.")
     })
+}
+
+fn format_import_paths(
+    target: &NamedNode,
+    paths: Vec<Vec<GraphIdentifier>>,
+    missing: bool,
+) -> Vec<Vec<String>> {
+    let mut unique: BTreeSet<Vec<String>> = BTreeSet::new();
+    if paths.is_empty() {
+        if missing {
+            unique.insert(vec![format!("{} (missing)", target.to_uri_string())]);
+        }
+        return unique.into_iter().collect();
+    }
+    for path in paths {
+        let mut entries: Vec<String> = path.into_iter().map(|id| id.to_uri_string()).collect();
+        if missing {
+            entries.push(format!("{} (missing)", target.to_uri_string()));
+        }
+        unique.insert(entries);
+    }
+    unique.into_iter().collect()
+}
+
+fn print_import_paths(target: &NamedNode, paths: Vec<Vec<GraphIdentifier>>, missing: bool) {
+    if paths.is_empty() {
+        if missing {
+            println!(
+                "Ontology {} is missing but no importers reference it.",
+                target.to_uri_string()
+            );
+        } else {
+            println!("No importers found for {}", target.to_uri_string());
+        }
+        return;
+    }
+
+    println!(
+        "Why {}{}:",
+        target.to_uri_string(),
+        if missing { " (missing)" } else { "" }
+    );
+
+    let mut lines: BTreeSet<String> = BTreeSet::new();
+    for path in paths {
+        let mut segments: Vec<String> = path.into_iter().map(|id| id.to_uri_string()).collect();
+        if missing {
+            segments.push(format!("{} (missing)", target.to_uri_string()));
+        }
+        lines.insert(segments.join(" -> "));
+    }
+
+    for line in lines {
+        println!("{}", line);
+    }
 }

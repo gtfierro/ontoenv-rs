@@ -7,7 +7,7 @@ use crate::policy;
 use anyhow::{anyhow, Result};
 use chrono::prelude::*;
 use log::warn;
-use oxigraph::model::{Graph, NamedNodeRef};
+use oxigraph::model::{Graph, NamedNode, NamedNodeRef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -48,6 +48,8 @@ pub struct Environment {
     default_policy: Box<dyn policy::ResolutionPolicy>,
     #[serde(skip)]
     pub locations: HashMap<OntologyLocation, GraphIdentifier>,
+    #[serde(default)]
+    aliases: HashMap<String, GraphIdentifier>,
 }
 
 impl Clone for Environment {
@@ -55,6 +57,7 @@ impl Clone for Environment {
         Self {
             ontologies: self.ontologies.clone(),
             locations: self.locations.clone(),
+            aliases: self.aliases.clone(),
             default_policy: policy::policy_from_name(self.default_policy.policy_name())
                 .expect("Failed to clone policy"),
         }
@@ -78,6 +81,7 @@ impl Environment {
             ontologies: HashMap::new(),
             default_policy: Box::new(policy::DefaultPolicy),
             locations: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -91,8 +95,11 @@ impl Environment {
             .location()
             .cloned()
             .ok_or_else(|| anyhow!("Cannot add ontology {} without a location", ontology.id()))?;
-        self.locations.insert(location, ontology.id().clone());
-        self.ontologies.insert(ontology.id().clone(), ontology);
+        let ontology_id = ontology.id().clone();
+        let ontology_name = ontology.name();
+        self.locations.insert(location.clone(), ontology_id.clone());
+        self.register_alias(&location, &ontology_id, &ontology_name);
+        self.ontologies.insert(ontology_id, ontology);
         Ok(())
     }
 
@@ -103,6 +110,7 @@ impl Environment {
             } else {
                 warn!("Removing ontology {} without recorded location", id);
             }
+            self.aliases.retain(|_, value| value != id);
         }
         Ok(self.ontologies.remove(id))
     }
@@ -138,6 +146,11 @@ impl Environment {
     /// Returns the first ontology with the given name
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
         let target = Self::normalize_name(name.as_str());
+        if let Some(id) = self.aliases.get(target) {
+            if let Some(ontology) = self.ontologies.get(id) {
+                return Some(ontology);
+            }
+        }
         self.ontologies.values().find(|ontology| {
             let binding = ontology.name();
             let candidate = Self::normalize_name(binding.as_str());
@@ -157,5 +170,41 @@ impl Environment {
     pub fn get_ontology_by_location(&self, location: &OntologyLocation) -> Option<&Ontology> {
         let id = self.locations.get(location)?;
         self.ontologies.get(id)
+    }
+
+    fn register_alias(
+        &mut self,
+        location: &OntologyLocation,
+        ontology_id: &GraphIdentifier,
+        ontology_name: &NamedNode,
+    ) {
+        if let OntologyLocation::Url(url) = location {
+            if let Ok(loc_node) = NamedNode::new(url.clone()) {
+                let loc_norm = Self::normalize_name(loc_node.as_str()).to_string();
+                let name_norm = Self::normalize_name(ontology_name.as_str());
+                if loc_norm != name_norm {
+                    self.aliases.insert(loc_norm, ontology_id.clone());
+                } else {
+                    self.aliases.remove(&loc_norm);
+                }
+            }
+        }
+    }
+
+    pub fn rebuild_aliases(&mut self) {
+        self.aliases.clear();
+        let mut alias_data: Vec<(OntologyLocation, GraphIdentifier, NamedNode)> = Vec::new();
+        for ontology in self.ontologies.values() {
+            if let Some(location) = ontology.location() {
+                alias_data.push((
+                    location.clone(),
+                    ontology.id().clone(),
+                    ontology.name(),
+                ));
+            }
+        }
+        for (location, ontology_id, ontology_name) in alias_data {
+            self.register_alias(&location, &ontology_id, &ontology_name);
+        }
     }
 }
