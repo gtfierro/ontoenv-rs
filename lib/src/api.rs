@@ -23,6 +23,7 @@ use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 
@@ -91,28 +92,6 @@ pub struct Stats {
     pub num_triples: usize,
     pub num_graphs: usize,
     pub num_ontologies: usize,
-}
-
-pub struct OntoEnv {
-    env: Environment,
-    io: Box<dyn GraphIO>,
-    dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
-    config: Config,
-    failed_resolutions: HashSet<NamedNode>,
-    batch_state: BatchState,
-}
-
-impl std::fmt::Debug for OntoEnv {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        // print config
-        writeln!(f, "OntoEnv {{")?;
-        writeln!(f, "  config: {:?},", self.config)?;
-        writeln!(f, "  env: {:?},", self.env)?;
-        writeln!(f, "  dependency_graph: {:?},", self.dependency_graph)?;
-        writeln!(f, "  io: {:?},", self.io.io_type())?;
-        write!(f, "}}")?;
-        Ok(())
-    }
 }
 
 #[derive(Default)]
@@ -194,7 +173,41 @@ enum FetchOutcome {
     Loaded(Ontology),
 }
 
+fn fetch_remote(url: &str, offline: bool) -> Result<crate::fetch::FetchResult> {
+    if offline {
+        return Err(anyhow!("Cannot fetch {} in offline mode", url));
+    }
+    let mut opts = crate::fetch::FetchOptions::default();
+    opts.offline = offline;
+    crate::fetch::fetch_rdf(url, &opts)
+}
+
+pub struct OntoEnv {
+    env: Environment,
+    io: Box<dyn GraphIO>,
+    dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
+    config: Config,
+    failed_resolutions: HashSet<NamedNode>,
+    batch_state: BatchState,
+}
+
+impl std::fmt::Debug for OntoEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        // print config
+        writeln!(f, "OntoEnv {{")?;
+        writeln!(f, "  config: {:?},", self.config)?;
+        writeln!(f, "  env: {:?},", self.env)?;
+        writeln!(f, "  dependency_graph: {:?},", self.dependency_graph)?;
+        writeln!(f, "  io: {:?},", self.io.io_type())?;
+        write!(f, "}}")?;
+        Ok(())
+    }
+}
+
+
 impl OntoEnv {
+
+    // Constructors
     fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
         Self {
             env,
@@ -318,10 +331,6 @@ impl OntoEnv {
         Ok(ontoenv)
     }
 
-    pub fn io(&self) -> &Box<dyn GraphIO> {
-        &self.io
-    }
-
     /// returns the graph identifier for the given resolve target, if it exists
     pub fn resolve(&self, target: ResolveTarget) -> Option<GraphIdentifier> {
         match target {
@@ -334,15 +343,6 @@ impl OntoEnv {
                 .get_ontology_by_name(iri.as_ref())
                 .map(|ont| ont.id().clone()),
         }
-    }
-
-    pub fn stats(&self) -> Result<Stats> {
-        let store_stats = self.io.size()?;
-        Ok(Stats {
-            num_triples: store_stats.num_triples,
-            num_graphs: store_stats.num_graphs,
-            num_ontologies: self.env.ontologies().len(),
-        })
     }
 
     /// Saves the current environment to the .ontoenv directory.
@@ -372,22 +372,6 @@ impl OntoEnv {
         file.write_all(graph_str.as_bytes())?;
 
         Ok(())
-    }
-
-    pub fn flush(&mut self) -> Result<()> {
-        self.io.flush()
-    }
-
-    fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
-    where
-        F: FnOnce(&mut Self) -> Result<T>,
-    {
-        BatchScope::enter(self)?.run(f)
-    }
-
-    /// Backwards-compatibility: update only changed/added files (same as update_all(false))
-    pub fn update(&mut self) -> Result<Vec<GraphIdentifier>> {
-        self.update_all(false)
     }
 
     pub fn new_temporary(&self) -> Result<Self> {
@@ -470,6 +454,39 @@ impl OntoEnv {
             batch_state: BatchState::default(),
         })
     }
+
+    // Core API methods
+    pub fn flush(&mut self) -> Result<()> {
+        self.io.flush()
+    }
+
+    fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self) -> Result<T>,
+    {
+        BatchScope::enter(self)?.run(f)
+    }
+
+    pub fn io(&self) -> &Box<dyn GraphIO> {
+        &self.io
+    }
+
+    pub fn stats(&self) -> Result<Stats> {
+        let store_stats = self.io.size()?;
+        Ok(Stats {
+            num_triples: store_stats.num_triples,
+            num_graphs: store_stats.num_graphs,
+            num_ontologies: self.env.ontologies().len(),
+        })
+    }
+
+
+
+    /// Backwards-compatibility: update only changed/added files (same as update_all(false))
+    pub fn update(&mut self) -> Result<Vec<GraphIdentifier>> {
+        self.update_all(false)
+    }
+
 
     /// Calculates and returns the environment status
     pub fn status(&self) -> Result<EnvironmentStatus> {
@@ -864,20 +881,74 @@ impl OntoEnv {
         &mut self,
         updated_files: Vec<OntologyLocation>,
     ) -> Result<Vec<Ontology>> {
-        let mut ontologies = Vec::with_capacity(updated_files.len());
-        for location in updated_files {
-            match self.io.add(location.clone(), Overwrite::Allow) {
-                Ok(ont) => ontologies.push(ont),
-                Err(err) => {
-                    if self.config.strict {
-                        return Err(err);
-                    } else {
-                        warn!("Failed to read ontology file {}: {}", location, err);
+        let (remote, local): (Vec<_>, Vec<_>) = updated_files
+            .into_iter()
+            .partition(|loc| matches!(loc, OntologyLocation::Url(_)));
+
+        let mut ontologies = Vec::with_capacity(remote.len() + local.len());
+
+        if !remote.is_empty() {
+            let offline = self.config.offline;
+            let remote_results: Vec<_> = remote
+                .into_par_iter()
+                .map(|location| {
+                    let fetch_result = match &location {
+                        OntologyLocation::Url(url) => fetch_remote(url, offline),
+                        _ => Err(anyhow!("Expected URL location")),
+                    };
+                    (location, fetch_result)
+                })
+                .collect();
+
+            for (location, fetch_result) in remote_results {
+                let (bytes, format) = match fetch_result {
+                    Ok(res) => (res.bytes, res.format),
+                    Err(err) => {
+                        if self.config.strict {
+                            return Err(err);
+                        } else {
+                            warn!("Failed to fetch ontology {}: {}", location, err);
+                            continue;
+                        }
                     }
+                };
+
+                let ontology_result =
+                    self.io
+                        .add_from_bytes(location.clone(), bytes, format, Overwrite::Allow);
+
+                if let Some(ontology) = self.handle_add_result(&location, ontology_result)? {
+                    ontologies.push(ontology);
                 }
             }
         }
+
+        for location in local {
+            let result = self.io.add(location.clone(), Overwrite::Allow);
+            if let Some(ontology) = self.handle_add_result(&location, result)? {
+                ontologies.push(ontology);
+            }
+        }
+
         Ok(ontologies)
+    }
+
+    fn handle_add_result(
+        &self,
+        location: &OntologyLocation,
+        result: Result<Ontology>,
+    ) -> Result<Option<Ontology>> {
+        match result {
+            Ok(ontology) => Ok(Some(ontology)),
+            Err(err) => {
+                if self.config.strict {
+                    Err(err)
+                } else {
+                    warn!("Failed to read ontology file {}: {}", location, err);
+                    Ok(None)
+                }
+            }
+        }
     }
 
     /// Returns a list of all files in the environment which have been updated (added or changed)
