@@ -8,7 +8,7 @@ use crate::util::get_file_contents;
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use fs2::FileExt;
-use log::{debug, error, info};
+use log::{error, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad};
 use oxigraph::store::Store;
@@ -19,7 +19,6 @@ use rdf5d::{
 use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct StoreStats {
@@ -52,49 +51,24 @@ fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> 
     Err(anyhow!("Failed to parse RDF bytes in any supported format"))
 }
 
-/// A helper function to read an ontology from a location, add it to a store,
-/// and return the parsed ontology metadata. This is used by multiple GraphIO implementations.
-fn add_ontology_to_store(
+fn add_ontology_bytes(
     store: &Store,
-    location: OntologyLocation,
+    location: &OntologyLocation,
+    bytes: &[u8],
+    format: Option<RdfFormat>,
     overwrite: Overwrite,
-    offline: bool,
     strict: bool,
 ) -> Result<Ontology> {
-    // Read source into bytes (via fetch for URLs) and load into a staging store with format fallback
-    let t0 = Instant::now();
     let staging_graph = NamedNode::new_unchecked("temp:graph");
-    let tmp_store = match &location {
-        OntologyLocation::File(path) => {
-            let (bytes, format) = get_file_contents(path)?;
-            load_staging_store_from_bytes(&bytes, format)?
-        }
-        OntologyLocation::Url(url) => {
-            if offline {
-                return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
-            }
-            let opts = crate::fetch::FetchOptions::default();
-            let fetched = crate::fetch::fetch_rdf(url.as_str(), &opts)?;
-            load_staging_store_from_bytes(&fetched.bytes, fetched.format)?
-        }
-    };
-    debug!(
-        "Loaded {} into staging store in {:?}",
-        location.as_str(),
-        t0.elapsed()
-    );
-
-    // Build ontology metadata from the staging store
-    let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location);
+    let tmp_store = load_staging_store_from_bytes(bytes, format)?;
+    let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
     let mut ontology = Ontology::from_store(&tmp_store, &staging_id, strict)?;
     ontology.with_last_updated(Utc::now());
     let id = ontology.id();
     let graphname: GraphName = id.graphname()?;
 
-    // If overwriting or not present, load quads from tmp_store directly into final graph in target store
     if overwrite.as_bool() || !store.contains_named_graph(id.name())? {
         store.remove_named_graph(id.name())?;
-        let t1 = Instant::now();
         let quads = tmp_store
             .quads_for_pattern(
                 None,
@@ -106,14 +80,33 @@ fn add_ontology_to_store(
         let mut loader = store.bulk_loader();
         loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
         loader.commit()?;
-        info!(
-            "Added graph {} (from staging) in {:?}",
-            id.name(),
-            t1.elapsed()
-        );
+        info!("Added graph {} (from bytes)", id.name());
     }
 
     Ok(ontology)
+}
+
+/// A helper function to read an ontology from a location, add it to a store,
+/// and return the parsed ontology metadata. This is used by multiple GraphIO implementations.
+fn add_ontology_to_store(
+    store: &Store,
+    location: OntologyLocation,
+    overwrite: Overwrite,
+    offline: bool,
+    strict: bool,
+) -> Result<Ontology> {
+    let (bytes, format) = match &location {
+        OntologyLocation::File(path) => get_file_contents(path)?,
+        OntologyLocation::Url(url) => {
+            if offline {
+                return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
+            }
+            let opts = crate::fetch::FetchOptions::default();
+            let fetched = crate::fetch::fetch_rdf(url.as_str(), &opts)?;
+            (fetched.bytes, fetched.format)
+        }
+    };
+    add_ontology_bytes(store, &location, &bytes, format, overwrite, strict)
 }
 
 pub trait GraphIO: Send + Sync {
@@ -133,6 +126,15 @@ pub trait GraphIO: Send + Sync {
     /// Adds a graph to the store and returns the ontology metadata.
     /// Existing graphs are replaced only when `overwrite` allows it.
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology>;
+
+    /// Adds a graph to the store using pre-fetched bytes and optional format.
+    fn add_from_bytes(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+    ) -> Result<Ontology>;
 
     /// Returns the graph with the given identifier
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
@@ -401,6 +403,25 @@ impl GraphIO for PersistentGraphIO {
         Ok(ont)
     }
 
+    fn add_from_bytes(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+    ) -> Result<Ontology> {
+        let ont = add_ontology_bytes(
+            &self.store,
+            &location,
+            &bytes,
+            format,
+            overwrite,
+            self.strict,
+        )?;
+        self.on_store_mutated()?;
+        Ok(ont)
+    }
+
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
         let graphname = id.name();
         self.store.remove_named_graph(graphname)?;
@@ -523,6 +544,16 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         Err(anyhow!("Cannot add to read-only store"))
     }
 
+    fn add_from_bytes(
+        &mut self,
+        _location: OntologyLocation,
+        _bytes: Vec<u8>,
+        _format: Option<RdfFormat>,
+        _overwrite: Overwrite,
+    ) -> Result<Ontology> {
+        Err(anyhow!("Cannot add to read-only store"))
+    }
+
     fn remove(&mut self, _id: &GraphIdentifier) -> Result<()> {
         Err(anyhow!("Cannot remove from read-only store"))
     }
@@ -581,6 +612,23 @@ impl GraphIO for ExternalStoreGraphIO {
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
         add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
     }
+
+    fn add_from_bytes(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+    ) -> Result<Ontology> {
+        add_ontology_bytes(
+            &self.store,
+            &location,
+            &bytes,
+            format,
+            overwrite,
+            self.strict,
+        )
+    }
 }
 
 pub struct MemoryGraphIO {
@@ -631,5 +679,22 @@ impl GraphIO for MemoryGraphIO {
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
         add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
+    }
+
+    fn add_from_bytes(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+    ) -> Result<Ontology> {
+        add_ontology_bytes(
+            &self.store,
+            &location,
+            &bytes,
+            format,
+            overwrite,
+            self.strict,
+        )
     }
 }
