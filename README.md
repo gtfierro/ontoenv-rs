@@ -37,6 +37,10 @@ Specifically, `ontoenv` looks for patterns like the following inside local ontol
 
 When initialized, `ontoenv` searches the specified directories for ontology declarations, identifies their `owl:imports`, and recursively pulls in dependencies. Runtime queries operate on an in‑memory Oxigraph store. Persistent on‑disk state uses a compact RDF5D file at `.ontoenv/store.r5tu` with single‑writer, shared reader locking.
 
+### Canonical IRIs and Source URLs
+
+Ontologies fetched from a URL often declare a different, usually versioned, ontology IRI inside the file. `ontoenv` now remembers that relationship. When an ontology is added we record the source location and, if its declared name differs, create an alias from the normalized URL to the canonical ontology identifier. Future `owl:imports` that reference the versionless URL will therefore reuse the already downloaded ontology instead of refetching it. Removing an ontology clears any aliases associated with it, and loading an existing environment rebuilds the mapping automatically.
+
 ## CLI
 
 ### Installation
