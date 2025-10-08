@@ -312,7 +312,7 @@ mod tests {
     ) {
         let decl_bnode = BlankNode::default();
         // subject sh:declare _:decl
-        ds.insert(Quad::new(
+        ds.insert(&Quad::new(
             NamedOrBlankNode::from(subject.clone()),
             DECLARE.into_owned(),
             Term::from(decl_bnode.clone()),
@@ -321,7 +321,7 @@ mod tests {
 
         // _:decl sh:prefix "prefix"
         let sh_prefix = NamedNode::new("http://www.w3.org/ns/shacl#prefix").unwrap();
-        ds.insert(Quad::new(
+        ds.insert(&Quad::new(
             NamedOrBlankNode::from(decl_bnode.clone()),
             sh_prefix,
             Term::from(Literal::new_simple_literal(prefix)),
@@ -331,7 +331,7 @@ mod tests {
         // _:decl sh:namespace <namespace>
         let sh_namespace = NamedNode::new("http://www.w3.org/ns/shacl#namespace").unwrap();
         let ns_node = NamedNode::new(namespace).unwrap();
-        ds.insert(Quad::new(
+        ds.insert(&Quad::new(
             NamedOrBlankNode::from(decl_bnode),
             sh_namespace,
             Term::from(ns_node),
@@ -354,7 +354,7 @@ mod tests {
 
         // ont1 imports ont2 (for scenario realism)
         let owl_imports = NamedNode::new("http://www.w3.org/2002/07/owl#imports").unwrap();
-        ds.insert(Quad::new(
+        ds.insert(&Quad::new(
             NamedOrBlankNode::from(ont1.clone()),
             owl_imports,
             Term::from(ont2.clone()),
