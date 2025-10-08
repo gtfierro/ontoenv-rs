@@ -5,6 +5,7 @@ use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, TYPE};
 use oxigraph::model::{
     Dataset, Graph, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef, TermRef, Triple, TripleRef,
 };
+use std::collections::HashSet;
 
 /// Rewrites all sh:prefixes in a graph to point to the provided root
 pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
@@ -19,13 +20,85 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
         // add a new triple <shape or rule, sh:prefixes, root>
         to_add.push(new_triple.into());
     }
-    // move the sh:declare statements to the root ontology too
+    // move the sh:declare statements to the root ontology too, deduplicating by (sh:prefix, sh:namespace)
+    let sh_prefix = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
+    let sh_namespace = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+
+    // Seed with any existing declarations on the root
+    for t in graph.triples_for_predicate(DECLARE) {
+        if t.subject == root {
+            // Attempt to extract (prefix, namespace) pair
+            if let Some(decl_node) = match t.object {
+                TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
+                TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
+                _ => None,
+            } {
+                let mut pref: Option<String> = None;
+                let mut ns: Option<String> = None;
+                for t2 in graph.triples_for_subject(decl_node) {
+                    if t2.predicate == sh_prefix {
+                        if let TermRef::Literal(l) = t2.object {
+                            pref = Some(l.value().to_string());
+                        }
+                    } else if t2.predicate == sh_namespace {
+                        match t2.object {
+                            TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
+                            TermRef::Literal(l) => ns = Some(l.value().to_string()),
+                            _ => {}
+                        }
+                    }
+                }
+                if let (Some(pv), Some(nv)) = (pref, ns) {
+                    seen.insert((pv, nv));
+                }
+            }
+        }
+    }
+
     for triple in graph.triples_for_predicate(DECLARE) {
+        let s = triple.subject;
+        if s == root {
+            continue;
+        }
         let o = triple.object;
-        let new_triple = TripleRef::new(root, DECLARE, o);
+
         // remove the old triple <ontology, sh:declare, prefix>
         to_remove.push(triple.into());
-        // add a new triple <root, sh:declare, prefix>
+
+        // Attempt to deduplicate using (prefix, namespace)
+        if let Some(decl_node) = match o {
+            TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
+            TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
+            _ => None,
+        } {
+            let mut pref: Option<String> = None;
+            let mut ns: Option<String> = None;
+            for t2 in graph.triples_for_subject(decl_node) {
+                if t2.predicate == sh_prefix {
+                    if let TermRef::Literal(l) = t2.object {
+                        pref = Some(l.value().to_string());
+                    }
+                } else if t2.predicate == sh_namespace {
+                    match t2.object {
+                        TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
+                        TermRef::Literal(l) => ns = Some(l.value().to_string()),
+                        _ => {}
+                    }
+                }
+            }
+            if let (Some(pv), Some(nv)) = (pref, ns) {
+                if seen.insert((pv, nv)) {
+                    // add a new triple <root, sh:declare, prefix>
+                    let new_triple = TripleRef::new(root, DECLARE, o);
+                    to_add.push(new_triple.into());
+                }
+                continue;
+            }
+        }
+
+        // If we can't determine prefix/namespace, conservatively move it
+        let new_triple = TripleRef::new(root, DECLARE, o);
         to_add.push(new_triple.into());
     }
 
@@ -92,14 +165,84 @@ pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
         // add a new quad <shape or rule, sh:prefixes, root>
         to_add.push(new_quad.into());
     }
-    // move the sh:declare statements to the root ontology too
+    // move the sh:declare statements to the root ontology too, deduplicating by (sh:prefix, sh:namespace)
+    let sh_prefix = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
+    let sh_namespace = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+
+    // Seed with any existing declarations on the root
+    for q in graph.quads_for_predicate(DECLARE) {
+        if q.subject == root {
+            if let Some(decl_node) = match q.object {
+                TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
+                TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
+                _ => None,
+            } {
+                let mut pref: Option<String> = None;
+                let mut ns: Option<String> = None;
+                for q2 in graph.quads_for_subject(decl_node) {
+                    if q2.predicate == sh_prefix {
+                        if let TermRef::Literal(l) = q2.object {
+                            pref = Some(l.value().to_string());
+                        }
+                    } else if q2.predicate == sh_namespace {
+                        match q2.object {
+                            TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
+                            TermRef::Literal(l) => ns = Some(l.value().to_string()),
+                            _ => {}
+                        }
+                    }
+                }
+                if let (Some(pv), Some(nv)) = (pref, ns) {
+                    seen.insert((pv, nv));
+                }
+            }
+        }
+    }
+
     for quad in graph.quads_for_predicate(DECLARE) {
+        let s = quad.subject;
+        if s == root {
+            continue;
+        }
         let o = quad.object;
         let g = quad.graph_name;
-        let new_quad = QuadRef::new(root, DECLARE, o, g);
+
         // remove the old quad <ontology, sh:declare, prefix>
         to_remove.push(quad.into());
-        // add a new quad <root, sh:declare, prefix>
+
+        // Attempt to deduplicate using (prefix, namespace)
+        if let Some(decl_node) = match o {
+            TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
+            TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
+            _ => None,
+        } {
+            let mut pref: Option<String> = None;
+            let mut ns: Option<String> = None;
+            for q2 in graph.quads_for_subject(decl_node) {
+                if q2.predicate == sh_prefix {
+                    if let TermRef::Literal(l) = q2.object {
+                        pref = Some(l.value().to_string());
+                    }
+                } else if q2.predicate == sh_namespace {
+                    match q2.object {
+                        TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
+                        TermRef::Literal(l) => ns = Some(l.value().to_string()),
+                        _ => {}
+                    }
+                }
+            }
+            if let (Some(pv), Some(nv)) = (pref, ns) {
+                if seen.insert((pv, nv)) {
+                    let new_quad = QuadRef::new(root, DECLARE, o, g);
+                    to_add.push(new_quad.into());
+                }
+                continue;
+            }
+        }
+
+        // If we can't determine prefix/namespace, conservatively move it
+        let new_quad = QuadRef::new(root, DECLARE, o, g);
         to_add.push(new_quad.into());
     }
 
