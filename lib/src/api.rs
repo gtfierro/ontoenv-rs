@@ -1323,7 +1323,7 @@ impl OntoEnv {
         // Rewrite sh:prefixes
         // defaults to true if not specified
         if rewrite_sh_prefixes.unwrap_or(true) {
-            transform::rewrite_sh_prefixes(&mut dataset, root_ontology);
+            transform::rewrite_sh_prefixes_dataset(&mut dataset, root_ontology);
         }
         // remove owl:imports
         if remove_owl_imports.unwrap_or(true) {
