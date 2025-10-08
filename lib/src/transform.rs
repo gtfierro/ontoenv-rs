@@ -294,3 +294,190 @@ pub fn remove_ontology_declarations(graph: &mut Dataset, root: NamedOrBlankNodeR
         graph.remove(quad.as_ref());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oxigraph::model::{
+        BlankNode, GraphName, Literal, NamedNode, NamedNodeRef, NamedOrBlankNode, Term,
+    };
+    use std::collections::HashSet;
+
+    fn add_decl(
+        ds: &mut Dataset,
+        subject: &NamedNode,
+        graph_name: &NamedNode,
+        prefix: &str,
+        namespace: &str,
+    ) {
+        let decl_bnode = BlankNode::default();
+        // subject sh:declare _:decl
+        ds.insert(Quad::new(
+            NamedOrBlankNode::from(subject.clone()),
+            DECLARE.into_owned(),
+            Term::from(decl_bnode.clone()),
+            GraphName::NamedNode(graph_name.clone()),
+        ));
+
+        // _:decl sh:prefix "prefix"
+        let sh_prefix = NamedNode::new("http://www.w3.org/ns/shacl#prefix").unwrap();
+        ds.insert(Quad::new(
+            NamedOrBlankNode::from(decl_bnode.clone()),
+            sh_prefix,
+            Term::from(Literal::new_simple_literal(prefix)),
+            GraphName::NamedNode(graph_name.clone()),
+        ));
+
+        // _:decl sh:namespace <namespace>
+        let sh_namespace = NamedNode::new("http://www.w3.org/ns/shacl#namespace").unwrap();
+        let ns_node = NamedNode::new(namespace).unwrap();
+        ds.insert(Quad::new(
+            NamedOrBlankNode::from(decl_bnode),
+            sh_namespace,
+            Term::from(ns_node),
+            GraphName::NamedNode(graph_name.clone()),
+        ));
+    }
+
+    #[test]
+    fn deduplicates_sh_declare_by_prefix_and_namespace_across_graphs() {
+        // Two graphs, one imports the other. Each has 3 declarations:
+        // - one identical pair across both graphs (same prefix+namespace)
+        // - one pair with same namespace but different prefixes
+        // - one fully different
+        let mut ds = Dataset::new();
+
+        let ont1 = NamedNode::new("http://example.com/ont1").unwrap();
+        let ont2 = NamedNode::new("http://example.com/ont2").unwrap();
+        let g1 = NamedNode::new("http://example.com/graph1").unwrap();
+        let g2 = NamedNode::new("http://example.com/graph2").unwrap();
+
+        // ont1 imports ont2 (for scenario realism)
+        let owl_imports = NamedNode::new("http://www.w3.org/2002/07/owl#imports").unwrap();
+        ds.insert(Quad::new(
+            NamedOrBlankNode::from(ont1.clone()),
+            owl_imports,
+            Term::from(ont2.clone()),
+            GraphName::NamedNode(g1.clone()),
+        ));
+
+        // Graph 1 declarations
+        add_decl(
+            &mut ds,
+            &ont1,
+            &g1,
+            "cmn",
+            "http://example.com/ns/identical#",
+        ); // identical across graphs
+        add_decl(
+            &mut ds,
+            &ont1,
+            &g1,
+            "ex",
+            "http://example.com/ns/same#",
+        ); // same namespace, different prefixes
+        add_decl(
+            &mut ds,
+            &ont1,
+            &g1,
+            "only1",
+            "http://example.com/ns/only1#",
+        ); // unique to graph1
+
+        // Graph 2 declarations
+        add_decl(
+            &mut ds,
+            &ont2,
+            &g2,
+            "cmn",
+            "http://example.com/ns/identical#",
+        ); // identical across graphs
+        add_decl(
+            &mut ds,
+            &ont2,
+            &g2,
+            "ex2",
+            "http://example.com/ns/same#",
+        ); // same namespace, different prefixes
+        add_decl(
+            &mut ds,
+            &ont2,
+            &g2,
+            "only2",
+            "http://example.com/ns/only2#",
+        ); // unique to graph2
+
+        // Rewrite to root (ont1), deduplicating by (prefix, namespace)
+        let root = NamedOrBlankNodeRef::NamedNode(ont1.as_ref());
+        rewrite_sh_prefixes(&mut ds, root);
+
+        // Count root declarations and ensure there are none left on non-root subjects
+        let declare_ref = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#declare");
+
+        let root_count = ds
+            .quads_for_predicate(declare_ref)
+            .filter(|q| q.subject == root)
+            .count();
+        let non_root_count = ds
+            .quads_for_predicate(declare_ref)
+            .filter(|q| q.subject != root)
+            .count();
+
+        assert_eq!(root_count, 5, "Expected 5 unique (prefix,namespace) pairs");
+        assert_eq!(
+            non_root_count, 0,
+            "All sh:declare triples should be moved to the root"
+        );
+
+        // Verify the exact set of (prefix, namespace) pairs on the root
+        let sh_prefix_ref =
+            NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
+        let sh_namespace_ref =
+            NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
+
+        let mut pairs: HashSet<(String, String)> = HashSet::new();
+        for q in ds.quads_for_predicate(declare_ref).filter(|q| q.subject == root) {
+            // Follow the declaration node to collect prefix+namespace
+            if let Some(decl_node) = match q.object {
+                TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
+                TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
+                _ => None,
+            } {
+                let mut pref: Option<String> = None;
+                let mut ns: Option<String> = None;
+                for q2 in ds.quads_for_subject(decl_node) {
+                    if q2.predicate == sh_prefix_ref {
+                        if let TermRef::Literal(l) = q2.object {
+                            pref = Some(l.value().to_string());
+                        }
+                    } else if q2.predicate == sh_namespace_ref {
+                        match q2.object {
+                            TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
+                            TermRef::Literal(l) => ns = Some(l.value().to_string()),
+                            _ => {}
+                        }
+                    }
+                }
+                if let (Some(p), Some(n)) = (pref, ns) {
+                    pairs.insert((p, n));
+                } else {
+                    panic!("Root declaration missing sh:prefix or sh:namespace");
+                }
+            } else {
+                panic!("sh:declare object was not a named or blank node");
+            }
+        }
+
+        let expected: HashSet<(String, String)> = [
+            ("cmn".to_string(), "http://example.com/ns/identical#".to_string()),
+            ("ex".to_string(), "http://example.com/ns/same#".to_string()),
+            ("ex2".to_string(), "http://example.com/ns/same#".to_string()),
+            ("only1".to_string(), "http://example.com/ns/only1#".to_string()),
+            ("only2".to_string(), "http://example.com/ns/only2#".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(pairs, expected);
+    }
+}
