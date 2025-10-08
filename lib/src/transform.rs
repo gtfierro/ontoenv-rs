@@ -255,10 +255,6 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
     }
 }
 
-/// Backwards-compat wrapper; prefer rewrite_sh_prefixes_dataset
-pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
-    rewrite_sh_prefixes_dataset(graph, root)
-}
 
 /// Remove owl:imports statements from a dataset. Can be helpful to do after computing the union of
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
@@ -424,7 +420,7 @@ mod tests {
 
         // Rewrite to root (ont1), deduplicating by (prefix, namespace)
         let root = NamedOrBlankNodeRef::NamedNode(ont1.as_ref());
-        rewrite_sh_prefixes(&mut ds, root);
+        rewrite_sh_prefixes_dataset(&mut ds, root);
 
         // Count root declarations and ensure there are none left on non-root subjects
         let declare_ref = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#declare");
