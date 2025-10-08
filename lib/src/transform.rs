@@ -151,8 +151,8 @@ pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankN
     }
 }
 
-/// Rewrites all sh:prefixes in the graph to point to the provided root
-pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
+/** Rewrites all sh:prefixes in the dataset to point to the provided root */
+pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
     let mut to_remove: Vec<Quad> = vec![];
     let mut to_add: Vec<Quad> = vec![];
     // find all sh:prefixes quads
@@ -255,10 +255,15 @@ pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
     }
 }
 
-/// Remove owl:imports statements from a graph. Can be helpful to do after computing the union of
+/// Backwards-compat wrapper; prefer rewrite_sh_prefixes_dataset
+pub fn rewrite_sh_prefixes(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
+    rewrite_sh_prefixes_dataset(graph, root)
+}
+
+/// Remove owl:imports statements from a dataset. Can be helpful to do after computing the union of
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
 /// themselves. If ontologies_to_remove is provided, only remove owl:imports to those ontologies
-pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+pub fn remove_owl_imports_dataset(graph: &mut Dataset, ontologies_to_remove: Option<&[NamedNodeRef]>) {
     let to_remove: Vec<Quad> = graph
         .quads_for_predicate(IMPORTS)
         .filter_map(|quad| match quad.object {
@@ -279,8 +284,18 @@ pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[Na
     }
 }
 
-/// Removes owl:Ontology declarations which are not the provided root
+/// Backwards-compat wrapper; prefer remove_ontology_declarations_dataset
 pub fn remove_ontology_declarations(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
+    remove_ontology_declarations_dataset(graph, root)
+}
+
+/// Backwards-compat wrapper; prefer remove_owl_imports_dataset
+pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+    remove_owl_imports_dataset(graph, ontologies_to_remove)
+}
+
+/// Removes owl:Ontology declarations in a dataset which are not the provided root
+pub fn remove_ontology_declarations_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
     // remove owl:Ontology declarations that are not the first graph
     let mut to_remove: Vec<Quad> = vec![];
     for quad in graph.quads_for_object(ONTOLOGY) {
