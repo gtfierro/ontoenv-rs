@@ -195,11 +195,7 @@ impl Environment {
         let mut alias_data: Vec<(OntologyLocation, GraphIdentifier, NamedNode)> = Vec::new();
         for ontology in self.ontologies.values() {
             if let Some(location) = ontology.location() {
-                alias_data.push((
-                    location.clone(),
-                    ontology.id().clone(),
-                    ontology.name(),
-                ));
+                alias_data.push((location.clone(), ontology.id().clone(), ontology.name()));
             }
         }
         for (location, ontology_id, ontology_name) in alias_data {

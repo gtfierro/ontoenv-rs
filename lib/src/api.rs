@@ -709,7 +709,10 @@ impl OntoEnv {
         }
 
         ids.into_iter().next().ok_or_else(|| {
-            let mut base = format!("Failed to add ontology for location {}", location.to_string());
+            let mut base = format!(
+                "Failed to add ontology for location {}",
+                location.to_string()
+            );
             if !errors.is_empty() {
                 base.push_str(": ");
                 base.push_str(&errors.join("; "));
@@ -919,11 +922,7 @@ impl OntoEnv {
                     let id = ontology.id().clone();
                     if include_imports {
                         for import in imports {
-                            self.queue_import_location(
-                                &import,
-                                &mut queue,
-                                self.config.strict,
-                            )?;
+                            self.queue_import_location(&import, &mut queue, self.config.strict)?;
                         }
                     }
                     fetched.push(ontology);
@@ -934,11 +933,11 @@ impl OntoEnv {
                     if include_imports {
                         if let Ok(existing) = self.get_ontology(&id) {
                             for import in existing.imports {
-                            self.queue_import_location(
-                                &import,
-                                &mut queue,
-                                self.config.strict,
-                            )?;
+                                self.queue_import_location(
+                                    &import,
+                                    &mut queue,
+                                    self.config.strict,
+                                )?;
                             }
                         }
                     }

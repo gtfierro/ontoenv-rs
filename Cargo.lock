@@ -2332,6 +2332,7 @@ dependencies = [
  "env_logger",
  "log",
  "ontoenv",
+ "ontoenv-cli",
  "oxigraph",
  "pyo3",
  "pyo3-build-config",

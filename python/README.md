@@ -56,44 +56,13 @@ env.import_dependencies(g)
 print(f"Graph with imported dependencies has {len(g)} triples")
 ```
 
-## Module Command (python -m)
+## CLI Entrypoint
 
-You can initialize an environment without writing any Python by using the module command:
+Installing `pyontoenv` also provides the Rust-backed `ontoenv` command-line tool:
 
 ```
-python -m ontoenv.init [options]
+pip install pyontoenv
+ontoenv --help
 ```
 
-This provides a simple, Python-only frontend that mirrors the `OntoEnv(...)` constructor. It is useful when you don’t want to call into the API directly or use the Rust CLI.
-
-Examples:
-
-- Create (or overwrite) an env at a path:
-  - `python -m ontoenv.init --path ./myproj --recreate`
-- Initialize a temporary (in-memory) env for quick tasks:
-  - `python -m ontoenv.init --temporary --root .`
-- Open an existing env in read-only mode:
-  - `python -m ontoenv.init --path ./myproj --read-only`
-- Discover ontologies under a search directory when initializing:
-  - `python -m ontoenv.init --path ./myproj --recreate --search-dir ./brick`
-
-Arguments (mirror `OntoEnv` kwargs):
-
-- `--path PATH`: Root directory where `.ontoenv` lives or will be created
-- `--recreate`: Create or overwrite an env at `--path`
-- `--read-only`: Open the env in read-only mode
-- `--search-dir DIR`: Directory to search for ontologies (repeatable)
-- `--require-ontology-names`: Require explicit ontology names
-- `--strict`: Enable strict mode (treat resolution failures as errors)
-- `--offline`: Disable network access for resolution
-- `--resolution-policy NAME`: Resolution policy to use (default: `default`)
-- `--root DIR`: Discovery start directory when not recreating (default: `.`)
-- `--include PATTERN`: Include pattern for discovery (repeatable)
-- `--exclude PATTERN`: Exclude pattern for discovery (repeatable)
-- `--temporary`: Use an in-memory environment (no files created)
-- `--no-search`: Disable local directory search
-
-Behavior:
-
-- Prints the environment store path on success when persisted (non-temporary).
-- Exits with code 0 on success; on error prints a message and exits non‑zero.
+The CLI is identical to the standalone `ontoenv-cli` binary; see the top-level README for usage.
