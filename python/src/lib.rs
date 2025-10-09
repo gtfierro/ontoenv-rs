@@ -391,9 +391,12 @@ impl OntoEnv {
         Ok(names)
     }
 
-    /// Merge all graphs in the imports closure of the given ontology into a single graph. If
-    /// destination_graph is provided, add the merged graph to the destination_graph. If not,
-    /// return the merged graph.
+    /// Merge the imports closure of `uri` into a single graph and return it alongside the closure list.
+    ///
+    /// The first element of the returned tuple is either the provided `destination_graph` (after
+    /// mutation) or a brand-new `rdflib.Graph`. The second element is an ordered list of ontology
+    /// IRIs in the resolved closure starting with `uri`. Set `rewrite_sh_prefixes` or
+    /// `remove_owl_imports` to control post-processing of the merged triples.
     #[pyo3(signature = (uri, destination_graph=None, rewrite_sh_prefixes=true, remove_owl_imports=true, recursion_depth=-1))]
     fn get_closure<'a>(
         &self,
@@ -481,8 +484,12 @@ impl OntoEnv {
         }
     }
 
-    /// Import the dependencies of the given graph into the graph. Removes the owl:imports
-    /// of all imported ontologies.
+    /// Import the dependencies referenced by `owl:imports` triples in `graph`.
+    ///
+    /// When `fetch_missing` is true, the environment attempts to download unresolved imports
+    /// before computing the closure. After merging the closure triples into `graph`, all
+    /// `owl:imports` statements are removed. The returned list contains the deduplicated ontology
+    /// IRIs that were successfully imported.
     #[pyo3(signature = (graph, recursion_depth=-1, fetch_missing=false))]
     fn import_dependencies<'a>(
         &self,
@@ -607,7 +614,8 @@ impl OntoEnv {
     /// This method will look for `owl:imports` statements in the provided `graph`,
     /// then find those ontologies within the `OntoEnv` and compute the full
     /// dependency closure. The triples of all ontologies in the closure are
-    /// returned as a new graph. The original graph is not modified.
+    /// returned as a new graph. The original `graph` is left untouched unless you also
+    /// supply it as the `destination_graph`.
     ///
     /// Args:
     ///     graph (rdflib.Graph): The graph to find dependencies for.
@@ -621,8 +629,8 @@ impl OntoEnv {
     ///         returned graph.
     ///
     /// Returns:
-    ///     tuple[rdflib.Graph, list[str]]: A tuple containing the graph of dependencies and a list of the URIs of the
-    ///     imported ontologies.
+    ///     tuple[rdflib.Graph, list[str]]: A tuple containing the populated dependency graph and the sorted list of
+    ///     imported ontology IRIs.
     #[pyo3(signature = (graph, destination_graph=None, recursion_depth=-1, fetch_missing=false, rewrite_sh_prefixes=true, remove_owl_imports=true))]
     fn get_dependencies_graph<'a>(
         &self,

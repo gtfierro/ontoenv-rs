@@ -45,7 +45,8 @@ Ontologies fetched from a URL often declare a different, usually versioned, onto
 
 ### Installation
 
-- If you have Rust installed, you can install the tool with `cargo install ontoenv-cli`
+- Install from crates.io with `cargo install --locked ontoenv-cli`
+- From a local checkout, run `cargo install --path cli --locked` to build the current workspace
 - Download a binary from the [Releases](https://github.com/gtfierro/ontoenv-rs/releases) tab
 
 ### Usage
@@ -153,7 +154,7 @@ Notes:
 
 ##### Installation
 
-`pip install pyontoenv`
+`pip install pyontoenv` (requires Python 3.9+; prebuilt wheels ship for common platforms. Building from source needs a Rust toolchain.)
 
 ### Basic usage
 
@@ -214,12 +215,18 @@ with tempfile.TemporaryDirectory() as temp_dir:
 - `add(location, fetch_imports=True) -> str`: add graph from file or URL; returns graph IRI
 - `get_graph(name) -> rdflib.Graph`: get just one ontology graph
 - `get_closure(name, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1) -> (Graph, list[str])`
-- `import_dependencies(graph, fetch_missing=False) -> list[str]`: load imports into an rdflib graph
+- `import_dependencies(graph, fetch_missing=False) -> list[str]`: load imports into an rdflib graph, remove its `owl:imports`, and return the sorted IRIs that were imported
 - `list_closure(name, recursion_depth=-1) -> list[str]`: list IRIs in the closure
 - `get_importers(name) -> list[str]`: ontologies that import `name`
 - `to_rdflib_dataset() -> rdflib.Dataset`: in‑memory Dataset with one named graph per ontology
 - `store_path() -> Optional[str]`: path to `.ontoenv/` (persistent envs) or `None` (temporary)
 - `close()`: persist (if applicable) and release resources
+
+### Module command
+
+- `python -m ontoenv.init --help` exposes a Python-only CLI that mirrors the `OntoEnv(...)` constructor flags.
+- The launcher always passes `recreate=True`, so pointing it at a persistent path will rebuild the environment before exiting.
+- Successful runs print the resolved store path; combine with `--temporary` for in-memory experiments that avoid touching disk.
 
 ### Behavior
 
@@ -309,11 +316,11 @@ assert_eq!(ontologies.len(), 2);
 // Get the dependency closure for ontology B
 let ont_b_name = NamedNode::new("http://example.com/ontology_b")?;
 let ont_b_id = env.resolve(ResolveTarget::Graph(ont_b_name)).unwrap();
-let closure = env.get_dependency_closure(&ont_b_id)?;
+let closure_ids = env.get_closure(&ont_b_id, -1)?;
 
 // The closure should contain both ontology A and B
-assert_eq!(closure.len(), 2);
-let closure_names: HashSet<String> = closure.iter().map(|id| id.to_uri_string()).collect();
+assert_eq!(closure_ids.len(), 2);
+let closure_names: HashSet<String> = closure_ids.iter().map(|id| id.to_uri_string()).collect();
 println!("Closure contains: {:?}", closure_names);
 assert!(closure_names.contains("http://example.com/ontology_a"));
 assert!(closure_names.contains("http://example.com/ontology_b"));

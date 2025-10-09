@@ -543,10 +543,13 @@ impl OntoEnv {
         metadata
     }
 
-    /// Initializes a new API environment. If the environment directory already exists:
-    /// - If `overwrite` is true, it will remove the existing directory and recreate it.
-    /// - If `overwrite` is false, it will return an error.
-    /// Returns a `Result` indicating success or failure
+    /// Initializes a new API environment based on `config`.
+    ///
+    /// For persistent environments (`config.temporary == false`), if the target `.ontoenv`
+    /// directory already exists this will remove and recreate it when `overwrite` is `true`,
+    /// otherwise it returns an error. Temporary environments never touch the filesystem, so
+    /// the `overwrite` flag is ignored. An initial discovery run is performed before the
+    /// environment is returned.
     pub fn init(config: Config, overwrite: bool) -> Result<Self> {
         let ontoenv_dir = config.root.join(".ontoenv");
 
@@ -762,25 +765,15 @@ impl OntoEnv {
         }
     }
 
-    /// Load all graphs from the search directories. There are several things that can happen:
+    /// Loads or refreshes graphs discovered in the configured search directories.
     ///
-    /// 1. files have been added from the search directories
-    /// 2. files have been removed from the search directories
-    /// 3. files have been updated in the search directories
+    /// When `all` is `false`, only new or modified ontology sources are reparsed. When `all`
+    /// is `true`, every known ontology location is reprocessed regardless of timestamps,
+    /// allowing callers to force a fresh ingest of all content.
     ///
-    /// OntoEnv tries to do the least amount of work possible.
-    ///
-    /// First, it removes all ontologies which no longer appear in the search directories; it uses
-    /// its internal index of ontologies to do this search.
-    ///
-    /// Next, it determines what new files have been added to the search directories. These are
-    /// files whose locations do not appear in the internal ontology index. It also finds the files
-    /// in the internal ontology index have been updated. It does this by comparing the last
-    /// updated time of the file with the last updated time of the ontology in the index.
-    ///
-    /// Then, it reads all the new and updated files and adds them to the environment.
-    ///
-    /// Finally, it updates the dependency graph for all the updated ontologies.
+    /// The workflow removes ontologies whose sources disappeared, detects additions and
+    /// updates by comparing on-disk content with the stored copy, ingests changed files, and
+    /// finally refreshes the dependency graph for the affected ontologies.
     pub fn update_all(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
         self.with_io_batch(move |env| env.update_all_inner(all))
     }
@@ -1239,7 +1232,12 @@ impl OntoEnv {
         doctor.run(self)
     }
 
-    /// Returns the names of all graphs within the dependency closure of the provided graph
+    /// Returns the dependency closure for the provided graph identifier.
+    ///
+    /// The returned vector contains `GraphIdentifier`s, with the requested identifier inserted
+    /// at the front followed by its resolved imports. If `recursion_depth` is non-negative,
+    /// traversal stops once that depth is reached. In strict mode an unresolved import results
+    /// in an error; otherwise the missing import is logged and skipped.
     pub fn get_closure(
         &self,
         id: &GraphIdentifier,

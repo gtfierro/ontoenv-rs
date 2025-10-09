@@ -7,7 +7,8 @@ use oxigraph::model::{
 };
 use std::collections::HashSet;
 
-/// Rewrites all sh:prefixes in a graph to point to the provided root
+/// Rewrites all `sh:prefixes` links in a graph so they point at `root`, moving each `sh:declare`
+/// block onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`.
 pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
     let mut to_remove: Vec<Triple> = vec![];
     let mut to_add: Vec<Triple> = vec![];
@@ -151,7 +152,8 @@ pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankN
     }
 }
 
-/** Rewrites all sh:prefixes in the dataset to point to the provided root */
+/** Rewrites all `sh:prefixes` entries in the dataset to point at `root`, relocating `sh:declare`
+ blocks onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`. */
 pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
     let mut to_remove: Vec<Quad> = vec![];
     let mut to_add: Vec<Quad> = vec![];
