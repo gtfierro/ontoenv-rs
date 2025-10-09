@@ -35,8 +35,8 @@ where
     Ok(map)
 }
 
-/// A struct that holds the ontology environment: all the mappings
-/// between ontology names and their respective graph identifiers and locations.
+/// Represents the loaded ontology environment, including ontologies, their source
+/// locations, normalized aliases, and the default resolution policy.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Environment {
     #[serde(serialize_with = "ontologies_ser", deserialize_with = "ontologies_de")]
@@ -125,13 +125,12 @@ impl Environment {
         self.locations.get(location)
     }
 
-    /// Returns an Ontology with the given id using the default policy
+    /// Returns a cloned `Ontology` for the provided identifier using the default resolution policy.
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Option<Ontology> {
         self.get_ontology_with_policy(id.into(), &*self.default_policy)
     }
 
-    /// Returns an Ontology with the given name. Uses the provided policy to resolve
-    /// the ontology if there are multiple ontologies with the same name.
+    /// Returns a cloned `Ontology` with the given name, resolving conflicts with the supplied policy.
     pub fn get_ontology_with_policy(
         &self,
         name: NamedNodeRef,
@@ -143,7 +142,7 @@ impl Environment {
             .cloned()
     }
 
-    /// Returns the first ontology with the given name
+    /// Returns the first ontology whose name (or registered alias) matches the supplied value.
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
         let target = Self::normalize_name(name.as_str());
         if let Some(id) = self.aliases.get(target) {
@@ -158,7 +157,7 @@ impl Environment {
         })
     }
 
-    /// Returns the first graph with the given name
+    /// Returns the graph associated with the given name (respecting aliases) using the provided I/O backend.
     pub fn get_graph_by_name(&self, name: NamedNodeRef, store: impl GraphIO) -> Result<Graph> {
         let ontology = self
             .get_ontology_by_name(name)
