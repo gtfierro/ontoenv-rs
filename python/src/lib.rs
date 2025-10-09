@@ -6,6 +6,7 @@ use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ::ontoenv::transform;
 use ::ontoenv::ToUriString;
 use anyhow::Error;
+use ontoenv_cli;
 use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
 use pyo3::{
     prelude::*,
@@ -112,16 +113,18 @@ fn term_to_python<'a>(
     Ok(res)
 }
 
-/// Call the pure-Python CLI entry in `ontoenv.init`.
+/// Run the Rust CLI implementation and return its process-style exit code.
 #[pyfunction]
-fn init_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
-    let module = py.import("ontoenv.init")?;
-    let main = module.getattr("main")?;
-    let ret = match args {
-        Some(argv) => main.call1((argv,))?,
-        None => main.call0()?,
-    };
-    ret.extract::<i32>()
+fn run_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
+    let argv = args.unwrap_or_else(|| std::env::args().collect());
+    let code = py.allow_threads(move || match ontoenv_cli::run_from_args(argv) {
+        Ok(()) => 0,
+        Err(err) => {
+            eprintln!("{err}");
+            1
+        }
+    });
+    Ok(code)
 }
 
 #[pyclass(name = "Ontology")]
@@ -1121,7 +1124,7 @@ fn ontoenv(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<OntoEnv>()?;
     m.add_class::<PyOntology>()?;
-    m.add_function(wrap_pyfunction!(init_cli, m)?)?;
+    m.add_function(wrap_pyfunction!(run_cli, m)?)?;
     // add version attribute
     m.add("version", env!("CARGO_PKG_VERSION"))?;
     Ok(())

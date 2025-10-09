@@ -47,6 +47,7 @@ Ontologies fetched from a URL often declare a different, usually versioned, onto
 
 - Install from crates.io with `cargo install --locked ontoenv-cli`
 - From a local checkout, run `cargo install --path cli --locked` to build the current workspace
+- Install via PyPI with `pip install pyontoenv` to get the CLI together with the Python bindings
 - Download a binary from the [Releases](https://github.com/gtfierro/ontoenv-rs/releases) tab
 
 ### Usage
@@ -221,12 +222,6 @@ with tempfile.TemporaryDirectory() as temp_dir:
 - `to_rdflib_dataset() -> rdflib.Dataset`: in‑memory Dataset with one named graph per ontology
 - `store_path() -> Optional[str]`: path to `.ontoenv/` (persistent envs) or `None` (temporary)
 - `close()`: persist (if applicable) and release resources
-
-### Module command
-
-- `python -m ontoenv.init --help` exposes a Python-only CLI that mirrors the `OntoEnv(...)` constructor flags.
-- The launcher always passes `recreate=True`, so pointing it at a persistent path will rebuild the environment before exiting.
-- Successful runs print the resolved store path; combine with `--temporary` for in-memory experiments that avoid touching disk.
 
 ### Behavior
 

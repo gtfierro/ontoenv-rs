@@ -153,7 +153,7 @@ pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankN
 }
 
 /** Rewrites all `sh:prefixes` entries in the dataset to point at `root`, relocating `sh:declare`
- blocks onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`. */
+blocks onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`. */
 pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
     let mut to_remove: Vec<Quad> = vec![];
     let mut to_add: Vec<Quad> = vec![];
@@ -257,11 +257,13 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
     }
 }
 
-
 /// Remove owl:imports statements from a dataset. Can be helpful to do after computing the union of
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
 /// themselves. If ontologies_to_remove is provided, only remove owl:imports to those ontologies
-pub fn remove_owl_imports_dataset(graph: &mut Dataset, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+pub fn remove_owl_imports_dataset(
+    graph: &mut Dataset,
+    ontologies_to_remove: Option<&[NamedNodeRef]>,
+) {
     let to_remove: Vec<Quad> = graph
         .quads_for_predicate(IMPORTS)
         .filter_map(|quad| match quad.object {
@@ -382,20 +384,8 @@ mod tests {
             "cmn",
             "http://example.com/ns/identical#",
         ); // identical across graphs
-        add_decl(
-            &mut ds,
-            &ont1,
-            &g1,
-            "ex",
-            "http://example.com/ns/same#",
-        ); // same namespace, different prefixes
-        add_decl(
-            &mut ds,
-            &ont1,
-            &g1,
-            "only1",
-            "http://example.com/ns/only1#",
-        ); // unique to graph1
+        add_decl(&mut ds, &ont1, &g1, "ex", "http://example.com/ns/same#"); // same namespace, different prefixes
+        add_decl(&mut ds, &ont1, &g1, "only1", "http://example.com/ns/only1#"); // unique to graph1
 
         // Graph 2 declarations
         add_decl(
@@ -405,20 +395,8 @@ mod tests {
             "cmn",
             "http://example.com/ns/identical#",
         ); // identical across graphs
-        add_decl(
-            &mut ds,
-            &ont2,
-            &g2,
-            "ex2",
-            "http://example.com/ns/same#",
-        ); // same namespace, different prefixes
-        add_decl(
-            &mut ds,
-            &ont2,
-            &g2,
-            "only2",
-            "http://example.com/ns/only2#",
-        ); // unique to graph2
+        add_decl(&mut ds, &ont2, &g2, "ex2", "http://example.com/ns/same#"); // same namespace, different prefixes
+        add_decl(&mut ds, &ont2, &g2, "only2", "http://example.com/ns/only2#"); // unique to graph2
 
         // Rewrite to root (ont1), deduplicating by (prefix, namespace)
         let root = NamedOrBlankNodeRef::NamedNode(ont1.as_ref());
@@ -443,13 +421,14 @@ mod tests {
         );
 
         // Verify the exact set of (prefix, namespace) pairs on the root
-        let sh_prefix_ref =
-            NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
-        let sh_namespace_ref =
-            NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
+        let sh_prefix_ref = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
+        let sh_namespace_ref = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
 
         let mut pairs: HashSet<(String, String)> = HashSet::new();
-        for q in ds.quads_for_predicate(declare_ref).filter(|q| q.subject == root) {
+        for q in ds
+            .quads_for_predicate(declare_ref)
+            .filter(|q| q.subject == root)
+        {
             // Follow the declaration node to collect prefix+namespace
             if let Some(decl_node) = match q.object {
                 TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
@@ -482,11 +461,20 @@ mod tests {
         }
 
         let expected: HashSet<(String, String)> = [
-            ("cmn".to_string(), "http://example.com/ns/identical#".to_string()),
+            (
+                "cmn".to_string(),
+                "http://example.com/ns/identical#".to_string(),
+            ),
             ("ex".to_string(), "http://example.com/ns/same#".to_string()),
             ("ex2".to_string(), "http://example.com/ns/same#".to_string()),
-            ("only1".to_string(), "http://example.com/ns/only1#".to_string()),
-            ("only2".to_string(), "http://example.com/ns/only2#".to_string()),
+            (
+                "only1".to_string(),
+                "http://example.com/ns/only1#".to_string(),
+            ),
+            (
+                "only2".to_string(),
+                "http://example.com/ns/only2#".to_string(),
+            ),
         ]
         .into_iter()
         .collect();
