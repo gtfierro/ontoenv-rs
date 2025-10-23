@@ -130,6 +130,50 @@ impl Default for OntologyLocation {
     }
 }
 
+fn file_path_to_file_uri(p: &PathBuf) -> String {
+    #[cfg(windows)]
+    {
+        let mut s = p.to_string_lossy().to_string();
+        if s.contains('\\') {
+            s = s.replace('\\', "/");
+        }
+        // Ensure leading slash for drive-letter paths (e.g., C:/...)
+        if !s.starts_with('/') {
+            if s.len() >= 2 && s.as_bytes()[1] == b':' {
+                s = format!("/{s}");
+            }
+        }
+        // Minimal percent-encoding for common problematic characters in paths
+        let mut encoded = String::with_capacity(s.len());
+        for ch in s.chars() {
+            match ch {
+                ' ' => encoded.push_str("%20"),
+                '#' => encoded.push_str("%23"),
+                '?' => encoded.push_str("%3F"),
+                '%' => encoded.push_str("%25"),
+                _ => encoded.push(ch),
+            }
+        }
+        return format!("file://{encoded}");
+    }
+    #[cfg(not(windows))]
+    {
+        let s = p.to_string_lossy();
+        // Minimal percent-encoding for common problematic characters in paths
+        let mut encoded = String::with_capacity(s.len());
+        for ch in s.chars() {
+            match ch {
+                ' ' => encoded.push_str("%20"),
+                '#' => encoded.push_str("%23"),
+                '?' => encoded.push_str("%3F"),
+                '%' => encoded.push_str("%25"),
+                _ => encoded.push(ch),
+            }
+        }
+        return format!("file://{encoded}");
+    }
+}
+
 impl OntologyLocation {
     pub fn as_str(&self) -> &str {
         match self {
@@ -175,13 +219,20 @@ impl OntologyLocation {
     }
 
     pub fn to_iri(&self) -> NamedNode {
-        // if it is a file, convert it to a file:// IRI
         match self {
             OntologyLocation::File(p) => {
-                let p = p.to_str().unwrap_or_default();
-                NamedNode::new(format!("file://{p}")).unwrap()
+                let iri = file_path_to_file_uri(p);
+                NamedNode::new(iri).unwrap()
             }
-            OntologyLocation::Url(u) => NamedNode::new(u.clone()).unwrap(),
+            OntologyLocation::Url(u) => {
+                // Strip angle brackets if present (e.g., "<http://...>")
+                let iri = if u.starts_with('<') && u.ends_with('>') && u.len() >= 2 {
+                    u[1..u.len() - 1].to_string()
+                } else {
+                    u.clone()
+                };
+                NamedNode::new(iri).unwrap()
+            }
         }
     }
 
