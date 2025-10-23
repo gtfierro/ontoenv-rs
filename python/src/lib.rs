@@ -15,6 +15,7 @@ use pyo3::{
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::ffi::OsStr;
 use std::sync::{Arc, Mutex};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
@@ -211,7 +212,17 @@ impl OntoEnv {
         temporary: bool,
         no_search: bool,
     ) -> PyResult<Self> {
-        let root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
+        let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
+        // If the provided path points to a '.ontoenv' directory, treat its parent as the root
+        if root_path
+            .file_name()
+            .map(|n| n == OsStr::new(".ontoenv"))
+            .unwrap_or(false)
+        {
+            if let Some(parent) = root_path.parent() {
+                root_path = parent.to_path_buf();
+            }
+        }
 
         // Strict Git-like behavior:
         // - temporary=True: create a temporary (in-memory) env
@@ -250,15 +261,19 @@ impl OntoEnv {
             // Explicit create/overwrite at root_path
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
         } else {
-            // Discover upward from root_path; load if found, else error.
+            // Discover upward from root_path; load if found. If not found and not read-only,
+            // initialize a new environment at the requested root.
             match ::ontoenv::api::find_ontoenv_root_from(&root_path) {
                 Some(found_root) => OntoEnvRs::load_from_directory(found_root, read_only)
                     .map_err(anyhow_to_pyerr)?,
                 None => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "OntoEnv directory not found at: \"{}\"",
-                        root_path.join(".ontoenv").to_string_lossy()
-                    )));
+                    if read_only {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "OntoEnv directory not found at: \"{}\" and read_only=True",
+                            root_path.join(".ontoenv").to_string_lossy()
+                        )));
+                    }
+                    OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
                 }
             }
         };
