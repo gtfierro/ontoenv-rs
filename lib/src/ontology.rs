@@ -7,8 +7,8 @@ use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, info, warn};
 use oxigraph::model::{
-    Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, Subject, SubjectRef,
-    Term,
+    Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNode,
+    NamedOrBlankNodeRef, Term,
 };
 use oxigraph::store::Store;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -80,10 +80,7 @@ impl GraphIdentifier {
             name: name.into(),
         }
     }
-    pub fn new_with_location(
-        name: NamedNodeRef,
-        location: OntologyLocation,
-    ) -> Self {
+    pub fn new_with_location(name: NamedNodeRef, location: OntologyLocation) -> Self {
         GraphIdentifier {
             location,
             name: name.into(),
@@ -267,7 +264,6 @@ impl Default for Ontology {
 }
 
 impl Ontology {
-
     pub fn with_last_updated(&mut self, last_updated: DateTime<Utc>) {
         self.last_updated = Some(last_updated);
     }
@@ -280,12 +276,8 @@ impl Ontology {
         match &self.location {
             Some(OntologyLocation::File(p)) => p.exists(),
             Some(OntologyLocation::Url(u)) => {
-                // check if the URL is reachable
-                let res = reqwest::blocking::get(u);
-                match res {
-                    Ok(r) => r.status().is_success(),
-                    Err(_) => false,
-                }
+                let opts = crate::fetch::FetchOptions::default();
+                crate::fetch::head_exists(u, &opts).unwrap_or(false)
             }
             None => false,
         }
@@ -329,7 +321,7 @@ impl Ontology {
     fn build_from_subject_in_store(
         store: &Store,
         graph_name: GraphNameRef,
-        ontology_subject: Subject,
+        ontology_subject: NamedOrBlankNode,
         location: OntologyLocation,
     ) -> Result<Self> {
         debug!("got ontology name: {ontology_subject}");
@@ -353,8 +345,8 @@ impl Ontology {
             .map(|q| q.object)
         {
             let decl_subj = match &decl_obj {
-                Term::NamedNode(n) => Subject::NamedNode(n.clone()),
-                Term::BlankNode(b) => Subject::BlankNode(b.clone()),
+                Term::NamedNode(n) => NamedOrBlankNode::NamedNode(n.clone()),
+                Term::BlankNode(b) => NamedOrBlankNode::BlankNode(b.clone()),
                 _ => continue,
             };
 
@@ -390,33 +382,44 @@ impl Ontology {
         }
 
         let imports: Vec<Term> = store
-            .quads_for_pattern(Some(ontology_subject_ref), Some(IMPORTS), None, Some(graph_name))
+            .quads_for_pattern(
+                Some(ontology_subject_ref),
+                Some(IMPORTS),
+                None,
+                Some(graph_name),
+            )
             .filter_map(Result::ok)
             .map(|q| q.object)
             .collect::<Vec<_>>();
 
         // get each of the ONNTOLOGY_VERSION_IRIS values, if they exist on the ontology
-        let mut version_properties: HashMap<NamedNode, String> = ONTOLOGY_VERSION_IRIS
-            .iter()
-            .fold(HashMap::new(), |mut acc, &iri| {
-                if let Some(o) = store
-                    .quads_for_pattern(Some(ontology_subject_ref), Some(iri), None, Some(graph_name))
-                    .filter_map(Result::ok)
-                    .map(|q| q.object)
-                    .next()
-                {
-                    match o {
-                        Term::NamedNode(s) => {
-                            acc.insert(iri.into(), s.to_string());
+        let mut version_properties: HashMap<NamedNode, String> =
+            ONTOLOGY_VERSION_IRIS
+                .iter()
+                .fold(HashMap::new(), |mut acc, &iri| {
+                    if let Some(o) = store
+                        .quads_for_pattern(
+                            Some(ontology_subject_ref),
+                            Some(iri),
+                            None,
+                            Some(graph_name),
+                        )
+                        .filter_map(Result::ok)
+                        .map(|q| q.object)
+                        .next()
+                    {
+                        match o {
+                            Term::NamedNode(s) => {
+                                acc.insert(iri.into(), s.to_string());
+                            }
+                            Term::Literal(lit) => {
+                                acc.insert(iri.into(), lit.to_string());
+                            }
+                            _ => (),
                         }
-                        Term::Literal(lit) => {
-                            acc.insert(iri.into(), lit.to_string());
-                        }
-                        _ => (),
                     }
-                }
-                acc
-            });
+                    acc
+                });
 
         // check if any of the ONTOLOGY_VERSION_IRIS exist on the other side of a
         // vaem:hasGraphMetadata predicate
@@ -438,7 +441,7 @@ impl Ontology {
             for iri in ONTOLOGY_VERSION_IRIS.iter() {
                 if let Some(value) = store
                     .quads_for_pattern(
-                        Some(SubjectRef::NamedNode(graph_iri.as_ref())),
+                        Some(NamedOrBlankNodeRef::NamedNode(graph_iri.as_ref())),
                         Some(*iri),
                         None,
                         Some(graph_name),
@@ -464,12 +467,10 @@ impl Ontology {
             debug!("{k}: {v}");
         }
 
-        info!(
-            "Fetched graph {ontology_subject} from location: {location:?}"
-        );
+        info!("Fetched graph {ontology_subject} from location: {location:?}");
 
         let ontology_name: NamedNode = match ontology_subject {
-            Subject::NamedNode(s) => s,
+            NamedOrBlankNode::NamedNode(s) => s,
             _ => panic!("Ontology name is not an IRI"),
         };
 
@@ -508,7 +509,7 @@ impl Ontology {
         let location = id.location().clone();
 
         // get the rdf:type owl:Ontology declarations
-        let mut decls: Vec<Subject> = store
+        let mut decls: Vec<NamedOrBlankNode> = store
             .quads_for_pattern(
                 None,
                 Some(TYPE),
@@ -540,15 +541,13 @@ impl Ontology {
                     location
                 ));
             }
-            warn!(
-                "No ontology declaration found in {location}. Using this as the ontology name"
-            );
-            let ontology_subject = Subject::NamedNode(location.to_iri());
+            warn!("No ontology declaration found in {location}. Using this as the ontology name");
+            let ontology_subject = NamedOrBlankNode::NamedNode(location.to_iri());
             Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
         } else {
             let decl = decls.into_iter().next().unwrap();
             let ontology_subject = match decl {
-                Subject::NamedNode(s) => Subject::NamedNode(s),
+                NamedOrBlankNode::NamedNode(s) => NamedOrBlankNode::NamedNode(s),
                 _ => {
                     return Err(anyhow::anyhow!(
                         "Ontology declaration subject is not a NamedNode, skipping."
@@ -559,9 +558,7 @@ impl Ontology {
         }
     }
 
-
     pub fn from_str(s: &str) -> Result<Self> {
         Ok(serde_json::from_str(s)?)
     }
 }
-

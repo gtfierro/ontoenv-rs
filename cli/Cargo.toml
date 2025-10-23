@@ -9,6 +9,11 @@ repository.workspace = true
 homepage.workspace = true
 build = "build.rs"
 
+[lib]
+name = "ontoenv_cli"
+path = "src/lib.rs"
+doc = false
+
 [[bin]]
 name = "ontoenv"
 path = "src/main.rs"

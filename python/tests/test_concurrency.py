@@ -52,6 +52,42 @@ def _rw_open_worker(path_str, graph_uri, result_queue):
         result_queue.put(("error", graph_uri, str(e)))
 
 
+def _writer_hold_worker(path_str, hold_secs, graph_uri, result_queue):
+    try:
+        import time
+        from pathlib import Path
+        from ontoenv import OntoEnv
+        from rdflib import URIRef
+        from rdflib.namespace import RDF, OWL
+
+        env = OntoEnv(path=Path(path_str))
+        # Touch a known graph to ensure the store is usable
+        g = env.get_graph(graph_uri)
+        ok_graph = (URIRef(graph_uri), RDF.type, OWL.Ontology) in g and len(g) > 0
+
+        # Hold the exclusive writer lock for a bit
+        time.sleep(hold_secs)
+        env.close()
+        result_queue.put(("released", ok_graph))
+    except Exception as e:
+        result_queue.put(("error", str(e)))
+
+
+def _ro_open_get_graph_worker(path_str, graph_uri, result_queue):
+    try:
+        from pathlib import Path
+        from ontoenv import OntoEnv
+        from rdflib import URIRef
+        from rdflib.namespace import RDF, OWL
+
+        env = OntoEnv(path=Path(path_str), read_only=True)
+        g = env.get_graph(graph_uri)
+        ok = (URIRef(graph_uri), RDF.type, OWL.Ontology) in g and len(g) > 0
+        env.close()
+        result_queue.put(("ok", ok))
+    except Exception as e:
+        result_queue.put(("error", str(e)))
+
 class TestOntoEnvReadOnlyConcurrency(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path("test_env_ro")
@@ -89,7 +125,7 @@ class TestOntoEnvReadOnlyConcurrency(unittest.TestCase):
         )
 
         # Create the store and add ontologies (single writer)
-        env = OntoEnv(path=self.test_dir)
+        env = OntoEnv(path=self.test_dir, recreate=True)
         name_a = env.add(str(a_path), fetch_imports=False)
         name_b = env.add(str(b_path), fetch_imports=False)
         self.assertEqual(name_a, a_uri)
@@ -160,7 +196,7 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
             encoding="utf-8",
         )
 
-        env = OntoEnv(path=self.test_dir)
+        env = OntoEnv(path=self.test_dir, recreate=True)
         name_a = env.add(str(a_path), fetch_imports=False)
         name_b = env.add(str(b_path), fetch_imports=False)
         self.assertEqual(name_a, a_uri)
@@ -206,6 +242,53 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
             "Failed to open OntoEnv store for write" in err_msg or "exclusive lock" in err_msg,
             msg=f"Unexpected error message: {err_msg}",
         )
+
+    def test_reader_waits_for_writer_then_reads(self):
+        """A read-only open should wait while a writer holds the exclusive lock, then succeed."""
+        a_path = self.test_dir / "A.ttl"
+        a_uri = "http://example.org/ont/A"
+        a_path.write_text(
+            "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            f"<{a_uri}> a owl:Ontology .\n",
+            encoding="utf-8",
+        )
+        env = OntoEnv(path=self.test_dir, recreate=True)
+        env.add(str(a_path), fetch_imports=False)
+        env.flush()
+        env.close()
+
+        ctx = multiprocessing.get_context("spawn")
+        q = ctx.Queue()
+        hold_secs = 1.0
+        writer = ctx.Process(target=_writer_hold_worker, args=(str(self.test_dir), hold_secs, a_uri, q))
+        reader = ctx.Process(target=_ro_open_get_graph_worker, args=(str(self.test_dir), a_uri, q))
+
+        writer.start()
+        import time
+        time.sleep(0.15)  # ensure writer started and holds the lock
+        t0 = time.time()
+        reader.start()
+
+        # First result should be from reader after writer releases
+        r1 = q.get(timeout=30)
+        r2 = q.get(timeout=30)
+
+        writer.join(timeout=30)
+        reader.join(timeout=30)
+
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(writer.exitcode, 0)
+        self.assertEqual(reader.exitcode, 0)
+
+        elapsed = time.time() - t0
+        # Reader should have waited roughly the hold duration (minus start skew)
+        self.assertGreaterEqual(elapsed, 0.7)
+
+        results = {r1[0], r2[0]}
+        self.assertIn("released", results)
+        self.assertIn("ok", results)
 
 
 if __name__ == "__main__":
