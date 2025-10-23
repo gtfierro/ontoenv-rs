@@ -13,6 +13,9 @@ authors = [
 ]
 license = "bsd-3-clause"
 
+[project.scripts]
+ontoenv = "ontoenv._cli:main"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 

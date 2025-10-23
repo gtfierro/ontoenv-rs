@@ -23,6 +23,11 @@ env = OntoEnv()
 brick_name = env.add("../brick/Brick.ttl")
 print(f"Added ontology {brick_name}")
 
+# When you add from a URL whose declared ontology name differs (for example a
+# versioned IRI served at a versionless URL), pyontoenv records that alias. You
+# can later refer to the ontology by either the canonical name or the original
+# URL when resolving imports or querying.
+
 # get the graph of the ontology we just added
 # env.get_graph returns an rdflib.Graph
 brick_graph = env.get_graph(brick_name)
@@ -50,3 +55,14 @@ g.parse(data="""
 env.import_dependencies(g)
 print(f"Graph with imported dependencies has {len(g)} triples")
 ```
+
+## CLI Entrypoint
+
+Installing `pyontoenv` also provides the Rust-backed `ontoenv` command-line tool:
+
+```
+pip install pyontoenv
+ontoenv --help
+```
+
+The CLI is identical to the standalone `ontoenv-cli` binary; see the top-level README for usage.

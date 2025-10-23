@@ -2,13 +2,16 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
-use crate::ToUriString;
-use crate::doctor::{ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem};
+use crate::doctor::{
+    ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
+};
 use crate::environment::Environment;
+use crate::options::{Overwrite, RefreshStrategy};
 use crate::transform;
+use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, SubjectRef};
+use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
 use std::io::{BufReader, Write};
@@ -18,10 +21,17 @@ use std::path::PathBuf;
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::{anyhow, Result};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+
+#[derive(Clone, Debug)]
+struct PendingImport {
+    location: OntologyLocation,
+    overwrite: Overwrite,
+    required: bool,
+}
 
 /// Initializes logging for the ontoenv library.
 ///
@@ -90,12 +100,100 @@ pub struct Stats {
     pub num_ontologies: usize,
 }
 
+#[derive(Debug, Clone)]
+pub enum ImportPaths {
+    Present(Vec<Vec<GraphIdentifier>>),
+    Missing {
+        importers: Vec<Vec<GraphIdentifier>>,
+    },
+}
+
+#[derive(Default)]
+struct BatchState {
+    depth: usize,
+    seen_locations: HashSet<OntologyLocation>,
+}
+
+impl BatchState {
+    fn begin(&mut self) {
+        if self.depth == 0 {
+            self.seen_locations.clear();
+        }
+        self.depth += 1;
+    }
+
+    fn end(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    fn has_seen(&self, location: &OntologyLocation) -> bool {
+        self.seen_locations.contains(location)
+    }
+
+    fn mark_seen(&mut self, location: &OntologyLocation) {
+        self.seen_locations.insert(location.clone());
+    }
+}
+
+struct BatchScope<'a> {
+    env: &'a mut OntoEnv,
+    completed: bool,
+}
+
+impl<'a> BatchScope<'a> {
+    fn enter(env: &'a mut OntoEnv) -> Result<Self> {
+        env.batch_state.begin();
+        if let Err(err) = env.io.begin_batch() {
+            env.batch_state.end();
+            return Err(err);
+        }
+        Ok(Self {
+            env,
+            completed: false,
+        })
+    }
+
+    fn run<T>(mut self, f: impl FnOnce(&mut OntoEnv) -> Result<T>) -> Result<T> {
+        let result = f(self.env);
+        let end_result = self.env.io.end_batch();
+        self.env.batch_state.end();
+        self.completed = true;
+        match (result, end_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(err)) => Err(err),
+            (Err(err), Ok(())) => Err(err),
+            (Err(err), Err(end_err)) => {
+                error!("Failed to finalize batched RDF write: {end_err}");
+                Err(err)
+            }
+        }
+    }
+}
+
+impl<'a> Drop for BatchScope<'a> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        if let Err(err) = self.env.io.end_batch() {
+            error!("Failed to finalize batched RDF write: {err}");
+        }
+        self.env.batch_state.end();
+    }
+}
+
+enum FetchOutcome {
+    Reused(GraphIdentifier),
+    Loaded(Ontology),
+}
+
 pub struct OntoEnv {
     env: Environment,
     io: Box<dyn GraphIO>,
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
     config: Config,
     failed_resolutions: HashSet<NamedNode>,
+    batch_state: BatchState,
 }
 
 impl std::fmt::Debug for OntoEnv {
@@ -112,6 +210,7 @@ impl std::fmt::Debug for OntoEnv {
 }
 
 impl OntoEnv {
+    // Constructors
     fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
         Self {
             env,
@@ -119,6 +218,7 @@ impl OntoEnv {
             config,
             dependency_graph: DiGraph::new(),
             failed_resolutions: HashSet::new(),
+            batch_state: BatchState::default(),
         }
     }
 
@@ -218,9 +318,7 @@ impl OntoEnv {
     }
 
     pub fn new_from_store(strict: bool, offline: bool, store: Store) -> Result<Self> {
-        let io = Box::new(crate::io::ExternalStoreGraphIO::new(
-            store, offline, strict,
-        ));
+        let io = Box::new(crate::io::ExternalStoreGraphIO::new(store, offline, strict));
         let root = std::env::current_dir()?;
         let config = Config::builder()
             .root(root)
@@ -236,10 +334,6 @@ impl OntoEnv {
         Ok(ontoenv)
     }
 
-    pub fn io(&self) -> &Box<dyn GraphIO> {
-        &self.io
-    }
-
     /// returns the graph identifier for the given resolve target, if it exists
     pub fn resolve(&self, target: ResolveTarget) -> Option<GraphIdentifier> {
         match target {
@@ -252,15 +346,6 @@ impl OntoEnv {
                 .get_ontology_by_name(iri.as_ref())
                 .map(|ont| ont.id().clone()),
         }
-    }
-
-    pub fn stats(&self) -> Result<Stats> {
-        let store_stats = self.io.size()?;
-        Ok(Stats {
-            num_triples: store_stats.num_triples,
-            num_graphs: store_stats.num_graphs,
-            num_ontologies: self.env.ontologies().len(),
-        })
     }
 
     /// Saves the current environment to the .ontoenv directory.
@@ -290,15 +375,6 @@ impl OntoEnv {
         file.write_all(graph_str.as_bytes())?;
 
         Ok(())
-    }
-
-    pub fn flush(&mut self) -> Result<()> {
-        self.io.flush()
-    }
-
-    /// Backwards-compatibility: update only changed/added files (same as update_all(false))
-    pub fn update(&mut self) -> Result<Vec<GraphIdentifier>> {
-        self.update_all(false)
     }
 
     pub fn new_temporary(&self) -> Result<Self> {
@@ -343,6 +419,7 @@ impl OntoEnv {
             locations.insert(ontology.location().unwrap().clone(), ontology.id().clone());
         }
         env.locations = locations;
+        env.rebuild_aliases();
 
         // Initialize the IO to the persistent graph type. We know that it exists because we
         // are loading from a directory
@@ -361,8 +438,10 @@ impl OntoEnv {
         // copy the graphs from the persistent store to the memory store if we are a 'temporary'
         // environment
         if config.temporary {
-            let mut new_io =
-                Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?);
+            let mut new_io = Box::new(crate::io::MemoryGraphIO::new(
+                config.offline,
+                config.strict,
+            )?);
             for ontology in env.ontologies().values() {
                 let graph = io.get_graph(ontology.id())?;
                 new_io.add_graph(ontology.id().clone(), graph)?;
@@ -376,7 +455,38 @@ impl OntoEnv {
             config,
             dependency_graph,
             failed_resolutions: HashSet::new(),
+            batch_state: BatchState::default(),
         })
+    }
+
+    // Core API methods
+    pub fn flush(&mut self) -> Result<()> {
+        self.io.flush()
+    }
+
+    fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self) -> Result<T>,
+    {
+        BatchScope::enter(self)?.run(f)
+    }
+
+    pub fn io(&self) -> &Box<dyn GraphIO> {
+        &self.io
+    }
+
+    pub fn stats(&self) -> Result<Stats> {
+        let store_stats = self.io.size()?;
+        Ok(Stats {
+            num_triples: store_stats.num_triples,
+            num_graphs: store_stats.num_graphs,
+            num_ontologies: self.env.ontologies().len(),
+        })
+    }
+
+    /// Backwards-compatibility: update only changed/added files (same as update_all(false))
+    pub fn update(&mut self) -> Result<Vec<GraphIdentifier>> {
+        self.update_all(false)
     }
 
     /// Calculates and returns the environment status
@@ -433,18 +543,19 @@ impl OntoEnv {
         metadata
     }
 
-    /// Initializes a new API environment. If the environment directory already exists:
-    /// - If `overwrite` is true, it will remove the existing directory and recreate it.
-    /// - If `overwrite` is false, it will return an error.
-    /// Returns a `Result` indicating success or failure
+    /// Initializes a new API environment based on `config`.
+    ///
+    /// For persistent environments (`config.temporary == false`), if the target `.ontoenv`
+    /// directory already exists this will remove and recreate it when `overwrite` is `true`,
+    /// otherwise it returns an error. Temporary environments never touch the filesystem, so
+    /// the `overwrite` flag is ignored. An initial discovery run is performed before the
+    /// environment is returned.
     pub fn init(config: Config, overwrite: bool) -> Result<Self> {
         let ontoenv_dir = config.root.join(".ontoenv");
 
         if !config.temporary && ontoenv_dir.exists() {
             if overwrite {
-                info!(
-                    "Directory exists and will be overwritten: {ontoenv_dir:?}"
-                );
+                info!("Directory exists and will be overwritten: {ontoenv_dir:?}");
                 fs::remove_dir_all(&ontoenv_dir)?;
             } else {
                 return Err(anyhow::anyhow!(
@@ -460,7 +571,10 @@ impl OntoEnv {
 
         let env = Environment::new();
         let io: Box<dyn GraphIO> = match config.temporary {
-            true => Box::new(crate::io::MemoryGraphIO::new(config.offline, config.strict)?),
+            true => Box::new(crate::io::MemoryGraphIO::new(
+                config.offline,
+                config.strict,
+            )?),
             false => Box::new(crate::io::PersistentGraphIO::new(
                 ontoenv_dir,
                 config.offline,
@@ -474,6 +588,7 @@ impl OntoEnv {
             dependency_graph: DiGraph::new(),
             config,
             failed_resolutions: HashSet::new(),
+            batch_state: BatchState::default(),
         };
 
         let _ = ontoenv.update_all(false)?;
@@ -495,116 +610,192 @@ impl OntoEnv {
 
     /// Add the ontology from the given location to the environment,
     /// then add it to the dependency graph.
+    ///
+    /// * `overwrite` selects whether an existing graph at the same identifier should be replaced.
+    /// * `refresh` controls whether cached metadata may be reused (`RefreshStrategy::UseCache`) or
+    ///   the source should always be fetched (`RefreshStrategy::Force`).
     pub fn add(
         &mut self,
         location: OntologyLocation,
-        overwrite: bool,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
     ) -> Result<GraphIdentifier> {
-        self.failed_resolutions.clear();
-        let ont = self.io.add(location, overwrite)?;
-        let id = ont.id().clone();
-        self.env.add_ontology(ont);
-        self.add_ids_to_dependency_graph(vec![id.clone()])?;
-        self.save_to_directory()?;
-        Ok(id)
+        self.add_with_options(location, overwrite, refresh, true)
     }
 
     /// Add the ontology from the given location to the environment, but do not
     /// explore its owl:imports. It will be added to the dependency graph and
     /// edges will be created if its imports are already present in the environment.
+    /// Parameters mirror [`OntoEnv::add`] for overwrite and refresh behavior.
     pub fn add_no_imports(
         &mut self,
         location: OntologyLocation,
-        overwrite: bool,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
     ) -> Result<GraphIdentifier> {
-        self.failed_resolutions.clear();
-        let ont = self.io.add(location, overwrite)?;
-        let id = ont.id().clone();
-        self.env.add_ontology(ont);
-        self.add_ids_to_dependency_graph(vec![])?;
-        self.save_to_directory()?;
-        Ok(id)
+        self.add_with_options(location, overwrite, refresh, false)
     }
 
-    /// Load all graphs from the search directories. There are several things that can happen:
-    ///
-    /// 1. files have been added from the search directories
-    /// 2. files have been removed from the search directories
-    /// 3. files have been updated in the search directories
-    ///
-    /// OntoEnv tries to do the least amount of work possible.
-    ///
-    /// First, it removes all ontologies which no longer appear in the search directories; it uses
-    /// its internal index of ontologies to do this search.
-    ///
-    /// Next, it determines what new files have been added to the search directories. These are
-    /// files whose locations do not appear in the internal ontology index. It also finds the files
-    /// in the internal ontology index have been updated. It does this by comparing the last
-    /// updated time of the file with the last updated time of the ontology in the index.
-    ///
-    /// Then, it reads all the new and updated files and adds them to the environment.
-    ///
-    /// Finally, it updates the dependency graph for all the updated ontologies.
-    pub fn update_all(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
-        self.failed_resolutions.clear();
-        // remove ontologies which are no longer present in the search directories
-        // remove ontologies which are no longer present in the search directories
-        for graphid in self.missing_ontologies() {
-            self.io.remove(&graphid)?;
-            self.env.remove_ontology(&graphid);
+    fn add_with_options(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        update_dependencies: bool,
+    ) -> Result<GraphIdentifier> {
+        self.with_io_batch(move |env| {
+            env.add_with_options_inner(location, overwrite, refresh, update_dependencies)
+        })
+    }
+
+    fn fetch_location(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+    ) -> Result<FetchOutcome> {
+        if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
+            self.batch_state.mark_seen(&location);
+            return Ok(FetchOutcome::Reused(existing_id));
         }
 
-        // now, find all the new and updated ontologies in the search directories
-        // and add them to the environment
-        let updated_files: Vec<OntologyLocation> = if all {
-            let mut set: HashSet<OntologyLocation> = self
-                .env
-                .ontologies()
-                .values()
-                .filter_map(|o| o.location().cloned())
-                .collect();
-            for loc in self.find_files()? {
-                set.insert(loc);
+        if !refresh.is_force() && self.batch_state.has_seen(&location) {
+            if let Some(existing) = self.env.get_ontology_by_location(&location) {
+                return Ok(FetchOutcome::Reused(existing.id().clone()));
             }
-            set.into_iter().collect()
-        } else {
-            self.get_updated_locations()?
+        }
+
+        let ontology = self.io.add(location.clone(), overwrite)?;
+        self.batch_state.mark_seen(&location);
+        Ok(FetchOutcome::Loaded(ontology))
+    }
+
+    fn register_ontologies(
+        &mut self,
+        ontologies: Vec<Ontology>,
+        update_dependencies: bool,
+    ) -> Result<Vec<GraphIdentifier>> {
+        let mut ids = Vec::with_capacity(ontologies.len());
+        for ontology in ontologies {
+            let id = ontology.id().clone();
+            self.env.add_ontology(ontology)?;
+            ids.push(id);
+        }
+
+        if update_dependencies && !ids.is_empty() {
+            self.add_ids_to_dependency_graph(ids.clone())?;
+        }
+
+        self.save_to_directory()?;
+        Ok(ids)
+    }
+
+    fn add_with_options_inner(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        update_dependencies: bool,
+    ) -> Result<GraphIdentifier> {
+        self.failed_resolutions.clear();
+        let seeds = vec![(location.clone(), overwrite)];
+        let (ontologies, reused_ids, errors) =
+            self.process_import_queue(seeds, refresh, update_dependencies)?;
+        let mut ids = self.register_ontologies(ontologies, update_dependencies)?;
+        ids.extend(reused_ids);
+
+        if let Some(existing) = self.env.get_ontology_by_location(&location) {
+            return Ok(existing.id().clone());
+        }
+
+        ids.into_iter().next().ok_or_else(|| {
+            let mut base = format!(
+                "Failed to add ontology for location {}",
+                location.to_string()
+            );
+            if !errors.is_empty() {
+                base.push_str(": ");
+                base.push_str(&errors.join("; "));
+            }
+            anyhow!(base)
+        })
+    }
+
+    fn try_reuse_cached(
+        &self,
+        location: &OntologyLocation,
+        refresh: RefreshStrategy,
+    ) -> Result<Option<GraphIdentifier>> {
+        if !self.config.use_cached_ontologies.is_enabled() {
+            return Ok(None);
+        }
+        let existing = match self.env.get_ontology_by_location(location) {
+            Some(ontology) => ontology,
+            None => return Ok(None),
         };
 
-        // load all of these files into the environment
-        let mut ontologies: Vec<Ontology> = vec![];
-        for location in updated_files {
-            // if 'strict' mode then fail on any errors when adding the ontology
-            // otherwise just warn
+        let existing_id = existing.id().clone();
 
-            let result = self.io.add(location.clone(), true);
-            if result.is_err() {
-                if self.config.strict {
-                    return Err(result.unwrap_err());
-                } else {
+        if refresh.is_force() {
+            return Ok(None);
+        }
+
+        if location.is_file() {
+            let last_updated = match existing.last_updated {
+                Some(ts) => ts,
+                None => return Ok(None),
+            };
+
+            match self.io.source_last_modified(existing.id()) {
+                Ok(source_modified) => {
+                    if source_modified <= last_updated {
+                        return Ok(Some(existing_id));
+                    }
+                }
+                Err(err) => {
                     warn!(
-                        "Failed to read ontology file {}: {}",
-                        location,
-                        result.unwrap_err()
+                        "Failed to determine modification time for {} ({}); using cached version",
+                        existing_id, err
                     );
-                    continue;
+                    return Ok(Some(existing_id));
                 }
             }
 
-            let new_ont = result.unwrap();
-            ontologies.push(new_ont);
+            Ok(None)
+        } else {
+            // For URLs, reuse the cached ontology unless the caller forces a refresh
+            Ok(Some(existing_id))
         }
+    }
 
-        let mut update_ids: Vec<GraphIdentifier> = Vec::new();
-        // add the ontologies to the environment
-        for ontology in ontologies {
-            let id = ontology.id().clone();
-            self.env.add_ontology(ontology);
-            update_ids.push(id);
-        }
-        self.add_ids_to_dependency_graph(update_ids.clone())?;
-        self.save_to_directory()?;
-        Ok(update_ids)
+    /// Loads or refreshes graphs discovered in the configured search directories.
+    ///
+    /// When `all` is `false`, only new or modified ontology sources are reparsed. When `all`
+    /// is `true`, every known ontology location is reprocessed regardless of timestamps,
+    /// allowing callers to force a fresh ingest of all content.
+    ///
+    /// The workflow removes ontologies whose sources disappeared, detects additions and
+    /// updates by comparing on-disk content with the stored copy, ingests changed files, and
+    /// finally refreshes the dependency graph for the affected ontologies.
+    pub fn update_all(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
+        self.with_io_batch(move |env| env.update_all_inner(all))
+    }
+
+    fn update_all_inner(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
+        self.failed_resolutions.clear();
+        self.remove_missing_ontologies()?;
+
+        let updated_files = self.collect_updated_files(all)?;
+        let seeds: Vec<(OntologyLocation, Overwrite)> = updated_files
+            .into_iter()
+            .map(|loc| (loc, Overwrite::Allow))
+            .collect();
+        let (ontologies, reused_ids, _errors) =
+            self.process_import_queue(seeds, RefreshStrategy::UseCache, true)?;
+
+        let mut ids = self.register_ontologies(ontologies, true)?;
+        ids.extend(reused_ids);
+        Ok(ids)
     }
 
     /// Returns a list of all ontologies from the environment which have been updated.
@@ -666,6 +857,150 @@ impl OntoEnv {
             })
             .map(|(graphid, _)| graphid.clone())
             .collect()
+    }
+
+    fn remove_missing_ontologies(&mut self) -> Result<()> {
+        for graphid in self.missing_ontologies() {
+            self.io.remove(&graphid)?;
+            self.env.remove_ontology(&graphid)?;
+        }
+        Ok(())
+    }
+
+    fn collect_updated_files(&mut self, all: bool) -> Result<Vec<OntologyLocation>> {
+        if all {
+            let mut set: HashSet<OntologyLocation> = self
+                .env
+                .ontologies()
+                .values()
+                .filter_map(|o| o.location().cloned())
+                .collect();
+            for loc in self.find_files()? {
+                set.insert(loc);
+            }
+            Ok(set.into_iter().collect())
+        } else {
+            self.get_updated_locations()
+        }
+    }
+
+    fn process_import_queue(
+        &mut self,
+        seeds: Vec<(OntologyLocation, Overwrite)>,
+        refresh: RefreshStrategy,
+        include_imports: bool,
+    ) -> Result<(Vec<Ontology>, Vec<GraphIdentifier>, Vec<String>)> {
+        let strict = self.config.strict;
+        let mut queue: VecDeque<PendingImport> = seeds
+            .into_iter()
+            .map(|(location, overwrite)| PendingImport {
+                location,
+                overwrite,
+                required: strict,
+            })
+            .collect();
+        let mut seen: HashSet<OntologyLocation> = HashSet::new();
+        let mut fetched: Vec<Ontology> = Vec::new();
+        let mut touched_ids: Vec<GraphIdentifier> = Vec::new();
+        let mut touched_set: HashSet<GraphIdentifier> = HashSet::new();
+        let mut errors: Vec<String> = Vec::new();
+
+        let mut record_id = |id: &GraphIdentifier| {
+            if touched_set.insert(id.clone()) {
+                touched_ids.push(id.clone());
+            }
+        };
+
+        while let Some(job) = queue.pop_front() {
+            if !seen.insert(job.location.clone()) {
+                continue;
+            }
+
+            match self.fetch_location(job.location.clone(), job.overwrite, refresh) {
+                Ok(FetchOutcome::Loaded(ontology)) => {
+                    let imports = ontology.imports.clone();
+                    let id = ontology.id().clone();
+                    if include_imports {
+                        for import in imports {
+                            self.queue_import_location(&import, &mut queue, self.config.strict)?;
+                        }
+                    }
+                    fetched.push(ontology);
+                    record_id(&id);
+                }
+                Ok(FetchOutcome::Reused(id)) => {
+                    record_id(&id);
+                    if include_imports {
+                        if let Ok(existing) = self.get_ontology(&id) {
+                            for import in existing.imports {
+                                self.queue_import_location(
+                                    &import,
+                                    &mut queue,
+                                    self.config.strict,
+                                )?;
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    let err_str = err.to_string();
+                    let enriched = format!("Failed to load ontology {}: {}", job.location, err_str);
+                    if job.required {
+                        return Err(anyhow!(enriched));
+                    }
+                    warn!("{}", enriched);
+                    errors.push(enriched);
+                    if let OntologyLocation::Url(url) = &job.location {
+                        if let Ok(node) = NamedNode::new(url.clone()) {
+                            self.failed_resolutions.insert(node);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((fetched, touched_ids, errors))
+    }
+
+    fn queue_import_location(
+        &mut self,
+        import: &NamedNode,
+        queue: &mut VecDeque<PendingImport>,
+        strict: bool,
+    ) -> Result<()> {
+        let iri = import.as_str();
+        let is_fetchable =
+            iri.starts_with("http://") || iri.starts_with("https://") || iri.starts_with("file://");
+        if !is_fetchable {
+            return Ok(());
+        }
+
+        if let Some(existing) = self.env.get_ontology_by_name(import.into()) {
+            if let Some(loc) = existing.location() {
+                queue.push_back(PendingImport {
+                    location: loc.clone(),
+                    overwrite: Overwrite::Preserve,
+                    required: strict,
+                });
+                return Ok(());
+            }
+        }
+
+        match OntologyLocation::from_str(iri) {
+            Ok(loc) => queue.push_back(PendingImport {
+                location: loc,
+                overwrite: Overwrite::Preserve,
+                required: strict,
+            }),
+            Err(err) => {
+                self.failed_resolutions.insert(import.clone());
+                if strict {
+                    return Err(err);
+                }
+                warn!("Failed to resolve location for import {}: {}", import, err);
+            }
+        }
+        Ok(())
     }
 
     /// Returns a list of all files in the environment which have been updated (added or changed)
@@ -769,7 +1104,7 @@ impl OntoEnv {
         let mut seen: HashSet<GraphIdentifier> = HashSet::new();
 
         while let Some(graphid) = stack.pop_front() {
-            info!("Building dependency graph for: {graphid:?}");
+            debug!("Building dependency graph for: {graphid:?}");
             if seen.contains(&graphid) {
                 continue;
             }
@@ -821,10 +1156,10 @@ impl OntoEnv {
                     }
                 };
 
-                match self.io.add(location, false) {
+                match self.io.add(location, Overwrite::Preserve) {
                     Ok(new_ont) => {
                         let id = new_ont.id().clone();
-                        self.env.add_ontology(new_ont);
+                        self.env.add_ontology(new_ont)?;
                         stack.push_back(id);
                     }
                     Err(e) => {
@@ -850,7 +1185,10 @@ impl OntoEnv {
         // traverse the ontologies and add edges to the graph
         for ontology in self.env.ontologies().keys() {
             let index = indexes.get(ontology).ok_or_else(|| {
-                anyhow!("Programming error: ontology id {:?} not in index map", ontology)
+                anyhow!(
+                    "Programming error: ontology id {:?} not in index map",
+                    ontology
+                )
             })?;
             let ont = match self.env.ontologies().get(ontology) {
                 Some(ont) => ont,
@@ -893,7 +1231,12 @@ impl OntoEnv {
         doctor.run(self)
     }
 
-    /// Returns the names of all graphs within the dependency closure of the provided graph
+    /// Returns the dependency closure for the provided graph identifier.
+    ///
+    /// The returned vector contains `GraphIdentifier`s, with the requested identifier inserted
+    /// at the front followed by its resolved imports. If `recursion_depth` is non-negative,
+    /// traversal stops once that depth is reached. In strict mode an unresolved import results
+    /// in an error; otherwise the missing import is logged and skipped.
     pub fn get_closure(
         &self,
         id: &GraphIdentifier,
@@ -914,9 +1257,10 @@ impl OntoEnv {
                 continue;
             }
 
-            let ontology = self.ontologies().get(&graph).ok_or_else(|| {
-                anyhow!("Ontology {} not found", graph.to_uri_string())
-            })?;
+            let ontology = self
+                .ontologies()
+                .get(&graph)
+                .ok_or_else(|| anyhow!("Ontology {} not found", graph.to_uri_string()))?;
             for import in &ontology.imports {
                 // get graph identifier for import
                 let import = match self.env.get_ontology_by_name(import.into()) {
@@ -960,7 +1304,7 @@ impl OntoEnv {
         let first_id = graph_ids
             .first()
             .ok_or_else(|| anyhow!("No graphs found"))?;
-        let root_ontology: SubjectRef = SubjectRef::NamedNode(first_id.name());
+        let root_ontology = NamedOrBlankNodeRef::NamedNode(first_id.name());
 
         let mut namespace_map = HashMap::new();
         for graph_id in &graph_ids {
@@ -976,7 +1320,7 @@ impl OntoEnv {
         // Rewrite sh:prefixes
         // defaults to true if not specified
         if rewrite_sh_prefixes.unwrap_or(true) {
-            transform::rewrite_sh_prefixes(&mut dataset, root_ontology);
+            transform::rewrite_sh_prefixes_dataset(&mut dataset, root_ontology);
         }
         // remove owl:imports
         if remove_owl_imports.unwrap_or(true) {
@@ -1026,6 +1370,107 @@ impl OntoEnv {
         Ok(importers)
     }
 
+    /// Returns all importer paths that terminate at the given ontology.
+    /// Each path is ordered from the most distant importer down to `id`.
+    pub fn get_import_paths(&self, id: &NamedNode) -> Result<Vec<Vec<GraphIdentifier>>> {
+        match self.explain_import(id)? {
+            ImportPaths::Present(paths) => Ok(paths),
+            ImportPaths::Missing { .. } => Err(anyhow!("Ontology not found")),
+        }
+    }
+
+    pub fn explain_import(&self, id: &NamedNode) -> Result<ImportPaths> {
+        if let Some(target) = self.env.get_ontology_by_name(id.into()) {
+            let idx = self
+                .dependency_graph
+                .node_indices()
+                .find(|i| self.dependency_graph[*i] == *target.id())
+                .ok_or_else(|| anyhow!("Node not found"))?;
+            return Ok(ImportPaths::Present(
+                self.collect_import_paths_from_index(idx),
+            ));
+        }
+
+        let mut importers = Vec::new();
+        for ontology in self.env.ontologies().values() {
+            if ontology.imports.iter().any(|imp| imp == id) {
+                importers.push(ontology.id().clone());
+            }
+        }
+
+        if importers.is_empty() {
+            return Ok(ImportPaths::Missing {
+                importers: Vec::new(),
+            });
+        }
+
+        let mut paths: Vec<Vec<GraphIdentifier>> = Vec::new();
+        for importer in importers {
+            let maybe_idx = self
+                .dependency_graph
+                .node_indices()
+                .find(|i| self.dependency_graph[*i] == importer);
+            if let Some(idx) = maybe_idx {
+                let mut importer_paths = self.collect_import_paths_from_index(idx);
+                paths.append(&mut importer_paths);
+            } else {
+                paths.push(vec![importer.clone()]);
+            }
+        }
+
+        Ok(ImportPaths::Missing { importers: paths })
+    }
+
+    fn collect_import_paths_from_index(
+        &self,
+        target_idx: petgraph::graph::NodeIndex,
+    ) -> Vec<Vec<GraphIdentifier>> {
+        let mut results: Vec<Vec<GraphIdentifier>> = Vec::new();
+        let mut path: Vec<GraphIdentifier> = Vec::new();
+        let mut seen: std::collections::HashSet<GraphIdentifier> = std::collections::HashSet::new();
+
+        fn dfs(
+            g: &petgraph::Graph<GraphIdentifier, (), petgraph::Directed>,
+            idx: petgraph::graph::NodeIndex,
+            path: &mut Vec<GraphIdentifier>,
+            seen: &mut std::collections::HashSet<GraphIdentifier>,
+            results: &mut Vec<Vec<GraphIdentifier>>,
+        ) {
+            let current = g[idx].clone();
+            if !seen.insert(current.clone()) {
+                return;
+            }
+            path.push(current.clone());
+
+            let mut incoming = g
+                .neighbors_directed(idx, petgraph::Direction::Incoming)
+                .detach();
+
+            let mut has_incoming = false;
+            while let Some((_, src)) = incoming.next(g) {
+                has_incoming = true;
+                dfs(g, src, path, seen, results);
+            }
+            if !has_incoming {
+                let mut p = path.clone();
+                p.reverse();
+                results.push(p);
+            }
+
+            path.pop();
+            seen.remove(&current);
+        }
+
+        dfs(
+            &self.dependency_graph,
+            target_idx,
+            &mut path,
+            &mut seen,
+            &mut results,
+        );
+        results
+    }
+
     /// Returns the GraphViz dot representation of the dependency graph
     pub fn dep_graph_to_dot(&self) -> Result<String> {
         self.rooted_dep_graph_to_dot(self.ontologies().keys().cloned().collect())
@@ -1049,17 +1494,12 @@ impl OntoEnv {
             let ont = self
                 .ontologies()
                 .get(&ontology)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Listing ontologies: Ontology {} not found",
-                        ontology
-                    )
-                })?;
+                .ok_or_else(|| anyhow!("Listing ontologies: Ontology {} not found", ontology))?;
             for import in &ont.imports {
                 let import = match self.env.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),
                     None => {
-                        error!("Import not found: {import}");
+                        warn!("Import not found: {import}");
                         continue;
                     }
                 };
@@ -1106,7 +1546,7 @@ impl OntoEnv {
                 let g = match self.io.get_graph(ontology.id()) {
                     Ok(g) => g,
                     Err(e) => {
-                        error!("Could not get graph for {}: {e}", ontology.id());
+                        warn!("Could not get graph for {}: {e}", ontology.id());
                         continue;
                     }
                 };

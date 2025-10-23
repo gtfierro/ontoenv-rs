@@ -4,9 +4,10 @@
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::policy;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::prelude::*;
-use oxigraph::model::{Graph, NamedNodeRef};
+use log::warn;
+use oxigraph::model::{Graph, NamedNode, NamedNodeRef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -34,8 +35,8 @@ where
     Ok(map)
 }
 
-/// A struct that holds the ontology environment: all the mappings
-/// between ontology names and their respective graph identifiers and locations.
+/// Represents the loaded ontology environment, including ontologies, their source
+/// locations, normalized aliases, and the default resolution policy.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Environment {
     #[serde(serialize_with = "ontologies_ser", deserialize_with = "ontologies_de")]
@@ -47,6 +48,8 @@ pub struct Environment {
     default_policy: Box<dyn policy::ResolutionPolicy>,
     #[serde(skip)]
     pub locations: HashMap<OntologyLocation, GraphIdentifier>,
+    #[serde(default)]
+    aliases: HashMap<String, GraphIdentifier>,
 }
 
 impl Clone for Environment {
@@ -54,6 +57,7 @@ impl Clone for Environment {
         Self {
             ontologies: self.ontologies.clone(),
             locations: self.locations.clone(),
+            aliases: self.aliases.clone(),
             default_policy: policy::policy_from_name(self.default_policy.policy_name())
                 .expect("Failed to clone policy"),
         }
@@ -67,11 +71,17 @@ impl Default for Environment {
 }
 
 impl Environment {
+    fn normalize_name(s: &str) -> &str {
+        let trimmed_hash = s.trim_end_matches('#');
+        trimmed_hash.trim_end_matches('/')
+    }
+
     pub fn new() -> Self {
         Self {
             ontologies: HashMap::new(),
             default_policy: Box::new(policy::DefaultPolicy),
             locations: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -79,17 +89,30 @@ impl Environment {
         &self.ontologies
     }
 
-    pub fn add_ontology(&mut self, mut ontology: Ontology) {
+    pub fn add_ontology(&mut self, mut ontology: Ontology) -> Result<()> {
         ontology.last_updated = Some(Utc::now());
-        self.locations
-            .insert(ontology.location().unwrap().clone(), ontology.id().clone());
-        self.ontologies.insert(ontology.id().clone(), ontology);
+        let location = ontology
+            .location()
+            .cloned()
+            .ok_or_else(|| anyhow!("Cannot add ontology {} without a location", ontology.id()))?;
+        let ontology_id = ontology.id().clone();
+        let ontology_name = ontology.name();
+        self.locations.insert(location.clone(), ontology_id.clone());
+        self.register_alias(&location, &ontology_id, &ontology_name);
+        self.ontologies.insert(ontology_id, ontology);
+        Ok(())
     }
 
-    pub fn remove_ontology(&mut self, id: &GraphIdentifier) -> Option<Ontology> {
-        self.locations
-            .remove(self.ontologies.get(id)?.location().unwrap());
-        self.ontologies.remove(id)
+    pub fn remove_ontology(&mut self, id: &GraphIdentifier) -> Result<Option<Ontology>> {
+        if let Some(existing) = self.ontologies.get(id) {
+            if let Some(location) = existing.location() {
+                self.locations.remove(location);
+            } else {
+                warn!("Removing ontology {} without recorded location", id);
+            }
+            self.aliases.retain(|_, value| value != id);
+        }
+        Ok(self.ontologies.remove(id))
     }
 
     pub fn get_modified_time(&self, id: &GraphIdentifier) -> Option<DateTime<Utc>> {
@@ -102,13 +125,12 @@ impl Environment {
         self.locations.get(location)
     }
 
-    /// Returns an Ontology with the given id using the default policy
+    /// Returns a cloned `Ontology` for the provided identifier using the default resolution policy.
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Option<Ontology> {
         self.get_ontology_with_policy(id.into(), &*self.default_policy)
     }
 
-    /// Returns an Ontology with the given name. Uses the provided policy to resolve
-    /// the ontology if there are multiple ontologies with the same name.
+    /// Returns a cloned `Ontology` with the given name, resolving conflicts with the supplied policy.
     pub fn get_ontology_with_policy(
         &self,
         name: NamedNodeRef,
@@ -120,15 +142,22 @@ impl Environment {
             .cloned()
     }
 
-    /// Returns the first ontology with the given name
+    /// Returns the first ontology whose name (or registered alias) matches the supplied value.
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
-        // choose the first ontology with the given name
-        self.ontologies
-            .values()
-            .find(|&ontology| ontology.name() == name)
+        let target = Self::normalize_name(name.as_str());
+        if let Some(id) = self.aliases.get(target) {
+            if let Some(ontology) = self.ontologies.get(id) {
+                return Some(ontology);
+            }
+        }
+        self.ontologies.values().find(|ontology| {
+            let binding = ontology.name();
+            let candidate = Self::normalize_name(binding.as_str());
+            candidate == target
+        })
     }
 
-    /// Returns the first graph with the given name
+    /// Returns the graph associated with the given name (respecting aliases) using the provided I/O backend.
     pub fn get_graph_by_name(&self, name: NamedNodeRef, store: impl GraphIO) -> Result<Graph> {
         let ontology = self
             .get_ontology_by_name(name)
@@ -138,9 +167,39 @@ impl Environment {
 
     /// Returns the first ontology with the given location
     pub fn get_ontology_by_location(&self, location: &OntologyLocation) -> Option<&Ontology> {
-        // choose the first ontology with the given location
-        self.ontologies
-            .values()
-            .find(|&ontology| ontology.location() == Some(location))
+        let id = self.locations.get(location)?;
+        self.ontologies.get(id)
+    }
+
+    fn register_alias(
+        &mut self,
+        location: &OntologyLocation,
+        ontology_id: &GraphIdentifier,
+        ontology_name: &NamedNode,
+    ) {
+        if let OntologyLocation::Url(url) = location {
+            if let Ok(loc_node) = NamedNode::new(url.clone()) {
+                let loc_norm = Self::normalize_name(loc_node.as_str()).to_string();
+                let name_norm = Self::normalize_name(ontology_name.as_str());
+                if loc_norm != name_norm {
+                    self.aliases.insert(loc_norm, ontology_id.clone());
+                } else {
+                    self.aliases.remove(&loc_norm);
+                }
+            }
+        }
+    }
+
+    pub fn rebuild_aliases(&mut self) {
+        self.aliases.clear();
+        let mut alias_data: Vec<(OntologyLocation, GraphIdentifier, NamedNode)> = Vec::new();
+        for ontology in self.ontologies.values() {
+            if let Some(location) = ontology.location() {
+                alias_data.push((location.clone(), ontology.id().clone(), ontology.name()));
+            }
+        }
+        for (location, ontology_id, ontology_name) in alias_data {
+            self.register_alias(&location, &ontology_id, &ontology_name);
+        }
     }
 }

@@ -97,8 +97,10 @@ pub mod consts;
 pub mod doctor;
 pub mod environment;
 pub mod errors;
+pub mod fetch;
 pub mod io;
 pub mod ontology;
+pub mod options;
 pub mod policy;
 #[macro_use]
 pub mod util;
@@ -137,7 +139,6 @@ impl ToUriString for &GraphIdentifier {
         self.name().as_str().to_string()
     }
 }
-
 
 pub struct FailedImport {
     ontology: GraphIdentifier,
