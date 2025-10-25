@@ -3,48 +3,56 @@ name: Tests
 on:
   push:
     branches:
-      - '**'  # Triggers on push to all branches
+      - '**'
   pull_request:
     branches:
-      - '**'  # Triggers on pull request to all branches
+      - '**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build_and_test:
-    runs-on: ubuntu-latest
+  build-and-test:
+    name: ${{ matrix.os }} build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-14
+          - windows-2022
     steps:
-      #- run: cd python && python -m unittest test.py
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Set up Python
-        run: uv python install
-      - uses: ./.github/actions/setup-rust
-        with:
-          target: aarch64-unknown-linux-gnu
-          version: stable
-      - run: |
-          sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu libssl-dev
-          mkdir .cargo
-          echo -e "[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"" >> .cargo/config.toml
-      - name: Clean build cache in case
-        run: cargo clean
-        shell: bash
-      - name: Build rust stuff
-        run: cargo build --workspace --release
-      - name: Run rust tests
-        run: cargo test --workspace --release
-      - name: Build python package
-        run: uv run maturin build --release --features abi3
-        working-directory: ./python
-      - name: Test python package
-        run: uv run python -m unittest discover -s tests
-        working-directory: ./python
 
+      - name: Install Python
+        run: uv python install
+
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
+      - name: Build Rust workspace
+        run: cargo build --workspace --release
+
+      - name: Test Rust workspace
+        run: cargo test --workspace --release
+
+      - name: Build Python package
+        working-directory: python
+        run: uv run maturin build --release --features abi3
+
+      - name: Test Python package
+        working-directory: python
+        run: uv run python -m unittest discover -s tests
