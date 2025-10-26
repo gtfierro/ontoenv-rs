@@ -1130,7 +1130,7 @@ impl OntoEnv {
     }
 }
 
-#[pymodule(pyontoenv)] // <-- Change this
+#[pymodule] // <-- Change this
 fn pyontoenv(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> { // <-- And change this
     // Initialize logging when the python module is loaded.
     ::ontoenv::api::init_logging();
