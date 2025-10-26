@@ -49,8 +49,10 @@ macro_rules! setup {
             // TODO: we are using a workaround here, but it would be better to fix the copy_file
             // function or figure out why the last modified time is not updated.
             let current_time = std::time::SystemTime::now();
-            let dest_file = std::fs::File::open(&dest_path)
-                .expect(format!("Failed to open file {}", dest_path.display()).as_str());
+            let dest_file = std::fs::OpenOptions::new()
+                .write(true) // Request write access
+                .open(&dest_path)
+                .expect(format!("Failed to open file {} with write perms", dest_path.display()).as_str());
             dest_file.set_modified(current_time)
                 .expect(format!("Failed to set modified time for file {}", dest_path.display()).as_str());
         )*
