@@ -59,7 +59,7 @@ jobs:
         
       - name: Install Python package
         working-directory: python
-        run: uv pip install --no-index --find-links=target/wheels/ pyontoenv
+        run: uv pip install --no-index --find-links=../target/wheels/ pyontoenv
         
       - name: Test Python package
         working-directory: python
