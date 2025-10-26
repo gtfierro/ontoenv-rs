@@ -1,6 +1,5 @@
 use ontoenv::ontology::OntologyLocation;
 use oxigraph::model::NamedNode;
-use std::path::PathBuf;
 use url::Url;
 
 #[test]
@@ -18,7 +17,7 @@ fn test_ontology_location() {
 #[test]
 fn test_ontology_location_display() {
     // 1. Create a platform-agnostic path
-    let mut path = std::env::temp_dir(); 
+    let mut path = std::env::temp_dir();
     path.push("ontology.ttl");
 
     // 2. Create the location
@@ -41,12 +40,12 @@ fn test_ontology_location_to_iri() {
     path.push("ontology.ttl"); // path is now "D:\tmp\ontology.ttl"
 
     // 2. Create the location from this path
-    let location = OntologyLocation::File(path.clone()); 
+    let location = OntologyLocation::File(path.clone());
 
     // 3. Create the EXPECTED IRI correctly
     let expected_url_string = Url::from_file_path(&path).unwrap().to_string(); // Generates "file:///D:/tmp/ontology.ttl"
     let expected_iri = NamedNode::new(expected_url_string).unwrap();
 
     // 4. The assertion will now pass on all platforms
-    assert_eq!(location.to_iri().unwrap(), expected_iri);
+    assert_eq!(location.to_iri(), expected_iri); // <-- REMOVED .unwrap()
 }
