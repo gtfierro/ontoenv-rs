@@ -44,15 +44,16 @@ macro_rules! setup {
             }
 
             copy_file(&source_path, &dest_path).expect(format!("Failed to copy file from {} to {}", source_path.display(), dest_path.display()).as_str());
-            // modify the 'last modified' time to the current time. For some reason, in the
-            // temp_dir environment, the copy_file doesn't update the last modified time.
-            // TODO: we are using a workaround here, but it would be better to fix the copy_file
-            // function or figure out why the last modified time is not updated.
+            
+            // modify the 'last modified' time to the current time.
+            // We must open with .write(true) to get permissions
+            // to set metadata on Windows.
             let current_time = std::time::SystemTime::now();
             let dest_file = std::fs::OpenOptions::new()
-                .write(true) // Request write access
-                .open(&dest_path)
-                .expect(format!("Failed to open file {} with write perms", dest_path.display()).as_str());
+                .write(true) // Request write access
+                .open(&dest_path)
+                .expect(format!("Failed to open file {} with write perms", dest_path.display()).as_str());
+            
             dest_file.set_modified(current_time)
                 .expect(format!("Failed to set modified time for file {}", dest_path.display()).as_str());
         )*
