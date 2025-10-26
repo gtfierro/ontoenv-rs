@@ -53,13 +53,9 @@ jobs:
       - name: Test Rust workspace
         run: cargo test --workspace --release
 
-      - name: Build Python package
+      - name: Build and install Python package in-place
         working-directory: python
-        run: uv run maturin build --release --features abi3
-        
-      - name: Install Python package
-        working-directory: python
-        run: uv pip install --no-index --find-links=../target/wheels/ pyontoenv
+        run: uv run maturin develop
         
       - name: Test Python package
         working-directory: python
