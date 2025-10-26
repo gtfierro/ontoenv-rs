@@ -16,6 +16,7 @@ use serde_with::{serde_as, DeserializeAs, SerializeAs};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::PathBuf;
+use url::Url;
 //
 // custom derive for NamedNode
 fn namednode_ser<S>(namednode: &NamedNode, serializer: S) -> Result<S::Ok, S::Error>
@@ -117,8 +118,13 @@ pub enum OntologyLocation {
 impl std::fmt::Display for OntologyLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OntologyLocation::File(p) => write!(f, "file://{}", p.to_str().unwrap_or_default()),
-            OntologyLocation::Url(u) => write!(f, "{u}"),
+            OntologyLocation::Url(url) => write!(f, "{}", url),
+            OntologyLocation::File(path) => {
+                let url_string = Url::from_file_path(path)
+                    .map_err(|_| std::fmt::Error)? // Convert the error
+                    .to_string();
+                write!(f, "{}", url_string)
+            }
         }
     }
 }
@@ -127,50 +133,6 @@ impl std::fmt::Display for OntologyLocation {
 impl Default for OntologyLocation {
     fn default() -> Self {
         OntologyLocation::File(PathBuf::new())
-    }
-}
-
-fn file_path_to_file_uri(p: &PathBuf) -> String {
-    #[cfg(windows)]
-    {
-        let mut s = p.to_string_lossy().to_string();
-        if s.contains('\\') {
-            s = s.replace('\\', "/");
-        }
-        // Ensure leading slash for drive-letter paths (e.g., C:/...)
-        if !s.starts_with('/') {
-            if s.len() >= 2 && s.as_bytes()[1] == b':' {
-                s = format!("/{s}");
-            }
-        }
-        // Minimal percent-encoding for common problematic characters in paths
-        let mut encoded = String::with_capacity(s.len());
-        for ch in s.chars() {
-            match ch {
-                ' ' => encoded.push_str("%20"),
-                '#' => encoded.push_str("%23"),
-                '?' => encoded.push_str("%3F"),
-                '%' => encoded.push_str("%25"),
-                _ => encoded.push(ch),
-            }
-        }
-        return format!("file://{encoded}");
-    }
-    #[cfg(not(windows))]
-    {
-        let s = p.to_string_lossy();
-        // Minimal percent-encoding for common problematic characters in paths
-        let mut encoded = String::with_capacity(s.len());
-        for ch in s.chars() {
-            match ch {
-                ' ' => encoded.push_str("%20"),
-                '#' => encoded.push_str("%23"),
-                '?' => encoded.push_str("%3F"),
-                '%' => encoded.push_str("%25"),
-                _ => encoded.push(ch),
-            }
-        }
-        return format!("file://{encoded}");
     }
 }
 
@@ -221,7 +183,10 @@ impl OntologyLocation {
     pub fn to_iri(&self) -> NamedNode {
         match self {
             OntologyLocation::File(p) => {
-                let iri = file_path_to_file_uri(p);
+                // Use the Url crate, just like in the Display impl
+                let iri = Url::from_file_path(p)
+                    .expect("Failed to create file URL for IRI")
+                    .to_string();
                 NamedNode::new(iri).unwrap()
             }
             OntologyLocation::Url(u) => {
