@@ -56,7 +56,11 @@ jobs:
       - name: Build Python package
         working-directory: python
         run: uv run maturin build --release --features abi3
-
+        
+      - name: Install Python package
+        working-directory: python
+        run: uv pip install --no-index --find-links=target/wheels/ pyontoenv
+        
       - name: Test Python package
         working-directory: python
         run: uv run python -m unittest discover -s tests
