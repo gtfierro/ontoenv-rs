@@ -43,16 +43,20 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
 
+      - name: Clean build cache
+        run: cargo clean
+        shell: bash
+
       - name: Build Rust workspace
         run: cargo build --workspace --release
 
       - name: Test Rust workspace
         run: cargo test --workspace --release
 
-      - name: Build Python package
+      - name: Build and install Python package in-place
         working-directory: python
-        run: uv run maturin build --release --features abi3
-
+        run: uv run maturin develop
+        
       - name: Test Python package
         working-directory: python
         run: uv run python -m unittest discover -s tests
