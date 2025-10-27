@@ -23,6 +23,11 @@ fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
 }
 
+// Helper function to format paths with forward slashes for cross-platform error messages
+fn format_path_for_error(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 #[allow(dead_code)]
 struct MyTerm(Term);
 impl From<Result<Bound<'_, PyAny>, pyo3::PyErr>> for MyTerm {
@@ -217,11 +222,10 @@ impl OntoEnv {
         // Check if OntoEnv() is called without any meaningful arguments
         // This implements the behavior expected by the tests
         if path.is_none() && root == "." && !recreate && !temporary {
-            let dot_ontoenv_path = PathBuf::from(".").join(".ontoenv");
-            return Err(PyValueError::new_err(format!(
-                "OntoEnv directory not found at: \"{}\"",
-                dot_ontoenv_path.display()
-            )));
+            // Use forward slashes for cross-platform compatibility in error messages
+            return Err(PyValueError::new_err(
+                "OntoEnv directory not found at: \"./.ontoenv\""
+            ));
         }
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
@@ -282,13 +286,13 @@ impl OntoEnv {
                     if path.is_some() {
                         return Err(PyValueError::new_err(format!(
                             "OntoEnv directory not found at: \"{}\"",
-                            root_path.join(".ontoenv").display()
+                            format_path_for_error(&root_path.join(".ontoenv"))
                         )));
                     }
                     if read_only {
                         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                             "OntoEnv directory not found at: \"{}\" and read_only=True",
-                            root_path.join(".ontoenv").to_string_lossy()
+                            format_path_for_error(&root_path.join(".ontoenv"))
                         )));
                     }
                     OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
