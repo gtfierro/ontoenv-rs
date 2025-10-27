@@ -278,6 +278,13 @@ impl OntoEnv {
                 Some(found_root) => OntoEnvRs::load_from_directory(found_root, read_only)
                     .map_err(anyhow_to_pyerr)?,
                 None => {
+                    // If a specific path was provided but no .ontoenv exists, raise error
+                    if path.is_some() {
+                        return Err(PyValueError::new_err(format!(
+                            "OntoEnv directory not found at: \"{}\"",
+                            root_path.join(".ontoenv").display()
+                        )));
+                    }
                     if read_only {
                         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                             "OntoEnv directory not found at: \"{}\" and read_only=True",
