@@ -1,5 +1,5 @@
 [project]
-name = "pyontoenv"
+name = "ontoenv"
 description = "Python bindings for the OntoEnv Rust library. Manages ontology-based environments for building knowledge graphs."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -18,6 +18,9 @@ ontoenv = "ontoenv._cli:main"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+# This tells maturin to put the compiled 'pyontoenv' module
+# INSIDE the 'ontoenv' package directory.
+module-name = "ontoenv.pyontoenv"
 
 [build-system]
 requires = ["maturin>=1.5,<2.0"]
