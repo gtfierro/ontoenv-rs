@@ -2,8 +2,6 @@ import unittest
 import shutil
 import multiprocessing
 from pathlib import Path
-from rdflib import Graph, URIRef
-from rdflib.namespace import RDF, OWL
 from ontoenv import OntoEnv
 
 
