@@ -12,6 +12,7 @@ use pyo3::{
     prelude::*,
     types::{IntoPyDict, PyString, PyTuple},
     exceptions::PyValueError, // Correct import
+    exceptions::PyValueError, // Correct import
 };
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -230,32 +231,22 @@ impl OntoEnv {
         temporary: bool,
         no_search: bool,
     ) -> PyResult<Self> {
-
-        // Check if OntoEnv() is called without any meaningful arguments
-        if path.is_none() && root.is_none() && !recreate && !temporary {
-            // Construct the expected path for the error message
-            let dot_ontoenv_path = PathBuf::from(".").join(".ontoenv");
-            return Err(PyValueError::new_err(format!(
-                "OntoEnv directory not found at: \"{}\"",
-                dot_ontoenv_path.display()
-            )));
+        let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
+        // If the provided path points to a '.ontoenv' directory, treat its parent as the root
+        if root_path
+            .file_name()
+            .map(|n| n == OsStr::new(".ontoenv"))
+            .unwrap_or(false)
+        {
+            if let Some(parent) = root_path.parent() {
+                root_path = parent.to_path_buf();
+            }
         }
 
-        // Determine the effective root directory for configuration/discovery
-        // If 'path' is provided, it dictates the root for loading/creating.
-        // If only 'root' is provided, it's the starting point.
-        // If neither, default to current directory "." for discovery.
-        let effective_root = path.clone()
-            .or(root) // Use provided root if path isn't given
-            .unwrap_or_else(|| PathBuf::from(".")); // Default to current dir
-
-        // --- Logic Branching ---
-
-        let env_result = if temporary {
-            // --- 1. Temporary Environment ---
-            // If path is specified for a temporary env, use it as the config root,
-            // otherwise use effective_root.
-            let temp_root = path.unwrap_or(effective_root);
+        // Strict Git-like behavior:
+        // - temporary=True: create a temporary (in-memory) env
+        // - recreate=True: create (or overwrite) an env at root_path
+        // - otherwise: discover upward; if not found, error
 
             let mut builder = config::Config::builder()
                 .root(temp_root) // Root needed for relative paths in config
