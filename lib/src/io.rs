@@ -245,6 +245,8 @@ pub struct PersistentGraphIO {
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
+        // Ensure target directory exists before creating/locking files
+        std::fs::create_dir_all(&path)?;
         // Try to acquire an exclusive lock for writer; if any readers/writers hold the lock, error out immediately
         let lock_path = path.join("store.lock");
         let lock_file = std::fs::OpenOptions::new()

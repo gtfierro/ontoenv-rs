@@ -16,6 +16,7 @@ use serde_with::{serde_as, DeserializeAs, SerializeAs};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::PathBuf;
+use url::Url;
 //
 // custom derive for NamedNode
 fn namednode_ser<S>(namednode: &NamedNode, serializer: S) -> Result<S::Ok, S::Error>
@@ -117,8 +118,13 @@ pub enum OntologyLocation {
 impl std::fmt::Display for OntologyLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OntologyLocation::File(p) => write!(f, "file://{}", p.to_str().unwrap_or_default()),
-            OntologyLocation::Url(u) => write!(f, "{u}"),
+            OntologyLocation::Url(url) => write!(f, "{}", url),
+            OntologyLocation::File(path) => {
+                let url_string = Url::from_file_path(path)
+                    .map_err(|_| std::fmt::Error)? // Convert the error
+                    .to_string();
+                write!(f, "{}", url_string)
+            }
         }
     }
 }
@@ -175,13 +181,23 @@ impl OntologyLocation {
     }
 
     pub fn to_iri(&self) -> NamedNode {
-        // if it is a file, convert it to a file:// IRI
         match self {
             OntologyLocation::File(p) => {
-                let p = p.to_str().unwrap_or_default();
-                NamedNode::new(format!("file://{p}")).unwrap()
+                // Use the Url crate, just like in the Display impl
+                let iri = Url::from_file_path(p)
+                    .expect("Failed to create file URL for IRI")
+                    .to_string();
+                NamedNode::new(iri).unwrap()
             }
-            OntologyLocation::Url(u) => NamedNode::new(u.clone()).unwrap(),
+            OntologyLocation::Url(u) => {
+                // Strip angle brackets if present (e.g., "<http://...>")
+                let iri = if u.starts_with('<') && u.ends_with('>') && u.len() >= 2 {
+                    u[1..u.len() - 1].to_string()
+                } else {
+                    u.clone()
+                };
+                NamedNode::new(iri).unwrap()
+            }
         }
     }
 
