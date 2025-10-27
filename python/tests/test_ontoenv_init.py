@@ -1,5 +1,4 @@
 import unittest
-import pathlib
 import shutil
 import os
 import tempfile
