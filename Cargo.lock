@@ -1931,6 +1931,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ontoenv-python"
+version = "0.4.0-a11"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "ontoenv",
+ "ontoenv-cli",
+ "oxigraph",
+ "pyo3",
+ "pyo3-build-config",
+]
+
+[[package]]
 name = "ordered-float"
 version = "3.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2323,20 +2337,6 @@ dependencies = [
  "pyo3-build-config",
  "quote",
  "syn 2.0.106",
-]
-
-[[package]]
-name = "pyontoenv"
-version = "0.4.0-a11"
-dependencies = [
- "anyhow",
- "env_logger",
- "log",
- "ontoenv",
- "ontoenv-cli",
- "oxigraph",
- "pyo3",
- "pyo3-build-config",
 ]
 
 [[package]]

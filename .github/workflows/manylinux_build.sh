@@ -1,24 +1,32 @@
 # from https://github.com/oxigraph/oxigraph/blob/main/.github/workflows/manylinux_build.sh
+set -euxo pipefail
 cd /workdir
-yum -y install centos-release-scl-rh
-yum -y install llvm-toolset-7.0
-source scl_source enable llvm-toolset-7.0
+if command -v dnf >/dev/null 2>&1; then
+  dnf -y update
+  dnf -y install clang cmake make gcc-c++
+elif command -v yum >/dev/null 2>&1; then
+  yum -y update
+  yum -y install clang cmake make gcc-c++
+else
+  echo "No supported package manager found (dnf/yum)" >&2
+  exit 1
+fi
 curl https://static.rust-lang.org/rustup/dist/%arch%-unknown-linux-gnu/rustup-init --output rustup-init
 chmod +x rustup-init
 ./rustup-init -y --profile minimal --default-toolchain stable
 source "$HOME/.cargo/env"
-export PATH="${PATH}:/opt/python/cp37-cp37m/bin:/opt/python/cp38-cp38/bin:/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin"
+export PATH="${PATH}:/opt/python/cp37-cp37m/bin:/opt/python/cp38-cp38/bin:/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin:/opt/python/cp312-cp312/bin"
 cd python
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.dev.txt
 maturin develop --release
-maturin build --release --features abi3 --compatibility manylinux2014
+maturin build --release --features abi3 --compatibility manylinux_2_28
 if [ %for_each_version% ]; then
   for VERSION in 8 9 10 11 12; do
-    maturin build --release --interpreter "python3.$VERSION" --compatibility manylinux2014
+    maturin build --release --interpreter "python3.$VERSION" --compatibility manylinux_2_28
   done
   for VERSION in 9 10; do
-    maturin build --release --interpreter "pypy3.$VERSION" --compatibility manylinux2014
+    maturin build --release --interpreter "pypy3.$VERSION" --compatibility manylinux_2_28
   done
 fi

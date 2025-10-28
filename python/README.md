@@ -1,8 +1,8 @@
-# PyOntoenv
+# OntoEnv Python Bindings
 
 ## Installation
 
-`pip install pyontoenv`
+`pip install ontoenv`
 
 ## Usage
 
@@ -24,7 +24,7 @@ brick_name = env.add("../brick/Brick.ttl")
 print(f"Added ontology {brick_name}")
 
 # When you add from a URL whose declared ontology name differs (for example a
-# versioned IRI served at a versionless URL), pyontoenv records that alias. You
+# versioned IRI served at a versionless URL), ontoenv records that alias. You
 # can later refer to the ontology by either the canonical name or the original
 # URL when resolving imports or querying.
 
@@ -58,10 +58,10 @@ print(f"Graph with imported dependencies has {len(g)} triples")
 
 ## CLI Entrypoint
 
-Installing `pyontoenv` also provides the Rust-backed `ontoenv` command-line tool:
+Installing `ontoenv` also provides the Rust-backed `ontoenv` command-line tool:
 
 ```
-pip install pyontoenv
+pip install ontoenv
 ontoenv --help
 ```
 

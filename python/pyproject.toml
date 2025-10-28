@@ -18,9 +18,9 @@ ontoenv = "ontoenv._cli:main"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-# This tells maturin to put the compiled 'pyontoenv' module
+# This tells maturin to put the compiled native module
 # INSIDE the 'ontoenv' package directory.
-module-name = "ontoenv.pyontoenv"
+module-name = "ontoenv._native"
 
 [build-system]
 requires = ["maturin>=1.5,<2.0"]

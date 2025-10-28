@@ -9,7 +9,7 @@
 Project components:
 - CLI: `ontoenv` (installable via `cargo install ontoenv-cli`)
 - Rust library: [`ontoenv`](https://docs.rs/ontoenv/latest/ontoenv/)
-- Python bindings: [`pyontoenv`](https://pypi.org/project/pyontoenv/)
+- Python bindings: [`ontoenv`](https://pypi.org/project/ontoenv/)
 
 ## Overview
 
@@ -47,7 +47,7 @@ Ontologies fetched from a URL often declare a different, usually versioned, onto
 
 - Install from crates.io with `cargo install --locked ontoenv-cli`
 - From a local checkout, run `cargo install --path cli --locked` to build the current workspace
-- Install via PyPI with `pip install pyontoenv` to get the CLI together with the Python bindings
+- Install via PyPI with `pip install ontoenv` to get the CLI together with the Python bindings
 - Download a binary from the [Releases](https://github.com/gtfierro/ontoenv-rs/releases) tab
 
 ### Usage
@@ -151,11 +151,11 @@ Notes:
 - `ontoenv list missing` — missing imports (i.e. not found in environment); add `--json` for JSON array
 - `ontoenv why <IRI> [<IRI> ...]` — show who imports the given ontology as paths; add `--json` to emit a single JSON document mapping each IRI to path arrays
 
-## Python API (`pyontoenv`)
+## Python API (`ontoenv`)
 
 ##### Installation
 
-`pip install pyontoenv` (requires Python 3.9+; prebuilt wheels ship for common platforms. Building from source needs a Rust toolchain.)
+`pip install ontoenv` (requires Python 3.9+; prebuilt wheels ship for common platforms. Building from source needs a Rust toolchain.)
 
 ### Basic usage
 
