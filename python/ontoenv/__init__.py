@@ -1,8 +1,8 @@
 """Python package shim for the ontoenv extension."""
 
-# This is the name we set in python/Cargo.toml
-from .pyontoenv import OntoEnv, Ontology, run_cli, version  # type: ignore[attr-defined]
-from . import pyontoenv as _ext  # type: ignore[attr-defined]
+# These symbols come from the Rust extension module built via maturin.
+from ._native import OntoEnv, Ontology, run_cli, version  # type: ignore[attr-defined]
+from . import _native as _ext  # type: ignore[attr-defined]
 
 __doc__ = getattr(_ext, "__doc__", None)  # type: ignore[assignment]
 

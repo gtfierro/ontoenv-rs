@@ -137,8 +137,36 @@ jobs:
       - run: maturin sdist -m python/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_dist
+          name: ontoenv_dist
           path: target/wheels/*.tar.gz
+  python_pyontoenv_alias:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          VERSION=$(awk '
+            /^\[workspace.package\]/ { in_section=1; next }
+            /^\[/ { if (in_section) exit; in_section=0 }
+            in_section && $1 ~ /^version/ {
+              gsub(/"/, "", $3);
+              print $3;
+              exit
+            }
+          ' Cargo.toml)
+          echo "ONTOENV_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - run: pip install build
+      - run: python -m build
+        working-directory: ./pyontoenv-shim
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ontoenv_pyontoenv_alias
+          path: pyontoenv-shim/dist/*
 
   wheel_linux:
     runs-on: ubuntu-latest
@@ -162,7 +190,7 @@ jobs:
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') || matrix.architecture == 'x86_64'
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_${{ matrix.architecture }}_linux_gnu
+          name: ontoenv_${{ matrix.architecture }}_linux_gnu
           path: target/wheels/*.whl
 
   wheel_linux_musl:
@@ -188,7 +216,7 @@ jobs:
       - run: find .
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_${{ matrix.architecture }}_linux_musl
+          name: ontoenv_${{ matrix.architecture }}_linux_musl
           path: target/wheels/*.whl
 
   wheel_mac:
@@ -229,7 +257,7 @@ jobs:
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_macos
+          name: ontoenv_macos
           path: target/wheels/*.whl
 
   wheel_windows:
@@ -255,7 +283,7 @@ jobs:
       - run: maturin build --release -m python/Cargo.toml --features abi3
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_windows
+          name: ontoenv_windows
           path: target/wheels/*.whl
 
   publish_pypi:
@@ -263,11 +291,12 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: publish
-      url: https://pypi.org/p/pyontoenv
+      url: https://pypi.org/p/ontoenv
     permissions:
       id-token: write
     needs:
       - python_sdist
+      - python_pyontoenv_alias
       - wheel_windows
       - wheel_mac
       - wheel_linux
@@ -275,7 +304,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: pyontoenv_*
+          pattern: ontoenv_*
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
