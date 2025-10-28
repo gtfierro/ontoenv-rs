@@ -126,7 +126,7 @@ jobs:
           cache-dependency-path: '**/requirements.dev.txt'
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build -m python/Cargo.toml
-      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
+      - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin sdist -m python/Cargo.toml
       - uses: actions/upload-artifact@v4
@@ -152,7 +152,7 @@ jobs:
         with:
           version: stable
       - run: sed 's/%arch%/${{ matrix.architecture }}/g' .github/workflows/manylinux_build.sh | sed 's/%for_each_version%/${{ github.event_name == 'release' || '' }}/g' > .github/workflows/manylinux_build_script.sh
-      - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/manylinux2014_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/manylinux_build_script.sh
+      - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/manylinux_2_28_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/manylinux_build_script.sh
         if: github.event_name == 'release' || matrix.architecture == 'x86_64'
       - uses: actions/upload-artifact@v4
         with:
@@ -211,7 +211,7 @@ jobs:
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build --release --features abi3
         working-directory: ./python
-      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
+      - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin build --release --target universal2-apple-darwin --features abi3
         working-directory: ./python
@@ -244,7 +244,7 @@ jobs:
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build --release --features abi3
         working-directory: ./python
-      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
+      - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin build --release -m python/Cargo.toml --features abi3
       - uses: actions/upload-artifact@v4
@@ -301,15 +301,34 @@ jobs:
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - name: Wait for crate index propagation
-        run: sleep 45
-      - name: Publish pyontoenv crate
-        uses: katyo/publish-crates@v2
-        with:
-          path: './python'
-          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Wait for crate availability
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 - <<'PY'
+import tomllib
+from pathlib import Path
+with open(Path("Cargo.toml"), "rb") as fh:
+    data = tomllib.load(fh)
+print(data["workspace"]["package"]["version"])
+PY
+)
+          for crate in ontoenv ontoenv-cli; do
+            echo "Waiting for ${crate} ${VERSION} to appear on crates.io..."
+            success=0
+            for attempt in {1..10}; do
+              if curl --silent --fail "https://crates.io/api/v1/crates/${crate}/${VERSION}" >/dev/null; then
+                echo "${crate} ${VERSION} is available."
+                success=1
+                break
+              fi
+              echo "Attempt ${attempt}/10: ${crate} ${VERSION} not visible yet; retrying in 30s..."
+              sleep 30
+            done
+            if [ "${success}" -ne 1 ]; then
+              echo "Timed out waiting for ${crate} ${VERSION} to propagate to crates.io."
+              exit 1
+            fi
+          done
   full_archive:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
