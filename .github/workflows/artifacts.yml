@@ -4,6 +4,12 @@ on:
   release:
     types:
       - published
+  workflow_dispatch:
+    inputs:
+      run_full_matrix:
+        description: Build all additional architectures (aarch64, universal2, etc.)
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -126,13 +132,41 @@ jobs:
           cache-dependency-path: '**/requirements.dev.txt'
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build -m python/Cargo.toml
-      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
+      - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin sdist -m python/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_dist
+          name: ontoenv_dist
           path: target/wheels/*.tar.gz
+  python_pyontoenv_alias:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          VERSION=$(awk '
+            /^\[workspace.package\]/ { in_section=1; next }
+            /^\[/ { if (in_section) exit; in_section=0 }
+            in_section && $1 ~ /^version/ {
+              gsub(/"/, "", $3);
+              print $3;
+              exit
+            }
+          ' Cargo.toml)
+          echo "ONTOENV_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - run: pip install build
+      - run: python -m build
+        working-directory: ./pyontoenv-shim
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ontoenv_pyontoenv_alias
+          path: pyontoenv-shim/dist/*
 
   wheel_linux:
     runs-on: ubuntu-latest
@@ -147,16 +181,16 @@ jobs:
       - uses: docker/setup-qemu-action@v2
         with:
           platforms: linux/${{ matrix.architecture }}
-        if: github.event_name == 'release' && matrix.architecture != 'x86_64'
+        if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') && matrix.architecture != 'x86_64'
       - uses: ./.github/actions/setup-rust
         with:
           version: stable
-      - run: sed 's/%arch%/${{ matrix.architecture }}/g' .github/workflows/manylinux_build.sh | sed 's/%for_each_version%/${{ github.event_name == 'release' || '' }}/g' > .github/workflows/manylinux_build_script.sh
-      - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/manylinux2014_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/manylinux_build_script.sh
-        if: github.event_name == 'release' || matrix.architecture == 'x86_64'
+      - run: sed "s/%arch%/${{ matrix.architecture }}/g" .github/workflows/manylinux_build.sh | sed "s/%for_each_version%/${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')) && 'true' || '' }}/g" > .github/workflows/manylinux_build_script.sh
+      - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/manylinux_2_28_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/manylinux_build_script.sh
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') || matrix.architecture == 'x86_64'
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_${{ matrix.architecture }}_linux_gnu
+          name: ontoenv_${{ matrix.architecture }}_linux_gnu
           path: target/wheels/*.whl
 
   wheel_linux_musl:
@@ -172,17 +206,17 @@ jobs:
       - uses: docker/setup-qemu-action@v2
         with:
           platforms: linux/${{ matrix.architecture }}
-        if: github.event_name == 'release' && matrix.architecture != 'x86_64'
+        if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') && matrix.architecture != 'x86_64'
       - uses: ./.github/actions/setup-rust
         with:
           version: stable
-      - run: sed 's/%arch%/${{ matrix.architecture }}/g' .github/workflows/musllinux_build.sh | sed 's/%for_each_version%/${{ github.event_name == 'release' || '' }}/g' > .github/workflows/musllinux_build_script.sh
+      - run: sed "s/%arch%/${{ matrix.architecture }}/g" .github/workflows/musllinux_build.sh | sed "s/%for_each_version%/${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')) && 'true' || '' }}/g" > .github/workflows/musllinux_build_script.sh
       - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/musllinux_1_2_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/musllinux_build_script.sh
-        if: github.event_name == 'release' || matrix.architecture == 'x86_64'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') || matrix.architecture == 'x86_64'
       - run: find .
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_${{ matrix.architecture }}_linux_musl
+          name: ontoenv_${{ matrix.architecture }}_linux_musl
           path: target/wheels/*.whl
 
   wheel_mac:
@@ -211,19 +245,19 @@ jobs:
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build --release --features abi3
         working-directory: ./python
-      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
+      - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin build --release --target universal2-apple-darwin --features abi3
         working-directory: ./python
       - run: maturin build --release --target x86_64-apple-darwin --features abi3
         working-directory: ./python
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')
       - run: maturin build --release --target aarch64-apple-darwin --features abi3
         working-directory: ./python
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_macos
+          name: ontoenv_macos
           path: target/wheels/*.whl
 
   wheel_windows:
@@ -244,12 +278,12 @@ jobs:
       - run: pip install -r python/requirements.dev.txt
       - run: maturin build --release --features abi3
         working-directory: ./python
-      - run: pip install --no-index --find-links=target/wheels/ pyontoenv
+      - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin build --release -m python/Cargo.toml --features abi3
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_windows
+          name: ontoenv_windows
           path: target/wheels/*.whl
 
   publish_pypi:
@@ -257,11 +291,12 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: publish
-      url: https://pypi.org/p/pyontoenv
+      url: https://pypi.org/p/ontoenv
     permissions:
       id-token: write
     needs:
       - python_sdist
+      - python_pyontoenv_alias
       - wheel_windows
       - wheel_mac
       - wheel_linux
@@ -269,7 +304,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: pyontoenv_*
+          pattern: ontoenv_*
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
@@ -298,15 +333,6 @@ jobs:
         uses: katyo/publish-crates@v2
         with:
           path: './cli'
-          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - name: Wait for crate index propagation
-        run: sleep 45
-      - name: Publish pyontoenv crate
-        uses: katyo/publish-crates@v2
-        with:
-          path: './python'
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
