@@ -18,7 +18,7 @@ doc = false
 [dependencies]
 pyo3 = { version = "0.25", features = ["extension-module"] }
 ontoenv.workspace = true
-ontoenv-cli.workspace = true
+ontoenv-cli = { workspace = true, optional = true }
 anyhow.workspace = true
 oxigraph.workspace = true
 env_logger.workspace = true
@@ -28,4 +28,6 @@ log.workspace = true
 pyo3-build-config = "0.25"
 
 [features]
+default = []
 abi3 = ["pyo3/abi3-py39"]
+cli = ["ontoenv-cli"]

@@ -131,7 +131,7 @@ jobs:
           cache: pip
           cache-dependency-path: '**/requirements.dev.txt'
       - run: pip install -r python/requirements.dev.txt
-      - run: maturin build -m python/Cargo.toml
+      - run: maturin build -m python/Cargo.toml --features "cli"
       - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin sdist -m python/Cargo.toml
@@ -243,16 +243,16 @@ jobs:
           cache: pip
           cache-dependency-path: '**/requirements.dev.txt'
       - run: pip install -r python/requirements.dev.txt
-      - run: maturin build --release --features abi3
+      - run: maturin build --release --features "abi3 cli"
         working-directory: ./python
       - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
-      - run: maturin build --release --target universal2-apple-darwin --features abi3
+      - run: maturin build --release --target universal2-apple-darwin --features "abi3 cli"
         working-directory: ./python
-      - run: maturin build --release --target x86_64-apple-darwin --features abi3
+      - run: maturin build --release --target x86_64-apple-darwin --features "abi3 cli"
         working-directory: ./python
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')
-      - run: maturin build --release --target aarch64-apple-darwin --features abi3
+      - run: maturin build --release --target aarch64-apple-darwin --features "abi3 cli"
         working-directory: ./python
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')
       - uses: actions/upload-artifact@v4
@@ -276,11 +276,11 @@ jobs:
           cache-dependency-path: '**/requirements.dev.txt'
       - run: Remove-Item -LiteralPath "C:\msys64\" -Force -Recurse
       - run: pip install -r python/requirements.dev.txt
-      - run: maturin build --release --features abi3
+      - run: maturin build --release --features "abi3 cli"
         working-directory: ./python
       - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
-      - run: maturin build --release -m python/Cargo.toml --features abi3
+      - run: maturin build --release -m python/Cargo.toml --features "abi3 cli"
       - uses: actions/upload-artifact@v4
         with:
           name: pyontoenv_windows_${{ github.run_attempt }}
