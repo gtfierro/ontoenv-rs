@@ -6,6 +6,7 @@ use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ::ontoenv::transform;
 use ::ontoenv::ToUriString;
 use anyhow::Error;
+#[cfg(feature = "cli")]
 use ontoenv_cli;
 use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
 use pyo3::{
@@ -13,6 +14,8 @@ use pyo3::{
     types::{IntoPyDict, PyString, PyTuple},
     exceptions::PyValueError,
 };
+#[cfg(not(feature = "cli"))]
+use pyo3::exceptions::PyRuntimeError;
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -122,6 +125,7 @@ fn term_to_python<'a>(
 
 /// Run the Rust CLI implementation and return its process-style exit code.
 #[pyfunction]
+#[cfg(feature = "cli")]
 fn run_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
     let argv = args.unwrap_or_else(|| std::env::args().collect());
     let code = py.allow_threads(move || match ontoenv_cli::run_from_args(argv) {
@@ -132,6 +136,16 @@ fn run_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
         }
     });
     Ok(code)
+}
+
+/// Fallback stub when the CLI feature is disabled at compile time.
+#[pyfunction]
+#[cfg(not(feature = "cli"))]
+#[allow(unused_variables)]
+fn run_cli(_py: Python<'_>, _args: Option<Vec<String>>) -> PyResult<i32> {
+    Err(PyErr::new::<PyRuntimeError, _>(
+        "ontoenv was built without CLI support; rebuild with the 'cli' feature",
+    ))
 }
 
 #[pyclass(name = "Ontology")]

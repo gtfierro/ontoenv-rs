@@ -9,11 +9,10 @@ cd python
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.dev.txt
-maturin develop --release
-maturin build --release --features abi3 --compatibility musllinux_1_2
+maturin develop --release --features "abi3 cli"
+maturin build --release --features "abi3 cli" --compatibility musllinux_1_2
 if [ %for_each_version% ]; then
   for VERSION in 8 9 10 11 12; do
-    maturin build --release --interpreter "python3.$VERSION" --compatibility musllinux_1_2
+    maturin build --release --features "abi3 cli" --interpreter "python3.$VERSION" --compatibility musllinux_1_2
   done
 fi
-

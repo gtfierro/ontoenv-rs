@@ -17,7 +17,7 @@ license = "bsd-3-clause"
 ontoenv = "ontoenv._cli:main"
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+features = ["pyo3/extension-module", "cli"]
 # This tells maturin to put the compiled native module
 # INSIDE the 'ontoenv' package directory.
 module-name = "ontoenv._native"
