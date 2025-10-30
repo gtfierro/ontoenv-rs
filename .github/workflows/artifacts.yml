@@ -336,9 +336,9 @@ jobs:
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - name: Wait for crate availability
-        if: github.event_name == 'release'
-        run: ./.github/scripts/wait_for_crates.sh ontoenv ontoenv-cli
+      #- name: Wait for crate availability
+      #  if: github.event_name == 'release'
+      #  run: ./.github/scripts/wait_for_crates.sh ontoenv ontoenv-cli
   full_archive:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
