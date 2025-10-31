@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from .ontoenv import run_cli as _run_cli
+from ontoenv import run_cli as _run_cli
 
 
 def main(argv: list[str] | None = None) -> int:
