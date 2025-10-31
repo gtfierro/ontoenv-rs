@@ -238,7 +238,7 @@ impl OntoEnv {
         if path.is_none() && root == "." && !recreate && !temporary {
             // Use forward slashes for cross-platform compatibility in error messages
             return Err(PyValueError::new_err(
-                "OntoEnv directory not found at: \"./.ontoenv\""
+                "You must provide a valid path or set recreate=True or temporary=True to create a new OntoEnv.",
             ));
         }
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));

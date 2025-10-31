@@ -185,7 +185,7 @@ impl OntologyLocation {
             OntologyLocation::File(p) => {
                 // Use the Url crate, just like in the Display impl
                 let iri = Url::from_file_path(p)
-                    .expect("Failed to create file URL for IRI")
+                    .expect("Failed to create file URL for IRI. Try removing .ontoenv folder as it may contain corrupted or improperly formatted file paths. Then recreate the environment.")
                     .to_string();
                 NamedNode::new(iri).unwrap()
             }

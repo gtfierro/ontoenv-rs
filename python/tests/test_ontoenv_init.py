@@ -75,7 +75,7 @@ class TestOntoEnvInit(unittest.TestCase):
                 os.remove(".ontoenv")
             else:
                 shutil.rmtree(".ontoenv")
-        with self.assertRaisesRegex(ValueError, "OntoEnv directory not found at: \"./.ontoenv\""):
+        with self.assertRaisesRegex(ValueError, "You must provide a valid path or set recreate=True or temporary=True to create a new OntoEnv."):
             OntoEnv()  # No args
 
     def test_init_path_no_env_error(self):
