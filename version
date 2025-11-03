@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Version management helper for ontoenv-rs.
+
+- Without arguments: print the current workspace version.
+- With a version string: update all manifests and rebuild lockfiles.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+CARGO_TOML = ROOT / "Cargo.toml"
+PYONTOENV_PYPROJECT = ROOT / "pyontoenv-shim" / "pyproject.toml"
+
+
+def read_current_version() -> str:
+    text = (ROOT / "Cargo.toml").read_text(encoding="utf-8").splitlines()
+    in_workspace = False
+    for raw in text:
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            in_workspace = line == "[workspace.package]"
+            continue
+        if not in_workspace:
+            continue
+        if line.startswith("version"):
+            match = re.search(r'version\s*=\s*"([^"]+)"', line)
+            if match:
+                return match.group(1)
+    raise SystemExit("Unable to find workspace.package.version in Cargo.toml")
+
+
+def write_if_contains(path: Path, old: str, new: str) -> bool:
+    text = path.read_text(encoding="utf-8")
+    if old not in text:
+        return False
+    path.write_text(text.replace(old, new), encoding="utf-8")
+    return True
+
+
+def update_versions(old: str, new: str) -> None:
+    touched = []
+    for path in (CARGO_TOML, PYONTOENV_PYPROJECT):
+        if write_if_contains(path, old, new):
+            touched.append(path)
+    if not touched:
+        print("warning: no files updated; version string may already be current", file=sys.stderr)
+
+
+def run_command(cmd: list[str], cwd: Path | None = None) -> None:
+    display = " ".join(cmd)
+    print(f"+ {display}", flush=True)
+    env = os.environ.copy()
+    env.setdefault("UV_CACHE_DIR", str(ROOT / ".uv-cache"))
+    env.setdefault("UV_SYSTEM_RESOLVE", "0")
+    try:
+        subprocess.run(cmd, cwd=cwd, check=True, env=env)
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(f"{display} failed with exit code {exc.returncode}") from exc
+
+
+def rebuild() -> None:
+    run_command(["cargo", "check"])
+    run_command(["cargo", "build"])
+    run_command(["uv", "lock"], cwd=ROOT / "python")
+    run_command(["uv", "lock"], cwd=ROOT / "pyontoenv-shim")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Manage workspace version.")
+    parser.add_argument("version", nargs="?", help="New version string to apply.")
+    args = parser.parse_args()
+
+    current = read_current_version()
+    if not args.version:
+        print(current)
+        return
+
+    new = args.version
+    if new == current:
+        print(f"version already {current}")
+        rebuild()
+        return
+
+    update_versions(current, new)
+    rebuild()
+
+
+if __name__ == "__main__":
+    main()
