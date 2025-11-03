@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
+export UV_SYSTEM_RESOLVE="${UV_SYSTEM_RESOLVE:-0}"
+
+echo "+ cargo test --workspace"
+cargo test --workspace
+
+echo "+ uv run maturin develop (python/)"
+(
+  cd "$ROOT/python"
+  uv run maturin develop
+)
+
+echo "+ uv run python -m unittest discover -s tests (python/)"
+(
+  cd "$ROOT/python"
+  uv run python -m unittest discover -s tests
+)
+
+echo "+ uv run python -m unittest discover -s tests (pyontoenv-shim/)"
+(
+  cd "$ROOT/pyontoenv-shim"
+  uv run python -m unittest discover -s tests
+)
+
+echo "+ uv run python -c 'import pyontoenv...' (pyontoenv-shim/)"
+(
+  cd "$ROOT/pyontoenv-shim"
+  uv run python -c "
+import pyontoenv, ontoenv
+from pyontoenv import OntoEnv
+assert callable(OntoEnv)
+print('pyontoenv version', pyontoenv.__version__)
+"
+)
