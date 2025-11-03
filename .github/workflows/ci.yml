@@ -59,4 +59,20 @@ jobs:
         
       - name: Test Python package
         working-directory: python
+        run: uv run --project . python -m unittest discover -s tests
+
+      - name: Build ontoenv wheel
+        shell: bash
+        run: uv run maturin build --release -m python/Cargo.toml
+
+      - name: Run pyontoenv unit tests
+        working-directory: pyontoenv-shim
         run: uv run python -m unittest discover -s tests
+
+      - name: Build pyontoenv shim wheel
+        shell: bash
+        run: uv build --project pyontoenv-shim --wheel
+
+      - name: Test pyontoenv shim
+        shell: bash
+        run: uv run python scripts/test_pyontoenv.py
