@@ -11,6 +11,23 @@ Project components:
 - Rust library: [`ontoenv`](https://docs.rs/ontoenv/latest/ontoenv/)
 - Python bindings: [`ontoenv`](https://pypi.org/project/ontoenv/)
 
+## Building From Source
+
+### Rust workspace
+- `cargo build --workspace --release` compiles every crate (`lib/`, `cli/`, `rdf5d/`) and produces optimized binaries in `target/release/`.
+- `cargo test --workspace` exercises all Rust tests; the convenience wrapper `./test` also drives the Python suites.
+
+### Python package (`python/`)
+- `uv run --project python maturin develop` builds the extension module in editable mode against the local Rust library.
+- `uv run --project python python -m unittest discover -s tests` runs the Python unit tests.
+- Generated wheels land in `python/target/wheels/` when you run `uv run maturin build --release -m python/Cargo.toml`.
+
+### Compatibility shim (`pyontoenv-shim/`)
+- `uv build --project pyontoenv-shim --wheel` produces the `pyontoenv` wheel that re-exports the bindings.
+- `uv run --project pyontoenv-shim python -m unittest discover` validates the shim and its aliasing behavior.
+- `uv run python scripts/test_pyontoenv.py` installs the freshly built wheels into a throwaway virtualenv and sanity-checks imports and the CLI.
+- The helper `./version <new-version>` bumps the workspace version and refreshes related manifests for both Rust and Python packages.
+
 ## Overview
 
 Imagine you have an RDF graph which imports some ontologies in order to use those concepts.
