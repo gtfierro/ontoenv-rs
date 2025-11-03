@@ -18,13 +18,13 @@ Project components:
 - `cargo test --workspace` exercises all Rust tests; the convenience wrapper `./test` also drives the Python suites.
 
 ### Python package (`python/`)
-- `uv run --project python maturin develop` builds the extension module in editable mode against the local Rust library.
-- `uv run --project python python -m unittest discover -s tests` runs the Python unit tests.
-- Generated wheels land in `python/target/wheels/` when you run `uv run maturin build --release -m python/Cargo.toml`.
+- From `python/`, run `uv run --group dev maturin develop` to build the extension module in editable mode against the local Rust library.
+- `uv run python -m unittest discover -s tests` (also from `python/`) executes the Python test suite.
+- Packages drop into `python/target/wheels/` after `uv run --group dev maturin build --release`.
 
 ### Compatibility shim (`pyontoenv-shim/`)
-- `uv build --project pyontoenv-shim --wheel` produces the `pyontoenv` wheel that re-exports the bindings.
-- `uv run --project pyontoenv-shim python -m unittest discover` validates the shim and its aliasing behavior.
+- From `pyontoenv-shim/`, run `uv build --wheel` to produce the `pyontoenv` wheel that re-exports the bindings.
+- `uv run python -m unittest discover -s tests` (inside `pyontoenv-shim/`) validates the shim and its aliasing behavior.
 - `uv run python scripts/test_pyontoenv.py` installs the freshly built wheels into a throwaway virtualenv and sanity-checks imports and the CLI.
 - The helper `./version <new-version>` bumps the workspace version and refreshes related manifests for both Rust and Python packages.
 
