@@ -11,7 +11,7 @@ cargo test --workspace
 echo "+ uv run maturin develop (python/)"
 (
   cd "$ROOT/python"
-  uv run maturin develop
+  uv run --group dev maturin develop
 )
 
 echo "+ uv run python -m unittest discover -s tests (python/)"
