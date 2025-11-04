@@ -25,7 +25,7 @@ Project components:
 ### Compatibility shim (`pyontoenv-shim/`)
 - From `pyontoenv-shim/`, run `uv build --wheel` to produce the `pyontoenv` wheel that re-exports the bindings.
 - `uv run python -m unittest discover -s tests` (inside `pyontoenv-shim/`) validates the shim and its aliasing behavior.
-- `uv run python scripts/test_pyontoenv.py` installs the freshly built wheels into a throwaway virtualenv and sanity-checks imports and the CLI.
+- `uv run python scripts/test_pyontoenv.py` (run from `pyontoenv-shim/`) installs the freshly built wheels into a throwaway virtualenv and sanity-checks imports and the CLI.
 - The helper `./version <new-version>` bumps the workspace version and refreshes related manifests for both Rust and Python packages.
 
 ## Overview
