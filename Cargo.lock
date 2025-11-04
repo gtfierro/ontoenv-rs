@@ -1887,7 +1887,7 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
 name = "ontoenv"
-version = "0.4.0-a14"
+version = "0.4.0-a15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1917,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "ontoenv-cli"
-version = "0.4.0-a14"
+version = "0.4.0-a15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1932,7 +1932,7 @@ dependencies = [
 
 [[package]]
 name = "ontoenv-python"
-version = "0.4.0-a14"
+version = "0.4.0-a15"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "rdf5d"
-version = "0.4.0-a14"
+version = "0.4.0-a15"
 dependencies = [
  "clap",
  "memmap2",
