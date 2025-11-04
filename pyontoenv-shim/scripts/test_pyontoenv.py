@@ -15,14 +15,24 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_PATH = Path(__file__).resolve()
+SHIM_DIR = SCRIPT_PATH.parents[1]
+REPO_ROOT = SCRIPT_PATH.parents[2]
+PYTHON_WHEEL_DIRS = [
+    SHIM_DIR.parent / "python" / "target" / "wheels",
+    SHIM_DIR.parent / "python" / "target" / "release",
+    REPO_ROOT / "target" / "wheels",
+]
+SHIM_WHEEL_DIR = SHIM_DIR / "dist"
 
 
-def pick_wheel(path: Path, pattern: str) -> Path:
-    matches = sorted(path.glob(pattern))
-    if not matches:
-        raise SystemExit(f"no wheels match '{pattern}' under {path}")
-    return matches[-1]
+def pick_wheel(pattern: str, search_paths: list[Path]) -> Path:
+    for base in search_paths:
+        matches = sorted(base.glob(pattern))
+        if matches:
+            return matches[-1]
+    joined = ", ".join(str(path) for path in search_paths)
+    raise SystemExit(f"no wheels match '{pattern}' under any of: {joined}")
 
 
 def run(cmd: list[str], **kwargs) -> None:
@@ -39,13 +49,13 @@ def main() -> None:
     ontoenv_wheel = (
         args.ontoenv_wheel
         if args.ontoenv_wheel
-        else pick_wheel(ROOT / "python" / "target" / "wheels", "ontoenv-*.whl")
-    )
+        else pick_wheel("ontoenv-*.whl", PYTHON_WHEEL_DIRS)
+    ).resolve()
     shim_wheel = (
         args.shim_wheel
         if args.shim_wheel
-        else pick_wheel(ROOT / "pyontoenv-shim" / "dist", "pyontoenv-*.whl")
-    )
+        else pick_wheel("pyontoenv-*.whl", [SHIM_WHEEL_DIR])
+    ).resolve()
 
     with tempfile.TemporaryDirectory(prefix="pyontoenv-test-") as tmp:
         venv_dir = Path(tmp) / "venv"
