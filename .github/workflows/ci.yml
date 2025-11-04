@@ -77,4 +77,5 @@ jobs:
 
       - name: Test pyontoenv shim
         shell: bash
+        working-directory: pyontoenv-shim
         run: uv run python scripts/test_pyontoenv.py
