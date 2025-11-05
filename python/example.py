@@ -1,7 +1,8 @@
 from ontoenv import OntoEnv, version
 from rdflib import Graph
-print(version)
 
+
+print(version)
 
 print("Make env")
 env = OntoEnv(search_directories=["../brick"], strict=False, offline=False)
@@ -25,7 +26,7 @@ env2 = OntoEnv()
 print(env2.store_path())
 
 print("get brick again from URL")
-brick = env2.get("https://brickschema.org/schema/1.4/Brick")
+brick = env2.get_graph("https://brickschema.org/schema/1.4/Brick")
 print(len(brick))
 print(brick)
 print(type(brick))
@@ -35,10 +36,9 @@ print("brick closure", env2.list_closure("https://brickschema.org/schema/1.4/Bri
 env2.import_graph(brick, "https://w3id.org/rec")
 brick.serialize("test.ttl", format="turtle")
 
-print("qudtqk deps", env2.get_dependents('http://qudt.org/2.1/vocab/quantitykind'))
+print("qudtqk deps", env2.get_importers("http://qudt.org/2.1/vocab/quantitykind"))
 
 # get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
 ds = env2.to_rdflib_dataset()
-for graphname in ds.graphs():
-    graph = ds.graph(graphname)
-    print(f"Graph {graphname} has {len(graph)} triples")
+for graph in list(ds.contexts()):
+    print(f"Graph {graph.identifier} has {len(graph)} triples")

@@ -9,17 +9,16 @@ use anyhow::Error;
 #[cfg(feature = "cli")]
 use ontoenv_cli;
 use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
+#[cfg(not(feature = "cli"))]
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
     types::{IntoPyDict, PyString, PyTuple},
-    exceptions::PyValueError,
 };
-#[cfg(not(feature = "cli"))]
-use pyo3::exceptions::PyRuntimeError;
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::ffi::OsStr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
@@ -27,10 +26,6 @@ fn anyhow_to_pyerr(e: Error) -> PyErr {
 }
 
 // Helper function to format paths with forward slashes for cross-platform error messages
-fn format_path_for_error(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
 #[allow(dead_code)]
 struct MyTerm(Term);
 impl From<Result<Bound<'_, PyAny>, pyo3::PyErr>> for MyTerm {
@@ -232,15 +227,6 @@ impl OntoEnv {
         temporary: bool,
         no_search: bool,
     ) -> PyResult<Self> {
-
-        // Check if OntoEnv() is called without any meaningful arguments
-        // This implements the behavior expected by the tests
-        if path.is_none() && root == "." && !recreate && !temporary {
-            // Use forward slashes for cross-platform compatibility in error messages
-            return Err(PyValueError::new_err(
-                "OntoEnv directory not found at \"./.ontoenv\". You must provide a valid path or set recreate=True or temporary=True to create a new OntoEnv.",
-            ));
-        }
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
         if root_path
@@ -284,34 +270,11 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
         let env = if cfg.temporary {
-            // Explicit in-memory env
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
-            // Explicit create/overwrite at root_path
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
         } else {
-            // Discover upward from root_path; load if found. If not found and not read-only,
-            // initialize a new environment at the requested root.
-            match ::ontoenv::api::find_ontoenv_root_from(&root_path) {
-                Some(found_root) => OntoEnvRs::load_from_directory(found_root, read_only)
-                    .map_err(anyhow_to_pyerr)?,
-                None => {
-                    // If a specific path was provided but no .ontoenv exists, raise error
-                    if path.is_some() {
-                        return Err(PyValueError::new_err(format!(
-                            "OntoEnv directory not found at: \"{}\"",
-                            format_path_for_error(&root_path.join(".ontoenv"))
-                        )));
-                    }
-                    if read_only {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "OntoEnv directory not found at: \"{}\" and read_only=True",
-                            format_path_for_error(&root_path.join(".ontoenv"))
-                        )));
-                    }
-                    OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
-                }
-            }
+            OntoEnvRs::open_or_init(cfg, read_only).map_err(anyhow_to_pyerr)?
         };
 
         let inner = Arc::new(Mutex::new(Some(env)));

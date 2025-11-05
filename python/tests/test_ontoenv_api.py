@@ -37,9 +37,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_constructor_default(self):
         """Test default OntoEnv() constructor respects git-style discovery."""
-        with self.assertRaises(ValueError):
-            OntoEnv()
-        self.env = OntoEnv(temporary=True)
+        self.env = OntoEnv()
         self.assertIn("OntoEnv", repr(self.env))
         
     def test_constructor_path(self):

@@ -222,6 +222,37 @@ impl OntoEnv {
         }
     }
 
+    /// Opens an existing environment rooted at `config.root`, or initializes a new one using
+    /// the provided configuration when none exists yet.
+    pub fn open_or_init(config: Config, read_only: bool) -> Result<Self> {
+        if config.temporary {
+            return Self::init(config, false);
+        }
+
+        let root = config.root.clone();
+
+        if let Some(found_root) = find_ontoenv_root_from(&root) {
+            let ontoenv_dir = found_root.join(".ontoenv");
+            if ontoenv_dir.exists() {
+                return Self::load_from_directory(found_root, read_only);
+            }
+        }
+
+        let ontoenv_dir = root.join(".ontoenv");
+        if ontoenv_dir.exists() {
+            return Self::load_from_directory(root, read_only);
+        }
+
+        if read_only {
+            return Err(anyhow::anyhow!(
+                "OntoEnv directory not found at {} and read_only=true",
+                ontoenv_dir.display()
+            ));
+        }
+
+        Self::init(config, false)
+    }
+
     /// Creates a new online OntoEnv that searches for ontologies in the current directory.
     /// If an environment already exists, it will be loaded.
     /// The environment will be persisted to disk in the `.ontoenv` directory.
@@ -1640,5 +1671,38 @@ impl OntoEnv {
 
     pub fn set_resolution_policy(&mut self, policy: String) {
         self.config.resolution_policy = policy;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn open_or_init_initializes_when_missing() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("env");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .no_search(true)
+            .build()
+            .unwrap();
+
+        {
+            let env = OntoEnv::open_or_init(config.clone(), false).unwrap();
+            assert!(root.join(".ontoenv").is_dir());
+            drop(env);
+        }
+
+        {
+            let env = OntoEnv::open_or_init(config, false).unwrap();
+            assert!(root.join(".ontoenv").is_dir());
+            drop(env);
+        }
     }
 }
