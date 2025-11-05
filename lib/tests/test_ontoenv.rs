@@ -44,7 +44,7 @@ macro_rules! setup {
             }
 
             copy_file(&source_path, &dest_path).expect(format!("Failed to copy file from {} to {}", source_path.display(), dest_path.display()).as_str());
-            
+
             // modify the 'last modified' time to the current time.
             // We must open with .write(true) to get permissions
             // to set metadata on Windows.
@@ -53,7 +53,7 @@ macro_rules! setup {
                 .write(true) // Request write access
                 .open(&dest_path)
                 .expect(format!("Failed to open file {} with write perms", dest_path.display()).as_str());
-            
+
             dest_file.set_modified(current_time)
                 .expect(format!("Failed to set modified time for file {}", dest_path.display()).as_str());
         )*

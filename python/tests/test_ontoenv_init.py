@@ -2,7 +2,6 @@ import unittest
 import shutil
 import os
 import tempfile
-import re
 from pathlib import Path
 from ontoenv import OntoEnv
 
@@ -68,25 +67,24 @@ class TestOntoEnvInit(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Cannot add to read-only store"):
                 env.add("file:///dummy.ttl")
 
-    def test_init_no_config_no_path_error(self):
-        # Clean up potential leftover .ontoenv in cwd just in case
-        if os.path.exists(".ontoenv"):
-            if os.path.isfile(".ontoenv"):
-                os.remove(".ontoenv")
-            else:
-                shutil.rmtree(".ontoenv")
-        with self.assertRaisesRegex(ValueError, "OntoEnv directory not found at \"./.ontoenv\". You must provide a valid path or set recreate=True or temporary=True to create a new OntoEnv."):
-            OntoEnv()  # No args
+    def test_init_no_config_creates_environment(self):
+        original_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as td:
+            os.chdir(td)
+            try:
+                env = OntoEnv()  # No args; should auto-create
+                self.assertTrue(Path(".ontoenv").is_dir())
+                env.close()
+            finally:
+                os.chdir(original_cwd)
 
-    def test_init_path_no_env_error(self):
+    def test_init_path_auto_initializes(self):
         with tempfile.TemporaryDirectory() as td:
             env_path = Path(td) / "no_env_here"
             env_path.mkdir()
-            self.assertFalse((env_path / ".ontoenv").exists())
-            # Be tolerant of macOS /private prefix differences by matching only the tail.
-            tail_pattern = rf'OntoEnv directory not found at: "(.*/)?{re.escape(env_path.name)}/\.ontoenv"'
-            with self.assertRaisesRegex(ValueError, tail_pattern):
-                OntoEnv(path=env_path)
+            env = OntoEnv(path=env_path)
+            self.assertTrue((env_path / ".ontoenv").is_dir())
+            env.close()
 
     def test_init_temporary(self):
         with tempfile.TemporaryDirectory() as td:
