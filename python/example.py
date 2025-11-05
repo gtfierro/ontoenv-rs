@@ -40,5 +40,5 @@ print("qudtqk deps", env2.get_importers("http://qudt.org/2.1/vocab/quantitykind"
 
 # get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
 ds = env2.to_rdflib_dataset()
-for graph in list(ds.contexts()):
+for graph in list(ds.graphs()):
     print(f"Graph {graph.identifier} has {len(graph)} triples")
