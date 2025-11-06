@@ -1,4 +1,4 @@
-use ::ontoenv::api::{OntoEnv as OntoEnvRs, ResolveTarget};
+use ::ontoenv::api::{find_ontoenv_root_from, OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation};
@@ -13,16 +13,147 @@ use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyString, PyTuple},
+    types::{IntoPyDict, PyIterator, PyString, PyTuple},
 };
+use rand::random;
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+}
+
+struct ResolvedLocation {
+    location: OntologyLocation,
+    preferred_name: Option<String>,
+}
+
+fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLocation> {
+    let ontology_subject = extract_ontology_subject(location)?;
+
+    // Direct string extraction covers `str`, `Path`, `pathlib.Path`, etc.
+    if let Ok(path_like) = location.extract::<PathBuf>() {
+        return OntologyLocation::from_str(path_like.to_string_lossy().as_ref())
+            .map(|loc| ResolvedLocation {
+                location: loc,
+                preferred_name: ontology_subject,
+            })
+            .map_err(anyhow_to_pyerr);
+    }
+
+    if let Ok(fspath_obj) = location.call_method0("__fspath__") {
+        if let Ok(path_like) = fspath_obj.extract::<PathBuf>() {
+            return OntologyLocation::from_str(path_like.to_string_lossy().as_ref())
+                .map(|loc| ResolvedLocation {
+                    location: loc,
+                    preferred_name: ontology_subject,
+                })
+                .map_err(anyhow_to_pyerr);
+        }
+        let fspath: String = fspath_obj.str()?.to_str()?.to_owned();
+        return OntologyLocation::from_str(&fspath)
+            .map(|loc| ResolvedLocation {
+                location: loc,
+                preferred_name: ontology_subject,
+            })
+            .map_err(anyhow_to_pyerr);
+    }
+
+    if let Ok(base_attr) = location.getattr("base") {
+        if !base_attr.is_none() {
+            let base: String = base_attr.str()?.to_str()?.to_owned();
+            if !base.is_empty() {
+                if let Ok(loc) = OntologyLocation::from_str(&base) {
+                    return Ok(ResolvedLocation {
+                        location: loc,
+                        preferred_name: ontology_subject,
+                    });
+                }
+            }
+        }
+    }
+
+    if let Ok(identifier_attr) = location.getattr("identifier") {
+        if !identifier_attr.is_none() {
+            let identifier_str: String = identifier_attr.str()?.to_str()?.to_owned();
+            if !identifier_str.is_empty()
+                && (identifier_str.starts_with("file:") || Path::new(&identifier_str).exists())
+            {
+                if let Ok(loc) = OntologyLocation::from_str(&identifier_str) {
+                    return Ok(ResolvedLocation {
+                        location: loc,
+                        preferred_name: ontology_subject,
+                    });
+                }
+            }
+        }
+    }
+
+    if location.hasattr("serialize")? {
+        let identifier = ontology_subject
+            .clone()
+            .unwrap_or_else(generate_rdflib_graph_identifier);
+        return Ok(ResolvedLocation {
+            location: OntologyLocation::InMemory { identifier },
+            preferred_name: ontology_subject,
+        });
+    }
+
+    let as_string: String = location.str()?.to_str()?.to_owned();
+
+    if as_string.starts_with("file:") || Path::new(&as_string).exists() {
+        return OntologyLocation::from_str(&as_string)
+            .map(|loc| ResolvedLocation {
+                location: loc,
+                preferred_name: ontology_subject,
+            })
+            .map_err(anyhow_to_pyerr);
+    }
+
+    Ok(ResolvedLocation {
+        location: OntologyLocation::Url(generate_rdflib_graph_identifier()),
+        preferred_name: ontology_subject,
+    })
+}
+
+fn generate_rdflib_graph_identifier() -> String {
+    format!("rdflib:graph-{}", random_hex_suffix())
+}
+
+fn random_hex_suffix() -> String {
+    format!("{:08x}", random::<u32>())
+}
+
+fn extract_ontology_subject(graph: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    if !graph.hasattr("subjects")? {
+        return Ok(None);
+    }
+
+    let py = graph.py();
+    let namespace = PyModule::import(py, "rdflib.namespace")?;
+    let rdf = namespace.getattr("RDF")?;
+    let rdf_type = rdf.getattr("type")?;
+    let owl = namespace.getattr("OWL")?;
+    let ontology_term = match owl.getattr("Ontology") {
+        Ok(term) => term,
+        Err(_) => owl.call_method1("__getitem__", ("Ontology",))?,
+    };
+
+    let subjects_iter = graph.call_method1("subjects", (rdf_type, ontology_term))?;
+    let mut iterator = PyIterator::from_object(&subjects_iter)?;
+
+    if let Some(first_res) = iterator.next() {
+        let first = first_res?;
+        let subject_str = first.str()?.to_str()?.to_owned();
+        if !subject_str.is_empty() {
+            return Ok(Some(subject_str));
+        }
+    }
+
+    Ok(None)
 }
 
 // Helper function to format paths with forward slashes for cross-platform error messages
@@ -209,11 +340,12 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
         recreate: bool,
+        create_or_use_cached: bool,
         read_only: bool,
         search_directories: Option<Vec<String>>,
         require_ontology_names: bool,
@@ -242,6 +374,7 @@ impl OntoEnv {
         // Strict Git-like behavior:
         // - temporary=True: create a temporary (in-memory) env
         // - recreate=True: create (or overwrite) an env at root_path
+        // - create_or_use_cached=True: create if missing, otherwise load
         // - otherwise: discover upward; if not found, error
 
         let mut builder = config::Config::builder()
@@ -269,12 +402,32 @@ impl OntoEnv {
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
+        let root_for_lookup = cfg.root.clone();
         let env = if cfg.temporary {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
-        } else {
+        } else if create_or_use_cached {
             OntoEnvRs::open_or_init(cfg, read_only).map_err(anyhow_to_pyerr)?
+        } else {
+            let load_root = if let Some(found_root) =
+                find_ontoenv_root_from(root_for_lookup.as_path())
+            {
+                found_root
+            } else {
+                let ontoenv_dir = root_for_lookup.join(".ontoenv");
+                if ontoenv_dir.exists() {
+                    root_for_lookup.clone()
+                } else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
+                        format!(
+                            "OntoEnv directory not found at {} (set create_or_use_cached=True to initialize a new environment)",
+                            ontoenv_dir.display()
+                        ),
+                    ));
+                }
+            };
+            OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?
         };
 
         let inner = Arc::new(Mutex::new(Some(env)));
@@ -797,8 +950,14 @@ impl OntoEnv {
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
-        let location =
-            OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
+        let resolved = ontology_location_from_py(location)?;
+        if matches!(resolved.location, OntologyLocation::InMemory { .. }) {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "In-memory rdflib graphs cannot be added to the environment",
+            ));
+        }
+        let preferred_name = resolved.preferred_name.clone();
+        let location = resolved.location;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
         let graph_id = if fetch_imports {
@@ -807,7 +966,15 @@ impl OntoEnv {
             env.add_no_imports(location, overwrite_flag, refresh)
         }
         .map_err(anyhow_to_pyerr)?;
-        Ok(graph_id.to_uri_string())
+        let actual_name = graph_id.to_uri_string();
+        if let Some(pref) = preferred_name {
+            if let Ok(candidate) = NamedNode::new(pref.clone()) {
+                if env.resolve(ResolveTarget::Graph(candidate)).is_some() {
+                    return Ok(pref);
+                }
+            }
+        }
+        Ok(actual_name)
     }
 
     /// Add a new ontology to the OntoEnv without exploring owl:imports.
@@ -823,14 +990,28 @@ impl OntoEnv {
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let location =
-            OntologyLocation::from_str(&location.to_string()).map_err(anyhow_to_pyerr)?;
+        let resolved = ontology_location_from_py(location)?;
+        if matches!(resolved.location, OntologyLocation::InMemory { .. }) {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "In-memory rdflib graphs cannot be added to the environment",
+            ));
+        }
+        let preferred_name = resolved.preferred_name.clone();
+        let location = resolved.location;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
         let graph_id = env
             .add_no_imports(location, overwrite_flag, refresh)
             .map_err(anyhow_to_pyerr)?;
-        Ok(graph_id.to_uri_string())
+        let actual_name = graph_id.to_uri_string();
+        if let Some(pref) = preferred_name {
+            if let Ok(candidate) = NamedNode::new(pref.clone()) {
+                if env.resolve(ResolveTarget::Graph(candidate)).is_some() {
+                    return Ok(pref);
+                }
+            }
+        }
+        Ok(actual_name)
     }
 
     /// Get the names of all ontologies that import the given ontology
