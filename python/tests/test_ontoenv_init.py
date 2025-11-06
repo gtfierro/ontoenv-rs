@@ -67,12 +67,22 @@ class TestOntoEnvInit(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Cannot add to read-only store"):
                 env.add("file:///dummy.ttl")
 
-    def test_init_no_config_creates_environment(self):
+    def test_init_no_config_requires_existing(self):
         original_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as td:
             os.chdir(td)
             try:
-                env = OntoEnv()  # No args; should auto-create
+                with self.assertRaises(FileNotFoundError):
+                    OntoEnv()
+            finally:
+                os.chdir(original_cwd)
+
+    def test_init_no_config_create_flag(self):
+        original_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as td:
+            os.chdir(td)
+            try:
+                env = OntoEnv(create_or_use_cached=True)
                 self.assertTrue(Path(".ontoenv").is_dir())
                 env.close()
             finally:
@@ -82,7 +92,7 @@ class TestOntoEnvInit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             env_path = Path(td) / "no_env_here"
             env_path.mkdir()
-            env = OntoEnv(path=env_path)
+            env = OntoEnv(path=env_path, create_or_use_cached=True)
             self.assertTrue((env_path / ".ontoenv").is_dir())
             env.close()
 

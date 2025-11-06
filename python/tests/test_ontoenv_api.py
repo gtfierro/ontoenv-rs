@@ -1,5 +1,6 @@
 import unittest
 import shutil
+import os
 from pathlib import Path
 from ontoenv import OntoEnv
 from rdflib import Graph, URIRef
@@ -37,8 +38,15 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_constructor_default(self):
         """Test default OntoEnv() constructor respects git-style discovery."""
-        self.env = OntoEnv()
-        self.assertIn("OntoEnv", repr(self.env))
+        original_cwd = Path.cwd()
+        os.chdir(self.test_dir)
+        try:
+            bootstrap = OntoEnv(create_or_use_cached=True)
+            bootstrap.close()
+            self.env = OntoEnv()
+            self.assertIn("OntoEnv", repr(self.env))
+        finally:
+            os.chdir(original_cwd)
         
     def test_constructor_path(self):
         """Test OntoEnv(path=...) constructor."""
@@ -84,6 +92,20 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn(self.brick_name, ontologies)
         # check that dependencies were not added
         self.assertEqual(len(ontologies), 1)
+
+    def test_add_rejects_in_memory_rdflib_graph(self):
+        """Adding an rdflib.Graph object should raise since it is in-memory."""
+        self.env = OntoEnv(temporary=True)
+        g = Graph()
+        ontology = URIRef("http://example.com/temp")
+        g.add((ontology, RDF.type, OWL.Ontology))
+
+        with self.assertRaises(TypeError) as ctx:
+            self.env.add(g)
+        self.assertIn("In-memory rdflib graphs cannot be added", str(ctx.exception))
+
+        with self.assertRaises(TypeError):
+            self.env.add_no_imports(g)
 
     def test_get_graph(self):
         """Test env.get_graph()."""

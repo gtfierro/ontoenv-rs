@@ -105,6 +105,11 @@ fn add_ontology_to_store(
             let fetched = crate::fetch::fetch_rdf(url.as_str(), &opts)?;
             (fetched.bytes, fetched.format)
         }
+        OntologyLocation::InMemory { .. } => {
+            return Err(anyhow!(
+                "In-memory ontologies cannot be persisted or refreshed from a source"
+            ))
+        }
     };
     add_ontology_bytes(store, &location, &bytes, format, overwrite, strict)
 }
@@ -218,6 +223,11 @@ pub trait GraphIO: Send + Sync {
                     Some(dt) => dt,
                     None => Utc::now(),
                 }
+            }
+            OntologyLocation::InMemory { .. } => {
+                return Err(anyhow!(
+                    "In-memory ontologies do not have a source modification time"
+                ))
             }
         };
         Ok(modified_time)

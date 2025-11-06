@@ -40,11 +40,13 @@ class OntoEnv:
         self,
         path: Optional[Union[str, Path]] = None,
         recreate: bool = False,
+        create_or_use_cached: bool = False,
         read_only: bool = False,
         search_directories: Optional[List[str]] = None,
         require_ontology_names: bool = False,
         strict: bool = False,
         offline: bool = False,
+        use_cached_ontologies: bool = False,
         resolution_policy: str = "default",
         root: str = ".",
         includes: Optional[List[str]] = None,
@@ -118,4 +120,3 @@ class OntoEnv:
 
     def flush(self) -> None: ...
     def close(self) -> None: ...
-

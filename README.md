@@ -226,7 +226,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
 ### Key methods
 
-- Constructor: `OntoEnv(path=None, recreate=False, read_only=False, search_directories=None, require_ontology_names=False, strict=False, offline=False, resolution_policy="default", root=".", includes=None, excludes=None, temporary=False, no_search=False)`
+- Constructor: `OntoEnv(path=None, recreate=False, create_or_use_cached=False, read_only=False, search_directories=None, require_ontology_names=False, strict=False, offline=False, resolution_policy="default", root=".", includes=None, excludes=None, temporary=False, no_search=False)`
   - `offline`: don’t fetch remote ontologies
   - `temporary`: in‑memory only (no `.ontoenv/`)
 - `update(all=False)`: refresh discovered ontologies
@@ -245,7 +245,8 @@ with tempfile.TemporaryDirectory() as temp_dir:
 - Strict Git‑like:
   - Temporary environment: `OntoEnv(temporary=True)` creates an in‑memory environment (no `.ontoenv/`).
   - Create/overwrite on disk: `OntoEnv(path=..., recreate=True)` explicitly creates a new environment at `path` (or overwrites if it exists).
-  - Discover and load: Otherwise, the constructor walks up from `path` (or `root=.` if `path` is None) to find an existing `.ontoenv/`. If found, it loads it; if not, it raises `ValueError` with a hint to use `recreate=True` or `temporary=True`.
+  - Create or reuse cached: `OntoEnv(create_or_use_cached=True, ...)` retains the previous auto-initializing behavior—if no environment is found it bootstraps one using the supplied configuration.
+  - Discover and load: Otherwise, the constructor walks up from `path` (or `root=.` if `path` is None) to find an existing `.ontoenv/`. If found, it loads it; if not, it raises `FileNotFoundError` with a hint to use `recreate=True`, `temporary=True`, or `create_or_use_cached=True`.
   - Flags such as `offline`, `strict`, `search_directories`, `includes`, `excludes` apply to created environments; loading respects the saved configuration.
 
 #### get_closure vs import_dependencies

@@ -15,7 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use url::Url;
 //
 // custom derive for NamedNode
@@ -112,6 +112,8 @@ pub enum OntologyLocation {
     File(PathBuf),
     #[serde(rename = "url")]
     Url(String),
+    #[serde(rename = "in-memory")]
+    InMemory { identifier: String },
 }
 
 // impl display for OntologyLocation
@@ -120,10 +122,15 @@ impl std::fmt::Display for OntologyLocation {
         match self {
             OntologyLocation::Url(url) => write!(f, "{}", url),
             OntologyLocation::File(path) => {
-                let url_string = Url::from_file_path(path)
-                    .map_err(|_| std::fmt::Error)? // Convert the error
-                    .to_string();
-                write!(f, "{}", url_string)
+                let effective_path = Self::normalized_file_path(path);
+                if let Some(url) = Self::file_url_for(&effective_path) {
+                    write!(f, "{}", url)
+                } else {
+                    write!(f, "{}", effective_path.display())
+                }
+            }
+            OntologyLocation::InMemory { identifier } => {
+                write!(f, "in-memory:{}", identifier)
             }
         }
     }
@@ -132,7 +139,7 @@ impl std::fmt::Display for OntologyLocation {
 // impl default for OntologyLocation
 impl Default for OntologyLocation {
     fn default() -> Self {
-        OntologyLocation::File(PathBuf::new())
+        OntologyLocation::File(Self::normalized_file_path(Path::new("")))
     }
 }
 
@@ -141,6 +148,7 @@ impl OntologyLocation {
         match self {
             OntologyLocation::File(p) => p.to_str().unwrap_or_default(),
             OntologyLocation::Url(u) => u.as_str(),
+            OntologyLocation::InMemory { identifier } => identifier.as_str(),
         }
     }
 
@@ -148,6 +156,9 @@ impl OntologyLocation {
         match self {
             OntologyLocation::File(p) => read_file(p),
             OntologyLocation::Url(u) => read_url(u),
+            OntologyLocation::InMemory { .. } => Err(anyhow::anyhow!(
+                "In-memory ontology locations cannot be refreshed from an external source"
+            )),
         }
     }
 
@@ -155,6 +166,7 @@ impl OntologyLocation {
         match self {
             OntologyLocation::File(_) => true,
             OntologyLocation::Url(_) => false,
+            OntologyLocation::InMemory { .. } => false,
         }
     }
 
@@ -162,6 +174,7 @@ impl OntologyLocation {
         match self {
             OntologyLocation::File(_) => false,
             OntologyLocation::Url(_) => true,
+            OntologyLocation::InMemory { .. } => false,
         }
     }
 
@@ -183,11 +196,16 @@ impl OntologyLocation {
     pub fn to_iri(&self) -> NamedNode {
         match self {
             OntologyLocation::File(p) => {
-                // Use the Url crate, just like in the Display impl
-                let iri = Url::from_file_path(p)
-                    .expect("Failed to create file URL for IRI. Try removing .ontoenv folder as it may contain corrupted or improperly formatted file paths. Then recreate the environment.")
-                    .to_string();
-                NamedNode::new(iri).unwrap()
+                let effective_path = Self::normalized_file_path(p);
+                if let Some(url) = Self::file_url_for(&effective_path) {
+                    let iri: String = url.into();
+                    return NamedNode::new(iri.clone())
+                        .unwrap_or_else(|_| NamedNode::new_unchecked(iri));
+                }
+
+                let fallback_iri = format!("file://{}", effective_path.display());
+                NamedNode::new(fallback_iri.clone())
+                    .unwrap_or_else(|_| NamedNode::new_unchecked(fallback_iri))
             }
             OntologyLocation::Url(u) => {
                 // Strip angle brackets if present (e.g., "<http://...>")
@@ -198,6 +216,8 @@ impl OntologyLocation {
                 };
                 NamedNode::new(iri).unwrap()
             }
+            OntologyLocation::InMemory { identifier } => NamedNode::new(identifier.clone())
+                .unwrap_or_else(|_| NamedNode::new_unchecked(identifier.clone())),
         }
     }
 
@@ -205,7 +225,27 @@ impl OntologyLocation {
         match self {
             OntologyLocation::File(p) => Some(p),
             OntologyLocation::Url(_) => None,
+            OntologyLocation::InMemory { .. } => None,
         }
+    }
+
+    fn normalized_file_path(path: &Path) -> PathBuf {
+        if path.as_os_str().is_empty() {
+            return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        }
+
+        if path.is_relative() {
+            let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            return base.join(path);
+        }
+
+        path.to_path_buf()
+    }
+
+    fn file_url_for(path: &Path) -> Option<Url> {
+        Url::from_file_path(path)
+            .ok()
+            .or_else(|| Url::from_directory_path(path).ok())
     }
 }
 
@@ -217,6 +257,43 @@ impl SerializeAs<NamedNode> for LocalType {
         S: Serializer,
     {
         namednode_ser(value, serializer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_location_with_empty_path_uses_current_dir() {
+        let cwd = std::env::current_dir().unwrap();
+        let location = OntologyLocation::File(PathBuf::new());
+
+        let display = location.to_string();
+        let iri = location.to_iri();
+
+        let cwd_str = cwd.to_string_lossy().into_owned();
+
+        assert!(!display.is_empty());
+        assert!(display.contains(&cwd_str));
+
+        assert!(iri.as_str().starts_with("file:"));
+        assert!(iri.as_str().contains(&cwd_str));
+    }
+
+    #[test]
+    fn file_location_normalizes_relative_paths() {
+        let relative = PathBuf::from("some/relative/path");
+        let location = OntologyLocation::File(relative.clone());
+
+        let expected = std::env::current_dir().unwrap().join(relative);
+        let expected_str = expected.to_string_lossy().into_owned();
+
+        let display = location.to_string();
+        let iri = location.to_iri();
+
+        assert!(display.contains(&expected_str));
+        assert!(iri.as_str().contains(&expected_str));
     }
 }
 
@@ -266,7 +343,7 @@ impl Default for Ontology {
     fn default() -> Self {
         Ontology {
             id: GraphIdentifier {
-                location: OntologyLocation::File(PathBuf::new()),
+                location: OntologyLocation::default(),
                 name: NamedNode::new("<n/a>").unwrap(),
             },
             name: NamedNode::new("<n/a>").unwrap(),
@@ -295,6 +372,7 @@ impl Ontology {
                 let opts = crate::fetch::FetchOptions::default();
                 crate::fetch::head_exists(u, &opts).unwrap_or(false)
             }
+            Some(OntologyLocation::InMemory { .. }) => false,
             None => false,
         }
     }
