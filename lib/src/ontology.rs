@@ -264,21 +264,36 @@ impl SerializeAs<NamedNode> for LocalType {
 mod tests {
     use super::*;
 
+    fn assert_location_matches_path(display: &str, iri: &NamedNode, expected: &Path) {
+        if let Some(url) = OntologyLocation::file_url_for(expected) {
+            let expected_url: String = url.into();
+            assert_eq!(display, expected_url, "display should equal file URL");
+            assert_eq!(iri.as_str(), expected_url, "iri should equal file URL");
+        } else {
+            let expected_str = expected.to_string_lossy().into_owned();
+            assert!(
+                display.contains(&expected_str),
+                "display should contain normalized path"
+            );
+            assert!(
+                iri.as_str().contains(&expected_str),
+                "iri should contain normalized path"
+            );
+        }
+    }
+
     #[test]
     fn file_location_with_empty_path_uses_current_dir() {
         let cwd = std::env::current_dir().unwrap();
+        let expected = OntologyLocation::normalized_file_path(Path::new(""));
+        assert_eq!(expected, cwd);
         let location = OntologyLocation::File(PathBuf::new());
 
         let display = location.to_string();
         let iri = location.to_iri();
 
-        let cwd_str = cwd.to_string_lossy().into_owned();
-
         assert!(!display.is_empty());
-        assert!(display.contains(&cwd_str));
-
-        assert!(iri.as_str().starts_with("file:"));
-        assert!(iri.as_str().contains(&cwd_str));
+        assert_location_matches_path(&display, &iri, &expected);
     }
 
     #[test]
@@ -286,14 +301,13 @@ mod tests {
         let relative = PathBuf::from("some/relative/path");
         let location = OntologyLocation::File(relative.clone());
 
-        let expected = std::env::current_dir().unwrap().join(relative);
-        let expected_str = expected.to_string_lossy().into_owned();
-
+        let expected = OntologyLocation::normalized_file_path(&relative);
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(expected, cwd.join(&relative));
         let display = location.to_string();
         let iri = location.to_iri();
 
-        assert!(display.contains(&expected_str));
-        assert!(iri.as_str().contains(&expected_str));
+        assert_location_matches_path(&display, &iri, &expected);
     }
 }
 
