@@ -59,9 +59,20 @@ class OntoEnv:
 
     def update(self, all: bool = False) -> None: ...
 
-    def add(self, location: Union[str, Path], overwrite: bool = False, fetch_imports: bool = True) -> str: ...
+    def add(
+        self,
+        location: Union[str, Path],
+        overwrite: bool = False,
+        fetch_imports: bool = True,
+        force: bool = False,
+    ) -> str: ...
 
-    def add_no_imports(self, location: Union[str, Path], overwrite: bool = False) -> str: ...
+    def add_no_imports(
+        self,
+        location: Union[str, Path],
+        overwrite: bool = False,
+        force: bool = False,
+    ) -> str: ...
 
     def get_graph(self, uri: str) -> Graph: ...
 
