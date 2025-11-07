@@ -20,6 +20,19 @@ ONTOENV_PYPROJECT = ROOT / "python" / "pyproject.toml"
 PYONTOENV_PYPROJECT = ROOT / "pyontoenv-shim" / "pyproject.toml"
 
 
+def semver_to_pep440(version: str) -> str:
+    """Convert workspace semver (with `-pre`) into a PEP 440 compatible form."""
+    base, plus, build = version.partition("+")
+    release, hyphen, suffix = base.partition("-")
+    pep = release
+    if hyphen:
+        pep += suffix.replace("-", ".")
+    if plus:
+        normalized = build.replace("-", ".")
+        pep += f".post{normalized or '0'}"
+    return pep
+
+
 def read_current_version() -> str:
     text = (ROOT / "Cargo.toml").read_text(encoding="utf-8").splitlines()
     in_workspace = False
@@ -47,11 +60,30 @@ def write_if_contains(path: Path, old: str, new: str) -> bool:
 
 def update_versions(old: str, new: str) -> None:
     touched = []
-    for path in (CARGO_TOML, ONTOENV_PYPROJECT, PYONTOENV_PYPROJECT):
+    for path in (CARGO_TOML, ONTOENV_PYPROJECT):
         if write_if_contains(path, old, new):
             touched.append(path)
+    if update_pyontoenv_shim_version(new):
+        touched.append(PYONTOENV_PYPROJECT)
     if not touched:
         print("warning: no files updated; version string may already be current", file=sys.stderr)
+
+
+def update_pyontoenv_shim_version(new_version: str) -> bool:
+    pep_version = semver_to_pep440(new_version)
+    text = PYONTOENV_PYPROJECT.read_text(encoding="utf-8")
+    pattern = re.compile(r'(?m)^(version\s*=\s*)"([^"]+)"')
+
+    def repl(match: re.Match[str]) -> str:
+        return f'{match.group(1)}"{pep_version}"'
+
+    updated, count = pattern.subn(repl, text, count=1)
+    if count == 0:
+        raise SystemExit(f"Unable to find version field in {PYONTOENV_PYPROJECT}")
+    if updated != text:
+        PYONTOENV_PYPROJECT.write_text(updated, encoding="utf-8")
+        return True
+    return False
 
 
 def run_command(cmd: list[str], cwd: Path | None = None) -> None:
