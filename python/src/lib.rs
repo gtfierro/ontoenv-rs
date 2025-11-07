@@ -53,7 +53,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
                 })
                 .map_err(anyhow_to_pyerr);
         }
-        let fspath: String = fspath_obj.str()?.to_str()?.to_owned();
+        let fspath: String = bound_pystring_to_string(fspath_obj.str()?)?;
         return OntologyLocation::from_str(&fspath)
             .map(|loc| ResolvedLocation {
                 location: loc,
@@ -64,7 +64,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
 
     if let Ok(base_attr) = location.getattr("base") {
         if !base_attr.is_none() {
-            let base: String = base_attr.str()?.to_str()?.to_owned();
+            let base: String = bound_pystring_to_string(base_attr.str()?)?;
             if !base.is_empty() {
                 if let Ok(loc) = OntologyLocation::from_str(&base) {
                     return Ok(ResolvedLocation {
@@ -78,7 +78,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
 
     if let Ok(identifier_attr) = location.getattr("identifier") {
         if !identifier_attr.is_none() {
-            let identifier_str: String = identifier_attr.str()?.to_str()?.to_owned();
+            let identifier_str: String = bound_pystring_to_string(identifier_attr.str()?)?;
             if !identifier_str.is_empty()
                 && (identifier_str.starts_with("file:") || Path::new(&identifier_str).exists())
             {
@@ -102,7 +102,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
         });
     }
 
-    let as_string: String = location.str()?.to_str()?.to_owned();
+    let as_string: String = bound_pystring_to_string(location.str()?)?;
 
     if as_string.starts_with("file:") || Path::new(&as_string).exists() {
         return OntologyLocation::from_str(&as_string)
@@ -147,7 +147,7 @@ fn extract_ontology_subject(graph: &Bound<'_, PyAny>) -> PyResult<Option<String>
 
     if let Some(first_res) = iterator.next() {
         let first = first_res?;
-        let subject_str = first.str()?.to_str()?.to_owned();
+        let subject_str = bound_pystring_to_string(first.str()?)?;
         if !subject_str.is_empty() {
             return Ok(Some(subject_str));
         }
@@ -247,6 +247,10 @@ fn term_to_python<'a>(
             .call1((id.clone().into_string(),))?,
     };
     Ok(res)
+}
+
+fn bound_pystring_to_string(py_str: Bound<'_, PyString>) -> PyResult<String> {
+    Ok(py_str.to_cow()?.into_owned())
 }
 
 /// Run the Rust CLI implementation and return its process-style exit code.
