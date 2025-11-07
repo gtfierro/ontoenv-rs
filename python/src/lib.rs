@@ -13,7 +13,7 @@ use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyIterator, PyString, PyTuple},
+    types::{IntoPyDict, PyIterator, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
 use std::borrow::Borrow;
@@ -254,7 +254,7 @@ fn term_to_python<'a>(
 #[cfg(feature = "cli")]
 fn run_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
     let argv = args.unwrap_or_else(|| std::env::args().collect());
-    let code = py.allow_threads(move || match ontoenv_cli::run_from_args(argv) {
+    let code = py.detach(move || match ontoenv_cli::run_from_args(argv) {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("{err}");
@@ -512,25 +512,22 @@ impl OntoEnv {
         // remove the owl:import statement for the 'uri' ontology
         transform::remove_owl_imports_graph(&mut graph, Some(&[iri.as_ref()]));
 
-        Python::with_gil(|_py| {
-            for triple in graph.into_iter() {
-                let s: Term = triple.subject.into();
-                let p: Term = triple.predicate.into();
-                let o: Term = triple.object.into();
+        for triple in graph.into_iter() {
+            let s: Term = triple.subject.into();
+            let p: Term = triple.predicate.into();
+            let o: Term = triple.object.into();
 
-                let t = PyTuple::new(
-                    py,
-                    &[
-                        term_to_python(py, &rdflib, s)?,
-                        term_to_python(py, &rdflib, p)?,
-                        term_to_python(py, &rdflib, o)?,
-                    ],
-                )?;
+            let t = PyTuple::new(
+                py,
+                &[
+                    term_to_python(py, &rdflib, s)?,
+                    term_to_python(py, &rdflib, p)?,
+                    term_to_python(py, &rdflib, o)?,
+                ],
+            )?;
 
-                destination_graph.getattr("add")?.call1((t,))?;
-            }
-            Ok::<(), PyErr>(())
-        })?;
+            destination_graph.getattr("add")?.call1((t,))?;
+        }
         Ok(())
     }
 
@@ -1283,7 +1280,7 @@ impl OntoEnv {
     // Let's keep the Option return type for flexibility and adjust tests.
 
     pub fn close(&mut self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let inner = self.inner.clone();
             let mut guard = inner.lock().unwrap();
             if let Some(env) = guard.as_mut() {
@@ -1296,7 +1293,7 @@ impl OntoEnv {
     }
 
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let inner = self.inner.clone();
             let mut guard = inner.lock().unwrap();
             if let Some(env) = guard.as_mut() {
