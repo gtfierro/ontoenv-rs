@@ -26,7 +26,7 @@ if [ %for_each_version% ]; then
   for VERSION in 8 9 10 11 12; do
     maturin build --release --features "abi3 cli" --interpreter "python3.$VERSION" --compatibility manylinux_2_28
   done
-  for VERSION in 9 10; do
+  for VERSION in 11; do
     maturin build --release --features "abi3 cli" --interpreter "pypy3.$VERSION" --compatibility manylinux_2_28
   done
 fi
