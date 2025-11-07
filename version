@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 CARGO_TOML = ROOT / "Cargo.toml"
+ONTOENV_PYPROJECT = ROOT / "python" / "pyproject.toml"
 PYONTOENV_PYPROJECT = ROOT / "pyontoenv-shim" / "pyproject.toml"
 
 
@@ -46,7 +47,7 @@ def write_if_contains(path: Path, old: str, new: str) -> bool:
 
 def update_versions(old: str, new: str) -> None:
     touched = []
-    for path in (CARGO_TOML, PYONTOENV_PYPROJECT):
+    for path in (CARGO_TOML, ONTOENV_PYPROJECT, PYONTOENV_PYPROJECT):
         if write_if_contains(path, old, new):
             touched.append(path)
     if not touched:
