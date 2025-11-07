@@ -107,6 +107,45 @@ class TestOntoEnvAPI(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.env.add_no_imports(g)
 
+    def test_get_closure_with_in_memory_destination(self):
+        """Closure can be materialized into an in-memory rdflib.Graph."""
+        base_path = self.test_dir / "base.ttl"
+        imported_path = self.test_dir / "imported.ttl"
+        imported_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix ex: <http://example.com/imported#> .
+            <http://example.com/imported> a owl:Ontology .
+            ex:Thing a owl:Class .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        base_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix ex: <http://example.com/base#> .
+            <http://example.com/base> a owl:Ontology ;
+                owl:imports <http://example.com/imported> .
+            ex:Root a owl:Class .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        # Load imported first so fetch_imports finds it locally.
+        self.env.add(str(imported_path), fetch_imports=False)
+        base_name = self.env.add(str(base_path))
+
+        destination = Graph()
+        closure_graph, closure_names = self.env.get_closure(base_name, destination_graph=destination)
+
+        self.assertIs(destination, closure_graph)
+        self.assertGreater(len(closure_graph), 0)
+        self.assertIn("http://example.com/base", closure_names)
+        self.assertIn("http://example.com/imported", closure_names)
+
     def test_get_graph(self):
         """Test env.get_graph()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True)
