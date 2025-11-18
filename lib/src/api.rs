@@ -1120,7 +1120,20 @@ impl OntoEnv {
                 continue;
             }
             for entry in walkdir::WalkDir::new(location) {
-                let entry = entry?;
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        if self.config.strict {
+                            return Err(err.into());
+                        }
+                        let path = err
+                            .path()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| location.display().to_string());
+                        warn!("Skipping {path} due to filesystem error: {err}");
+                        continue;
+                    }
+                };
                 if entry.file_type().is_file() && self.config.is_included(entry.path()) {
                     files.insert(OntologyLocation::File(entry.path().to_path_buf()));
                 }
