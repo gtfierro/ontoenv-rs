@@ -219,8 +219,8 @@ fn import_graph_handles_cycles() -> Result<()> {
 
     let a_path = dir.path().join("A.ttl");
     let b_path = dir.path().join("B.ttl");
-    let a_iri = format!("file://{}", a_path.display());
-    let b_iri = format!("file://{}", b_path.display());
+    let a_iri = url::Url::from_file_path(&a_path).unwrap().to_string();
+    let b_iri = url::Url::from_file_path(&b_path).unwrap().to_string();
 
     fs::write(
         &a_path,
@@ -307,9 +307,9 @@ fn import_graph_respects_recursion_depth() -> Result<()> {
     let b_path = dir.path().join("B.ttl");
     let c_path = dir.path().join("C.ttl");
 
-    let a_iri = format!("file://{}", a_path.display());
-    let b_iri = format!("file://{}", b_path.display());
-    let c_iri = format!("file://{}", c_path.display());
+    let a_iri = url::Url::from_file_path(&a_path).unwrap().to_string();
+    let b_iri = url::Url::from_file_path(&b_path).unwrap().to_string();
+    let c_iri = url::Url::from_file_path(&c_path).unwrap().to_string();
 
     fs::write(
         &a_path,
