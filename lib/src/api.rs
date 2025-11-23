@@ -2,7 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
-use crate::consts::{ONTOLOGY, TYPE};
+use crate::consts::IMPORTS;
 use crate::doctor::{
     ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
 };
@@ -12,9 +12,7 @@ use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{
-    Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TermRef, TripleRef,
-};
+use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
 use std::io::{BufReader, Write};
@@ -1419,6 +1417,9 @@ impl OntoEnv {
         recursion_depth: i32,
         root: NamedNodeRef,
     ) -> Result<Graph> {
+        let imported = self.get_ontology(id)?;
+        let imported_imports = imported.imports.clone();
+
         let closure = self.get_closure(id, recursion_depth)?;
         let mut union = self.get_union_graph(&closure, Some(true), Some(true))?;
 
@@ -1431,7 +1432,31 @@ impl OntoEnv {
         // Flatten dataset into a single graph, ignoring named graph labels.
         let mut graph = Graph::new();
         for quad in union.dataset.iter() {
+            // Drop owl:imports on non-root subjects to prevent retaining inner edges in cycles.
+            if quad.predicate == IMPORTS && quad.subject != root_nb {
+                continue;
+            }
             graph.insert(TripleRef::new(quad.subject, quad.predicate, quad.object));
+        }
+        // Re-attach imports of the imported ontology and its dependencies onto the root; skip self-imports and dedup.
+        let closure_names: std::collections::HashSet<NamedNodeRef> =
+            closure.iter().map(|id| id.name()).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut add_import = |target: NamedNodeRef, dep: NamedNodeRef| {
+            if target == dep {
+                return;
+            }
+            if seen.insert(dep.to_string()) {
+                graph.insert(TripleRef::new(target, IMPORTS, dep));
+            }
+        };
+        for dep in imported_imports {
+            if closure_names.contains(&dep.as_ref()) {
+                add_import(root, dep.as_ref());
+            }
+        }
+        for dep_id in closure.iter().skip(1) {
+            add_import(root, dep_id.name());
         }
         Ok(graph)
     }

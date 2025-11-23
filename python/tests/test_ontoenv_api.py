@@ -282,6 +282,118 @@ ex:BaseClass a owl:Class .
         self.assertTrue(any("BaseClass" in str(t) for t in dest))
         self.assertTrue(any("ImpClass" in str(t) for t in dest))
 
+    def test_import_graph_handles_cycles(self):
+        """import_graph should handle cycles (A imports B imports A) without duplicating imports."""
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        a_iri = f"file://{a_path}"
+        b_iri = f"file://{b_path}"
+
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/A#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> .
+ex:A a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/B#> .
+<{b_iri}> a owl:Ontology ;
+    owl:imports <{a_iri}> .
+ex:B a owl:Class .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(a_path))
+        self.env.add(str(b_path))
+
+        dest = Graph()
+        dest.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+
+        self.env.import_graph(dest, a_iri, recursion_depth=-1)
+
+        # Single root ontology declaration
+        ontology_decls = list(dest.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(len(ontology_decls), 1)
+        self.assertEqual(str(ontology_decls[0][0]), a_iri)
+
+        # Imports rewritten onto root; no self-import duplication
+        imports = list(dest.triples((URIRef(a_iri), OWL.imports, None)))
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(str(imports[0][2]), b_iri)
+
+        # No imports hanging off the imported ontology
+        self.assertEqual(len(list(dest.triples((URIRef(b_iri), OWL.imports, None)))), 0)
+
+        # Data from both ontologies present
+        self.assertTrue(any("A" in str(t) for t in dest))
+        self.assertTrue(any("B" in str(t) for t in dest))
+
+    def test_import_graph_respects_recursion_depth(self):
+        """import_graph should honor recursion_depth when reattaching imports."""
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        c_path = self.test_dir / "C.ttl"
+        a_iri = f"file://{a_path}"
+        b_iri = f"file://{b_path}"
+        c_iri = f"file://{c_path}"
+
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ; owl:imports <{b_iri}> .
+""",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology ; owl:imports <{c_iri}> .
+""",
+            encoding="utf-8",
+        )
+        c_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{c_iri}> a owl:Ontology .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(a_path))
+        self.env.add(str(b_path))
+        self.env.add(str(c_path))
+
+        dest0 = Graph()
+        dest0.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+        self.env.import_graph(dest0, a_iri, recursion_depth=0)
+        self.assertEqual(len(list(dest0.triples((URIRef(a_iri), OWL.imports, None)))), 0)
+
+        dest1 = Graph()
+        dest1.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+        self.env.import_graph(dest1, a_iri, recursion_depth=1)
+        imports1 = list(dest1.triples((URIRef(a_iri), OWL.imports, None)))
+        self.assertEqual(len(imports1), 1)
+        self.assertEqual(str(imports1[0][2]), b_iri)
+
+        dest_full = Graph()
+        dest_full.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+        self.env.import_graph(dest_full, a_iri, recursion_depth=-1)
+        imports_full = list(dest_full.triples((URIRef(a_iri), OWL.imports, None)))
+        self.assertEqual(len(imports_full), 2)
+        self.assertSetEqual(
+            {str(i[2]) for i in imports_full},
+            {b_iri, c_iri},
+        )
+
     def test_to_rdflib_dataset(self):
         """Test env.to_rdflib_dataset()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
@@ -306,9 +418,10 @@ ex:BaseClass a owl:Class .
         # import full closure; ensure imports were materialized and owl:imports removed
         self.env.import_graph(g, name, recursion_depth=-1)
         self.assertGreater(len(g), 0)
-        # no owl:imports triples should remain
+        # owl:imports should be rewritten onto the root ontology
         imports_pred = URIRef("http://www.w3.org/2002/07/owl#imports")
-        self.assertEqual(len(list(g.triples((None, imports_pred, None)))), 0)
+        imports = list(g.triples((URIRef(name), imports_pred, None)))
+        self.assertGreater(len(imports), 0)
 
     def test_store_path(self):
         """Test env.store_path()."""
