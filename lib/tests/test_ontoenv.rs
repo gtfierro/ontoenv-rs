@@ -1,9 +1,12 @@
 use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::Config;
+use ontoenv::consts::IMPORTS;
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use oxigraph::model::NamedNodeRef;
+use oxigraph::model::NamedOrBlankNodeRef;
+use oxigraph::model::TermRef;
 use std::fs;
 use std::path::PathBuf;
 use std::thread;
@@ -178,11 +181,20 @@ ex:b ex:p ex:o .
         "Merged graph missing B data"
     );
 
-    // No owl:imports should remain
-    assert_eq!(
-        merged.triples_for_predicate(IMPORTS).count(),
-        0,
-        "Merged graph should not contain owl:imports"
+    // owl:imports should be rewritten onto the root (base) ontology
+    let imports: Vec<_> = merged
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert!(
+        !imports.is_empty(),
+        "Merged graph should contain rewritten imports on the root"
+    );
+    assert!(
+        imports
+            .iter()
+            .all(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name())),
+        "All imports should be on the root ontology"
     );
 
     // Only one owl:Ontology declaration (root) should remain
@@ -194,6 +206,178 @@ ex:b ex:p ex:o .
         ontology_decls, 1,
         "Should retain only the root ontology declaration"
     );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn import_graph_handles_cycles() -> Result<()> {
+    use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
+
+    let dir = TempDir::new("ontoenv-import-cycle")?;
+
+    let a_path = dir.path().join("A.ttl");
+    let b_path = dir.path().join("B.ttl");
+    let a_iri = format!("file://{}", a_path.display());
+    let b_iri = format!("file://{}", b_path.display());
+
+    fs::write(
+        &a_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix ex: <http://example.com/A#> .\n<{a}> a owl:Ontology ; owl:imports <{b}> .\nex:A a owl:Class .\n",
+            a = a_iri,
+            b = b_iri
+        ),
+    )?;
+    fs::write(
+        &b_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix ex: <http://example.com/B#> .\n<{b}> a owl:Ontology ; owl:imports <{a}> .\nex:B a owl:Class .\n",
+            a = a_iri,
+            b = b_iri
+        ),
+    )?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.add(
+        OntologyLocation::File(a_path),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    env.add(
+        OntologyLocation::File(b_path),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+
+    let a_id = env
+        .resolve(ResolveTarget::Location(OntologyLocation::from_str(&a_iri)?))
+        .unwrap();
+    let merged = env.import_graph(&a_id, -1)?;
+
+    // Single root ontology
+    let ontology_decls = merged
+        .triples_for_object(ONTOLOGY)
+        .filter(|t| t.predicate == TYPE)
+        .count();
+    assert_eq!(ontology_decls, 1);
+
+    // Imports rewritten onto root with no self-loop
+    let imports: Vec<_> = merged
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert_eq!(imports.len(), 1);
+    if let TermRef::NamedNode(obj) = imports[0].object {
+        assert_eq!(obj.as_str(), b_iri);
+    } else {
+        panic!("Import object was not a NamedNode");
+    }
+
+    // No imports hanging off B
+    assert_eq!(
+        merged
+            .triples_for_predicate(IMPORTS)
+            .filter(|t| {
+                t.subject == NamedOrBlankNodeRef::NamedNode(NamedNodeRef::new_unchecked(&b_iri))
+            })
+            .count(),
+        0
+    );
+
+    // Data from both ontologies present
+    assert!(merged
+        .iter()
+        .any(|t| format!("{:?}", t.subject).contains("#A")));
+    assert!(merged
+        .iter()
+        .any(|t| format!("{:?}", t.subject).contains("#B")));
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn import_graph_respects_recursion_depth() -> Result<()> {
+    let dir = TempDir::new("ontoenv-import-depth")?;
+
+    let a_path = dir.path().join("A.ttl");
+    let b_path = dir.path().join("B.ttl");
+    let c_path = dir.path().join("C.ttl");
+
+    let a_iri = format!("file://{}", a_path.display());
+    let b_iri = format!("file://{}", b_path.display());
+    let c_iri = format!("file://{}", c_path.display());
+
+    fs::write(
+        &a_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{a}> a owl:Ontology ; owl:imports <{b}> .",
+            a = a_iri, b = b_iri
+        ),
+    )?;
+    fs::write(
+        &b_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{b}> a owl:Ontology ; owl:imports <{c}> .",
+            b = b_iri, c = c_iri
+        ),
+    )?;
+    fs::write(
+        &c_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{c}> a owl:Ontology .",
+            c = c_iri
+        ),
+    )?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.add(
+        OntologyLocation::File(a_path),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    env.add(
+        OntologyLocation::File(b_path),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    env.add(
+        OntologyLocation::File(c_path),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+
+    let a_id = env
+        .resolve(ResolveTarget::Location(OntologyLocation::from_str(&a_iri)?))
+        .unwrap();
+
+    // depth 0: only A (no imports attached)
+    let g0 = env.import_graph(&a_id, 0)?;
+    let imports0 = g0
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .count();
+    assert_eq!(imports0, 0, "depth 0 should not carry imports on root");
+
+    // depth 1: A imports B
+    let g1 = env.import_graph(&a_id, 1)?;
+    let imports_b: Vec<_> = g1
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert_eq!(imports_b.len(), 1);
+
+    // depth -1: full closure, includes C
+    let gfull = env.import_graph(&a_id, -1)?;
+    let imports_full: Vec<_> = gfull
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert_eq!(imports_full.len(), 2);
 
     teardown(dir);
     Ok(())
