@@ -126,6 +126,73 @@ fn ontoenv_dir_override() {
     );
 }
 
+#[test]
+fn update_from_nested_subdir_uses_root_locations() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("update_nested");
+    let ont_dir = root.join("ontologies");
+    fs::create_dir_all(&ont_dir).unwrap();
+    let ont_path = ont_dir.join("A.ttl");
+    write_ttl(&ont_path, "http://example.org/ont/A", "");
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg("--")
+        .arg("ontologies")
+        .output()
+        .expect("run init");
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Modify the file to ensure update detects a change.
+    write_ttl(
+        &ont_path,
+        "http://example.org/ont/A",
+        "<http://example.org/ont/A> <http://example.org/p> <http://example.org/o> .",
+    );
+
+    let nested = root.join("nested").join("deeper");
+    fs::create_dir_all(&nested).unwrap();
+    let out = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("update")
+        .output()
+        .expect("run update");
+    assert!(
+        out.status.success(),
+        "update failed from nested dir: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let update_stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        update_stdout.contains("http://example.org/ont/A"),
+        "update output missing ontology: {}",
+        update_stdout
+    );
+
+    let out = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("list")
+        .arg("locations")
+        .output()
+        .expect("run list locations");
+    assert!(
+        out.status.success(),
+        "list locations failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let locations_out = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        locations_out.contains("ontologies") && locations_out.contains("A.ttl"),
+        "expected ontology location in output, got: {}",
+        locations_out
+    );
+}
+
 // Why subcommand integration
 #[test]
 fn why_lists_importers_paths() {

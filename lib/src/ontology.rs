@@ -375,6 +375,13 @@ impl Ontology {
         self.last_updated = Some(last_updated);
     }
 
+    /// Update the ontology's location (and associated identifier) in one step.
+    /// Keeps the name stable while swapping in the new location.
+    pub fn set_location(&mut self, location: OntologyLocation) {
+        self.id = GraphIdentifier::new_with_location(self.id.name(), location.clone());
+        self.location = Some(location);
+    }
+
     pub fn id(&self) -> &GraphIdentifier {
         &self.id
     }

@@ -10,6 +10,8 @@ use log::warn;
 use oxigraph::model::{Graph, NamedNode, NamedNodeRef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::mem;
+use std::path::Path;
 
 // custom derive for ontologies field as vec of Ontology
 fn ontologies_ser<S>(
@@ -201,5 +203,31 @@ impl Environment {
         for (location, ontology_id, ontology_name) in alias_data {
             self.register_alias(&location, &ontology_id, &ontology_name);
         }
+    }
+
+    /// Ensure file-based ontology locations are absolute using `root` as the base
+    /// for any relative paths, and rebuild cached location/alias maps.
+    pub fn normalize_file_locations(&mut self, root: &Path) {
+        let mut rebuilt: HashMap<GraphIdentifier, Ontology> = HashMap::new();
+        self.locations.clear();
+
+        for (_, mut ontology) in mem::take(&mut self.ontologies) {
+            if let Some(loc) = ontology.location().cloned() {
+                if let OntologyLocation::File(p) = &loc {
+                    if p.is_relative() {
+                        let abs = root.join(p);
+                        ontology.set_location(OntologyLocation::File(abs));
+                    }
+                }
+            }
+            let id = ontology.id().clone();
+            if let Some(loc) = ontology.location() {
+                self.locations.insert(loc.clone(), id.clone());
+            }
+            rebuilt.insert(id, ontology);
+        }
+
+        self.ontologies = rebuilt;
+        self.rebuild_aliases();
     }
 }
