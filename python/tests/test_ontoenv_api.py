@@ -236,8 +236,8 @@ class TestOntoEnvAPI(unittest.TestCase):
         """import_graph merges closure into one ontology declaration and removes owl:imports."""
         base_path = self.test_dir / "base.ttl"
         imp_path = self.test_dir / "imp.ttl"
-        base_iri = f"file://{base_path}"
-        imp_iri = f"file://{imp_path}"
+        base_iri = base_path.resolve().as_uri()
+        imp_iri = imp_path.resolve().as_uri()
 
         imp_path.write_text(
             f"""
@@ -286,8 +286,8 @@ ex:BaseClass a owl:Class .
         """import_graph should handle cycles (A imports B imports A) without duplicating imports."""
         a_path = self.test_dir / "A.ttl"
         b_path = self.test_dir / "B.ttl"
-        a_iri = f"file://{a_path}"
-        b_iri = f"file://{b_path}"
+        a_iri = a_path.resolve().as_uri()
+        b_iri = b_path.resolve().as_uri()
 
         a_path.write_text(
             f"""
@@ -341,9 +341,9 @@ ex:B a owl:Class .
         a_path = self.test_dir / "A.ttl"
         b_path = self.test_dir / "B.ttl"
         c_path = self.test_dir / "C.ttl"
-        a_iri = f"file://{a_path}"
-        b_iri = f"file://{b_path}"
-        c_iri = f"file://{c_path}"
+        a_iri = a_path.resolve().as_uri()
+        b_iri = b_path.resolve().as_uri()
+        c_iri = c_path.resolve().as_uri()
 
         a_path.write_text(
             f"""
