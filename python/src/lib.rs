@@ -3,7 +3,6 @@ use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation};
 use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
-use ::ontoenv::transform;
 use ::ontoenv::ToUriString;
 use anyhow::Error;
 #[cfg(feature = "cli")]
@@ -515,27 +514,12 @@ impl OntoEnv {
         let type_uri = uriref_constructor.call1((TYPE.as_str(),))?;
         let ontology_uri = uriref_constructor.call1((ONTOLOGY.as_str(),))?;
         let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict(py)?;
-        let result = destination_graph.call_method("value", (), Some(&kwargs))?;
-        let root = if result.is_none() {
-            None
-        } else {
-            let ontology = NamedNode::new(result.extract::<String>()?)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-            Some(NamedOrBlankNodeRef::NamedNode(ontology.as_ref()))
-        };
-
+        let _ = destination_graph.call_method("value", (), Some(&kwargs))?;
         // Flatten quads into triples; graph_name is ignored because we have already merged.
-        for quad in union.dataset.quads() {
+        for quad in union.dataset.iter() {
             let s: Term = quad.subject.into();
             let p: Term = quad.predicate.into();
             let o: Term = quad.object.into();
-
-            // If a root ontology is known, drop ontology declarations that are not the root.
-            if let Some(root_node) = root {
-                if p.as_ref() == TYPE && o.as_ref() == ONTOLOGY && quad.subject != root_node {
-                    continue;
-                }
-            }
 
             let t = PyTuple::new(
                 py,
