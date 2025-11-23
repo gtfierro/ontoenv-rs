@@ -198,6 +198,7 @@ jobs:
               --release \
               --target ${{ matrix.arch }}-unknown-linux-gnu \
               --interpreter python3.12 \
+              --features "abi3 cli" \
               --compatibility manylinux2014 \
               --zig
       - uses: actions/upload-artifact@v4
