@@ -7,8 +7,6 @@ from rdflib import Graph, URIRef
 from rdflib.namespace import RDF, OWL
 
 
-
-
 class TestOntoEnvAPI(unittest.TestCase):
     def setUp(self):
         """Set up a test environment."""
@@ -18,7 +16,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.test_dir.mkdir()
 
         self.brick_file_path = Path("../brick/Brick.ttl")
-        self.brick_name = "https://brickschema.org/schema/1.4-rc1/Brick"
+        self.brick_name = "https://brickschema.org/schema/1.4/Brick"
         self.brick_144_url = "https://brickschema.org/schema/1.4.4/Brick.ttl"
         self.brick_144_name = "https://brickschema.org/schema/1.4/Brick"
         self.env = None
@@ -69,7 +67,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_name, ontologies)
         # check that dependencies were added because fetch_imports is true by default
-        self.assertIn("http://qudt.org/2.1/schema/qudt", ontologies)
+        self.assertIn("http://qudt.org/3.1.8/schema/qudt", ontologies)
 
     def test_add_url(self):
         """Test env.add() with a URL."""
@@ -178,7 +176,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         brick_ontology_uri = URIRef(self.brick_name)
         g.add((brick_ontology_uri, RDF.type, OWL.Ontology))
         # add an import to be removed
-        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/2.1/schema/qudt")))
+        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/3.1.8/schema/qudt")))
 
         num_triples_before = len(g)
         imported = self.env.import_dependencies(g)
@@ -223,15 +221,15 @@ class TestOntoEnvAPI(unittest.TestCase):
         closure_list = self.env.list_closure(name)
         self.assertIn(name, closure_list)
         # check for some known imports
-        self.assertIn("http://qudt.org/2.1/schema/qudt", closure_list)
-        self.assertIn("http://qudt.org/2.1/vocab/quantitykind", closure_list)
+        self.assertIn("http://qudt.org/3.1.8/schema/qudt", closure_list)
+        self.assertIn("http://qudt.org/3.1.8/vocab/quantitykind", closure_list)
 
     def test_get_importers(self):
         """Test env.get_importers()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
 
-        dependents = self.env.get_importers("http://qudt.org/2.1/vocab/quantitykind")
+        dependents = self.env.get_importers("http://qudt.org/3.1.8/vocab/quantitykind")
         self.assertIn(self.brick_name, dependents)
 
     def test_to_rdflib_dataset(self):
@@ -328,7 +326,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         brick_ontology_uri = URIRef(self.brick_name)
         g.add((brick_ontology_uri, RDF.type, OWL.Ontology))
         # add an import to be resolved
-        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/2.1/vocab/quantitykind")))
+        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/3.1.8/vocab/quantitykind")))
 
         num_triples_before = len(g)
         deps_g, imported = self.env.get_dependencies_graph(g)
@@ -340,8 +338,8 @@ class TestOntoEnvAPI(unittest.TestCase):
         # new graph should have content
         self.assertGreater(len(deps_g), 0)
         self.assertGreater(len(imported), 0)
-        self.assertIn("http://qudt.org/2.1/vocab/quantitykind", imported)
-        self.assertIn("http://qudt.org/2.1/vocab/dimensionvector", imported)
+        self.assertIn("http://qudt.org/3.1.8/vocab/quantitykind", imported)
+        self.assertIn("http://qudt.org/3.1.8/vocab/dimensionvector", imported)
 
         # test with destination graph
         dest_g = Graph()
