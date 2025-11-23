@@ -477,11 +477,13 @@ impl OntoEnv {
 
     // The following methods will now access the inner OntoEnv in a thread-safe manner:
 
+    #[pyo3(signature = (destination_graph, uri, recursion_depth = -1))]
     fn import_graph(
         &self,
         py: Python,
         destination_graph: &Bound<'_, PyAny>,
         uri: &str,
+        recursion_depth: i32,
     ) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
@@ -498,28 +500,42 @@ impl OntoEnv {
                     "Failed to resolve graph for URI: {uri}"
                 ))
             })?;
-        let mut graph = env.get_graph(&graphid).map_err(anyhow_to_pyerr)?;
+
+        // Compute closure starting from this ontology, honoring recursion depth and deduping loops.
+        let closure = env
+            .get_closure(&graphid, recursion_depth)
+            .map_err(anyhow_to_pyerr)?;
+
+        // Merge closure graphs into one dataset with SHACL prefix rewrite and owl:imports removal.
+        let union = env
+            .get_union_graph(&closure, Some(true), Some(true))
+            .map_err(anyhow_to_pyerr)?;
 
         let uriref_constructor = rdflib.getattr("URIRef")?;
         let type_uri = uriref_constructor.call1((TYPE.as_str(),))?;
         let ontology_uri = uriref_constructor.call1((ONTOLOGY.as_str(),))?;
         let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict(py)?;
         let result = destination_graph.call_method("value", (), Some(&kwargs))?;
-        if !result.is_none() {
+        let root = if result.is_none() {
+            None
+        } else {
             let ontology = NamedNode::new(result.extract::<String>()?)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-            let base_ontology = NamedOrBlankNodeRef::NamedNode(ontology.as_ref());
+            Some(NamedOrBlankNodeRef::NamedNode(ontology.as_ref()))
+        };
 
-            transform::rewrite_sh_prefixes_graph(&mut graph, base_ontology);
-            transform::remove_ontology_declarations_graph(&mut graph, base_ontology);
-        }
-        // remove the owl:import statement for the 'uri' ontology
-        transform::remove_owl_imports_graph(&mut graph, Some(&[iri.as_ref()]));
+        // Flatten quads into triples; graph_name is ignored because we have already merged.
+        for quad in union.dataset.quads() {
+            let s: Term = quad.subject.into();
+            let p: Term = quad.predicate.into();
+            let o: Term = quad.object.into();
 
-        for triple in graph.into_iter() {
-            let s: Term = triple.subject.into();
-            let p: Term = triple.predicate.into();
-            let o: Term = triple.object.into();
+            // If a root ontology is known, drop ontology declarations that are not the root.
+            if let Some(root_node) = root {
+                if p.as_ref() == TYPE && o.as_ref() == ONTOLOGY && quad.subject != root_node {
+                    continue;
+                }
+            }
 
             let t = PyTuple::new(
                 py,
