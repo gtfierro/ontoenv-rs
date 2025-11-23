@@ -11,7 +11,7 @@ use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef};
+use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
 use std::io::{BufReader, Write};
@@ -1394,6 +1394,24 @@ impl OntoEnv {
             failed_imports: None, // TODO: Populate this correctly
             namespace_map,
         })
+    }
+
+    /// Merge an ontology and its imports closure into a single graph.
+    ///
+    /// - `recursion_depth` follows the semantics of [`get_closure`]; `-1` means unlimited.
+    /// - SHACL prefixes are rewritten to the root ontology and `sh:declare` entries deduplicated.
+    /// - `owl:imports` statements are removed to prevent downstream refetching.
+    /// - Additional `owl:Ontology` declarations are stripped, keeping only the root.
+    pub fn import_graph(&self, id: &GraphIdentifier, recursion_depth: i32) -> Result<Graph> {
+        let closure = self.get_closure(id, recursion_depth)?;
+        let union = self.get_union_graph(&closure, Some(true), Some(true))?;
+
+        // Flatten dataset into a single graph, ignoring named graph labels.
+        let mut graph = Graph::new();
+        for quad in union.dataset.iter() {
+            graph.insert(TripleRef::new(quad.subject, quad.predicate, quad.object));
+        }
+        Ok(graph)
     }
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {

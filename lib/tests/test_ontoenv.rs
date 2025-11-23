@@ -124,6 +124,174 @@ fn default_config_with_subdir(dir: &TempDir, path: &str) -> Config {
 fn teardown(_dir: TempDir) {}
 
 #[test]
+fn import_graph_merges_closure_and_removes_imports() -> Result<()> {
+    use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
+    use oxigraph::model::Triple;
+    let dir = TempDir::new("ontoenv-import-merge")?;
+
+    // A imports B, B imports A (cycle)
+    let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex.org/> .
+<http://ex.org/A> a owl:Ontology ;
+  owl:imports <http://ex.org/B> .
+ex:shape sh:prefixes <http://ex.org/A> .
+ex:a ex:p ex:o .
+"#;
+    let b_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://ex.org/> .
+<http://ex.org/B> a owl:Ontology ;
+  owl:imports <http://ex.org/A> .
+ex:b ex:p ex:o .
+"#;
+    fs::write(dir.path().join("A.ttl"), a_ttl)?;
+    fs::write(dir.path().join("B.ttl"), b_ttl)?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update_all(false)?;
+
+    let a_name = NamedNodeRef::new_unchecked("http://ex.org/A");
+    let a_id = env
+        .resolve(ResolveTarget::Graph(a_name.into()))
+        .expect("A should resolve");
+
+    let merged = env.import_graph(&a_id, -1)?;
+
+    // Should contain data from both ontologies
+    let a_triple = Triple::new(
+        NamedNodeRef::new_unchecked("http://ex.org/a"),
+        NamedNodeRef::new_unchecked("http://ex.org/p"),
+        NamedNodeRef::new_unchecked("http://ex.org/o"),
+    );
+    let b_triple = Triple::new(
+        NamedNodeRef::new_unchecked("http://ex.org/b"),
+        NamedNodeRef::new_unchecked("http://ex.org/p"),
+        NamedNodeRef::new_unchecked("http://ex.org/o"),
+    );
+    assert!(
+        merged.contains(a_triple.as_ref()),
+        "Merged graph missing A data"
+    );
+    assert!(
+        merged.contains(b_triple.as_ref()),
+        "Merged graph missing B data"
+    );
+
+    // No owl:imports should remain
+    assert_eq!(
+        merged.triples_for_predicate(IMPORTS).count(),
+        0,
+        "Merged graph should not contain owl:imports"
+    );
+
+    // Only one owl:Ontology declaration (root) should remain
+    let ontology_decls = merged
+        .triples_for_object(ONTOLOGY)
+        .filter(|t| t.predicate == TYPE)
+        .count();
+    assert_eq!(
+        ontology_decls, 1,
+        "Should retain only the root ontology declaration"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[cfg(unix)]
+mod unix_permission_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn test_find_files_skips_permission_denied_when_not_strict() -> Result<()> {
+        let dir = TempDir::new("ontoenv-permissions")?;
+        setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl" });
+
+        let restricted_dir = dir.path().join("restricted");
+        fs::create_dir_all(&restricted_dir)?;
+        fs::write(
+            restricted_dir.join("hidden.ttl"),
+            "@prefix : <#> . :s :p :o .",
+        )?;
+
+        struct PermissionGuard {
+            path: PathBuf,
+            original: fs::Permissions,
+        }
+
+        impl Drop for PermissionGuard {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(&self.path, self.original.clone());
+            }
+        }
+
+        let guard = PermissionGuard {
+            path: restricted_dir.clone(),
+            original: fs::metadata(&restricted_dir)?.permissions(),
+        };
+
+        let mut denied = guard.original.clone();
+        denied.set_mode(0o000);
+        fs::set_permissions(&restricted_dir, denied)?;
+
+        let cfg = default_config(&dir);
+        let env = OntoEnv::init(cfg, false)?;
+        let files = env.find_files()?;
+        let expected = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        assert!(
+            files.contains(&expected),
+            "find_files should still collect readable entries"
+        );
+
+        drop(guard);
+        teardown(dir);
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+mod windows_permission_tests {
+    use super::*;
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    #[test]
+    fn test_find_files_skips_sharing_violation_when_not_strict() -> Result<()> {
+        let dir = TempDir::new("ontoenv-permissions")?;
+        setup!(&dir, {
+            "fixtures/ont1.ttl" => "ont1.ttl",
+            "fixtures/ont2.ttl" => "locked.ttl"
+        });
+
+        let locked_path = dir.path().join("locked.ttl");
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&locked_path)?;
+
+        let cfg = default_config(&dir);
+        let env = OntoEnv::init(cfg, false)?;
+        let files = env.find_files()?;
+        let readable = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        assert!(
+            files.contains(&readable),
+            "find_files should still collect readable entries"
+        );
+        assert!(
+            !files.contains(&OntologyLocation::File(locked_path.clone())),
+            "locked files should be skipped when encountering sharing violations"
+        );
+
+        drop(lock);
+        teardown(dir);
+        Ok(())
+    }
+}
+
+#[test]
 fn test_ontoenv_scans() -> Result<()> {
     let dir = TempDir::new("ontoenv")?;
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
