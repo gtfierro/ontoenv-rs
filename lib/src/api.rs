@@ -222,6 +222,25 @@ impl OntoEnv {
         }
     }
 
+    /// Resolve a path relative to the configured OntoEnv root if it is not already absolute.
+    fn resolve_path(&self, path: &Path) -> PathBuf {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.config.root.join(path)
+        }
+    }
+
+    /// Ensure file locations are anchored to the OntoEnv root; leave other variants untouched.
+    fn resolve_location(&self, location: OntologyLocation) -> OntologyLocation {
+        match location {
+            OntologyLocation::File(p) if p.is_relative() => {
+                OntologyLocation::File(self.resolve_path(&p))
+            }
+            _ => location,
+        }
+    }
+
     /// Opens an existing environment rooted at `config.root`, or initializes a new one using
     /// the provided configuration when none exists yet.
     pub fn open_or_init(config: Config, read_only: bool) -> Result<Self> {
@@ -445,12 +464,7 @@ impl OntoEnv {
         let reader = BufReader::new(file);
         // TODO: clean up the locations field loading
         let mut env: Environment = serde_json::from_reader(reader)?;
-        let mut locations: HashMap<OntologyLocation, GraphIdentifier> = HashMap::new();
-        for ontology in env.ontologies().values() {
-            locations.insert(ontology.location().unwrap().clone(), ontology.id().clone());
-        }
-        env.locations = locations;
-        env.rebuild_aliases();
+        env.normalize_file_locations(&config.root);
 
         // Initialize the IO to the persistent graph type. We know that it exists because we
         // are loading from a directory
@@ -674,6 +688,7 @@ impl OntoEnv {
         refresh: RefreshStrategy,
         update_dependencies: bool,
     ) -> Result<GraphIdentifier> {
+        let location = self.resolve_location(location);
         self.with_io_batch(move |env| {
             env.add_with_options_inner(location, overwrite, refresh, update_dependencies)
         })
@@ -1109,17 +1124,18 @@ impl OntoEnv {
         }
         let mut files = HashSet::new();
         for location in &self.config.locations {
+            let resolved = self.resolve_path(location);
             // if location does not exist, skip it
-            if !location.exists() {
-                warn!("Location does not exist: {location:?}");
+            if !resolved.exists() {
+                warn!("Location does not exist: {resolved:?}");
                 continue;
             }
             // if location is a file, add it to the list
-            if location.is_file() && self.config.is_included(location) {
-                files.insert(OntologyLocation::File(location.clone()));
+            if resolved.is_file() && self.config.is_included(&resolved) {
+                files.insert(OntologyLocation::File(resolved.clone()));
                 continue;
             }
-            for entry in walkdir::WalkDir::new(location) {
+            for entry in walkdir::WalkDir::new(&resolved) {
                 let entry = match entry {
                     Ok(entry) => entry,
                     Err(err) => {
@@ -1129,7 +1145,7 @@ impl OntoEnv {
                         let path = err
                             .path()
                             .map(|p| p.display().to_string())
-                            .unwrap_or_else(|| location.display().to_string());
+                            .unwrap_or_else(|| resolved.display().to_string());
                         warn!("Skipping {path} due to filesystem error: {err}");
                         continue;
                     }
