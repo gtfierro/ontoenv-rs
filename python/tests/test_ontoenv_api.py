@@ -255,8 +255,12 @@ class TestOntoEnvAPI(unittest.TestCase):
 
         g = Graph()
         self.assertEqual(len(g), 0)
-        self.env.import_graph(g, name)
+        # import full closure; ensure imports were materialized and owl:imports removed
+        self.env.import_graph(g, name, recursion_depth=-1)
         self.assertGreater(len(g), 0)
+        # no owl:imports triples should remain
+        imports_pred = URIRef("http://www.w3.org/2002/07/owl#imports")
+        self.assertEqual(len(list(g.triples((None, imports_pred, None)))), 0)
 
     def test_store_path(self):
         """Test env.store_path()."""
