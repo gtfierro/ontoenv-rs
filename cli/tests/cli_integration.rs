@@ -135,6 +135,9 @@ fn update_from_nested_subdir_uses_root_locations() {
     let ont_path = ont_dir.join("A.ttl");
     write_ttl(&ont_path, "http://example.org/ont/A", "");
 
+    // Ensure file mtime changes on rewrites (Linux FS timestamp granularity can be 1s)
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("init")

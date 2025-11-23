@@ -242,18 +242,18 @@ fn import_graph_handles_cycles() -> Result<()> {
     let cfg = default_config(&dir);
     let mut env = OntoEnv::init(cfg, false)?;
     env.add(
-        OntologyLocation::File(a_path),
+        OntologyLocation::File(a_path.clone()),
         Overwrite::Allow,
         RefreshStrategy::UseCache,
     )?;
     env.add(
-        OntologyLocation::File(b_path),
+        OntologyLocation::File(b_path.clone()),
         Overwrite::Allow,
         RefreshStrategy::UseCache,
     )?;
 
     let a_id = env
-        .resolve(ResolveTarget::Location(OntologyLocation::from_str(&a_iri)?))
+        .resolve(ResolveTarget::Location(OntologyLocation::File(a_path)))
         .unwrap();
     let merged = env.import_graph(&a_id, -1)?;
 
@@ -336,23 +336,23 @@ fn import_graph_respects_recursion_depth() -> Result<()> {
     let cfg = default_config(&dir);
     let mut env = OntoEnv::init(cfg, false)?;
     env.add(
-        OntologyLocation::File(a_path),
+        OntologyLocation::File(a_path.clone()),
         Overwrite::Allow,
         RefreshStrategy::UseCache,
     )?;
     env.add(
-        OntologyLocation::File(b_path),
+        OntologyLocation::File(b_path.clone()),
         Overwrite::Allow,
         RefreshStrategy::UseCache,
     )?;
     env.add(
-        OntologyLocation::File(c_path),
+        OntologyLocation::File(c_path.clone()),
         Overwrite::Allow,
         RefreshStrategy::UseCache,
     )?;
 
     let a_id = env
-        .resolve(ResolveTarget::Location(OntologyLocation::from_str(&a_iri)?))
+        .resolve(ResolveTarget::Location(OntologyLocation::File(a_path)))
         .unwrap();
 
     // depth 0: only A (no imports attached)
