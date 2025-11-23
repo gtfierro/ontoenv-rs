@@ -7,7 +7,7 @@ use ::ontoenv::ToUriString;
 use anyhow::Error;
 #[cfg(feature = "cli")]
 use ontoenv_cli;
-use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
+use oxigraph::model::{BlankNode, Literal, NamedNode, Term};
 #[cfg(not(feature = "cli"))]
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
@@ -505,22 +505,50 @@ impl OntoEnv {
             .get_closure(&graphid, recursion_depth)
             .map_err(anyhow_to_pyerr)?;
 
-        // Merge closure graphs into one dataset with SHACL prefix rewrite and owl:imports removal.
-        let union = env
-            .get_union_graph(&closure, Some(true), Some(true))
-            .map_err(anyhow_to_pyerr)?;
-
+        // Determine root ontology: prefer an existing ontology in the destination graph; else use the
+        // imported ontology name.
         let uriref_constructor = rdflib.getattr("URIRef")?;
         let type_uri = uriref_constructor.call1((TYPE.as_str(),))?;
         let ontology_uri = uriref_constructor.call1((ONTOLOGY.as_str(),))?;
         let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict(py)?;
-        let _ = destination_graph.call_method("value", (), Some(&kwargs))?;
-        // Flatten quads into triples; graph_name is ignored because we have already merged.
-        for quad in union.dataset.iter() {
-            let s: Term = quad.subject.into();
-            let p: Term = quad.predicate.into();
-            let o: Term = quad.object.into();
+        let existing_root = destination_graph.call_method("value", (), Some(&kwargs))?;
+        let root_node_owned: oxigraph::model::NamedNode = if existing_root.is_none() {
+            graphid.name().into_owned()
+        } else {
+            NamedNode::new(existing_root.extract::<String>()?)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                .to_owned()
+        };
+        let root_node = root_node_owned.as_ref();
 
+        // Remove any ontology declarations in the destination that are not the chosen root.
+        let triples_to_remove = destination_graph.call_method(
+            "triples",
+            ((
+                py.None(),
+                uriref_constructor.call1((TYPE.as_str(),))?,
+                uriref_constructor.call1((ONTOLOGY.as_str(),))?,
+            ),),
+            None,
+        )?;
+        for triple in triples_to_remove.try_iter()? {
+            let t = triple?;
+            let subj: Bound<'_, PyAny> = t.get_item(0)?;
+            if subj.str()?.to_str()? != root_node.as_str() {
+                destination_graph.getattr("remove")?.call1((t,))?;
+            }
+        }
+
+        // Merge closure graphs via the Rust API, choosing the caller's root.
+        let merged = env
+            .import_graph_with_root(&graphid, recursion_depth, root_node)
+            .map_err(anyhow_to_pyerr)?;
+
+        // Flatten triples into the destination graph.
+        for triple in merged.into_iter() {
+            let s: Term = triple.subject.into();
+            let p: Term = triple.predicate.into();
+            let o: Term = triple.object.into();
             let t = PyTuple::new(
                 py,
                 &[
@@ -529,7 +557,6 @@ impl OntoEnv {
                     term_to_python(py, &rdflib, o)?,
                 ],
             )?;
-
             destination_graph.getattr("add")?.call1((t,))?;
         }
         Ok(())

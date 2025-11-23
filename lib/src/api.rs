@@ -2,6 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
+use crate::consts::{ONTOLOGY, TYPE};
 use crate::doctor::{
     ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
 };
@@ -11,7 +12,9 @@ use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
+use oxigraph::model::{
+    Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TermRef, TripleRef,
+};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
 use std::io::{BufReader, Write};
@@ -227,7 +230,15 @@ impl OntoEnv {
         if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.config.root.join(path)
+            // Prefer current working directory (CLI/Python caller context) so explicit relative
+            // search paths like "../brick" behave as users expect, but fall back to root-relative.
+            let cwd = std::env::current_dir().unwrap_or_else(|_| self.config.root.clone());
+            let cwd_join = cwd.join(path);
+            if cwd_join.exists() {
+                cwd_join
+            } else {
+                self.config.root.join(path)
+            }
         }
     }
 
@@ -1399,12 +1410,23 @@ impl OntoEnv {
     /// Merge an ontology and its imports closure into a single graph.
     ///
     /// - `recursion_depth` follows the semantics of [`get_closure`]; `-1` means unlimited.
-    /// - SHACL prefixes are rewritten to the root ontology and `sh:declare` entries deduplicated.
+    /// - SHACL prefixes are rewritten to the supplied `root` ontology and `sh:declare` entries deduplicated.
     /// - `owl:imports` statements are removed to prevent downstream refetching.
-    /// - Additional `owl:Ontology` declarations are stripped, keeping only the root.
-    pub fn import_graph(&self, id: &GraphIdentifier, recursion_depth: i32) -> Result<Graph> {
+    /// - Additional `owl:Ontology` declarations are stripped, keeping only `root`.
+    pub fn import_graph_with_root(
+        &self,
+        id: &GraphIdentifier,
+        recursion_depth: i32,
+        root: NamedNodeRef,
+    ) -> Result<Graph> {
         let closure = self.get_closure(id, recursion_depth)?;
-        let union = self.get_union_graph(&closure, Some(true), Some(true))?;
+        let mut union = self.get_union_graph(&closure, Some(true), Some(true))?;
+
+        let root_nb = NamedOrBlankNodeRef::NamedNode(root);
+        // Apply transforms with caller-chosen root.
+        transform::rewrite_sh_prefixes_dataset(&mut union.dataset, root_nb);
+        transform::remove_owl_imports(&mut union.dataset, None);
+        transform::remove_ontology_declarations(&mut union.dataset, root_nb);
 
         // Flatten dataset into a single graph, ignoring named graph labels.
         let mut graph = Graph::new();
@@ -1412,6 +1434,11 @@ impl OntoEnv {
             graph.insert(TripleRef::new(quad.subject, quad.predicate, quad.object));
         }
         Ok(graph)
+    }
+
+    /// Convenience wrapper that uses the target ontology as the root.
+    pub fn import_graph(&self, id: &GraphIdentifier, recursion_depth: i32) -> Result<Graph> {
+        self.import_graph_with_root(id, recursion_depth, id.name())
     }
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
