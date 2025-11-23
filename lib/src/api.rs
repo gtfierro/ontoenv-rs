@@ -1141,7 +1141,14 @@ impl OntoEnv {
             }
             // if location is a file, add it to the list
             if resolved.is_file() && self.config.is_included(&resolved) {
-                files.insert(OntologyLocation::File(resolved.clone()));
+                if let Err(err) = std::fs::File::open(&resolved) {
+                    if self.config.strict {
+                        return Err(err.into());
+                    }
+                    warn!("Skipping {:?} due to access error: {}", resolved, err);
+                } else {
+                    files.insert(OntologyLocation::File(resolved.clone()));
+                }
                 continue;
             }
             for entry in walkdir::WalkDir::new(&resolved) {
@@ -1160,6 +1167,18 @@ impl OntoEnv {
                     }
                 };
                 if entry.file_type().is_file() && self.config.is_included(entry.path()) {
+                    // Skip unreadable files when not strict
+                    if let Err(err) = std::fs::File::open(entry.path()) {
+                        if self.config.strict {
+                            return Err(err.into());
+                        }
+                        warn!(
+                            "Skipping {:?} due to access error while opening: {}",
+                            entry.path(),
+                            err
+                        );
+                        continue;
+                    }
                     files.insert(OntologyLocation::File(entry.path().to_path_buf()));
                 }
             }
