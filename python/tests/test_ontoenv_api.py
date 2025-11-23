@@ -232,6 +232,56 @@ class TestOntoEnvAPI(unittest.TestCase):
         dependents = self.env.get_importers("http://qudt.org/3.1.8/vocab/quantitykind")
         self.assertIn(self.brick_name, dependents)
 
+    def test_import_graph_flattens_to_single_ontology(self):
+        """import_graph merges closure into one ontology declaration and removes owl:imports."""
+        base_path = self.test_dir / "base.ttl"
+        imp_path = self.test_dir / "imp.ttl"
+        base_iri = f"file://{base_path}"
+        imp_iri = f"file://{imp_path}"
+
+        imp_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/imp#> .
+<{imp_iri}> a owl:Ontology .
+ex:ImpClass a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        base_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/base#> .
+<{base_iri}> a owl:Ontology ;
+    owl:imports <{imp_iri}> .
+ex:BaseClass a owl:Class .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(imp_path))
+        self.env.add(str(base_path))
+
+        dest = Graph()
+        dest.add((URIRef(base_iri), RDF.type, OWL.Ontology))
+
+        self.env.import_graph(dest, base_iri, recursion_depth=-1)
+
+        # Only one ontology declaration (the root) should remain
+        ontology_decls = list(dest.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(len(ontology_decls), 1)
+        self.assertEqual(str(ontology_decls[0][0]), base_iri)
+
+        # Imports rewritten onto root, not to the imported ontology
+        imports = list(dest.triples((URIRef(base_iri), OWL.imports, None)))
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(str(imports[0][2]), imp_iri)
+
+        # Data from both base and imported ontologies present
+        self.assertTrue(any("BaseClass" in str(t) for t in dest))
+        self.assertTrue(any("ImpClass" in str(t) for t in dest))
+
     def test_to_rdflib_dataset(self):
         """Test env.to_rdflib_dataset()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
