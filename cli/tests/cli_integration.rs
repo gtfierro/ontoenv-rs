@@ -153,6 +153,8 @@ fn update_from_nested_subdir_uses_root_locations() {
         "http://example.org/ont/A",
         "<http://example.org/ont/A> <http://example.org/p> <http://example.org/o> .",
     );
+    // Ensure mtime advances on filesystems with coarse timestamp granularity (e.g., Windows).
+    std::thread::sleep(std::time::Duration::from_millis(2000));
 
     let nested = root.join("nested").join("deeper");
     fs::create_dir_all(&nested).unwrap();
