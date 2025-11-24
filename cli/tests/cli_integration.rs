@@ -28,17 +28,13 @@ fn ontoenv_bin() -> PathBuf {
 }
 
 fn tmp_dir(name: &str) -> PathBuf {
-    let mut d = std::env::current_dir().unwrap();
-    d.push(format!(
-        "target/cli_integration_{}_{}",
-        name,
-        std::process::id()
-    ));
-    if d.exists() {
-        let _ = fs::remove_dir_all(&d);
+    let mut base = std::env::temp_dir();
+    base.push(format!("ontoenv-cli-{}-{}", name, std::process::id()));
+    if base.exists() {
+        let _ = fs::remove_dir_all(&base);
     }
-    fs::create_dir_all(&d).unwrap();
-    d
+    fs::create_dir_all(&base).unwrap();
+    base
 }
 
 fn write_ttl(path: &PathBuf, ontology_uri: &str, extra: &str) {
