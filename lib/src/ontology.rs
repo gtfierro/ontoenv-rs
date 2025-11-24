@@ -334,6 +334,8 @@ pub struct Ontology {
     version_properties: HashMap<NamedNode, String>,
     #[serde(default)]
     namespace_map: HashMap<String, String>,
+    #[serde(default)]
+    content_hash: Option<String>,
 }
 
 // impl display; name + location + last updated, then indented version properties
@@ -366,6 +368,7 @@ impl Default for Ontology {
             last_updated: None,
             version_properties: HashMap::new(),
             namespace_map: HashMap::new(),
+            content_hash: None,
         }
     }
 }
@@ -380,6 +383,14 @@ impl Ontology {
     pub fn set_location(&mut self, location: OntologyLocation) {
         self.id = GraphIdentifier::new_with_location(self.id.name(), location.clone());
         self.location = Some(location);
+    }
+
+    pub fn set_content_hash(&mut self, hash: String) {
+        self.content_hash = Some(hash);
+    }
+
+    pub fn content_hash(&self) -> Option<&str> {
+        self.content_hash.as_deref()
     }
 
     pub fn id(&self) -> &GraphIdentifier {
@@ -610,6 +621,7 @@ impl Ontology {
             version_properties,
             last_updated: None,
             namespace_map,
+            content_hash: None,
         })
     }
 

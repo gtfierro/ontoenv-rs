@@ -15,13 +15,15 @@ use chrono::prelude::*;
 use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
-use std::io::{BufReader, Write};
+use std::fs::File;
+use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::{anyhow, Result};
+use blake3;
 use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -867,48 +869,47 @@ impl OntoEnv {
                     }
                 };
 
-                // if the source modified is missing, then we assume it has been updated
-                let source_modified = self
-                    .io
-                    .source_last_modified(ontology.id())
-                    .unwrap_or(Utc::now());
-                // if the ontology has no modified time, then we assume it has never been updated
                 let last_updated = ontology
                     .last_updated
                     .unwrap_or(Utc.timestamp_opt(0, 0).unwrap());
 
-                if source_modified > last_updated {
-                    if let OntologyLocation::File(path) = location {
-                        // Mtime is newer, so now check if content is different
-                        let new_graph = match self.io.read_file(path) {
-                            Ok(g) => g,
+                match location {
+                    OntologyLocation::File(path) => {
+                        // Prefer a fast content hash comparison to avoid mtime granularity issues.
+                        let current_hash = match hash_file(path) {
+                            Ok(h) => h,
                             Err(e) => {
                                 warn!(
-                                    "Could not read file for update check {}: {}",
+                                    "Could not hash file for update check {}: {}",
                                     path.display(),
                                     e
                                 );
-                                return true; // If we can't read it, assume it's updated
+                                return true; // assume updated if we cannot hash
                             }
                         };
-                        let old_graph = match self.io.get_graph(ontology.id()) {
-                            Ok(g) => g,
-                            Err(e) => {
-                                warn!(
-                                    "Could not get graph from store for update check {}: {}",
-                                    ontology.id(),
-                                    e
-                                );
-                                return true; // If we can't get the old one, assume updated
-                            }
-                        };
-                        return new_graph != old_graph;
-                    }
-                    // For non-file locations, we can't easily check content, so stick with mtime.
-                    return true;
-                }
 
-                false
+                        if let Some(stored_hash) = ontology.content_hash() {
+                            if stored_hash == current_hash {
+                                return false;
+                            }
+                            return true;
+                        }
+
+                        // Fallback to mtime when legacy records lack a stored hash.
+                        let source_modified = self
+                            .io
+                            .source_last_modified(ontology.id())
+                            .unwrap_or(Utc::now());
+                        source_modified > last_updated
+                    }
+                    _ => {
+                        let source_modified = self
+                            .io
+                            .source_last_modified(ontology.id())
+                            .unwrap_or(Utc::now());
+                        source_modified > last_updated
+                    }
+                }
             })
             .map(|(graphid, _)| graphid.clone())
             .collect()
@@ -1790,6 +1791,21 @@ impl OntoEnv {
     pub fn set_resolution_policy(&mut self, policy: String) {
         self.config.resolution_policy = policy;
     }
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[cfg(test)]
