@@ -38,6 +38,7 @@ oxigraph = "0.5"
 memmap2 = "0.9"
 zstd = "0.13"
 rand = "0.9"
+blake3 = "1.5"
 
 rdf5d = { version = "0.4.1-a1", path = "rdf5d", features = ["oxigraph", "zstd"] }
 
