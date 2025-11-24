@@ -159,7 +159,6 @@ fn update_from_nested_subdir_uses_root_locations() {
     let out = Command::new(&exe)
         .current_dir(&nested)
         .arg("update")
-        .arg("--all")
         .output()
         .expect("run update");
     assert!(
