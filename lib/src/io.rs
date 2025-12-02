@@ -6,6 +6,7 @@ use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::options::Overwrite;
 use crate::util::get_file_contents;
 use anyhow::{anyhow, Error, Result};
+use blake3;
 use chrono::prelude::*;
 use fs2::FileExt;
 use log::{error, info};
@@ -63,6 +64,8 @@ fn add_ontology_bytes(
     let tmp_store = load_staging_store_from_bytes(bytes, format)?;
     let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
     let mut ontology = Ontology::from_store(&tmp_store, &staging_id, strict)?;
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    ontology.set_content_hash(hash);
     ontology.with_last_updated(Utc::now());
     let id = ontology.id();
     let graphname: GraphName = id.graphname()?;

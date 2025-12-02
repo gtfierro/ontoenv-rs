@@ -1,9 +1,12 @@
 use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::Config;
+use ontoenv::consts::IMPORTS;
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use oxigraph::model::NamedNodeRef;
+use oxigraph::model::NamedOrBlankNodeRef;
+use oxigraph::model::TermRef;
 use std::fs;
 use std::path::PathBuf;
 use std::thread;
@@ -122,6 +125,355 @@ fn default_config_with_subdir(dir: &TempDir, path: &str) -> Config {
 // we just drop the TempDir (looking at this doc:
 // https://docs.rs/tempdir/latest/tempdir/struct.TempDir.html#method.close)
 fn teardown(_dir: TempDir) {}
+
+#[test]
+fn import_graph_merges_closure_and_removes_imports() -> Result<()> {
+    use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
+    use oxigraph::model::Triple;
+    let dir = TempDir::new("ontoenv-import-merge")?;
+
+    // A imports B, B imports A (cycle)
+    let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex.org/> .
+<http://ex.org/A> a owl:Ontology ;
+  owl:imports <http://ex.org/B> .
+ex:shape sh:prefixes <http://ex.org/A> .
+ex:a ex:p ex:o .
+"#;
+    let b_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://ex.org/> .
+<http://ex.org/B> a owl:Ontology ;
+  owl:imports <http://ex.org/A> .
+ex:b ex:p ex:o .
+"#;
+    fs::write(dir.path().join("A.ttl"), a_ttl)?;
+    fs::write(dir.path().join("B.ttl"), b_ttl)?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update_all(false)?;
+
+    let a_name = NamedNodeRef::new_unchecked("http://ex.org/A");
+    let a_id = env
+        .resolve(ResolveTarget::Graph(a_name.into()))
+        .expect("A should resolve");
+
+    let merged = env.import_graph(&a_id, -1)?;
+
+    // Should contain data from both ontologies
+    let a_triple = Triple::new(
+        NamedNodeRef::new_unchecked("http://ex.org/a"),
+        NamedNodeRef::new_unchecked("http://ex.org/p"),
+        NamedNodeRef::new_unchecked("http://ex.org/o"),
+    );
+    let b_triple = Triple::new(
+        NamedNodeRef::new_unchecked("http://ex.org/b"),
+        NamedNodeRef::new_unchecked("http://ex.org/p"),
+        NamedNodeRef::new_unchecked("http://ex.org/o"),
+    );
+    assert!(
+        merged.contains(a_triple.as_ref()),
+        "Merged graph missing A data"
+    );
+    assert!(
+        merged.contains(b_triple.as_ref()),
+        "Merged graph missing B data"
+    );
+
+    // owl:imports should be rewritten onto the root (base) ontology
+    let imports: Vec<_> = merged
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert!(
+        !imports.is_empty(),
+        "Merged graph should contain rewritten imports on the root"
+    );
+    assert!(
+        imports
+            .iter()
+            .all(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name())),
+        "All imports should be on the root ontology"
+    );
+
+    // Only one owl:Ontology declaration (root) should remain
+    let ontology_decls = merged
+        .triples_for_object(ONTOLOGY)
+        .filter(|t| t.predicate == TYPE)
+        .count();
+    assert_eq!(
+        ontology_decls, 1,
+        "Should retain only the root ontology declaration"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn import_graph_handles_cycles() -> Result<()> {
+    use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
+
+    let dir = TempDir::new("ontoenv-import-cycle")?;
+
+    let a_path = dir.path().join("A.ttl");
+    let b_path = dir.path().join("B.ttl");
+    let a_iri = url::Url::from_file_path(&a_path).unwrap().to_string();
+    let b_iri = url::Url::from_file_path(&b_path).unwrap().to_string();
+
+    fs::write(
+        &a_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix ex: <http://example.com/A#> .\n<{a}> a owl:Ontology ; owl:imports <{b}> .\nex:A a owl:Class .\n",
+            a = a_iri,
+            b = b_iri
+        ),
+    )?;
+    fs::write(
+        &b_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix ex: <http://example.com/B#> .\n<{b}> a owl:Ontology ; owl:imports <{a}> .\nex:B a owl:Class .\n",
+            a = a_iri,
+            b = b_iri
+        ),
+    )?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.add(
+        OntologyLocation::File(a_path.clone()),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    env.add(
+        OntologyLocation::File(b_path.clone()),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+
+    let a_id = env
+        .resolve(ResolveTarget::Location(OntologyLocation::File(a_path)))
+        .unwrap();
+    let merged = env.import_graph(&a_id, -1)?;
+
+    // Single root ontology
+    let ontology_decls = merged
+        .triples_for_object(ONTOLOGY)
+        .filter(|t| t.predicate == TYPE)
+        .count();
+    assert_eq!(ontology_decls, 1);
+
+    // Imports rewritten onto root with no self-loop
+    let imports: Vec<_> = merged
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert_eq!(imports.len(), 1);
+    if let TermRef::NamedNode(obj) = imports[0].object {
+        assert_eq!(obj.as_str(), b_iri);
+    } else {
+        panic!("Import object was not a NamedNode");
+    }
+
+    // No imports hanging off B
+    assert_eq!(
+        merged
+            .triples_for_predicate(IMPORTS)
+            .filter(|t| {
+                t.subject == NamedOrBlankNodeRef::NamedNode(NamedNodeRef::new_unchecked(&b_iri))
+            })
+            .count(),
+        0
+    );
+
+    // Data from both ontologies present
+    assert!(merged
+        .iter()
+        .any(|t| format!("{:?}", t.subject).contains("#A")));
+    assert!(merged
+        .iter()
+        .any(|t| format!("{:?}", t.subject).contains("#B")));
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn import_graph_respects_recursion_depth() -> Result<()> {
+    let dir = TempDir::new("ontoenv-import-depth")?;
+
+    let a_path = dir.path().join("A.ttl");
+    let b_path = dir.path().join("B.ttl");
+    let c_path = dir.path().join("C.ttl");
+
+    let a_iri = url::Url::from_file_path(&a_path).unwrap().to_string();
+    let b_iri = url::Url::from_file_path(&b_path).unwrap().to_string();
+    let c_iri = url::Url::from_file_path(&c_path).unwrap().to_string();
+
+    fs::write(
+        &a_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{a}> a owl:Ontology ; owl:imports <{b}> .",
+            a = a_iri, b = b_iri
+        ),
+    )?;
+    fs::write(
+        &b_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{b}> a owl:Ontology ; owl:imports <{c}> .",
+            b = b_iri, c = c_iri
+        ),
+    )?;
+    fs::write(
+        &c_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{c}> a owl:Ontology .",
+            c = c_iri
+        ),
+    )?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.add(
+        OntologyLocation::File(a_path.clone()),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    env.add(
+        OntologyLocation::File(b_path.clone()),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    env.add(
+        OntologyLocation::File(c_path.clone()),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+
+    let a_id = env
+        .resolve(ResolveTarget::Location(OntologyLocation::File(a_path)))
+        .unwrap();
+
+    // depth 0: only A (no imports attached)
+    let g0 = env.import_graph(&a_id, 0)?;
+    let imports0 = g0
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .count();
+    assert_eq!(imports0, 0, "depth 0 should not carry imports on root");
+
+    // depth 1: A imports B
+    let g1 = env.import_graph(&a_id, 1)?;
+    let imports_b: Vec<_> = g1
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert_eq!(imports_b.len(), 1);
+
+    // depth -1: full closure, includes C
+    let gfull = env.import_graph(&a_id, -1)?;
+    let imports_full: Vec<_> = gfull
+        .triples_for_predicate(IMPORTS)
+        .filter(|t| t.subject == NamedOrBlankNodeRef::NamedNode(a_id.name()))
+        .collect();
+    assert_eq!(imports_full.len(), 2);
+
+    teardown(dir);
+    Ok(())
+}
+
+#[cfg(unix)]
+mod unix_permission_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn test_find_files_skips_permission_denied_when_not_strict() -> Result<()> {
+        let dir = TempDir::new("ontoenv-permissions")?;
+        setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl" });
+
+        let restricted_dir = dir.path().join("restricted");
+        fs::create_dir_all(&restricted_dir)?;
+        fs::write(
+            restricted_dir.join("hidden.ttl"),
+            "@prefix : <#> . :s :p :o .",
+        )?;
+
+        struct PermissionGuard {
+            path: PathBuf,
+            original: fs::Permissions,
+        }
+
+        impl Drop for PermissionGuard {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(&self.path, self.original.clone());
+            }
+        }
+
+        let guard = PermissionGuard {
+            path: restricted_dir.clone(),
+            original: fs::metadata(&restricted_dir)?.permissions(),
+        };
+
+        let mut denied = guard.original.clone();
+        denied.set_mode(0o000);
+        fs::set_permissions(&restricted_dir, denied)?;
+
+        let cfg = default_config(&dir);
+        let env = OntoEnv::init(cfg, false)?;
+        let files = env.find_files()?;
+        let expected = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        assert!(
+            files.contains(&expected),
+            "find_files should still collect readable entries"
+        );
+
+        drop(guard);
+        teardown(dir);
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+mod windows_permission_tests {
+    use super::*;
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    #[test]
+    fn test_find_files_skips_sharing_violation_when_not_strict() -> Result<()> {
+        let dir = TempDir::new("ontoenv-permissions")?;
+        setup!(&dir, {
+            "fixtures/ont1.ttl" => "ont1.ttl",
+            "fixtures/ont2.ttl" => "locked.ttl"
+        });
+
+        let locked_path = dir.path().join("locked.ttl");
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&locked_path)?;
+
+        let cfg = default_config(&dir);
+        let env = OntoEnv::init(cfg, false)?;
+        let files = env.find_files()?;
+        let readable = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        assert!(
+            files.contains(&readable),
+            "find_files should still collect readable entries"
+        );
+        assert!(
+            !files.contains(&OntologyLocation::File(locked_path.clone())),
+            "locked files should be skipped when encountering sharing violations"
+        );
+
+        drop(lock);
+        teardown(dir);
+        Ok(())
+    }
+}
 
 #[test]
 fn test_ontoenv_scans() -> Result<()> {

@@ -2,6 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
+use crate::consts::IMPORTS;
 use crate::doctor::{
     ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
 };
@@ -11,16 +12,18 @@ use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
-use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef};
+use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
-use std::io::{BufReader, Write};
+use std::fs::File;
+use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use anyhow::{anyhow, Result};
+use blake3;
 use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -219,6 +222,33 @@ impl OntoEnv {
             dependency_graph: DiGraph::new(),
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
+        }
+    }
+
+    /// Resolve a path relative to the configured OntoEnv root if it is not already absolute.
+    fn resolve_path(&self, path: &Path) -> PathBuf {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            // Prefer current working directory (CLI/Python caller context) so explicit relative
+            // search paths like "../brick" behave as users expect, but fall back to root-relative.
+            let cwd = std::env::current_dir().unwrap_or_else(|_| self.config.root.clone());
+            let cwd_join = cwd.join(path);
+            if cwd_join.exists() {
+                cwd_join
+            } else {
+                self.config.root.join(path)
+            }
+        }
+    }
+
+    /// Ensure file locations are anchored to the OntoEnv root; leave other variants untouched.
+    fn resolve_location(&self, location: OntologyLocation) -> OntologyLocation {
+        match location {
+            OntologyLocation::File(p) if p.is_relative() => {
+                OntologyLocation::File(self.resolve_path(&p))
+            }
+            _ => location,
         }
     }
 
@@ -445,12 +475,7 @@ impl OntoEnv {
         let reader = BufReader::new(file);
         // TODO: clean up the locations field loading
         let mut env: Environment = serde_json::from_reader(reader)?;
-        let mut locations: HashMap<OntologyLocation, GraphIdentifier> = HashMap::new();
-        for ontology in env.ontologies().values() {
-            locations.insert(ontology.location().unwrap().clone(), ontology.id().clone());
-        }
-        env.locations = locations;
-        env.rebuild_aliases();
+        env.normalize_file_locations(&config.root);
 
         // Initialize the IO to the persistent graph type. We know that it exists because we
         // are loading from a directory
@@ -674,6 +699,7 @@ impl OntoEnv {
         refresh: RefreshStrategy,
         update_dependencies: bool,
     ) -> Result<GraphIdentifier> {
+        let location = self.resolve_location(location);
         self.with_io_batch(move |env| {
             env.add_with_options_inner(location, overwrite, refresh, update_dependencies)
         })
@@ -843,48 +869,47 @@ impl OntoEnv {
                     }
                 };
 
-                // if the source modified is missing, then we assume it has been updated
-                let source_modified = self
-                    .io
-                    .source_last_modified(ontology.id())
-                    .unwrap_or(Utc::now());
-                // if the ontology has no modified time, then we assume it has never been updated
                 let last_updated = ontology
                     .last_updated
                     .unwrap_or(Utc.timestamp_opt(0, 0).unwrap());
 
-                if source_modified > last_updated {
-                    if let OntologyLocation::File(path) = location {
-                        // Mtime is newer, so now check if content is different
-                        let new_graph = match self.io.read_file(path) {
-                            Ok(g) => g,
+                match location {
+                    OntologyLocation::File(path) => {
+                        // Prefer a fast content hash comparison to avoid mtime granularity issues.
+                        let current_hash = match hash_file(path) {
+                            Ok(h) => h,
                             Err(e) => {
                                 warn!(
-                                    "Could not read file for update check {}: {}",
+                                    "Could not hash file for update check {}: {}",
                                     path.display(),
                                     e
                                 );
-                                return true; // If we can't read it, assume it's updated
+                                return true; // assume updated if we cannot hash
                             }
                         };
-                        let old_graph = match self.io.get_graph(ontology.id()) {
-                            Ok(g) => g,
-                            Err(e) => {
-                                warn!(
-                                    "Could not get graph from store for update check {}: {}",
-                                    ontology.id(),
-                                    e
-                                );
-                                return true; // If we can't get the old one, assume updated
-                            }
-                        };
-                        return new_graph != old_graph;
-                    }
-                    // For non-file locations, we can't easily check content, so stick with mtime.
-                    return true;
-                }
 
-                false
+                        if let Some(stored_hash) = ontology.content_hash() {
+                            if stored_hash == current_hash {
+                                return false;
+                            }
+                            return true;
+                        }
+
+                        // Fallback to mtime when legacy records lack a stored hash.
+                        let source_modified = self
+                            .io
+                            .source_last_modified(ontology.id())
+                            .unwrap_or(Utc::now());
+                        source_modified > last_updated
+                    }
+                    _ => {
+                        let source_modified = self
+                            .io
+                            .source_last_modified(ontology.id())
+                            .unwrap_or(Utc::now());
+                        source_modified > last_updated
+                    }
+                }
             })
             .map(|(graphid, _)| graphid.clone())
             .collect()
@@ -1109,17 +1134,25 @@ impl OntoEnv {
         }
         let mut files = HashSet::new();
         for location in &self.config.locations {
+            let resolved = self.resolve_path(location);
             // if location does not exist, skip it
-            if !location.exists() {
-                warn!("Location does not exist: {location:?}");
+            if !resolved.exists() {
+                warn!("Location does not exist: {resolved:?}");
                 continue;
             }
             // if location is a file, add it to the list
-            if location.is_file() && self.config.is_included(location) {
-                files.insert(OntologyLocation::File(location.clone()));
+            if resolved.is_file() && self.config.is_included(&resolved) {
+                if let Err(err) = std::fs::File::open(&resolved) {
+                    if self.config.strict {
+                        return Err(err.into());
+                    }
+                    warn!("Skipping {:?} due to access error: {}", resolved, err);
+                } else {
+                    files.insert(OntologyLocation::File(resolved.clone()));
+                }
                 continue;
             }
-            for entry in walkdir::WalkDir::new(location) {
+            for entry in walkdir::WalkDir::new(&resolved) {
                 let entry = match entry {
                     Ok(entry) => entry,
                     Err(err) => {
@@ -1129,12 +1162,24 @@ impl OntoEnv {
                         let path = err
                             .path()
                             .map(|p| p.display().to_string())
-                            .unwrap_or_else(|| location.display().to_string());
+                            .unwrap_or_else(|| resolved.display().to_string());
                         warn!("Skipping {path} due to filesystem error: {err}");
                         continue;
                     }
                 };
                 if entry.file_type().is_file() && self.config.is_included(entry.path()) {
+                    // Skip unreadable files when not strict
+                    if let Err(err) = std::fs::File::open(entry.path()) {
+                        if self.config.strict {
+                            return Err(err.into());
+                        }
+                        warn!(
+                            "Skipping {:?} due to access error while opening: {}",
+                            entry.path(),
+                            err
+                        );
+                        continue;
+                    }
                     files.insert(OntologyLocation::File(entry.path().to_path_buf()));
                 }
             }
@@ -1378,6 +1423,67 @@ impl OntoEnv {
             failed_imports: None, // TODO: Populate this correctly
             namespace_map,
         })
+    }
+
+    /// Merge an ontology and its imports closure into a single graph.
+    ///
+    /// - `recursion_depth` follows the semantics of [`get_closure`]; `-1` means unlimited.
+    /// - SHACL prefixes are rewritten to the supplied `root` ontology and `sh:declare` entries deduplicated.
+    /// - `owl:imports` statements are removed to prevent downstream refetching.
+    /// - Additional `owl:Ontology` declarations are stripped, keeping only `root`.
+    pub fn import_graph_with_root(
+        &self,
+        id: &GraphIdentifier,
+        recursion_depth: i32,
+        root: NamedNodeRef,
+    ) -> Result<Graph> {
+        let imported = self.get_ontology(id)?;
+        let imported_imports = imported.imports.clone();
+
+        let closure = self.get_closure(id, recursion_depth)?;
+        let mut union = self.get_union_graph(&closure, Some(true), Some(true))?;
+
+        let root_nb = NamedOrBlankNodeRef::NamedNode(root);
+        // Apply transforms with caller-chosen root.
+        transform::rewrite_sh_prefixes_dataset(&mut union.dataset, root_nb);
+        transform::remove_owl_imports(&mut union.dataset, None);
+        transform::remove_ontology_declarations(&mut union.dataset, root_nb);
+
+        // Flatten dataset into a single graph, ignoring named graph labels.
+        let mut graph = Graph::new();
+        for quad in union.dataset.iter() {
+            // Drop owl:imports on non-root subjects to prevent retaining inner edges in cycles.
+            if quad.predicate == IMPORTS && quad.subject != root_nb {
+                continue;
+            }
+            graph.insert(TripleRef::new(quad.subject, quad.predicate, quad.object));
+        }
+        // Re-attach imports of the imported ontology and its dependencies onto the root; skip self-imports and dedup.
+        let closure_names: std::collections::HashSet<NamedNodeRef> =
+            closure.iter().map(|id| id.name()).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut add_import = |target: NamedNodeRef, dep: NamedNodeRef| {
+            if target == dep {
+                return;
+            }
+            if seen.insert(dep.to_string()) {
+                graph.insert(TripleRef::new(target, IMPORTS, dep));
+            }
+        };
+        for dep in imported_imports {
+            if closure_names.contains(&dep.as_ref()) {
+                add_import(root, dep.as_ref());
+            }
+        }
+        for dep_id in closure.iter().skip(1) {
+            add_import(root, dep_id.name());
+        }
+        Ok(graph)
+    }
+
+    /// Convenience wrapper that uses the target ontology as the root.
+    pub fn import_graph(&self, id: &GraphIdentifier, recursion_depth: i32) -> Result<Graph> {
+        self.import_graph_with_root(id, recursion_depth, id.name())
     }
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
@@ -1685,6 +1791,21 @@ impl OntoEnv {
     pub fn set_resolution_policy(&mut self, policy: String) {
         self.config.resolution_policy = policy;
     }
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[cfg(test)]

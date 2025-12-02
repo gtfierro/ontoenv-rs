@@ -33,3 +33,4 @@ tempdir = "0.3.7"
 pretty-bytes = "0.2.2"
 fs2 = "0.4"
 url = "2.5"
+blake3.workspace = true
