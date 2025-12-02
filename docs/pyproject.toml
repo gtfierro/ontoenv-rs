@@ -1,0 +1,13 @@
+[project]
+name = "ontoenv-docs"
+version = "0.0.0"
+description = "Documentation build for OntoEnv"
+requires-python = ">=3.11"
+dependencies = [
+    "sphinx>=7.0,<8",
+    "furo>=2023.5.0",
+]
+
+[tool.uv]
+# Keep doc tooling separate from the main project; `uv sync --project docs`
+# will materialize a local .venv under docs/.
