@@ -28,17 +28,13 @@ fn ontoenv_bin() -> PathBuf {
 }
 
 fn tmp_dir(name: &str) -> PathBuf {
-    let mut d = std::env::current_dir().unwrap();
-    d.push(format!(
-        "target/cli_integration_{}_{}",
-        name,
-        std::process::id()
-    ));
-    if d.exists() {
-        let _ = fs::remove_dir_all(&d);
+    let mut base = std::env::temp_dir();
+    base.push(format!("ontoenv-cli-{}-{}", name, std::process::id()));
+    if base.exists() {
+        let _ = fs::remove_dir_all(&base);
     }
-    fs::create_dir_all(&d).unwrap();
-    d
+    fs::create_dir_all(&base).unwrap();
+    base
 }
 
 fn write_ttl(path: &PathBuf, ontology_uri: &str, extra: &str) {
@@ -123,6 +119,78 @@ fn ontoenv_dir_override() {
         out.status.success(),
         "list failed with ONTOENV_DIR: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn update_from_nested_subdir_uses_root_locations() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("update_nested");
+    let ont_dir = root.join("ontologies");
+    fs::create_dir_all(&ont_dir).unwrap();
+    let ont_path = ont_dir.join("A.ttl");
+    write_ttl(&ont_path, "http://example.org/ont/A", "");
+
+    // Ensure file mtime changes on rewrites (Linux FS timestamp granularity can be 1s)
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg("--")
+        .arg("ontologies")
+        .output()
+        .expect("run init");
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Modify the file to ensure update detects a change.
+    write_ttl(
+        &ont_path,
+        "http://example.org/ont/A",
+        "<http://example.org/ont/A> <http://example.org/p> <http://example.org/o> .",
+    );
+    // Ensure mtime advances on filesystems with coarse timestamp granularity (e.g., Windows).
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+
+    let nested = root.join("nested").join("deeper");
+    fs::create_dir_all(&nested).unwrap();
+    let out = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("update")
+        .output()
+        .expect("run update");
+    assert!(
+        out.status.success(),
+        "update failed from nested dir: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let update_stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        update_stdout.contains("http://example.org/ont/A"),
+        "update output missing ontology: {}",
+        update_stdout
+    );
+
+    let out = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("list")
+        .arg("locations")
+        .output()
+        .expect("run list locations");
+    assert!(
+        out.status.success(),
+        "list locations failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let locations_out = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        locations_out.contains("ontologies") && locations_out.contains("A.ttl"),
+        "expected ontology location in output, got: {}",
+        locations_out
     );
 }
 

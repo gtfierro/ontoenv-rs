@@ -5,11 +5,11 @@ from rdflib import Graph
 print(version)
 
 print("Make env")
-env = OntoEnv(search_directories=["../brick"], strict=False, offline=False)
+env = OntoEnv(search_directories=["../brick"], strict=False, offline=False, create_or_use_cached=True)
 print(env)
 print("get brick")
 g = Graph()
-env.get_closure("https://brickschema.org/schema/1.4-rc1/Brick", g)
+env.get_closure("https://brickschema.org/schema/1.4/Brick", g)
 print(len(g))
 
 print("get brick 2")
@@ -17,12 +17,12 @@ brick = Graph()
 brick.parse("../brick/Brick.ttl", format="turtle")
 env.import_dependencies(brick)
 print(len(brick))
-brick_name = env.add("https://brickschema.org/schema/1.4/Brick.ttl")
+brick_name = env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
 print(f"Added {brick_name}")
 del env
 
 print("new env")
-env2 = OntoEnv()
+env2 = OntoEnv(create_or_use_cached=True)
 print(env2.store_path())
 
 print("get brick again from URL")
