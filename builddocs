@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-"$ROOT/.uv-cache"}"
+export UV_SYSTEM_RESOLVE="${UV_SYSTEM_RESOLVE:-0}"
+
+pushd "$ROOT/docs"
+MODE="${1:-html}"
+if [[ "$MODE" != "html" && "$MODE" != "llms" ]]; then
+  echo "Usage: $0 [html|llms]" >&2
+  exit 64
+fi
+
+# Ensure the docs environment is provisioned.
+uv sync --project .
+
+# Install the Python extension into the docs venv so autodoc can import it.
+uv pip install --project . -e "$ROOT/python"
+
+if [[ "$MODE" == "html" ]]; then
+  uv run --project . sphinx-build -M html . _build
+else
+  uv run --project . sphinx-build -M text . _build
+  find _build/text -name '*.txt' -print | sort | xargs cat > _build/llms.txt
+  echo "Wrote _build/llms.txt"
+fi
+popd
