@@ -1,2 +1,6 @@
 /target
 .ontoenv
+docs/_build/
+docs/_doctrees/
+docs/.venv/
+.uv-cache/
