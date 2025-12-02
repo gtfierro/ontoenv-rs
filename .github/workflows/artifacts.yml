@@ -168,56 +168,43 @@ jobs:
           name: pyontoenv_alias_${{ github.run_attempt }}
           path: pyontoenv-shim/dist/*
 
-  wheel_linux:
-    runs-on: ubuntu-latest
+  wheel_linux_cross:
+    runs-on: macos-14
     strategy:
       matrix:
-        architecture: [ "x86_64", "aarch64" ]
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-      - uses: docker/setup-qemu-action@v2
-        with:
-          platforms: linux/${{ matrix.architecture }}
-        if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') && matrix.architecture != 'x86_64'
-      - uses: ./.github/actions/setup-rust
-        with:
-          version: stable
-      - run: sed "s/%arch%/${{ matrix.architecture }}/g" .github/workflows/manylinux_build.sh | sed "s/%for_each_version%/${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')) && 'true' || '' }}/g" > .github/workflows/manylinux_build_script.sh
-      - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/manylinux_2_28_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/manylinux_build_script.sh
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') || matrix.architecture == 'x86_64'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pyontoenv_${{ matrix.architecture }}_linux_gnu_${{ github.run_attempt }}
-          path: target/wheels/*.whl
-
-  wheel_linux_musl:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        architecture: [ "x86_64", "aarch64" ]
-    continue-on-error: true
+        arch: [ x86_64, aarch64 ]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: docker/setup-qemu-action@v2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          platforms: linux/${{ matrix.architecture }}
-        if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') && matrix.architecture != 'x86_64'
-      - uses: ./.github/actions/setup-rust
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+      - name: Install zig
+        run: brew install zig
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          version: stable
-      - run: sed "s/%arch%/${{ matrix.architecture }}/g" .github/workflows/musllinux_build.sh | sed "s/%for_each_version%/${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')) && 'true' || '' }}/g" > .github/workflows/musllinux_build_script.sh
-      - run: docker run -v "$(pwd)":/workdir --platform linux/${{ matrix.architecture }} quay.io/pypa/musllinux_1_2_${{ matrix.architecture }} /bin/bash /workdir/.github/workflows/musllinux_build_script.sh
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true') || matrix.architecture == 'x86_64'
-      - run: find .
+          enable-cache: true
+      - name: Install Python 3.12
+        run: uv python install 3.12
+      - name: Build Linux ${{ matrix.arch }} wheel (uv+maturin+zig)
+        working-directory: python
+        env:
+          UV_PYTHON_DOWNLOAD_MISSING: 1
+        run: |
+          uv tool run --python 3.12 \
+            maturin build \
+              --release \
+              --target ${{ matrix.arch }}-unknown-linux-gnu \
+              --interpreter python3.12 \
+              --features "abi3 cli" \
+              --compatibility manylinux2014 \
+              --zig
       - uses: actions/upload-artifact@v4
         with:
-          name: pyontoenv_${{ matrix.architecture }}_linux_musl_${{ github.run_attempt }}
-          path: target/wheels/*.whl
+          name: pyontoenv_${{ matrix.arch }}_linux_gnu_${{ github.run_attempt }}
+          path: python/target/wheels/*.whl
 
   wheel_mac:
     runs-on: macos-latest
@@ -299,8 +286,7 @@ jobs:
       - python_pyontoenv_alias
       - wheel_windows
       - wheel_mac
-      - wheel_linux
-      - wheel_linux_musl
+      - wheel_linux_cross
     steps:
       - uses: actions/download-artifact@v4
         with:

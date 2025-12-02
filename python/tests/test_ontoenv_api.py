@@ -7,8 +7,6 @@ from rdflib import Graph, URIRef
 from rdflib.namespace import RDF, OWL
 
 
-
-
 class TestOntoEnvAPI(unittest.TestCase):
     def setUp(self):
         """Set up a test environment."""
@@ -18,7 +16,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.test_dir.mkdir()
 
         self.brick_file_path = Path("../brick/Brick.ttl")
-        self.brick_name = "https://brickschema.org/schema/1.4-rc1/Brick"
+        self.brick_name = "https://brickschema.org/schema/1.4/Brick"
         self.brick_144_url = "https://brickschema.org/schema/1.4.4/Brick.ttl"
         self.brick_144_name = "https://brickschema.org/schema/1.4/Brick"
         self.env = None
@@ -69,7 +67,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_name, ontologies)
         # check that dependencies were added because fetch_imports is true by default
-        self.assertIn("http://qudt.org/2.1/schema/qudt", ontologies)
+        self.assertIn("http://qudt.org/3.1.8/schema/qudt", ontologies)
 
     def test_add_url(self):
         """Test env.add() with a URL."""
@@ -178,7 +176,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         brick_ontology_uri = URIRef(self.brick_name)
         g.add((brick_ontology_uri, RDF.type, OWL.Ontology))
         # add an import to be removed
-        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/2.1/schema/qudt")))
+        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/3.1.8/schema/qudt")))
 
         num_triples_before = len(g)
         imported = self.env.import_dependencies(g)
@@ -223,16 +221,178 @@ class TestOntoEnvAPI(unittest.TestCase):
         closure_list = self.env.list_closure(name)
         self.assertIn(name, closure_list)
         # check for some known imports
-        self.assertIn("http://qudt.org/2.1/schema/qudt", closure_list)
-        self.assertIn("http://qudt.org/2.1/vocab/quantitykind", closure_list)
+        self.assertIn("http://qudt.org/3.1.8/schema/qudt", closure_list)
+        self.assertIn("http://qudt.org/3.1.8/vocab/quantitykind", closure_list)
 
     def test_get_importers(self):
         """Test env.get_importers()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
 
-        dependents = self.env.get_importers("http://qudt.org/2.1/vocab/quantitykind")
+        dependents = self.env.get_importers("http://qudt.org/3.1.8/vocab/quantitykind")
         self.assertIn(self.brick_name, dependents)
+
+    def test_import_graph_flattens_to_single_ontology(self):
+        """import_graph merges closure into one ontology declaration and removes owl:imports."""
+        base_path = self.test_dir / "base.ttl"
+        imp_path = self.test_dir / "imp.ttl"
+        base_iri = base_path.resolve().as_uri()
+        imp_iri = imp_path.resolve().as_uri()
+
+        imp_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/imp#> .
+<{imp_iri}> a owl:Ontology .
+ex:ImpClass a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        base_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/base#> .
+<{base_iri}> a owl:Ontology ;
+    owl:imports <{imp_iri}> .
+ex:BaseClass a owl:Class .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(imp_path))
+        self.env.add(str(base_path))
+
+        dest = Graph()
+        dest.add((URIRef(base_iri), RDF.type, OWL.Ontology))
+
+        self.env.import_graph(dest, base_iri, recursion_depth=-1)
+
+        # Only one ontology declaration (the root) should remain
+        ontology_decls = list(dest.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(len(ontology_decls), 1)
+        self.assertEqual(str(ontology_decls[0][0]), base_iri)
+
+        # Imports rewritten onto root, not to the imported ontology
+        imports = list(dest.triples((URIRef(base_iri), OWL.imports, None)))
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(str(imports[0][2]), imp_iri)
+
+        # Data from both base and imported ontologies present
+        self.assertTrue(any("BaseClass" in str(t) for t in dest))
+        self.assertTrue(any("ImpClass" in str(t) for t in dest))
+
+    def test_import_graph_handles_cycles(self):
+        """import_graph should handle cycles (A imports B imports A) without duplicating imports."""
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        a_iri = a_path.resolve().as_uri()
+        b_iri = b_path.resolve().as_uri()
+
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/A#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> .
+ex:A a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/B#> .
+<{b_iri}> a owl:Ontology ;
+    owl:imports <{a_iri}> .
+ex:B a owl:Class .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(a_path))
+        self.env.add(str(b_path))
+
+        dest = Graph()
+        dest.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+
+        self.env.import_graph(dest, a_iri, recursion_depth=-1)
+
+        # Single root ontology declaration
+        ontology_decls = list(dest.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(len(ontology_decls), 1)
+        self.assertEqual(str(ontology_decls[0][0]), a_iri)
+
+        # Imports rewritten onto root; no self-import duplication
+        imports = list(dest.triples((URIRef(a_iri), OWL.imports, None)))
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(str(imports[0][2]), b_iri)
+
+        # No imports hanging off the imported ontology
+        self.assertEqual(len(list(dest.triples((URIRef(b_iri), OWL.imports, None)))), 0)
+
+        # Data from both ontologies present
+        self.assertTrue(any("A" in str(t) for t in dest))
+        self.assertTrue(any("B" in str(t) for t in dest))
+
+    def test_import_graph_respects_recursion_depth(self):
+        """import_graph should honor recursion_depth when reattaching imports."""
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        c_path = self.test_dir / "C.ttl"
+        a_iri = a_path.resolve().as_uri()
+        b_iri = b_path.resolve().as_uri()
+        c_iri = c_path.resolve().as_uri()
+
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ; owl:imports <{b_iri}> .
+""",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology ; owl:imports <{c_iri}> .
+""",
+            encoding="utf-8",
+        )
+        c_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{c_iri}> a owl:Ontology .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(a_path))
+        self.env.add(str(b_path))
+        self.env.add(str(c_path))
+
+        dest0 = Graph()
+        dest0.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+        self.env.import_graph(dest0, a_iri, recursion_depth=0)
+        self.assertEqual(len(list(dest0.triples((URIRef(a_iri), OWL.imports, None)))), 0)
+
+        dest1 = Graph()
+        dest1.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+        self.env.import_graph(dest1, a_iri, recursion_depth=1)
+        imports1 = list(dest1.triples((URIRef(a_iri), OWL.imports, None)))
+        self.assertEqual(len(imports1), 1)
+        self.assertEqual(str(imports1[0][2]), b_iri)
+
+        dest_full = Graph()
+        dest_full.add((URIRef(a_iri), RDF.type, OWL.Ontology))
+        self.env.import_graph(dest_full, a_iri, recursion_depth=-1)
+        imports_full = list(dest_full.triples((URIRef(a_iri), OWL.imports, None)))
+        self.assertEqual(len(imports_full), 2)
+        self.assertSetEqual(
+            {str(i[2]) for i in imports_full},
+            {b_iri, c_iri},
+        )
 
     def test_to_rdflib_dataset(self):
         """Test env.to_rdflib_dataset()."""
@@ -255,8 +415,13 @@ class TestOntoEnvAPI(unittest.TestCase):
 
         g = Graph()
         self.assertEqual(len(g), 0)
-        self.env.import_graph(g, name)
+        # import full closure; ensure imports were materialized and owl:imports removed
+        self.env.import_graph(g, name, recursion_depth=-1)
         self.assertGreater(len(g), 0)
+        # owl:imports should be rewritten onto the root ontology
+        imports_pred = URIRef("http://www.w3.org/2002/07/owl#imports")
+        imports = list(g.triples((URIRef(name), imports_pred, None)))
+        self.assertGreater(len(imports), 0)
 
     def test_store_path(self):
         """Test env.store_path()."""
@@ -324,7 +489,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         brick_ontology_uri = URIRef(self.brick_name)
         g.add((brick_ontology_uri, RDF.type, OWL.Ontology))
         # add an import to be resolved
-        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/2.1/vocab/quantitykind")))
+        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/3.1.8/vocab/quantitykind")))
 
         num_triples_before = len(g)
         deps_g, imported = self.env.get_dependencies_graph(g)
@@ -336,8 +501,8 @@ class TestOntoEnvAPI(unittest.TestCase):
         # new graph should have content
         self.assertGreater(len(deps_g), 0)
         self.assertGreater(len(imported), 0)
-        self.assertIn("http://qudt.org/2.1/vocab/quantitykind", imported)
-        self.assertIn("http://qudt.org/2.1/vocab/dimensionvector", imported)
+        self.assertIn("http://qudt.org/3.1.8/vocab/quantitykind", imported)
+        self.assertIn("http://qudt.org/3.1.8/vocab/dimensionvector", imported)
 
         # test with destination graph
         dest_g = Graph()
