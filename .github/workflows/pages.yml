@@ -64,6 +64,15 @@ jobs:
           UV_SYSTEM_RESOLVE: "0"
         run: uv run --project . sphinx-build -M html . _build
 
+      - name: Build llms.txt
+        working-directory: docs
+        env:
+          UV_SYSTEM_RESOLVE: "0"
+        run: |
+          uv run --project . sphinx-build -M text . _build
+          find _build/text -name '*.txt' -print | sort | xargs -r cat > _build/llms.txt
+          cp _build/llms.txt _build/html/llms.txt
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
