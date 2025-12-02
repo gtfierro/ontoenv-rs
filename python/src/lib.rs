@@ -3,12 +3,11 @@ use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation};
 use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
-use ::ontoenv::transform;
 use ::ontoenv::ToUriString;
 use anyhow::Error;
 #[cfg(feature = "cli")]
 use ontoenv_cli;
-use oxigraph::model::{BlankNode, Literal, NamedNode, NamedOrBlankNodeRef, Term};
+use oxigraph::model::{BlankNode, Literal, NamedNode, Term};
 #[cfg(not(feature = "cli"))]
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
@@ -477,11 +476,13 @@ impl OntoEnv {
 
     // The following methods will now access the inner OntoEnv in a thread-safe manner:
 
+    #[pyo3(signature = (destination_graph, uri, recursion_depth = -1))]
     fn import_graph(
         &self,
         py: Python,
         destination_graph: &Bound<'_, PyAny>,
         uri: &str,
+        recursion_depth: i32,
     ) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
@@ -498,29 +499,75 @@ impl OntoEnv {
                     "Failed to resolve graph for URI: {uri}"
                 ))
             })?;
-        let mut graph = env.get_graph(&graphid).map_err(anyhow_to_pyerr)?;
 
+        // Compute closure starting from this ontology, honoring recursion depth and deduping loops.
+        let closure = env
+            .get_closure(&graphid, recursion_depth)
+            .map_err(anyhow_to_pyerr)?;
+
+        // Determine root ontology: prefer an existing ontology in the destination graph; else use the
+        // imported ontology name.
         let uriref_constructor = rdflib.getattr("URIRef")?;
         let type_uri = uriref_constructor.call1((TYPE.as_str(),))?;
         let ontology_uri = uriref_constructor.call1((ONTOLOGY.as_str(),))?;
         let kwargs = [("predicate", type_uri), ("object", ontology_uri)].into_py_dict(py)?;
-        let result = destination_graph.call_method("value", (), Some(&kwargs))?;
-        if !result.is_none() {
-            let ontology = NamedNode::new(result.extract::<String>()?)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-            let base_ontology = NamedOrBlankNodeRef::NamedNode(ontology.as_ref());
+        let existing_root = destination_graph.call_method("value", (), Some(&kwargs))?;
+        let root_node_owned: oxigraph::model::NamedNode = if existing_root.is_none() {
+            graphid.name().into_owned()
+        } else {
+            NamedNode::new(existing_root.extract::<String>()?)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?
+                .to_owned()
+        };
+        let root_node = root_node_owned.as_ref();
 
-            transform::rewrite_sh_prefixes_graph(&mut graph, base_ontology);
-            transform::remove_ontology_declarations_graph(&mut graph, base_ontology);
+        // Remove owl:imports in the destination graph only for ontologies that will be rewritten.
+        let imports_uri = uriref_constructor.call1((IMPORTS.as_str(),))?;
+        let closure_set: std::collections::HashSet<String> =
+            closure.iter().map(|c| c.to_uri_string()).collect();
+        let triples_to_remove_imports = destination_graph.call_method(
+            "triples",
+            ((py.None(), imports_uri, py.None()),),
+            None,
+        )?;
+        for triple in triples_to_remove_imports.try_iter()? {
+            let t = triple?;
+            let obj: Bound<'_, PyAny> = t.get_item(2)?;
+            if let Ok(s) = obj.str() {
+                if closure_set.contains(s.to_str()?) {
+                    destination_graph.getattr("remove")?.call1((t,))?;
+                }
+            }
         }
-        // remove the owl:import statement for the 'uri' ontology
-        transform::remove_owl_imports_graph(&mut graph, Some(&[iri.as_ref()]));
 
-        for triple in graph.into_iter() {
+        // Remove any ontology declarations in the destination that are not the chosen root.
+        let triples_to_remove = destination_graph.call_method(
+            "triples",
+            ((
+                py.None(),
+                uriref_constructor.call1((TYPE.as_str(),))?,
+                uriref_constructor.call1((ONTOLOGY.as_str(),))?,
+            ),),
+            None,
+        )?;
+        for triple in triples_to_remove.try_iter()? {
+            let t = triple?;
+            let subj: Bound<'_, PyAny> = t.get_item(0)?;
+            if subj.str()?.to_str()? != root_node.as_str() {
+                destination_graph.getattr("remove")?.call1((t,))?;
+            }
+        }
+
+        // Merge closure graphs via the Rust API, choosing the caller's root.
+        let merged = env
+            .import_graph_with_root(&graphid, recursion_depth, root_node)
+            .map_err(anyhow_to_pyerr)?;
+
+        // Flatten triples into the destination graph.
+        for triple in merged.into_iter() {
             let s: Term = triple.subject.into();
             let p: Term = triple.predicate.into();
             let o: Term = triple.object.into();
-
             let t = PyTuple::new(
                 py,
                 &[
@@ -529,7 +576,19 @@ impl OntoEnv {
                     term_to_python(py, &rdflib, o)?,
                 ],
             )?;
-
+            destination_graph.getattr("add")?.call1((t,))?;
+        }
+        // Re-attach imports from the original closure onto the root in the destination graph.
+        for dep in closure.iter().skip(1) {
+            let dep_uri = dep.to_uri_string();
+            let t = PyTuple::new(
+                py,
+                &[
+                    uriref_constructor.call1((root_node.as_str(),))?,
+                    uriref_constructor.call1((IMPORTS.as_str(),))?,
+                    uriref_constructor.call1((dep_uri.as_str(),))?,
+                ],
+            )?;
             destination_graph.getattr("add")?.call1((t,))?;
         }
         Ok(())
