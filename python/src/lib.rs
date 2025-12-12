@@ -343,7 +343,7 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, temporary=false, no_search=false))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, no_search=false))]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
@@ -359,6 +359,8 @@ impl OntoEnv {
         root: String,
         includes: Option<Vec<String>>,
         excludes: Option<Vec<String>>,
+        include_ontologies: Option<Vec<String>>,
+        exclude_ontologies: Option<Vec<String>>,
         temporary: bool,
         no_search: bool,
     ) -> PyResult<Self> {
@@ -399,6 +401,12 @@ impl OntoEnv {
         }
         if let Some(excl) = excludes {
             builder = builder.excludes(excl);
+        }
+        if let Some(incl_o) = include_ontologies {
+            builder = builder.include_ontologies(incl_o);
+        }
+        if let Some(excl_o) = exclude_ontologies {
+            builder = builder.exclude_ontologies(excl_o);
         }
 
         let cfg = builder
