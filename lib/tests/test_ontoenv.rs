@@ -13,7 +13,6 @@ use std::thread;
 use std::time::Duration;
 use tempdir::TempDir;
 use ontoenv::ToUriString;
-use tempfile::tempdir;
 
 // the tests directory contains a number of test files that are used to test the OntoEnv.
 // Each has a unique name and they all exist in a flat folder.
@@ -130,7 +129,7 @@ fn teardown(_dir: TempDir) {}
 
 #[test]
 fn ontology_regex_filters_exclude() -> Result<()> {
-    let dir = tempdir()?;
+    let dir = TempDir::new("ontoenv-regex-filter")?;
     let a_path = dir.path().join("A.ttl");
     let b_path = dir.path().join("B.ttl");
 
