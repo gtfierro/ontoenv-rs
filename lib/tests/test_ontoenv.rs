@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use tempdir::TempDir;
+use ontoenv::ToUriString;
+use tempfile::tempdir;
 
 // the tests directory contains a number of test files that are used to test the OntoEnv.
 // Each has a unique name and they all exist in a flat folder.
