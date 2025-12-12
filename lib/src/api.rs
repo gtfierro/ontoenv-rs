@@ -1252,7 +1252,7 @@ impl OntoEnv {
         let (include_set, exclude_set) = self.config.build_globsets()?;
         let includes_empty = self.config.includes_is_empty();
 
-        let mut matches = |path: &Path| {
+        let matches = |path: &Path| {
             let rel = path
                 .strip_prefix(&self.config.root)
                 .unwrap_or(path)
@@ -1442,6 +1442,15 @@ impl OntoEnv {
         }
         self.dependency_graph = graph;
         Ok(())
+    }
+
+    fn rebuild_dependency_graph(&mut self) -> Result<()> {
+        let ids: Vec<GraphIdentifier> = self.env.ontologies().keys().cloned().collect();
+        self.dependency_graph = DiGraph::new();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.add_ids_to_dependency_graph(ids)
     }
 
     /// Returns a list of issues with the environment
