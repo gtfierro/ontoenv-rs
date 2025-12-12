@@ -127,6 +127,51 @@ fn default_config_with_subdir(dir: &TempDir, path: &str) -> Config {
 fn teardown(_dir: TempDir) {}
 
 #[test]
+fn ontology_regex_filters_exclude() -> Result<()> {
+    let dir = tempdir()?;
+    let a_path = dir.path().join("A.ttl");
+    let b_path = dir.path().join("B.ttl");
+
+    let a_iri = "http://example.com/A";
+    let b_iri = "http://example.com/B";
+    std::fs::write(
+        &a_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{iri}> a owl:Ontology .\n",
+            iri = a_iri
+        ),
+    )?;
+    std::fs::write(
+        &b_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{iri}> a owl:Ontology .\n",
+            iri = b_iri
+        ),
+    )?;
+
+    let config = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .includes(&["*.ttl"])
+        .exclude_ontologies(&["example.com/B"])
+        .offline(true)
+        .build()?;
+
+    let env = OntoEnv::init(config, true)?;
+    let names: Vec<String> = env
+        .ontologies()
+        .keys()
+        .map(|id| id.to_uri_string())
+        .collect();
+
+    assert!(names.iter().any(|n| n.contains("example.com/A")));
+    assert!(!names.iter().any(|n| n.contains("example.com/B")));
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
 fn import_graph_merges_closure_and_removes_imports() -> Result<()> {
     use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
     use oxigraph::model::Triple;

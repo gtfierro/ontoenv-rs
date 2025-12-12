@@ -51,6 +51,8 @@ class OntoEnv:
         root: str = ".",
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
+        include_ontologies: Optional[List[str]] = None,
+        exclude_ontologies: Optional[List[str]] = None,
         temporary: bool = False,
         no_search: bool = False,
     ) -> None: ...

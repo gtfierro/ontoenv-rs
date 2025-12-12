@@ -97,6 +97,8 @@ Options:
   -n, --no-search               Do not search for ontologies in the search directories
   -i, --includes <INCLUDES>...  Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']. Supports **, ?, and bare directories (e.g., 'lib/tests' expands to 'lib/tests/**').
   -e, --excludes <EXCLUDES>...  Glob patterns for which files to exclude, supports ** and directory prefixes
+      --include-ontology, --io <REGEX>...  Regex patterns of ontology IRIs to include; if set, only matches are kept
+      --exclude-ontology, --eo <REGEX>...  Regex patterns of ontology IRIs to exclude (checked after includes)
   -h, --help                    Print help
 ```
 
@@ -230,6 +232,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
   - `offline`: don’t fetch remote ontologies
   - `temporary`: in‑memory only (no `.ontoenv/`)
   - `includes` / `excludes`: gitignore-style globs (supports `**`); bare directories like `lib/tests` implicitly match everything under them.
+  - `include_ontologies` / `exclude_ontologies`: regex filters applied to ontology IRIs; excludes run after includes.
 - `update(all=False)`: refresh discovered ontologies
 - `add(location, fetch_imports=True) -> str`: add graph from file or URL; returns graph IRI
 - `get_graph(name) -> rdflib.Graph`: get just one ontology graph

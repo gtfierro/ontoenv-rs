@@ -15,6 +15,7 @@ use chrono::prelude::*;
 use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
+use regex::Regex;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
@@ -141,6 +142,25 @@ impl BatchState {
 struct BatchScope<'a> {
     env: &'a mut OntoEnv,
     completed: bool,
+}
+
+#[derive(Default)]
+struct OntologyFilters {
+    include: Vec<Regex>,
+    exclude: Vec<Regex>,
+}
+
+impl OntologyFilters {
+    fn allow(&self, id: &GraphIdentifier) -> bool {
+        let iri = id.to_uri_string();
+        if self.exclude.iter().any(|re| re.is_match(&iri)) {
+            return false;
+        }
+        if self.include.is_empty() {
+            return true;
+        }
+        self.include.iter().any(|re| re.is_match(&iri))
+    }
 }
 
 impl<'a> BatchScope<'a> {
@@ -446,6 +466,41 @@ impl OntoEnv {
         Ok(Self::new(self.env.clone(), io, self.config.clone()))
     }
 
+    fn ontology_filters(&self) -> Result<OntologyFilters> {
+        let (include, exclude) = self.config.build_ontology_regexes()?;
+        Ok(OntologyFilters { include, exclude })
+    }
+
+    fn prune_disallowed_ontologies(
+        &mut self,
+        filters: &OntologyFilters,
+        touch_io: bool,
+    ) -> Result<()> {
+        let mut removed = Vec::new();
+        for id in self.env.ontologies().keys().cloned().collect::<Vec<_>>() {
+            if filters.allow(&id) {
+                continue;
+            }
+            info!("Excluding ontology {} due to ontology filters", id);
+            if touch_io {
+                if let Err(err) = self.io.remove(&id) {
+                    warn!(
+                        "Failed to remove filtered ontology {} from store: {}",
+                        id, err
+                    );
+                }
+            }
+            let _ = self.env.remove_ontology(&id)?;
+            removed.push(id);
+        }
+
+        if !removed.is_empty() {
+            // Dependency graph may contain stale nodes; rebuild to stay consistent.
+            self.rebuild_dependency_graph()?;
+        }
+        Ok(())
+    }
+
     /// Loads the environment from the .ontoenv directory.
     pub fn load_from_directory(root: PathBuf, read_only: bool) -> Result<Self> {
         let ontoenv_dir = root.join(".ontoenv");
@@ -505,14 +560,21 @@ impl OntoEnv {
             io = new_io;
         }
 
-        Ok(OntoEnv {
+        let mut ontoenv = OntoEnv {
             env,
             io,
             config,
             dependency_graph,
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
-        })
+        };
+
+        let filters = ontoenv.ontology_filters()?;
+        // Avoid writing when read_only; prune in-memory only for read-only or temporary envs.
+        let touch_io = !(read_only || ontoenv.config.temporary);
+        ontoenv.prune_disallowed_ontologies(&filters, touch_io)?;
+
+        Ok(ontoenv)
     }
 
     // Core API methods
@@ -731,10 +793,15 @@ impl OntoEnv {
         &mut self,
         ontologies: Vec<Ontology>,
         update_dependencies: bool,
+        filters: &OntologyFilters,
     ) -> Result<Vec<GraphIdentifier>> {
         let mut ids = Vec::with_capacity(ontologies.len());
         for ontology in ontologies {
             let id = ontology.id().clone();
+            if !filters.allow(&id) {
+                info!("Excluding ontology {} due to ontology filters", id);
+                continue;
+            }
             self.env.add_ontology(ontology)?;
             ids.push(id);
         }
@@ -755,14 +822,32 @@ impl OntoEnv {
         update_dependencies: bool,
     ) -> Result<GraphIdentifier> {
         self.failed_resolutions.clear();
+        let ontology_filters = self.ontology_filters()?;
+        self.prune_disallowed_ontologies(&ontology_filters, true)?;
         let seeds = vec![(location.clone(), overwrite)];
         let (ontologies, reused_ids, errors) =
             self.process_import_queue(seeds, refresh, update_dependencies)?;
-        let mut ids = self.register_ontologies(ontologies, update_dependencies)?;
-        ids.extend(reused_ids);
+        let filtered_onts: Vec<Ontology> = ontologies
+            .into_iter()
+            .filter(|o| ontology_filters.allow(o.id()))
+            .collect();
+        let mut ids =
+            self.register_ontologies(filtered_onts, update_dependencies, &ontology_filters)?;
+        ids.extend(
+            reused_ids
+                .into_iter()
+                .filter(|id| ontology_filters.allow(id)),
+        );
 
         if let Some(existing) = self.env.get_ontology_by_location(&location) {
-            return Ok(existing.id().clone());
+            if ontology_filters.allow(existing.id()) {
+                return Ok(existing.id().clone());
+            } else {
+                return Err(anyhow!(
+                    "Ontology {} was filtered out by ontology include/exclude patterns",
+                    existing.id()
+                ));
+            }
         }
 
         ids.into_iter().next().ok_or_else(|| {
@@ -862,6 +947,9 @@ impl OntoEnv {
     fn update_all_inner(&mut self, all: bool) -> Result<Vec<GraphIdentifier>> {
         self.failed_resolutions.clear();
         self.remove_missing_ontologies()?;
+        let ontology_filters = self.ontology_filters()?;
+        // Prune any already-present ontologies that no longer satisfy filters
+        self.prune_disallowed_ontologies(&ontology_filters, true)?;
 
         let updated_files = self.collect_updated_files(all)?;
         let seeds: Vec<(OntologyLocation, Overwrite)> = updated_files
@@ -871,8 +959,16 @@ impl OntoEnv {
         let (ontologies, reused_ids, _errors) =
             self.process_import_queue(seeds, RefreshStrategy::UseCache, true)?;
 
-        let mut ids = self.register_ontologies(ontologies, true)?;
-        ids.extend(reused_ids);
+        let filtered_onts: Vec<Ontology> = ontologies
+            .into_iter()
+            .filter(|o| ontology_filters.allow(o.id()))
+            .collect();
+        let mut ids = self.register_ontologies(filtered_onts, true, &ontology_filters)?;
+        ids.extend(
+            reused_ids
+                .into_iter()
+                .filter(|id| ontology_filters.allow(id)),
+        );
         Ok(ids)
     }
 

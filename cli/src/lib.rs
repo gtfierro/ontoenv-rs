@@ -49,6 +49,12 @@ struct Cli {
     /// Glob patterns for which files to exclude; supports ** and directory prefixes.
     #[clap(long, short, num_args = 1.., global = true)]
     excludes: Vec<String>,
+    /// Regex patterns of ontology IRIs to include (if set, only matching IRIs are kept).
+    #[clap(long = "include-ontology", alias = "io", num_args = 1.., global = true)]
+    include_ontologies: Vec<String>,
+    /// Regex patterns of ontology IRIs to exclude; applied after includes.
+    #[clap(long = "exclude-ontology", alias = "eo", num_args = 1.., global = true)]
+    exclude_ontologies: Vec<String>,
     /// Do not search for ontologies in the search directories
     #[clap(long = "no-search", short = 'n', action, global = true)]
     no_search: bool,
@@ -451,6 +457,12 @@ fn execute(cmd: Cli) -> Result<()> {
     }
     if !cmd.excludes.is_empty() {
         builder = builder.excludes(&cmd.excludes);
+    }
+    if !cmd.include_ontologies.is_empty() {
+        builder = builder.include_ontologies(&cmd.include_ontologies);
+    }
+    if !cmd.exclude_ontologies.is_empty() {
+        builder = builder.exclude_ontologies(&cmd.exclude_ontologies);
     }
 
     let config: Config = builder.build()?;

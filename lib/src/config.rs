@@ -5,6 +5,7 @@ use crate::options::CacheMode;
 use crate::policy::{DefaultPolicy, ResolutionPolicy};
 use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -37,6 +38,12 @@ pub struct Config {
     // exclude patterns
     #[serde(default)]
     excludes: Vec<String>,
+    /// Regex patterns applied to ontology IRIs to include
+    #[serde(default)]
+    include_ontologies: Vec<String>,
+    /// Regex patterns applied to ontology IRIs to exclude
+    #[serde(default)]
+    exclude_ontologies: Vec<String>,
     // require ontology names?
     pub require_ontology_names: bool,
     // strict mode (does not allow for any errors in the ontology files)
@@ -92,6 +99,20 @@ impl Config {
 
     pub(crate) fn includes_is_empty(&self) -> bool {
         self.includes.is_empty()
+    }
+
+    pub(crate) fn build_ontology_regexes(&self) -> Result<(Vec<Regex>, Vec<Regex>)> {
+        let inc = self
+            .include_ontologies
+            .iter()
+            .map(|p| Regex::new(p))
+            .collect::<Result<Vec<_>, _>>()?;
+        let exc = self
+            .exclude_ontologies
+            .iter()
+            .map(|p| Regex::new(p))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((inc, exc))
     }
 
     /// A convenient constructor for a default offline, non-temporary environment.
@@ -171,6 +192,18 @@ impl Config {
                 println!("    - {pat}");
             }
         }
+        if !self.include_ontologies.is_empty() {
+            println!("  Include Ontology Regexes:");
+            for pat in &self.include_ontologies {
+                println!("    - {pat}");
+            }
+        }
+        if !self.exclude_ontologies.is_empty() {
+            println!("  Exclude Ontology Regexes:");
+            for pat in &self.exclude_ontologies {
+                println!("    - {pat}");
+            }
+        }
         println!("  Require Ontology Names: {}", self.require_ontology_names);
         println!("  Strict: {}", self.strict);
         println!("  Offline: {}", self.offline);
@@ -190,6 +223,8 @@ pub struct ConfigBuilder {
     locations: Option<Vec<PathBuf>>,
     includes: Option<Vec<String>>,
     excludes: Option<Vec<String>>,
+    include_ontologies: Option<Vec<String>>,
+    exclude_ontologies: Option<Vec<String>>,
     require_ontology_names: Option<bool>,
     strict: Option<bool>,
     offline: Option<bool>,
@@ -207,6 +242,8 @@ impl ConfigBuilder {
             locations: None,
             includes: None,
             excludes: None,
+            include_ontologies: None,
+            exclude_ontologies: None,
             require_ontology_names: None,
             strict: None,
             offline: None,
@@ -254,6 +291,36 @@ impl ConfigBuilder {
     {
         self.excludes = Some(
             excludes
+                .into_iter()
+                .map(|s| s.as_ref().to_string())
+                .collect(),
+        );
+        self
+    }
+
+    /// Sets regex patterns for ontology IRIs to include. If set, only matching ontologies are kept.
+    pub fn include_ontologies<I>(mut self, patterns: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        self.include_ontologies = Some(
+            patterns
+                .into_iter()
+                .map(|s| s.as_ref().to_string())
+                .collect(),
+        );
+        self
+    }
+
+    /// Sets regex patterns for ontology IRIs to exclude.
+    pub fn exclude_ontologies<I>(mut self, patterns: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        self.exclude_ontologies = Some(
+            patterns
                 .into_iter()
                 .map(|s| s.as_ref().to_string())
                 .collect(),
@@ -328,12 +395,16 @@ impl ConfigBuilder {
                 .collect()
         });
         let excludes_str = self.excludes.unwrap_or_default();
+        let include_ontologies = self.include_ontologies.unwrap_or_default();
+        let exclude_ontologies = self.exclude_ontologies.unwrap_or_default();
 
         Ok(Config {
             root,
             locations,
             includes: includes_str,
             excludes: excludes_str,
+            include_ontologies,
+            exclude_ontologies,
             require_ontology_names: self.require_ontology_names.unwrap_or(false),
             strict: self.strict.unwrap_or(false),
             offline: self.offline.unwrap_or(false),
