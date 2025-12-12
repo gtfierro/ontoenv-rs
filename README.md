@@ -95,8 +95,8 @@ Options:
   -o, --offline                 Offline mode - will not attempt to fetch ontologies from the web
   -p, --policy <POLICY>         Resolution policy for determining which ontology to use when there are multiple with the same name. One of 'default', 'latest', 'version' [default: default]
   -n, --no-search               Do not search for ontologies in the search directories
-  -i, --includes <INCLUDES>...  Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']
-  -e, --excludes <EXCLUDES>...  Glob patterns for which files to exclude, defaults to []
+  -i, --includes <INCLUDES>...  Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']. Supports **, ?, and bare directories (e.g., 'lib/tests' expands to 'lib/tests/**').
+  -e, --excludes <EXCLUDES>...  Glob patterns for which files to exclude, supports ** and directory prefixes
   -h, --help                    Print help
 ```
 
@@ -229,6 +229,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
 - Constructor: `OntoEnv(path=None, recreate=False, create_or_use_cached=False, read_only=False, search_directories=None, require_ontology_names=False, strict=False, offline=False, resolution_policy="default", root=".", includes=None, excludes=None, temporary=False, no_search=False)`
   - `offline`: don’t fetch remote ontologies
   - `temporary`: in‑memory only (no `.ontoenv/`)
+  - `includes` / `excludes`: gitignore-style globs (supports `**`); bare directories like `lib/tests` implicitly match everything under them.
 - `update(all=False)`: refresh discovered ontologies
 - `add(location, fetch_imports=True) -> str`: add graph from file or URL; returns graph IRI
 - `get_graph(name) -> rdflib.Graph`: get just one ontology graph
