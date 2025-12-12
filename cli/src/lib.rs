@@ -42,10 +42,11 @@ struct Cli {
     /// Offline mode - will not attempt to fetch ontologies from the web
     #[clap(long, short, action, default_value = "false", global = true)]
     offline: bool,
-    /// Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']
+    /// Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3'].
+    /// Supports **, ?, and bare directories (e.g., 'lib/tests' => 'lib/tests/**').
     #[clap(long, short, num_args = 1.., global = true)]
     includes: Vec<String>,
-    /// Glob patterns for which files to exclude, defaults to []
+    /// Glob patterns for which files to exclude; supports ** and directory prefixes.
     #[clap(long, short, num_args = 1.., global = true)]
     excludes: Vec<String>,
     /// Do not search for ontologies in the search directories

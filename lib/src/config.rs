@@ -4,32 +4,12 @@
 use crate::options::CacheMode;
 use crate::policy::{DefaultPolicy, ResolutionPolicy};
 use anyhow::Result;
-use glob::{Pattern, PatternError};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_INCLUDE_PATTERNS: &[&str] = &["*.ttl", "*.xml", "*.n3"];
-
-fn vec_pattern_ser<S>(patterns: &Vec<Pattern>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    // serialize to strings by calling the display method on the patterns
-    let patterns: Vec<String> = patterns.iter().map(|p| p.to_string()).collect();
-    patterns.serialize(serializer)
-}
-
-fn vec_pattern_de<'de, D>(deserializer: D) -> Result<Vec<Pattern>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // use the constructor for Pattern to validate the strings
-    let patterns: Vec<String> = Vec::deserialize(deserializer)?;
-    let patterns: Result<Vec<Pattern>, PatternError> =
-        patterns.iter().map(|p| Pattern::new(p)).collect();
-    patterns.map_err(serde::de::Error::custom)
-}
 
 fn cache_mode_ser<S>(mode: &CacheMode, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -51,18 +31,12 @@ pub struct Config {
     pub root: PathBuf,
     #[serde(default)]
     pub locations: Vec<PathBuf>,
-    // include regex patterns
-    #[serde(
-        serialize_with = "vec_pattern_ser",
-        deserialize_with = "vec_pattern_de"
-    )]
-    includes: Vec<Pattern>,
+    // include glob patterns (globset syntax; ** supported)
+    #[serde(default)]
+    includes: Vec<String>,
     // exclude patterns
-    #[serde(
-        serialize_with = "vec_pattern_ser",
-        deserialize_with = "vec_pattern_de"
-    )]
-    excludes: Vec<Pattern>,
+    #[serde(default)]
+    excludes: Vec<String>,
     // require ontology names?
     pub require_ontology_names: bool,
     // strict mode (does not allow for any errors in the ontology files)
@@ -90,6 +64,36 @@ impl Config {
         ConfigBuilder::new()
     }
 
+    pub(crate) fn build_globsets(&self) -> Result<(GlobSet, GlobSet)> {
+        fn contains_meta(pat: &str) -> bool {
+            pat.chars()
+                .any(|c| matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '!'))
+        }
+
+        fn expand_patterns(patterns: &[String]) -> Result<GlobSet> {
+            let mut builder = GlobSetBuilder::new();
+            for pat in patterns {
+                let trimmed = pat.trim_end_matches('/');
+                builder.add(Glob::new(trimmed)?);
+
+                // If the pattern looks like a bare directory (no glob meta),
+                // also match anything underneath it to support inputs like "lib/tests".
+                if !contains_meta(trimmed) {
+                    builder.add(Glob::new(&format!("{}/**", trimmed))?);
+                }
+            }
+            Ok(builder.build()?)
+        }
+
+        let includes = expand_patterns(&self.includes)?;
+        let excludes = expand_patterns(&self.excludes)?;
+        Ok((includes, excludes))
+    }
+
+    pub(crate) fn includes_is_empty(&self) -> bool {
+        self.includes.is_empty()
+    }
+
     /// A convenient constructor for a default offline, non-temporary environment.
     /// Searches for ontologies in the root directory.
     pub fn default(root: PathBuf) -> Result<Self> {
@@ -108,18 +112,29 @@ impl Config {
 
     /// Determines if a file is included in the ontology environment configuration
     pub fn is_included(&self, path: &Path) -> bool {
-        for exclude in self.excludes.iter() {
-            if exclude.matches_path(path) {
-                return false;
-            }
-        }
-        for include in self.includes.iter() {
-            if include.matches_path(path) {
+        // Match relative to the config root when possible so globs like "lib/**/*.ttl"
+        // behave intuitively even when walking absolute paths.
+        let rel = path.strip_prefix(&self.root).unwrap_or(path).to_path_buf();
+
+        let (include_set, exclude_set) = match self.build_globsets() {
+            Ok(sets) => sets,
+            Err(err) => {
+                // Fall back to permissive behavior if patterns are invalid
+                log::warn!("Invalid include/exclude pattern: {err}");
                 return true;
             }
+        };
+
+        if exclude_set.is_match(&rel) {
+            return false;
         }
-        // default: if no includes are defined, then include everything
-        self.includes.is_empty()
+
+        if self.includes.is_empty() {
+            // no includes means include everything unless excluded
+            return true;
+        }
+
+        include_set.is_match(&rel)
     }
 
     pub fn save_to_file(&self, file: &Path) -> Result<()> {
@@ -314,21 +329,11 @@ impl ConfigBuilder {
         });
         let excludes_str = self.excludes.unwrap_or_default();
 
-        let includes = includes_str
-            .iter()
-            .map(|p| Pattern::new(p))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let excludes = excludes_str
-            .iter()
-            .map(|p| Pattern::new(p))
-            .collect::<Result<Vec<_>, _>>()?;
-
         Ok(Config {
             root,
             locations,
-            includes,
-            excludes,
+            includes: includes_str,
+            excludes: excludes_str,
             require_ontology_names: self.require_ontology_names.unwrap_or(false),
             strict: self.strict.unwrap_or(false),
             offline: self.offline.unwrap_or(false),

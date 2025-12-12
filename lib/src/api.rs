@@ -797,10 +797,31 @@ impl OntoEnv {
             return Ok(None);
         }
 
-        if location.is_file() {
+        if let OntologyLocation::File(path) = location {
+            // Prefer content hash for accuracy
+            if let Some(stored_hash) = existing.content_hash() {
+                match hash_file(path) {
+                    Ok(current_hash) => {
+                        if current_hash == stored_hash {
+                            return Ok(Some(existing_id));
+                        }
+                        // Hashes differ, so file is modified. Do not reuse.
+                        return Ok(None);
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Failed to hash file {} for cache check, falling back to mtime: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                }
+            }
+
+            // Fallback to mtime comparison for legacy records without a hash
             let last_updated = match existing.last_updated {
                 Some(ts) => ts,
-                None => return Ok(None),
+                None => return Ok(None), // Cannot determine freshness
             };
 
             match self.io.source_last_modified(existing.id()) {
@@ -814,11 +835,11 @@ impl OntoEnv {
                         "Failed to determine modification time for {} ({}); using cached version",
                         existing_id, err
                     );
-                    return Ok(Some(existing_id));
+                    return Ok(Some(existing_id)); // Err on safe side
                 }
             }
 
-            Ok(None)
+            Ok(None) // Modified or freshness uncertain
         } else {
             // For URLs, reuse the cached ontology unless the caller forces a refresh
             Ok(Some(existing_id))
@@ -1127,11 +1148,28 @@ impl OntoEnv {
     }
 
     /// Lists all ontologies in the search directories which match
-    /// the patterns
+    /// the include/exclude glob patterns
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
         if self.config.no_search {
             return Ok(Vec::new());
         }
+        let (include_set, exclude_set) = self.config.build_globsets()?;
+        let includes_empty = self.config.includes_is_empty();
+
+        let mut matches = |path: &Path| {
+            let rel = path
+                .strip_prefix(&self.config.root)
+                .unwrap_or(path)
+                .to_path_buf();
+
+            if exclude_set.is_match(&rel) {
+                return false;
+            }
+            if includes_empty {
+                return true;
+            }
+            include_set.is_match(&rel)
+        };
         let mut files = HashSet::new();
         for location in &self.config.locations {
             let resolved = self.resolve_path(location);
@@ -1141,7 +1179,7 @@ impl OntoEnv {
                 continue;
             }
             // if location is a file, add it to the list
-            if resolved.is_file() && self.config.is_included(&resolved) {
+            if resolved.is_file() && matches(&resolved) {
                 if let Err(err) = std::fs::File::open(&resolved) {
                     if self.config.strict {
                         return Err(err.into());
@@ -1167,7 +1205,7 @@ impl OntoEnv {
                         continue;
                     }
                 };
-                if entry.file_type().is_file() && self.config.is_included(entry.path()) {
+                if entry.file_type().is_file() && matches(entry.path()) {
                     // Skip unreadable files when not strict
                     if let Err(err) = std::fs::File::open(entry.path()) {
                         if self.config.strict {
