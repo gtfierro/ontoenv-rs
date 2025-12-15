@@ -55,9 +55,9 @@ struct Cli {
     /// Regex patterns of ontology IRIs to exclude; applied after includes.
     #[clap(long = "exclude-ontology", alias = "eo", num_args = 1.., global = true)]
     exclude_ontologies: Vec<String>,
-    /// Do not search for ontologies in the search directories
-    #[clap(long = "no-search", short = 'n', action, global = true)]
-    no_search: bool,
+    /// Maximum age (seconds) before cached remote ontologies are re-fetched. Default: 86400 (24h).
+    #[clap(long = "remote-cache-ttl-secs", value_parser, global = true)]
+    remote_cache_ttl_secs: Option<u64>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -114,9 +114,9 @@ enum Commands {
         /// Overwrite the environment if it already exists
         #[clap(long, default_value = "false")]
         overwrite: bool,
-        /// Directories to search for ontologies. If not provided, the current directory is used.
-        #[clap(last = true)]
-        locations: Option<Vec<PathBuf>>,
+        /// Directories to search for ontologies. If omitted, defaults to the current directory.
+        #[clap(value_name = "LOCATION", num_args = 0.., value_parser)]
+        locations: Vec<PathBuf>,
     },
     /// Prints the version of the ontoenv binary
     Version,
@@ -309,7 +309,7 @@ fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<
     match config_cmd {
         ConfigCommands::Set { key, value } => {
             match key.as_str() {
-                "offline" | "strict" | "require_ontology_names" | "no_search" => {
+                "offline" | "strict" | "require_ontology_names" => {
                     let bool_val = value.parse::<bool>().map_err(|_| {
                         anyhow::anyhow!("Invalid boolean value for {}: {}", key, value)
                     })?;
@@ -317,6 +317,12 @@ fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<
                 }
                 "resolution_policy" => {
                     object.insert(key.to_string(), serde_json::Value::String(value.clone()));
+                }
+                "remote_cache_ttl_secs" => {
+                    let ttl = value
+                        .parse::<u64>()
+                        .map_err(|_| anyhow::anyhow!("Invalid u64 value for {}: {}", key, value))?;
+                    object.insert(key.to_string(), serde_json::Value::Number(ttl.into()));
                 }
                 "locations" | "includes" | "excludes" => {
                     return Err(anyhow::anyhow!(
@@ -434,22 +440,18 @@ fn execute(cmd: Cli) -> Result<()> {
 
     let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
 
+    let cwd = current_dir()?;
     let mut builder = Config::builder()
-        .root(current_dir()?)
+        .root(cwd.clone())
         .require_ontology_names(cmd.require_ontology_names)
         .strict(cmd.strict)
         .offline(cmd.offline)
         .resolution_policy(policy)
-        .temporary(cmd.temporary)
-        .no_search(cmd.no_search);
+        .temporary(cmd.temporary);
 
     // Locations only apply to `init`; other commands ignore positional LOCATIONS
-    if let Commands::Init {
-        locations: Some(locs),
-        ..
-    } = &cmd.command
-    {
-        builder = builder.locations(locs.clone());
+    if let Commands::Init { locations, .. } = &cmd.command {
+        builder = builder.locations(locations.clone());
     }
     // only set includes if they are provided on the command line, otherwise use builder defaults
     if !cmd.includes.is_empty() {
@@ -463,6 +465,9 @@ fn execute(cmd: Cli) -> Result<()> {
     }
     if !cmd.exclude_ontologies.is_empty() {
         builder = builder.exclude_ontologies(&cmd.exclude_ontologies);
+    }
+    if let Some(ttl) = cmd.remote_cache_ttl_secs {
+        builder = builder.remote_cache_ttl_secs(ttl);
     }
 
     let config: Config = builder.build()?;

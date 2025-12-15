@@ -77,16 +77,16 @@ Begin by initializing an `ontoenv` workspace in a directory containing some onto
 ontoenv init
 ```
 
-Initializes `.ontoenv/` in the current directory (or specified root), discovers ontologies, and loads dependencies. You must run `init` once per environment. Subsequent commands will auto‑discover the nearest `.ontoenv/` in parent directories.
+Initializes `.ontoenv/` in the current directory (or specified root). Pass one or more `LOCATION` arguments (for example `.`) to discover ontologies immediately; if you omit them, the environment starts empty and you can populate it later via `ontoenv add` or by rerunning `init` with locations. You must run `init` once per environment. Subsequent commands will auto‑discover the nearest `.ontoenv/` in parent directories.
 
 ```ignore
 $ ontoenv init -h
 Create a new ontology environment
 
-Usage: ontoenv init [OPTIONS] [SEARCH_DIRECTORIES]...
+Usage: ontoenv init [OPTIONS] [LOCATION]...
 
 Arguments:
-  [SEARCH_DIRECTORIES]...  Directories to search for ontologies. If not provided, the current directory is used
+  [LOCATION]...  Directories to search for ontologies. If omitted, no directories are scanned and you must add ontologies explicitly or rerun init with locations.
 
 Options:
       --overwrite                 Overwrite the environment if it already exists
@@ -94,7 +94,6 @@ Options:
   -s, --strict                  Strict mode - will raise an error if an ontology is not found
   -o, --offline                 Offline mode - will not attempt to fetch ontologies from the web
   -p, --policy <POLICY>         Resolution policy for determining which ontology to use when there are multiple with the same name. One of 'default', 'latest', 'version' [default: default]
-  -n, --no-search               Do not search for ontologies in the search directories
   -i, --includes <INCLUDES>...  Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']. Supports **, ?, and bare directories (e.g., 'lib/tests' expands to 'lib/tests/**').
   -e, --excludes <EXCLUDES>...  Glob patterns for which files to exclude, supports ** and directory prefixes
       --include-ontology, --io <REGEX>...  Regex patterns of ontology IRIs to include; if set, only matches are kept
@@ -104,9 +103,9 @@ Options:
 
 Offline mode in particular is helpful when you want to limit which ontologies get loaded. Simply download the ontologies you want, and then enable offline mode.
 
-Examples:
-- `ontoenv init` — initialize in current directory
-- `ontoenv init ./ontologies ./models` — initialize and search these directories
+- `ontoenv init .` — initialize and scan the current directory (recursive)
+- `ontoenv init ./ontologies ./models` — initialize and search these directories (recursive)
+- `ontoenv init` — create an empty environment (no discovery) so you can add ontologies manually
 - `ontoenv init --overwrite --offline ./ontologies` — rebuild from scratch and work offline
 
 #### Local State
@@ -120,7 +119,7 @@ Examples:
 - Discovery: Commands (except `init`) discover an environment by walking up parent directories from the current working directory, looking for `.ontoenv/`.
 - Override: Set `ONTOENV_DIR` to point to a specific environment; if it points at a `.ontoenv` directory the parent of that directory is used as the root.
 - Creation: Only `ontoenv init` creates an environment on disk. Other commands will error if no environment is found.
-- Positional search directories: Only `ontoenv init` accepts positional search directories (LOCATIONS). Other commands ignore trailing positionals.
+- Positional search directories: Only `ontoenv init` accepts positional search directories (LOCATIONS). If you omit them, no directories are scanned automatically; add ontologies manually or rerun `init` with explicit paths. Other commands ignore trailing positionals.
 - Temporary mode: Pass `--temporary` to run with an in‑memory environment (no `.ontoenv/`).
 
 #### update
@@ -228,7 +227,8 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
 ### Key methods
 
-- Constructor: `OntoEnv(path=None, recreate=False, create_or_use_cached=False, read_only=False, search_directories=None, require_ontology_names=False, strict=False, offline=False, resolution_policy="default", root=".", includes=None, excludes=None, temporary=False, no_search=False)`
+- Constructor: `OntoEnv(path=None, recreate=False, create_or_use_cached=False, read_only=False, search_directories=None, require_ontology_names=False, strict=False, offline=False, use_cached_ontologies=False, resolution_policy="default", root=".", includes=None, excludes=None, temporary=False, remote_cache_ttl_secs=None)`
+  - Leave `search_directories=None` to skip automatic discovery; pass paths (e.g., `["."]`) to search immediately.
   - `offline`: don’t fetch remote ontologies
   - `temporary`: in‑memory only (no `.ontoenv/`)
   - `includes` / `excludes`: gitignore-style globs (supports `**`); bare directories like `lib/tests` implicitly match everything under them.
@@ -251,7 +251,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
   - Create/overwrite on disk: `OntoEnv(path=..., recreate=True)` explicitly creates a new environment at `path` (or overwrites if it exists).
   - Create or reuse cached: `OntoEnv(create_or_use_cached=True, ...)` retains the previous auto-initializing behavior—if no environment is found it bootstraps one using the supplied configuration.
   - Discover and load: Otherwise, the constructor walks up from `path` (or `root=.` if `path` is None) to find an existing `.ontoenv/`. If found, it loads it; if not, it raises `FileNotFoundError` with a hint to use `recreate=True`, `temporary=True`, or `create_or_use_cached=True`.
-  - Flags such as `offline`, `strict`, `search_directories`, `includes`, `excludes` apply to created environments; loading respects the saved configuration.
+  - Flags such as `offline`, `strict`, `search_directories`, `includes`, `excludes` apply to created environments; loading respects the saved configuration. `search_directories` defaults to an empty list, so pass paths (e.g., `["."]`) when you want discovery at init-time.
 
 #### get_closure vs import_dependencies
 
@@ -372,6 +372,7 @@ Persistent storage details
 - Creation:
   - `OntoEnv::init(config, overwrite)` explicitly creates (or overwrites) an environment on disk.
   - `OntoEnv::add(..., Overwrite::Allow, RefreshStrategy::UseCache)` is the common way to add an ontology, while `RefreshStrategy::Force` skips cache reuse.
+  - Enable `use_cached_ontologies` in `Config` (or pass `use_cached_ontologies=True` to Python) to start with an empty environment that only fetches data when explicitly asked; keep it disabled (default) to run an implicit discovery during `init`.
 - Recommended pattern:
   - Try discovery (`find_ontoenv_root()`), then `load_from_directory`; if not found, prompt/init explicitly.
   - Use `config.temporary = true` (via `Config::builder`) and `OntoEnv::init` for in‑memory use cases.
@@ -382,6 +383,7 @@ The Rust API now exposes expressive enums instead of opaque booleans:
 
 - `Overwrite::{Allow, Preserve}` — replace existing graphs or keep the original.
 - `RefreshStrategy::{Force, UseCache}` — bypass or reuse cached ontologies.
-- `CacheMode::{Enabled, Disabled}` — persisted in `Config` and mirrored in Python as the `use_cached_ontologies` boolean.
+- `CacheMode::{Enabled, Disabled}` — persisted in `Config` and mirrored in Python as the `use_cached_ontologies` boolean. Enabled mode skips all implicit discovery and only reuses existing graphs when explicitly requested; disabled mode performs automatic discovery during `init`.
+- `remote_cache_ttl_secs` — maximum age (seconds) before a cached *remote* ontology (URL) is re-fetched; defaults to 86,400 (24h). Exposed via CLI `--remote-cache-ttl-secs` and Python `remote_cache_ttl_secs`.
 
 From older code that passed `true`/`false`, use `Overwrite::Allow`/`Preserve` and `RefreshStrategy::Force`/`UseCache`. `bool` values still convert via `Into`, so existing code can migrate incrementally.
