@@ -43,7 +43,7 @@ fn init_store_with_two_graphs(root: &Path, a_uri: &str, b_uri: &str) -> (String,
         .strict(false)
         .offline(true)
         .temporary(false)
-        .no_search(true)
+        .locations(vec![])
         .build()
         .expect("build config");
 
