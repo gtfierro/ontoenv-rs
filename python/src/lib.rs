@@ -343,7 +343,7 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, no_search=false))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None))]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
@@ -362,7 +362,7 @@ impl OntoEnv {
         include_ontologies: Option<Vec<String>>,
         exclude_ontologies: Option<Vec<String>>,
         temporary: bool,
-        no_search: bool,
+        remote_cache_ttl_secs: Option<u64>,
     ) -> PyResult<Self> {
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
@@ -389,8 +389,7 @@ impl OntoEnv {
             .offline(offline)
             .use_cached_ontologies(CacheMode::from(use_cached_ontologies))
             .resolution_policy(resolution_policy)
-            .temporary(temporary)
-            .no_search(no_search);
+            .temporary(temporary);
 
         if let Some(dirs) = search_directories {
             let paths = dirs.into_iter().map(PathBuf::from).collect();
@@ -407,6 +406,9 @@ impl OntoEnv {
         }
         if let Some(excl_o) = exclude_ontologies {
             builder = builder.exclude_ontologies(excl_o);
+        }
+        if let Some(ttl) = remote_cache_ttl_secs {
+            builder = builder.remote_cache_ttl_secs(ttl);
         }
 
         let cfg = builder
@@ -1272,31 +1274,6 @@ impl OntoEnv {
         let mut guard = inner.lock().unwrap();
         if let Some(env) = guard.as_mut() {
             env.set_require_ontology_names(require);
-            env.save_to_directory().map_err(anyhow_to_pyerr)
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "OntoEnv is closed",
-            ))
-        }
-    }
-
-    fn no_search(&self) -> PyResult<bool> {
-        let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_ref() {
-            Ok(env.no_search())
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "OntoEnv is closed",
-            ))
-        }
-    }
-
-    fn set_no_search(&mut self, no_search: bool) -> PyResult<()> {
-        let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_mut() {
-            env.set_no_search(no_search);
             env.save_to_directory().map_err(anyhow_to_pyerr)
         } else {
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

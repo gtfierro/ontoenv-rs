@@ -71,6 +71,7 @@ fn discovery_from_subdirectory() {
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("init")
+        .arg(".")
         .output()
         .expect("run init");
     assert!(
@@ -100,6 +101,7 @@ fn ontoenv_dir_override() {
     let out = Command::new(&exe)
         .current_dir(&env_root)
         .arg("init")
+        .arg(".")
         .output()
         .expect("run init");
     assert!(
@@ -137,7 +139,6 @@ fn update_from_nested_subdir_uses_root_locations() {
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("init")
-        .arg("--")
         .arg("ontologies")
         .output()
         .expect("run init");
@@ -222,6 +223,7 @@ fn why_lists_importers_paths() {
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("init")
+        .arg(".")
         .output()
         .expect("run init");
     assert!(out.status.success());
@@ -252,6 +254,7 @@ fn get_stdout_turtle() {
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("init")
+        .arg(".")
         .output()
         .expect("run init");
     assert!(
@@ -294,6 +297,7 @@ fn get_jsonld_output() {
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("init")
+        .arg(".")
         .output()
         .expect("run init");
     assert!(out.status.success());
@@ -349,6 +353,7 @@ fn get_with_location_disambiguates() {
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("init")
+        .arg(".")
         .output()
         .expect("run init");
     assert!(out.status.success());
