@@ -32,3 +32,6 @@ pyo3-build-config = "0.27"
 default = []
 abi3 = ["pyo3/abi3-py311"]
 cli = ["ontoenv-cli"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
