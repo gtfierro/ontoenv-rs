@@ -34,3 +34,6 @@ pretty-bytes = "0.2.2"
 fs2 = "0.4"
 url = "2.5"
 blake3.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]

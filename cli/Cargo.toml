@@ -29,3 +29,6 @@ chrono.workspace = true
 walkdir.workspace = true
 serde_json.workspace = true
 log.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
