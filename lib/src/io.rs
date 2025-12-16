@@ -28,14 +28,14 @@ pub struct StoreStats {
 }
 
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
-    // Try preferred first, then fall back to other formats with a fresh store each time
+    // Try preferred first, then fall back to other formats.
     let mut candidates = vec![RdfFormat::Turtle, RdfFormat::RdfXml, RdfFormat::NTriples];
     if let Some(p) = preferred {
         candidates.retain(|f| *f != p);
         candidates.insert(0, p);
     }
+    let store = Store::new()?;
     for fmt in candidates {
-        let store = Store::new()?;
         let staging_graph = NamedNode::new_unchecked("temp:graph");
         let parser = RdfParser::from_format(fmt)
             .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
