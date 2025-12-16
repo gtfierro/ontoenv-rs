@@ -9,8 +9,14 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const DEFAULT_INCLUDE_PATTERNS: &[&str] = &["*.ttl", "*.xml", "*.n3"];
+const DEFAULT_REMOTE_CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24);
+
+fn default_remote_cache_ttl_secs() -> u64 {
+    DEFAULT_REMOTE_CACHE_TTL.as_secs()
+}
 
 fn cache_mode_ser<S>(mode: &CacheMode, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -58,11 +64,11 @@ pub struct Config {
         deserialize_with = "cache_mode_de"
     )]
     pub use_cached_ontologies: CacheMode,
+    /// Maximum age for cached remote ontologies before they are re-fetched, in seconds.
+    #[serde(default = "default_remote_cache_ttl_secs")]
+    pub remote_cache_ttl_secs: u64,
     // if true, do not store the ontoenv store on disk
     pub temporary: bool,
-    // if true, do not search for ontologies in the search directories
-    #[serde(skip_deserializing, default)]
-    pub no_search: bool,
 }
 
 impl Config {
@@ -211,9 +217,9 @@ impl Config {
             "  Use Cached Ontologies: {}",
             self.use_cached_ontologies.is_enabled()
         );
+        println!("  Remote Cache TTL (secs): {}", self.remote_cache_ttl_secs);
         println!("  Resolution Policy: {}", self.resolution_policy);
         println!("  Temporary: {}", self.temporary);
-        println!("  No Search: {}", self.no_search);
     }
 }
 
@@ -229,9 +235,9 @@ pub struct ConfigBuilder {
     strict: Option<bool>,
     offline: Option<bool>,
     resolution_policy: Option<String>,
-    no_search: bool,
     temporary: Option<bool>,
     use_cached_ontologies: Option<CacheMode>,
+    remote_cache_ttl_secs: Option<u64>,
 }
 
 impl ConfigBuilder {
@@ -248,9 +254,9 @@ impl ConfigBuilder {
             strict: None,
             offline: None,
             resolution_policy: None,
-            no_search: false,
             temporary: None,
             use_cached_ontologies: None,
+            remote_cache_ttl_secs: None,
         }
     }
 
@@ -260,8 +266,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Sets the search locations for ontologies. If not set, defaults to the root directory,
-    /// unless `no_search` is enabled.
+    /// Sets the search locations for ontologies. If not set, no directories will be scanned.
     pub fn locations(mut self, locations: Vec<PathBuf>) -> Self {
         self.locations = Some(locations);
         self
@@ -352,16 +357,15 @@ impl ConfigBuilder {
         self
     }
 
-    /// Sets the resolution policy. Defaults to `"default"`.
-    pub fn resolution_policy(mut self, policy: String) -> Self {
-        self.resolution_policy = Some(policy);
+    /// Sets the remote ontology cache TTL (seconds). Defaults to 24h.
+    pub fn remote_cache_ttl_secs(mut self, ttl_secs: u64) -> Self {
+        self.remote_cache_ttl_secs = Some(ttl_secs);
         self
     }
 
-    /// If set to `true`, no search for local ontologies will be performed. This will override
-    /// any specified search locations. Defaults to `false`.
-    pub fn no_search(mut self, no_search: bool) -> Self {
-        self.no_search = no_search;
+    /// Sets the resolution policy. Defaults to `"default"`.
+    pub fn resolution_policy(mut self, policy: String) -> Self {
+        self.resolution_policy = Some(policy);
         self
     }
 
@@ -382,11 +386,7 @@ impl ConfigBuilder {
             .root
             .ok_or_else(|| anyhow::anyhow!("Config 'root' is required"))?;
 
-        let locations = if self.no_search {
-            vec![]
-        } else {
-            self.locations.unwrap_or_else(|| vec![root.clone()])
-        };
+        let locations = self.locations.unwrap_or_default();
 
         let includes_str = self.includes.unwrap_or_else(|| {
             DEFAULT_INCLUDE_PATTERNS
@@ -412,8 +412,10 @@ impl ConfigBuilder {
                 .resolution_policy
                 .unwrap_or_else(|| DefaultPolicy.policy_name().to_string()),
             use_cached_ontologies: self.use_cached_ontologies.unwrap_or_default(),
+            remote_cache_ttl_secs: self
+                .remote_cache_ttl_secs
+                .unwrap_or_else(default_remote_cache_ttl_secs),
             temporary: self.temporary.unwrap_or(false),
-            no_search: self.no_search,
         })
     }
 }

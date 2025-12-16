@@ -312,13 +312,14 @@ impl OntoEnv {
             Self::load_from_directory(root, false)
         } else {
             let root = std::env::current_dir()?;
+            let locations = vec![root.clone()];
             let config = Config::builder()
                 .root(root)
                 .require_ontology_names(false)
                 .strict(false)
                 .offline(false)
                 .temporary(false)
-                .no_search(false)
+                .locations(locations)
                 .build()?;
             // overwrite should be false, but init will create it.
             Self::init(config, false)
@@ -334,13 +335,14 @@ impl OntoEnv {
             Self::load_from_directory(root, false)
         } else {
             let root = std::env::current_dir()?;
+            let locations = vec![root.clone()];
             let config = Config::builder()
                 .root(root)
                 .require_ontology_names(false)
                 .strict(false)
                 .offline(true)
                 .temporary(false)
-                .no_search(false)
+                .locations(locations)
                 .build()?;
             // overwrite should be false, but init will create it.
             Self::init(config, false)
@@ -362,7 +364,7 @@ impl OntoEnv {
                 .strict(false)
                 .offline(true)
                 .temporary(false)
-                .no_search(true)
+                .locations(vec![])
                 .build()?;
             // overwrite should be false, but init will create it.
             Self::init(config, false)
@@ -379,7 +381,7 @@ impl OntoEnv {
             .strict(false)
             .offline(false)
             .temporary(true)
-            .no_search(true)
+            .locations(vec![])
             .build()?;
         Self::init(config, true) // overwrite is fine for in-memory
     }
@@ -387,13 +389,14 @@ impl OntoEnv {
     /// Creates a new online, in-memory OntoEnv that searches for ontologies in the current directory.
     pub fn new_in_memory_online_with_search() -> Result<Self> {
         let root = std::env::current_dir()?;
+        let locations = vec![root.clone()];
         let config = Config::builder()
             .root(root)
             .require_ontology_names(false)
             .strict(false)
             .offline(false)
             .temporary(true)
-            .no_search(false)
+            .locations(locations)
             .build()?;
         Self::init(config, true)
     }
@@ -401,13 +404,14 @@ impl OntoEnv {
     pub fn new_from_store(strict: bool, offline: bool, store: Store) -> Result<Self> {
         let io = Box::new(crate::io::ExternalStoreGraphIO::new(store, offline, strict));
         let root = std::env::current_dir()?;
+        let locations = vec![root.clone()];
         let config = Config::builder()
             .root(root)
             .require_ontology_names(false)
             .strict(strict)
             .offline(offline)
             .temporary(false)
-            .no_search(false)
+            .locations(locations)
             .build()?;
 
         let mut ontoenv = Self::new(Environment::new(), io, config);
@@ -666,8 +670,9 @@ impl OntoEnv {
     /// For persistent environments (`config.temporary == false`), if the target `.ontoenv`
     /// directory already exists this will remove and recreate it when `overwrite` is `true`,
     /// otherwise it returns an error. Temporary environments never touch the filesystem, so
-    /// the `overwrite` flag is ignored. An initial discovery run is performed before the
-    /// environment is returned.
+    /// the `overwrite` flag is ignored. When the cache mode is disabled the initializer runs
+    /// a discovery pass so the store eagerly reflects on-disk content; when the cache mode is
+    /// enabled the environment starts empty and only fetches when explicitly asked to.
     pub fn init(config: Config, overwrite: bool) -> Result<Self> {
         let ontoenv_dir = config.root.join(".ontoenv");
 
@@ -709,7 +714,9 @@ impl OntoEnv {
             batch_state: BatchState::default(),
         };
 
-        let _ = ontoenv.update_all(false)?;
+        if !ontoenv.config.use_cached_ontologies.is_enabled() {
+            let _ = ontoenv.update_all(false)?;
+        }
 
         Ok(ontoenv)
     }
@@ -926,8 +933,22 @@ impl OntoEnv {
 
             Ok(None) // Modified or freshness uncertain
         } else {
-            // For URLs, reuse the cached ontology unless the caller forces a refresh
-            Ok(Some(existing_id))
+            // For URLs, reuse the cached ontology if it has not expired based on TTL.
+            let ttl = chrono::Duration::from_std(std::time::Duration::from_secs(
+                self.config.remote_cache_ttl_secs,
+            ))
+            .unwrap_or_else(|_| chrono::Duration::MAX);
+            if let Some(last_updated) = existing.last_updated {
+                let age = Utc::now() - last_updated;
+                if age <= ttl {
+                    return Ok(Some(existing_id));
+                }
+                info!(
+                    "Cached remote ontology {} expired after {:?}; refetching",
+                    existing_id, age
+                );
+            }
+            Ok(None)
         }
     }
 
@@ -956,8 +977,12 @@ impl OntoEnv {
             .into_iter()
             .map(|loc| (loc, Overwrite::Allow))
             .collect();
-        let (ontologies, reused_ids, _errors) =
-            self.process_import_queue(seeds, RefreshStrategy::UseCache, true)?;
+        let refresh = if all {
+            RefreshStrategy::Force
+        } else {
+            RefreshStrategy::UseCache
+        };
+        let (ontologies, reused_ids, _errors) = self.process_import_queue(seeds, refresh, true)?;
 
         let filtered_onts: Vec<Ontology> = ontologies
             .into_iter()
@@ -1246,7 +1271,7 @@ impl OntoEnv {
     /// Lists all ontologies in the search directories which match
     /// the include/exclude glob patterns
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
-        if self.config.no_search {
+        if self.config.locations.is_empty() {
             return Ok(Vec::new());
         }
         let (include_set, exclude_set) = self.config.build_globsets()?;
@@ -1919,14 +1944,6 @@ impl OntoEnv {
         self.config.require_ontology_names = require;
     }
 
-    pub fn no_search(&self) -> bool {
-        self.config.no_search
-    }
-
-    pub fn set_no_search(&mut self, no_search: bool) {
-        self.config.no_search = no_search;
-    }
-
     pub fn resolution_policy(&self) -> &str {
         &self.config.resolution_policy
     }
@@ -1954,6 +1971,8 @@ fn hash_file(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::options::CacheMode;
+    use oxigraph::io::RdfFormat;
     use tempfile::tempdir;
 
     #[test]
@@ -1966,7 +1985,7 @@ mod tests {
             .root(root.clone())
             .offline(true)
             .temporary(false)
-            .no_search(true)
+            .locations(vec![])
             .build()
             .unwrap();
 
@@ -1981,5 +2000,91 @@ mod tests {
             assert!(root.join(".ontoenv").is_dir());
             drop(env);
         }
+    }
+
+    #[test]
+    fn remote_cache_ttl_expires() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(true)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .remote_cache_ttl_secs(1)
+            .build()
+            .unwrap();
+        let mut env = OntoEnv::init(config, true).unwrap();
+        env.update_all(false).unwrap();
+
+        let location = OntologyLocation::Url("http://example.com/ttl-cache".to_string());
+        let ttl_bytes = b"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.com/ttl-cache> a owl:Ontology .";
+
+        // Seed the ontology directly into the store/environment.
+        let ontology = env
+            .io
+            .add_from_bytes(
+                location.clone(),
+                ttl_bytes.to_vec(),
+                Some(RdfFormat::Turtle),
+                Overwrite::Allow,
+            )
+            .unwrap();
+        env.env.add_ontology(ontology.clone()).unwrap();
+
+        // Fresh cache should be reused.
+        let reused = env
+            .try_reuse_cached(&location, RefreshStrategy::UseCache)
+            .unwrap();
+        assert!(reused.is_some(), "fresh remote cache should be reused");
+
+        // Age the cache past TTL and ensure reuse is skipped.
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let expired = env
+            .try_reuse_cached(&location, RefreshStrategy::UseCache)
+            .unwrap();
+        assert!(expired.is_none(), "expired remote cache should refresh");
+    }
+
+    #[test]
+    fn update_all_all_forces_refresh_even_when_cached() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let ttl_path = root.join("A.ttl");
+        std::fs::write(
+            &ttl_path,
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.com/A> a owl:Ontology .",
+        )
+        .unwrap();
+
+        let config = Config::builder()
+            .root(root.clone())
+            .locations(vec![root.clone()])
+            .includes(&["*.ttl"])
+            .offline(true)
+            .temporary(true)
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let mut env = OntoEnv::init(config, true).unwrap();
+        env.update_all(false).unwrap();
+
+        // Capture original last_updated
+        let id = env
+            .resolve(ResolveTarget::Graph(
+                NamedNode::new("http://example.com/A").unwrap(),
+            ))
+            .unwrap();
+        let first_ts = env.ontologies().get(&id).unwrap().last_updated.unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        env.update_all(true).unwrap();
+
+        let second_ts = env.ontologies().get(&id).unwrap().last_updated.unwrap();
+        assert!(
+            second_ts > first_ts,
+            "update --all should force refresh even when cache is enabled"
+        );
     }
 }

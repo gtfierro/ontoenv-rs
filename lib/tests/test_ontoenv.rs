@@ -4,6 +4,7 @@ use ontoenv::config::Config;
 use ontoenv::consts::IMPORTS;
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
+use ontoenv::ToUriString;
 use oxigraph::model::NamedNodeRef;
 use oxigraph::model::NamedOrBlankNodeRef;
 use oxigraph::model::TermRef;
@@ -12,7 +13,6 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use tempdir::TempDir;
-use ontoenv::ToUriString;
 
 // the tests directory contains a number of test files that are used to test the OntoEnv.
 // Each has a unique name and they all exist in a flat folder.
@@ -93,7 +93,6 @@ fn cached_env(dir: &TempDir) -> Result<OntoEnv> {
         .strict(false)
         .offline(true)
         .temporary(true)
-        .no_search(true)
         .use_cached_ontologies(CacheMode::Enabled)
         .build()?;
     OntoEnv::init(config, true)
@@ -120,6 +119,48 @@ fn default_config_with_subdir(dir: &TempDir, path: &str) -> Config {
         .offline(true)
         .build()
         .unwrap()
+}
+
+#[test]
+fn init_respects_cache_mode_for_implicit_updates() -> Result<()> {
+    let dir = TempDir::new("ontoenv-cache-mode")?;
+    let a_path = dir.path().join("A.ttl");
+    std::fs::write(
+        &a_path,
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.com/A> a owl:Ontology .",
+    )?;
+
+    let cached_cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .includes(&["*.ttl"])
+        .offline(true)
+        .temporary(true)
+        .use_cached_ontologies(CacheMode::Enabled)
+        .build()?;
+    let env_cached = OntoEnv::init(cached_cfg, true)?;
+    assert!(
+        env_cached.ontologies().is_empty(),
+        "cache-enabled mode should skip implicit discovery"
+    );
+
+    let eager_cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .includes(&["*.ttl"])
+        .offline(true)
+        .temporary(true)
+        .use_cached_ontologies(CacheMode::Disabled)
+        .build()?;
+    let env_eager = OntoEnv::init(eager_cfg, true)?;
+    assert_eq!(
+        env_eager.ontologies().len(),
+        1,
+        "cache-disabled mode should eagerly load ontologies"
+    );
+
+    teardown(dir);
+    Ok(())
 }
 
 // we don't care about errors when cleaning up the TempDir so
