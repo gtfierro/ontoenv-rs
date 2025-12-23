@@ -1022,6 +1022,51 @@ fn test_init_load_from_existing_dir() -> Result<()> {
 }
 
 #[test]
+fn test_lazy_flush_preserves_unloaded_graphs() -> Result<()> {
+    let dir = TempDir::new("ontoenv_lazy_flush")?;
+    setup!(&dir, {"fixtures/rdftest/ontology1.ttl" => "ontology1.ttl",
+                  "fixtures/rdftest/ontology2.ttl" => "ontology2.ttl"});
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update()?;
+    env.flush()?;
+    env.save_to_directory()?;
+    drop(env);
+
+    let mut loaded_env = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    let ont2 = NamedNodeRef::new("http://example.org/ontology2")?;
+    let ont2_id = loaded_env
+        .resolve(ResolveTarget::Graph(ont2.into()))
+        .unwrap();
+    let _ = loaded_env.get_graph(&ont2_id)?;
+
+    let extra_path = dir.path().join("ontology_extra.ttl");
+    std::fs::write(
+        &extra_path,
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.org/extra> a owl:Ontology .",
+    )?;
+    loaded_env.add(
+        OntologyLocation::File(extra_path),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    loaded_env.flush()?;
+    drop(loaded_env);
+
+    let reloaded_env = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    let ont1 = NamedNodeRef::new("http://example.org/ontology1")?;
+    let ont1_id = reloaded_env
+        .resolve(ResolveTarget::Graph(ont1.into()))
+        .unwrap();
+    let graph = reloaded_env.get_graph(&ont1_id)?;
+    assert!(graph.iter().next().is_some());
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
 fn test_init_recreate_existing_dir() -> Result<()> {
     let dir = TempDir::new("ontoenv_recreate")?;
     let env_path = dir.path().join("recreate_env");

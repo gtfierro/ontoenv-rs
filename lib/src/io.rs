@@ -17,14 +17,23 @@ use rdf5d::{
     reader::R5tuFile,
     writer::{Quint, StreamingWriter, Term as R5Term, WriterOptions},
 };
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct StoreStats {
     pub num_graphs: usize,
     pub num_triples: usize,
+}
+
+#[derive(Debug, Clone)]
+struct R5GraphInfo {
+    gid: u64,
+    id: String,
+    n_triples: u64,
 }
 
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
@@ -250,6 +259,9 @@ pub struct PersistentGraphIO {
     offline: bool,
     strict: bool,
     store_path: PathBuf,
+    r5_file: Option<R5tuFile>,
+    r5_index: HashMap<String, R5GraphInfo>,
+    loaded_graphs: Mutex<HashSet<String>>,
     // Keep the interprocess lock alive for the lifetime of this IO
     lock_file: File,
     dirty: bool,
@@ -279,16 +291,33 @@ impl PersistentGraphIO {
         // On-disk file is an RDF5D `.r5tu` file; in-memory store is Oxigraph
         let store_path = path.join("store.r5tu");
         let store = Store::new()?;
-        // Load existing store from RDF5D file if it exists
-        if store_path.exists() {
-            Self::load_r5tu_into_store(&store, &store_path)?;
-        }
+        // Load RDF5D header/index for lazy graph loading.
+        let (r5_file, r5_index) = if store_path.exists() {
+            let file = R5tuFile::open(&store_path)?;
+            let mut index = HashMap::new();
+            for gr in file.enumerate_all()? {
+                index.insert(
+                    gr.graphname.clone(),
+                    R5GraphInfo {
+                        gid: gr.gid,
+                        id: gr.id,
+                        n_triples: gr.n_triples,
+                    },
+                );
+            }
+            (Some(file), index)
+        } else {
+            (None, HashMap::new())
+        };
 
         Ok(Self {
             store,
             offline,
             strict,
             store_path,
+            r5_file,
+            r5_index,
+            loaded_graphs: Mutex::new(HashSet::new()),
             lock_file,
             dirty: false,
             batch_depth: 0,
@@ -322,6 +351,75 @@ impl PersistentGraphIO {
         Ok(())
     }
 
+    fn ensure_graph_loaded(&self, graphname: &str) -> Result<()> {
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if loaded.contains(graphname) {
+            return Ok(());
+        }
+        let graphname_str = graphname.to_string();
+        let Some(info) = self.r5_index.get(graphname) else {
+            return Ok(());
+        };
+        let Some(file) = self.r5_file.as_ref() else {
+            return Ok(());
+        };
+        let gnn = NamedNode::new(graphname)
+            .map_err(|e| anyhow!("Invalid graph name IRI in RDF5D: {}", e))?;
+        let graphname = GraphName::NamedNode(gnn);
+        let triples = file.oxigraph_triples(info.gid)?;
+        let mut loader = self.store.bulk_loader();
+        let mut quads_buf: Vec<Quad> = Vec::with_capacity(info.n_triples as usize);
+        for res in triples {
+            let t = res.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
+            quads_buf.push(Quad::new(
+                t.subject,
+                t.predicate,
+                t.object,
+                graphname.clone(),
+            ));
+        }
+        loader.load_quads(quads_buf.into_iter())?;
+        loader.commit()?;
+        loaded.insert(graphname_str);
+        Ok(())
+    }
+
+    fn count_graph_triples(&self, graphname: &GraphName) -> Result<usize> {
+        let mut count = 0usize;
+        for quad in self
+            .store
+            .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+        {
+            quad?;
+            count = count.saturating_add(1);
+        }
+        Ok(count)
+    }
+
+    fn update_index_for_graph(&mut self, graphname: &GraphName) -> Result<()> {
+        let graphname_str = match graphname {
+            GraphName::NamedNode(nn) => nn.as_str().to_string(),
+            _ => return Err(anyhow!("Only named graphs are supported in RDF5D backend")),
+        };
+        let n_triples = self.count_graph_triples(graphname)?;
+        let entry = self
+            .r5_index
+            .entry(graphname_str.clone())
+            .or_insert(R5GraphInfo {
+                gid: 0,
+                id: graphname_str.clone(),
+                n_triples: 0,
+            });
+        entry.n_triples = n_triples as u64;
+        if entry.id.is_empty() {
+            entry.id = graphname_str;
+        }
+        Ok(())
+    }
+
     fn write_store_to_r5tu(&mut self) -> Result<()> {
         if !self.dirty {
             return Ok(());
@@ -333,6 +431,7 @@ impl PersistentGraphIO {
         };
         let mut writer = StreamingWriter::new(&self.store_path, opts);
 
+        let mut written_graphs = HashSet::new();
         let iter = self.store.quads_for_pattern(None, None, None, None);
         for q in iter {
             let q = q?;
@@ -342,6 +441,7 @@ impl PersistentGraphIO {
                 _ => return Err(anyhow!("Only named graphs are supported in RDF5D backend")),
             };
             let id_str = gname_str.clone();
+            written_graphs.insert(gname_str.clone());
 
             // Map Oxigraph terms to rdf5d writer terms
             let s_term = match q.subject {
@@ -380,6 +480,62 @@ impl PersistentGraphIO {
             })?;
         }
 
+        // Copy any untouched graphs from the existing RDF5D file.
+        if let Some(file) = self.r5_file.as_ref() {
+            for (graphname, info) in &self.r5_index {
+                if written_graphs.contains(graphname) {
+                    continue;
+                }
+                let triples = file.oxigraph_triples(info.gid)?;
+                for res in triples {
+                    let t = res.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
+                    let gname_str = graphname.clone();
+                    let id_str = if info.id.is_empty() {
+                        gname_str.clone()
+                    } else {
+                        info.id.clone()
+                    };
+                    let s_term = match t.subject {
+                        NamedOrBlankNode::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
+                        NamedOrBlankNode::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
+                    };
+                    let p_term = R5Term::Iri(t.predicate.as_str().to_string());
+                    let o_term = match t.object {
+                        oxigraph::model::Term::NamedNode(nn) => {
+                            R5Term::Iri(nn.as_str().to_string())
+                        }
+                        oxigraph::model::Term::BlankNode(bn) => {
+                            R5Term::BNode(bn.as_str().to_string())
+                        }
+                        oxigraph::model::Term::Literal(lit) => {
+                            let lex = lit.value().to_string();
+                            if let Some(lang) = lit.language() {
+                                R5Term::Literal {
+                                    lex,
+                                    dt: None,
+                                    lang: Some(lang.to_string()),
+                                }
+                            } else {
+                                let dt = lit.datatype().as_str().to_string();
+                                R5Term::Literal {
+                                    lex,
+                                    dt: Some(dt),
+                                    lang: None,
+                                }
+                            }
+                        }
+                    };
+                    writer.add(Quint {
+                        id: id_str,
+                        s: s_term,
+                        p: p_term,
+                        o: o_term,
+                        gname: gname_str,
+                    })?;
+                }
+            }
+        }
+
         writer.finalize()?;
         self.dirty = false;
         Ok(())
@@ -414,6 +570,16 @@ impl GraphIO for PersistentGraphIO {
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
         let ont =
             add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
+        let graphname = ont.id().graphname()?;
+        self.update_index_for_graph(&graphname)?;
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if let GraphName::NamedNode(nn) = graphname {
+            loaded.insert(nn.as_str().to_string());
+        }
+        drop(loaded);
         self.on_store_mutated()?;
         Ok(ont)
     }
@@ -433,6 +599,16 @@ impl GraphIO for PersistentGraphIO {
             overwrite,
             self.strict,
         )?;
+        let graphname = ont.id().graphname()?;
+        self.update_index_for_graph(&graphname)?;
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if let GraphName::NamedNode(nn) = graphname {
+            loaded.insert(nn.as_str().to_string());
+        }
+        drop(loaded);
         self.on_store_mutated()?;
         Ok(ont)
     }
@@ -440,8 +616,30 @@ impl GraphIO for PersistentGraphIO {
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
         let graphname = id.name();
         self.store.remove_named_graph(graphname)?;
+        let graphname_str = graphname.as_str().to_string();
+        self.r5_index.remove(&graphname_str);
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        loaded.remove(&graphname_str);
+        drop(loaded);
         self.on_store_mutated()?;
         Ok(())
+    }
+
+    fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        let graphname = id.name().as_str();
+        self.ensure_graph_loaded(graphname)?;
+        let mut graph = Graph::new();
+        let graphname = id.graphname()?;
+        for quad in self
+            .store()
+            .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+        {
+            graph.insert(quad?.as_ref());
+        }
+        Ok(graph)
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -465,17 +663,12 @@ impl GraphIO for PersistentGraphIO {
     }
 
     fn size(&self) -> Result<StoreStats> {
-        // Prefer reading stats directly from the RDF5D file without touching the in-memory store
-        if !self.store_path.exists() {
-            return Ok(StoreStats {
-                num_graphs: 0,
-                num_triples: 0,
-            });
-        }
-        let f = R5tuFile::open(&self.store_path)?;
-        let graphs = f.enumerate_all()?;
-        let num_graphs = graphs.len();
-        let num_triples: usize = graphs.iter().map(|gr| gr.n_triples as usize).sum();
+        let num_graphs = self.r5_index.len();
+        let num_triples: usize = self
+            .r5_index
+            .values()
+            .map(|gr| gr.n_triples as usize)
+            .sum();
         Ok(StoreStats {
             num_graphs,
             num_triples,
