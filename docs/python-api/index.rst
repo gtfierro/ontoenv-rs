@@ -12,46 +12,24 @@ Example: create an in-memory environment, discover a couple of ontologies from d
 
 .. code-block:: python
 
-   import tempfile
    from pathlib import Path
    from ontoenv import OntoEnv
    from rdflib import Graph
 
-   with tempfile.TemporaryDirectory() as temp_dir:
-       root = Path(temp_dir)
+   env = OntoEnv(
+       search_directories=["."],
+       strict=False,
+   )
+   env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
 
-       (root / "ontology_a.ttl").write_text(
-           """
-   @prefix owl: <http://www.w3.org/2002/07/owl#> .
-   @prefix : <http://example.com/ontology_a#> .
-   <http://example.com/ontology_a> a owl:Ontology .
-   """
-       )
+   # retrieve a single ontology graph
+   brick: Graph = env.get_graph("https://brickschema.org/schema/1.4/Brick")
 
-       (root / "ontology_b.ttl").write_text(
-           """
-   @prefix owl: <http://www.w3.org/2002/07/owl#> .
-   @prefix : <http://example.com/ontology_b#> .
-   <http://example.com/ontology_b> a owl:Ontology ;
-       owl:imports <http://example.com/ontology_a> .
-   """
-       )
+   # g contains the Brick ontology and all its imports
+   g: Graph, imported = env.get_closure("https://brickschema.org/schema/1.4/Brick")
+   print(f"Imported {imported} ontologies, total triples: {len(g)}")
 
-       env = OntoEnv(
-           search_directories=[str(root)],
-           strict=False,
-           offline=True,
-           temporary=True,
-       )
 
-       print("Ontologies found:", env.get_ontology_names())
-
-       g = Graph()
-       env.get_closure("http://example.com/ontology_b", destination_graph=g)
-       print(f"Closure of ontology_b has {len(g)} triples")
-
-       g_a = env.get_graph("http://example.com/ontology_a")
-       print(f"Graph of ontology_a has {len(g_a)} triples")
 
 Key Methods
 -----------
