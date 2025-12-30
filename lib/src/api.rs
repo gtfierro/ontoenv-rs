@@ -615,6 +615,7 @@ impl OntoEnv {
     pub fn status(&self) -> Result<EnvironmentStatus> {
         // get time modified of the self.store_path() directory
         let ontoenv_dir = self.config.root.join(".ontoenv");
+        let ontoenv_path = fs::canonicalize(&ontoenv_dir).unwrap_or_else(|_| ontoenv_dir.clone());
         let last_updated: DateTime<Utc> = std::fs::metadata(&ontoenv_dir)?.modified()?.into();
         // get the size of the .ontoenv directory on disk
         let size: u64 = walkdir::WalkDir::new(ontoenv_dir)
@@ -628,6 +629,7 @@ impl OntoEnv {
         let missing_imports = self.missing_imports();
         Ok(EnvironmentStatus {
             exists: true,
+            ontoenv_path: Some(ontoenv_path),
             num_ontologies,
             last_updated: Some(last_updated),
             store_size: size,

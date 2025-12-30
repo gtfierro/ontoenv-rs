@@ -645,37 +645,22 @@ fn execute(cmd: Cli) -> Result<()> {
         Commands::Status { json } => {
             let env = require_ontoenv(env)?;
             if json {
-                // Recompute status details similar to env.status()
-                let ontoenv_dir = current_dir()?.join(".ontoenv");
-                let last_updated = if ontoenv_dir.exists() {
-                    Some(std::fs::metadata(&ontoenv_dir)?.modified()?)
-                        as Option<std::time::SystemTime>
-                } else {
-                    None
-                };
-                let size: u64 = if ontoenv_dir.exists() {
-                    walkdir::WalkDir::new(&ontoenv_dir)
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .filter(|e| e.file_type().is_file())
-                        .filter_map(|e| e.metadata().ok())
-                        .map(|m| m.len())
-                        .sum()
-                } else {
-                    0
-                };
-                let missing: Vec<String> = env
+                let status = env.status()?;
+                let missing: Vec<String> = status
                     .missing_imports()
-                    .into_iter()
+                    .iter()
                     .map(|n| n.to_uri_string())
                     .collect();
-                let last_str =
-                    last_updated.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
+                let last_str = status.last_updated().map(|t| t.to_rfc3339());
+                let ontoenv_path = status
+                    .ontoenv_path()
+                    .map(|path| path.display().to_string());
                 let obj = serde_json::json!({
-                    "exists": true,
-                    "num_ontologies": env.ontologies().len(),
+                    "exists": status.exists(),
+                    "ontoenv_path": ontoenv_path,
+                    "num_ontologies": status.num_ontologies(),
                     "last_updated": last_str,
-                    "store_size_bytes": size,
+                    "store_size_bytes": status.store_size(),
                     "missing_imports": missing,
                 });
                 println!("{}", serde_json::to_string_pretty(&obj)?);
