@@ -111,6 +111,7 @@ use chrono::prelude::*;
 use oxigraph::model::NamedNode;
 use pretty_bytes::converter::convert as pretty_bytes;
 use std::fmt::{self, Display};
+use std::path::{Path, PathBuf};
 
 pub trait ToUriString {
     fn to_uri_string(&self) -> String;
@@ -165,6 +166,8 @@ impl Display for FailedImport {
 pub struct EnvironmentStatus {
     // true if there is an environment that ontoenv can find
     exists: bool,
+    // absolute path to the .ontoenv directory
+    ontoenv_path: Option<PathBuf>,
     // number of ontologies in the environment
     num_ontologies: usize,
     // last time the environment was updated
@@ -173,6 +176,32 @@ pub struct EnvironmentStatus {
     store_size: u64,
     // list of missing imports
     missing_imports: Vec<NamedNode>,
+}
+
+impl EnvironmentStatus {
+    pub fn exists(&self) -> bool {
+        self.exists
+    }
+
+    pub fn ontoenv_path(&self) -> Option<&Path> {
+        self.ontoenv_path.as_deref()
+    }
+
+    pub fn num_ontologies(&self) -> usize {
+        self.num_ontologies
+    }
+
+    pub fn last_updated(&self) -> Option<&DateTime<Utc>> {
+        self.last_updated.as_ref()
+    }
+
+    pub fn store_size(&self) -> u64 {
+        self.store_size
+    }
+
+    pub fn missing_imports(&self) -> &[NamedNode] {
+        &self.missing_imports
+    }
 }
 
 // impl Display pretty print for EnvironmentStatus
@@ -190,12 +219,18 @@ impl std::fmt::Display for EnvironmentStatus {
                 .to_string(),
             None => "N/A".to_string(),
         };
+        let ontoenv_path = self
+            .ontoenv_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "N/A".to_string());
         write!(
             f,
-            "Environment Status\n\
+            "Environment Path: {}\n\
             Number of Ontologies: {}\n\
             Last Updated: {}\n\
             Store Size: {}",
+            ontoenv_path,
             self.num_ontologies,
             last_updated,
             pretty_bytes(self.store_size as f64),
