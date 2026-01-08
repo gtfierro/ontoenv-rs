@@ -664,11 +664,7 @@ impl GraphIO for PersistentGraphIO {
 
     fn size(&self) -> Result<StoreStats> {
         let num_graphs = self.r5_index.len();
-        let num_triples: usize = self
-            .r5_index
-            .values()
-            .map(|gr| gr.n_triples as usize)
-            .sum();
+        let num_triples: usize = self.r5_index.values().map(|gr| gr.n_triples as usize).sum();
         Ok(StoreStats {
             num_graphs,
             num_triples,
