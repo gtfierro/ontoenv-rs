@@ -652,9 +652,7 @@ fn execute(cmd: Cli) -> Result<()> {
                     .map(|n| n.to_uri_string())
                     .collect();
                 let last_str = status.last_updated().map(|t| t.to_rfc3339());
-                let ontoenv_path = status
-                    .ontoenv_path()
-                    .map(|path| path.display().to_string());
+                let ontoenv_path = status.ontoenv_path().map(|path| path.display().to_string());
                 let obj = serde_json::json!({
                     "exists": status.exists(),
                     "ontoenv_path": ontoenv_path,
