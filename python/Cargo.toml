@@ -24,6 +24,8 @@ oxigraph.workspace = true
 env_logger.workspace = true
 log.workspace = true
 rand.workspace = true
+blake3.workspace = true
+chrono.workspace = true
 
 [build-dependencies]
 pyo3-build-config = "0.27"

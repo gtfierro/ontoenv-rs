@@ -46,3 +46,4 @@ Some commonly used helpers when scripting with ``OntoEnv``:
    :maxdepth: 1
 
    ontoenv
+   graph-store

@@ -56,6 +56,29 @@ env.import_dependencies(g)
 print(f"Graph with imported dependencies has {len(g)} triples")
 ```
 
+## Custom graph store
+
+If you want OntoEnv to write graphs into an existing Python-backed store, pass a `graph_store`
+object that implements a small protocol:
+
+```python
+class GraphStore:
+    def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None: ...
+    def get_graph(self, iri: str) -> Graph: ...
+    def remove_graph(self, iri: str) -> None: ...
+    def graph_ids(self) -> list[str]: ...
+    def size(self) -> dict[str, int]: ...  # optional, returns {"num_graphs": ..., "num_triples": ...}
+```
+
+Example:
+
+```python
+store = DictGraphStore()
+env = OntoEnv(graph_store=store, temporary=True)
+```
+
+`graph_store` is currently incompatible with `recreate` and `create_or_use_cached`.
+
 ## CLI Entrypoint
 
 Installing `ontoenv` also provides the Rust-backed `ontoenv` command-line tool:
