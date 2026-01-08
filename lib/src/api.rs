@@ -419,6 +419,14 @@ impl OntoEnv {
         Ok(ontoenv)
     }
 
+    /// Creates a new OntoEnv using a caller-provided GraphIO implementation.
+    /// This is useful for embedding OntoEnv into applications with custom graph storage.
+    pub fn new_with_graph_io(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
+        let mut ontoenv = Self::new(Environment::new(), io, config);
+        let _ = ontoenv.update_all(false)?;
+        Ok(ontoenv)
+    }
+
     /// returns the graph identifier for the given resolve target, if it exists
     pub fn resolve(&self, target: ResolveTarget) -> Option<GraphIdentifier> {
         match target {
@@ -520,6 +528,11 @@ impl OntoEnv {
         let file = std::fs::File::open(config_path)?;
         let reader = BufReader::new(file);
         let config: Config = serde_json::from_reader(reader)?;
+        if let Some(store) = &config.external_graph_store {
+            warn!(
+                "OntoEnv uses an external graph store ({store}). The CLI cannot access that store; use the Python bindings instead."
+            );
+        }
 
         // Load the dependency graph
         let graph_path = ontoenv_dir.join("dependency_graph.json");

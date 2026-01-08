@@ -55,6 +55,7 @@ class OntoEnv:
         exclude_ontologies: Optional[List[str]] = None,
         temporary: bool = False,
         remote_cache_ttl_secs: Optional[int] = None,
+        graph_store: Optional[object] = None,
     ) -> None: ...
 
     def __repr__(self) -> str: ...

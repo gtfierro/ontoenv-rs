@@ -38,6 +38,9 @@ pub struct Config {
     pub root: PathBuf,
     #[serde(default)]
     pub locations: Vec<PathBuf>,
+    /// External graph store identifier (e.g., Python module path), if used.
+    #[serde(default)]
+    pub external_graph_store: Option<String>,
     // include glob patterns (globset syntax; ** supported)
     #[serde(default)]
     includes: Vec<String>,
@@ -182,6 +185,9 @@ impl Config {
     pub fn print(&self) {
         println!("Configuration:");
         println!("  Root: {}", self.root.display());
+        if let Some(store) = &self.external_graph_store {
+            println!("  External Graph Store: {store}");
+        }
         if !self.locations.is_empty() {
             println!("  Locations:");
             for loc in &self.locations {
@@ -227,6 +233,7 @@ impl Config {
 pub struct ConfigBuilder {
     root: Option<PathBuf>,
     locations: Option<Vec<PathBuf>>,
+    external_graph_store: Option<Option<String>>,
     includes: Option<Vec<String>>,
     excludes: Option<Vec<String>>,
     include_ontologies: Option<Vec<String>>,
@@ -246,6 +253,7 @@ impl ConfigBuilder {
         Self {
             root: None,
             locations: None,
+            external_graph_store: None,
             includes: None,
             excludes: None,
             include_ontologies: None,
@@ -269,6 +277,12 @@ impl ConfigBuilder {
     /// Sets the search locations for ontologies. If not set, no directories will be scanned.
     pub fn locations(mut self, locations: Vec<PathBuf>) -> Self {
         self.locations = Some(locations);
+        self
+    }
+
+    /// Sets the external graph store identifier (if using a non-default backend).
+    pub fn external_graph_store<S: Into<String>>(mut self, store: Option<S>) -> Self {
+        self.external_graph_store = Some(store.map(|s| s.into()));
         self
     }
 
@@ -401,6 +415,7 @@ impl ConfigBuilder {
         Ok(Config {
             root,
             locations,
+            external_graph_store: self.external_graph_store.unwrap_or(None),
             includes: includes_str,
             excludes: excludes_str,
             include_ontologies,

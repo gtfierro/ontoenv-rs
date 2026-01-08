@@ -1,13 +1,22 @@
 use ::ontoenv::api::{find_ontoenv_root_from, OntoEnv as OntoEnvRs, ResolveTarget};
 use ::ontoenv::config;
 use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
-use ::ontoenv::ontology::{Ontology as OntologyRs, OntologyLocation};
+use ::ontoenv::errors::OfflineRetrievalError;
+use ::ontoenv::io::{GraphIO, StoreStats};
+use ::ontoenv::ontology::{GraphIdentifier, Ontology as OntologyRs, OntologyLocation};
 use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
+use ::ontoenv::util::{get_file_contents, get_url_contents};
 use ::ontoenv::ToUriString;
-use anyhow::Error;
+use anyhow::{anyhow, Error, Result};
+use chrono::prelude::*;
 #[cfg(feature = "cli")]
 use ontoenv_cli;
-use oxigraph::model::{BlankNode, Literal, NamedNode, Term};
+use oxigraph::io::{RdfFormat, RdfParser};
+use oxigraph::model::{
+    BlankNode, Graph as OxigraphGraph, GraphNameRef, Literal, NamedNode, NamedOrBlankNode, Term,
+    Triple,
+};
+use oxigraph::store::Store;
 #[cfg(not(feature = "cli"))]
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
@@ -23,6 +32,10 @@ use std::sync::{Arc, Mutex};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+}
+
+fn pyerr_to_anyhow(e: PyErr) -> Error {
+    anyhow!(e.to_string())
 }
 
 struct ResolvedLocation {
@@ -248,8 +261,483 @@ fn term_to_python<'a>(
     Ok(res)
 }
 
+fn term_from_python(node: &Bound<'_, PyAny>) -> Result<Term> {
+    let type_name = node
+        .get_type()
+        .name()
+        .map_err(pyerr_to_anyhow)?
+        .to_string();
+    let value =
+        bound_pystring_to_string(node.str().map_err(pyerr_to_anyhow)?).map_err(pyerr_to_anyhow)?;
+    let data_type: Option<NamedNode> = match node.getattr("datatype") {
+        Ok(dt) => {
+            if dt.is_none() {
+                None
+            } else {
+                let dt_str =
+                    bound_pystring_to_string(dt.str().map_err(pyerr_to_anyhow)?).map_err(
+                        pyerr_to_anyhow,
+                    )?;
+                Some(NamedNode::new(dt_str).map_err(|e| anyhow!(e.to_string()))?)
+            }
+        }
+        Err(_) => None,
+    };
+    let lang: Option<String> = match node.getattr("language") {
+        Ok(l) => {
+            if l.is_none() {
+                None
+            } else {
+                Some(
+                    bound_pystring_to_string(l.str().map_err(pyerr_to_anyhow)?)
+                        .map_err(pyerr_to_anyhow)?,
+                )
+            }
+        }
+        Err(_) => None,
+    };
+
+    let term = match type_name.as_str() {
+        "URIRef" => Term::NamedNode(NamedNode::new(value).map_err(|e| anyhow!(e.to_string()))?),
+        "Literal" => match (data_type, lang) {
+            (Some(dt), None) => Term::Literal(Literal::new_typed_literal(value, dt)),
+            (None, Some(l)) => Term::Literal(
+                Literal::new_language_tagged_literal(value, l).map_err(|e| anyhow!(e.to_string()))?,
+            ),
+            _ => Term::Literal(Literal::new_simple_literal(value)),
+        },
+        "BNode" => Term::BlankNode(BlankNode::new(value).map_err(|e| anyhow!(e.to_string()))?),
+        _ => Term::NamedNode(NamedNode::new(value).map_err(|e| anyhow!(e.to_string()))?),
+    };
+    Ok(term)
+}
+
+fn term_to_subject(term: Term) -> Result<NamedOrBlankNode> {
+    match term {
+        Term::NamedNode(n) => Ok(NamedOrBlankNode::NamedNode(n)),
+        Term::BlankNode(b) => Ok(NamedOrBlankNode::BlankNode(b)),
+        _ => Err(anyhow!("Invalid subject term type")),
+    }
+}
+
+fn term_to_predicate(term: Term) -> Result<NamedNode> {
+    match term {
+        Term::NamedNode(n) => Ok(n),
+        _ => Err(anyhow!("Predicate must be a named node")),
+    }
+}
+
+fn graph_from_rdflib(_py: Python<'_>, graph: &Bound<'_, PyAny>) -> Result<OxigraphGraph> {
+    let iter = PyIterator::from_object(graph).map_err(pyerr_to_anyhow)?;
+    let mut out = OxigraphGraph::new();
+    for item in iter {
+        let item = item.map_err(pyerr_to_anyhow)?;
+        let triple = item
+            .downcast::<PyTuple>()
+            .map_err(|e| anyhow!(e.to_string()))?;
+        if triple.len() != 3 {
+            return Err(anyhow!("Expected rdflib triple tuples of length 3"));
+        }
+        let s = term_from_python(&triple.get_item(0).map_err(pyerr_to_anyhow)?)?;
+        let p = term_from_python(&triple.get_item(1).map_err(pyerr_to_anyhow)?)?;
+        let o = term_from_python(&triple.get_item(2).map_err(pyerr_to_anyhow)?)?;
+        let subject = term_to_subject(s)?;
+        let predicate = term_to_predicate(p)?;
+        let triple = Triple::new(subject, predicate, o);
+        out.insert(&triple);
+    }
+    Ok(out)
+}
+
+fn graph_to_rdflib<'a>(
+    py: Python<'a>,
+    graph: &OxigraphGraph,
+) -> PyResult<Bound<'a, PyAny>> {
+    let rdflib = PyModule::import(py, "rdflib")?;
+    let res = rdflib.getattr("Graph")?.call0()?;
+    for t in graph.iter() {
+        let tuple = PyTuple::new(
+            py,
+            &[
+                term_to_python(py, &rdflib, t.subject.into())?,
+                term_to_python(py, &rdflib, t.predicate.into())?,
+                term_to_python(py, &rdflib, t.object.into())?,
+            ],
+        )?;
+        res.getattr("add")?.call1((tuple,))?;
+    }
+    Ok(res)
+}
+
+fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
+    let mut candidates = vec![RdfFormat::Turtle, RdfFormat::RdfXml, RdfFormat::NTriples];
+    if let Some(p) = preferred {
+        candidates.retain(|f| *f != p);
+        candidates.insert(0, p);
+    }
+    let store = Store::new().map_err(|e| anyhow!(e.to_string()))?;
+    for fmt in candidates {
+        let staging_graph = NamedNode::new_unchecked("temp:graph");
+        let parser = RdfParser::from_format(fmt)
+            .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
+            .without_named_graphs();
+        let mut loader = store.bulk_loader();
+        match loader.load_from_reader(parser, std::io::Cursor::new(bytes)) {
+            Ok(_) => {
+                loader.commit().map_err(|e| anyhow!(e.to_string()))?;
+                return Ok(store);
+            }
+            Err(_) => continue,
+        }
+    }
+    Err(anyhow!("Failed to parse RDF bytes in any supported format"))
+}
+
+fn parse_ontology_bytes(
+    location: &OntologyLocation,
+    bytes: &[u8],
+    format: Option<RdfFormat>,
+    strict: bool,
+) -> Result<(OntologyRs, OxigraphGraph)> {
+    let staging_graph = NamedNode::new_unchecked("temp:graph");
+    let tmp_store = load_staging_store_from_bytes(bytes, format)?;
+    let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
+    let mut ontology = OntologyRs::from_store(&tmp_store, &staging_id, strict)?;
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    ontology.set_content_hash(hash);
+    ontology.with_last_updated(Utc::now());
+
+    let mut graph = OxigraphGraph::new();
+    for quad in tmp_store.quads_for_pattern(
+        None,
+        None,
+        None,
+        Some(GraphNameRef::NamedNode(staging_graph.as_ref())),
+    ) {
+        let quad = quad.map_err(|e: oxigraph::store::StorageError| anyhow!(e.to_string()))?;
+        graph.insert(quad.as_ref());
+    }
+    Ok((ontology, graph))
+}
+
 fn bound_pystring_to_string(py_str: Bound<'_, PyString>) -> PyResult<String> {
     Ok(py_str.to_cow()?.into_owned())
+}
+
+fn graph_store_description(py: Python<'_>, store: &Bound<'_, PyAny>) -> PyResult<String> {
+    let class = store.getattr("__class__")?;
+    let module = bound_pystring_to_string(class.getattr("__module__")?.str()?)?;
+    let qualname = bound_pystring_to_string(class.getattr("__qualname__")?.str()?)?;
+    if module.is_empty() {
+        Ok(qualname)
+    } else if qualname.is_empty() {
+        Ok(module)
+    } else {
+        Ok(format!("{module}:{qualname}"))
+    }
+}
+
+struct PythonGraphIO {
+    store: Mutex<Py<PyAny>>,
+    offline: bool,
+    strict: bool,
+    read_only: bool,
+    scratch: Store,
+}
+
+impl PythonGraphIO {
+    fn new(store: Py<PyAny>, offline: bool, strict: bool, read_only: bool) -> Result<Self> {
+        Ok(Self {
+            store: Mutex::new(store),
+            offline,
+            strict,
+            read_only,
+            scratch: Store::new().map_err(|e| anyhow!(e.to_string()))?,
+        })
+    }
+
+    fn with_store<F, T>(&self, f: F) -> Result<T>
+    where
+        F: for<'py> FnOnce(Python<'py>, Bound<'py, PyAny>) -> Result<T>,
+    {
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock python graph store"))?;
+        Python::with_gil(|py| {
+            let bound = store.clone_ref(py).into_bound(py);
+            f(py, bound)
+        })
+    }
+
+    fn add_graph_to_store(
+        &self,
+        py: Python<'_>,
+        store: &Bound<'_, PyAny>,
+        id: &str,
+        graph: &OxigraphGraph,
+        overwrite: Overwrite,
+    ) -> Result<()> {
+        let graph_py = graph_to_rdflib(py, graph).map_err(pyerr_to_anyhow)?;
+        let method = store.getattr("add_graph").map_err(pyerr_to_anyhow)?;
+        let result = method.call1((id, graph_py.clone(), overwrite.as_bool()));
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                if err.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {
+                    method
+                        .call1((id, graph_py))
+                        .map_err(pyerr_to_anyhow)?;
+                    Ok(())
+                } else {
+                    Err(pyerr_to_anyhow(err))
+                }
+            }
+        }
+    }
+
+    fn graph_ids_from_store(
+        &self,
+        py: Python<'_>,
+        store: &Bound<'_, PyAny>,
+    ) -> Result<Vec<String>> {
+        if !store
+            .hasattr("graph_ids")
+            .map_err(pyerr_to_anyhow)?
+        {
+            return Err(anyhow!(
+                "Python graph store must define graph_ids() to report stored graphs"
+            ));
+        }
+        let ids_obj = store.call_method0("graph_ids").map_err(pyerr_to_anyhow)?;
+        let iter = PyIterator::from_object(&ids_obj).map_err(pyerr_to_anyhow)?;
+        let mut ids = Vec::new();
+        for item in iter {
+            let item = item.map_err(pyerr_to_anyhow)?;
+            let id = bound_pystring_to_string(item.str().map_err(pyerr_to_anyhow)?)
+                .map_err(pyerr_to_anyhow)?;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+}
+
+impl GraphIO for PythonGraphIO {
+    fn is_offline(&self) -> bool {
+        self.offline
+    }
+
+    fn io_type(&self) -> String {
+        "python".to_string()
+    }
+
+    fn store_location(&self) -> Option<&Path> {
+        None
+    }
+
+    fn store(&self) -> &Store {
+        &self.scratch
+    }
+
+    fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<OntologyRs> {
+        if self.read_only {
+            return Err(anyhow!("Cannot add to read-only store"));
+        }
+
+        let (bytes, format) = match &location {
+            OntologyLocation::File(path) => get_file_contents(path)?,
+            OntologyLocation::Url(url) => {
+                if self.offline {
+                    return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
+                }
+                get_url_contents(url)?
+            }
+            OntologyLocation::InMemory { .. } => {
+                return Err(anyhow!(
+                    "In-memory ontologies cannot be added via the python graph store"
+                ))
+            }
+        };
+
+        let (ontology, graph) = parse_ontology_bytes(&location, &bytes, format, self.strict)?;
+        let graph_id = ontology.id().to_uri_string();
+        self.with_store(|py, store| {
+            self.add_graph_to_store(py, &store, &graph_id, &graph, overwrite)
+        })?;
+        Ok(ontology)
+    }
+
+    fn add_from_bytes(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+    ) -> Result<OntologyRs> {
+        if self.read_only {
+            return Err(anyhow!("Cannot add to read-only store"));
+        }
+        let (ontology, graph) = parse_ontology_bytes(&location, &bytes, format, self.strict)?;
+        let graph_id = ontology.id().to_uri_string();
+        self.with_store(|py, store| {
+            self.add_graph_to_store(py, &store, &graph_id, &graph, overwrite)
+        })?;
+        Ok(ontology)
+    }
+
+    fn get_graph(&self, id: &GraphIdentifier) -> Result<OxigraphGraph> {
+        let graph_id = id.to_uri_string();
+        self.with_store(|py, store| {
+            let graph_obj = store
+                .getattr("get_graph")
+                .map_err(pyerr_to_anyhow)?
+                .call1((graph_id.as_str(),))
+                .map_err(pyerr_to_anyhow)?;
+            if graph_obj.is_none() {
+                return Err(anyhow!("Graph not found: {graph_id}"));
+            }
+            graph_from_rdflib(py, &graph_obj)
+        })
+    }
+
+    fn size(&self) -> Result<StoreStats> {
+        self.with_store(|py, store| {
+            if store.hasattr("size").map_err(pyerr_to_anyhow)? {
+                let res = store.call_method0("size").map_err(pyerr_to_anyhow)?;
+                if let Ok(tuple) = res.downcast::<PyTuple>() {
+                    if tuple.len() == 2 {
+                        let num_graphs = tuple
+                            .get_item(0)
+                            .map_err(pyerr_to_anyhow)?
+                            .extract::<usize>()
+                            .map_err(pyerr_to_anyhow)?;
+                        let num_triples = tuple
+                            .get_item(1)
+                            .map_err(pyerr_to_anyhow)?
+                            .extract::<usize>()
+                            .map_err(pyerr_to_anyhow)?;
+                        return Ok(StoreStats {
+                            num_triples,
+                            num_graphs,
+                        });
+                    }
+                }
+                if let Ok(dict) = res.downcast::<pyo3::types::PyDict>() {
+                    let num_triples = dict
+                        .get_item("num_triples")
+                        .map_err(pyerr_to_anyhow)?
+                        .and_then(|item| item.extract::<usize>().ok());
+                    let num_graphs = dict
+                        .get_item("num_graphs")
+                        .map_err(pyerr_to_anyhow)?
+                        .and_then(|item| item.extract::<usize>().ok());
+                    if let (Some(num_triples), Some(num_graphs)) = (num_triples, num_graphs) {
+                        return Ok(StoreStats {
+                            num_triples,
+                            num_graphs,
+                        });
+                    }
+                }
+                if res.hasattr("num_triples").map_err(pyerr_to_anyhow)?
+                    && res.hasattr("num_graphs").map_err(pyerr_to_anyhow)?
+                {
+                    let num_triples = res
+                        .getattr("num_triples")
+                        .map_err(pyerr_to_anyhow)?
+                        .extract::<usize>()
+                        .map_err(pyerr_to_anyhow)?;
+                    let num_graphs = res
+                        .getattr("num_graphs")
+                        .map_err(pyerr_to_anyhow)?
+                        .extract::<usize>()
+                        .map_err(pyerr_to_anyhow)?;
+                    return Ok(StoreStats {
+                        num_triples,
+                        num_graphs,
+                    });
+                }
+            }
+
+            if !store.hasattr("graph_ids").map_err(pyerr_to_anyhow)? {
+                return Ok(StoreStats {
+                    num_triples: 0,
+                    num_graphs: 0,
+                });
+            }
+            let ids = self.graph_ids_from_store(py, &store)?;
+            let num_graphs = ids.len();
+            let mut num_triples = 0usize;
+            if store.hasattr("num_triples").map_err(pyerr_to_anyhow)? {
+                let res = store
+                    .getattr("num_triples")
+                    .map_err(pyerr_to_anyhow)?;
+                num_triples = if res.is_callable() {
+                    res.call0()
+                        .map_err(pyerr_to_anyhow)?
+                        .extract::<usize>()
+                        .map_err(pyerr_to_anyhow)?
+                } else {
+                    res.extract::<usize>().map_err(pyerr_to_anyhow)?
+                };
+            } else {
+                for id in ids {
+                    let graph_obj = store
+                        .getattr("get_graph")
+                        .map_err(pyerr_to_anyhow)?
+                        .call1((id.as_str(),))
+                        .map_err(pyerr_to_anyhow)?;
+                    num_triples += graph_obj.len().map_err(pyerr_to_anyhow)?;
+                }
+            }
+
+            Ok(StoreStats {
+                num_triples,
+                num_graphs,
+            })
+        })
+    }
+
+    fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
+        if self.read_only {
+            return Err(anyhow!("Cannot remove from read-only store"));
+        }
+        let graph_id = id.to_uri_string();
+        self.with_store(|_py, store| {
+            store
+                .getattr("remove_graph")
+                .map_err(pyerr_to_anyhow)?
+                .call1((graph_id.as_str(),))
+                .map_err(pyerr_to_anyhow)?;
+            Ok(())
+        })
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.with_store(|_py, store| {
+            if store.hasattr("flush").map_err(pyerr_to_anyhow)? {
+                store.call_method0("flush").map_err(pyerr_to_anyhow)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn begin_batch(&mut self) -> Result<()> {
+        self.with_store(|_py, store| {
+            if store.hasattr("begin_batch").map_err(pyerr_to_anyhow)? {
+                store.call_method0("begin_batch").map_err(pyerr_to_anyhow)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn end_batch(&mut self) -> Result<()> {
+        self.with_store(|_py, store| {
+            if store.hasattr("end_batch").map_err(pyerr_to_anyhow)? {
+                store.call_method0("end_batch").map_err(pyerr_to_anyhow)?;
+            }
+            Ok(())
+        })
+    }
 }
 
 /// Run the Rust CLI implementation and return its process-style exit code.
@@ -343,7 +831,7 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None))]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
@@ -363,6 +851,7 @@ impl OntoEnv {
         exclude_ontologies: Option<Vec<String>>,
         temporary: bool,
         remote_cache_ttl_secs: Option<u64>,
+        graph_store: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
@@ -411,9 +900,24 @@ impl OntoEnv {
             builder = builder.remote_cache_ttl_secs(ttl);
         }
 
-        let cfg = builder
+        let mut cfg = builder
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+        if let Some(store) = graph_store {
+            if recreate || create_or_use_cached {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "graph_store cannot be combined with recreate or create_or_use_cached",
+                ));
+            }
+            let desc = graph_store_description(_py, &store.bind(_py))?;
+            cfg.external_graph_store = Some(desc);
+            let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
+                .map_err(anyhow_to_pyerr)?;
+            let env = OntoEnvRs::new_with_graph_io(cfg, Box::new(io)).map_err(anyhow_to_pyerr)?;
+            let inner = Arc::new(Mutex::new(Some(env)));
+            return Ok(OntoEnv { inner });
+        }
 
         let root_for_lookup = cfg.root.clone();
         let env = if cfg.temporary {
