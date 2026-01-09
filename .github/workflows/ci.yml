@@ -22,7 +22,7 @@ jobs:
         os:
           - ubuntu-latest
           - macos-14
-          - windows-2022
+          - windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
