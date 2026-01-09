@@ -21,7 +21,7 @@ use oxigraph::store::Store;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyIterator, PyString, PyStringMethods, PyTuple},
+    types::{IntoPyDict, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
 use std::borrow::Borrow;
@@ -65,7 +65,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
                 })
                 .map_err(anyhow_to_pyerr);
         }
-        let fspath: String = bound_pystring_to_string(fspath_obj.str()?)?;
+        let fspath = pyany_to_string(&fspath_obj)?;
         return OntologyLocation::from_str(&fspath)
             .map(|loc| ResolvedLocation {
                 location: loc,
@@ -76,7 +76,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
 
     if let Ok(base_attr) = location.getattr("base") {
         if !base_attr.is_none() {
-            let base: String = bound_pystring_to_string(base_attr.str()?)?;
+            let base = pyany_to_string(&base_attr)?;
             if !base.is_empty() {
                 if let Ok(loc) = OntologyLocation::from_str(&base) {
                     return Ok(ResolvedLocation {
@@ -90,7 +90,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
 
     if let Ok(identifier_attr) = location.getattr("identifier") {
         if !identifier_attr.is_none() {
-            let identifier_str: String = bound_pystring_to_string(identifier_attr.str()?)?;
+            let identifier_str = pyany_to_string(&identifier_attr)?;
             if !identifier_str.is_empty()
                 && (identifier_str.starts_with("file:") || Path::new(&identifier_str).exists())
             {
@@ -114,7 +114,7 @@ fn ontology_location_from_py(location: &Bound<'_, PyAny>) -> PyResult<ResolvedLo
         });
     }
 
-    let as_string: String = bound_pystring_to_string(location.str()?)?;
+    let as_string = pyany_to_string(location)?;
 
     if as_string.starts_with("file:") || Path::new(&as_string).exists() {
         return OntologyLocation::from_str(&as_string)
@@ -155,11 +155,11 @@ fn extract_ontology_subject(graph: &Bound<'_, PyAny>) -> PyResult<Option<String>
     };
 
     let subjects_iter = graph.call_method1("subjects", (rdf_type, ontology_term))?;
-    let mut iterator = PyIterator::from_object(&subjects_iter)?;
+    let mut iterator = subjects_iter.try_iter()?;
 
     if let Some(first_res) = iterator.next() {
         let first = first_res?;
-        let subject_str = bound_pystring_to_string(first.str()?)?;
+        let subject_str = pyany_to_string(&first)?;
         if !subject_str.is_empty() {
             return Ok(Some(subject_str));
         }
@@ -267,17 +267,13 @@ fn term_from_python(node: &Bound<'_, PyAny>) -> Result<Term> {
         .name()
         .map_err(pyerr_to_anyhow)?
         .to_string();
-    let value =
-        bound_pystring_to_string(node.str().map_err(pyerr_to_anyhow)?).map_err(pyerr_to_anyhow)?;
+    let value = pyany_to_string(node).map_err(pyerr_to_anyhow)?;
     let data_type: Option<NamedNode> = match node.getattr("datatype") {
         Ok(dt) => {
             if dt.is_none() {
                 None
             } else {
-                let dt_str =
-                    bound_pystring_to_string(dt.str().map_err(pyerr_to_anyhow)?).map_err(
-                        pyerr_to_anyhow,
-                    )?;
+                let dt_str = pyany_to_string(&dt).map_err(pyerr_to_anyhow)?;
                 Some(NamedNode::new(dt_str).map_err(|e| anyhow!(e.to_string()))?)
             }
         }
@@ -288,10 +284,7 @@ fn term_from_python(node: &Bound<'_, PyAny>) -> Result<Term> {
             if l.is_none() {
                 None
             } else {
-                Some(
-                    bound_pystring_to_string(l.str().map_err(pyerr_to_anyhow)?)
-                        .map_err(pyerr_to_anyhow)?,
-                )
+                Some(pyany_to_string(&l).map_err(pyerr_to_anyhow)?)
             }
         }
         Err(_) => None,
@@ -328,7 +321,7 @@ fn term_to_predicate(term: Term) -> Result<NamedNode> {
 }
 
 fn graph_from_rdflib(_py: Python<'_>, graph: &Bound<'_, PyAny>) -> Result<OxigraphGraph> {
-    let iter = PyIterator::from_object(graph).map_err(pyerr_to_anyhow)?;
+    let iter = graph.try_iter().map_err(pyerr_to_anyhow)?;
     let mut out = OxigraphGraph::new();
     for item in iter {
         let item = item.map_err(pyerr_to_anyhow)?;
@@ -418,14 +411,18 @@ fn parse_ontology_bytes(
     Ok((ontology, graph))
 }
 
-fn bound_pystring_to_string(py_str: Bound<'_, PyString>) -> PyResult<String> {
+fn pystring_to_string(py_str: &Bound<'_, PyString>) -> PyResult<String> {
     Ok(py_str.to_cow()?.into_owned())
+}
+
+fn pyany_to_string(value: &Bound<'_, PyAny>) -> PyResult<String> {
+    pystring_to_string(&value.str()?)
 }
 
 fn graph_store_description(_py: Python<'_>, store: &Bound<'_, PyAny>) -> PyResult<String> {
     let class = store.getattr("__class__")?;
-    let module = bound_pystring_to_string(class.getattr("__module__")?.str()?)?;
-    let qualname = bound_pystring_to_string(class.getattr("__qualname__")?.str()?)?;
+    let module = pyany_to_string(&class.getattr("__module__")?)?;
+    let qualname = pyany_to_string(&class.getattr("__qualname__")?)?;
     if module.is_empty() {
         Ok(qualname)
     } else if qualname.is_empty() {
@@ -508,12 +505,11 @@ impl PythonGraphIO {
             ));
         }
         let ids_obj = store.call_method0("graph_ids").map_err(pyerr_to_anyhow)?;
-        let iter = PyIterator::from_object(&ids_obj).map_err(pyerr_to_anyhow)?;
+        let iter = ids_obj.try_iter().map_err(pyerr_to_anyhow)?;
         let mut ids = Vec::new();
         for item in iter {
             let item = item.map_err(pyerr_to_anyhow)?;
-            let id = bound_pystring_to_string(item.str().map_err(pyerr_to_anyhow)?)
-                .map_err(pyerr_to_anyhow)?;
+            let id = pyany_to_string(&item).map_err(pyerr_to_anyhow)?;
             ids.push(id);
         }
         Ok(ids)
@@ -1046,7 +1042,8 @@ impl OntoEnv {
             let t = triple?;
             let obj: Bound<'_, PyAny> = t.get_item(2)?;
             if let Ok(s) = obj.str() {
-                if closure_set.contains(s.to_str()?) {
+                let s = pystring_to_string(&s)?;
+                if closure_set.contains(s.as_str()) {
                     destination_graph.getattr("remove")?.call1((t,))?;
                 }
             }
@@ -1065,7 +1062,7 @@ impl OntoEnv {
         for triple in triples_to_remove.try_iter()? {
             let t = triple?;
             let subj: Bound<'_, PyAny> = t.get_item(0)?;
-            if subj.str()?.to_str()? != root_node.as_str() {
+            if pyany_to_string(&subj)? != root_node.as_str() {
                 destination_graph.getattr("remove")?.call1((t,))?;
             }
         }
@@ -1623,7 +1620,7 @@ impl OntoEnv {
     /// Get the graph with the given URI as an rdflib.Graph
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let rdflib = py.import("rdflib")?;
-        let iri = NamedNode::new(uri.to_string())
+        let iri = NamedNode::new(pystring_to_string(uri)?)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let graph = {
             let inner = self.inner.clone();
