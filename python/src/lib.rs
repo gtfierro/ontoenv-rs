@@ -332,9 +332,7 @@ fn graph_from_rdflib(_py: Python<'_>, graph: &Bound<'_, PyAny>) -> Result<Oxigra
     let mut out = OxigraphGraph::new();
     for item in iter {
         let item = item.map_err(pyerr_to_anyhow)?;
-        let triple = item
-            .downcast::<PyTuple>()
-            .map_err(|e| anyhow!(e.to_string()))?;
+        let triple = item.cast::<PyTuple>().map_err(|e| anyhow!(e.to_string()))?;
         if triple.len() != 3 {
             return Err(anyhow!("Expected rdflib triple tuples of length 3"));
         }
@@ -424,7 +422,7 @@ fn bound_pystring_to_string(py_str: Bound<'_, PyString>) -> PyResult<String> {
     Ok(py_str.to_cow()?.into_owned())
 }
 
-fn graph_store_description(py: Python<'_>, store: &Bound<'_, PyAny>) -> PyResult<String> {
+fn graph_store_description(_py: Python<'_>, store: &Bound<'_, PyAny>) -> PyResult<String> {
     let class = store.getattr("__class__")?;
     let module = bound_pystring_to_string(class.getattr("__module__")?.str()?)?;
     let qualname = bound_pystring_to_string(class.getattr("__qualname__")?.str()?)?;
@@ -464,7 +462,7 @@ impl PythonGraphIO {
             .store
             .lock()
             .map_err(|_| anyhow!("Failed to lock python graph store"))?;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let bound = store.clone_ref(py).into_bound(py);
             f(py, bound)
         })
@@ -498,7 +496,7 @@ impl PythonGraphIO {
 
     fn graph_ids_from_store(
         &self,
-        py: Python<'_>,
+        _py: Python<'_>,
         store: &Bound<'_, PyAny>,
     ) -> Result<Vec<String>> {
         if !store
@@ -604,7 +602,7 @@ impl GraphIO for PythonGraphIO {
         self.with_store(|py, store| {
             if store.hasattr("size").map_err(pyerr_to_anyhow)? {
                 let res = store.call_method0("size").map_err(pyerr_to_anyhow)?;
-                if let Ok(tuple) = res.downcast::<PyTuple>() {
+                if let Ok(tuple) = res.cast::<PyTuple>() {
                     if tuple.len() == 2 {
                         let num_graphs = tuple
                             .get_item(0)
@@ -622,7 +620,7 @@ impl GraphIO for PythonGraphIO {
                         });
                     }
                 }
-                if let Ok(dict) = res.downcast::<pyo3::types::PyDict>() {
+                if let Ok(dict) = res.cast::<pyo3::types::PyDict>() {
                     let num_triples = dict
                         .get_item("num_triples")
                         .map_err(pyerr_to_anyhow)?
