@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 doc = false
 
 [dependencies]
-pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3 = { version = "0.27" }
 ontoenv.workspace = true
 ontoenv-cli = { workspace = true, optional = true }
 anyhow.workspace = true
@@ -31,7 +31,7 @@ chrono.workspace = true
 pyo3-build-config = "0.27"
 
 [features]
-default = []
+default = ["abi3"]
 abi3 = ["pyo3/abi3-py311"]
 cli = ["ontoenv-cli"]
 
