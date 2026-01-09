@@ -16,8 +16,6 @@ jobs:
   build-and-test:
     name: ${{ matrix.os }} build
     runs-on: ${{ matrix.os }}
-    env:
-      UV_PYTHON: "3.12"
     strategy:
       fail-fast: false
       matrix:
@@ -34,12 +32,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-
-      - name: Install Python
-        run: uv python install
+          python-version: "3.12"
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
