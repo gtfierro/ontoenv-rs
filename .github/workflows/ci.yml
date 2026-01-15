@@ -51,18 +51,19 @@ jobs:
       - name: Test Rust workspace
         run: cargo test --workspace --release
 
-      - name: Build and install Python package in-place
-        working-directory: python
-        run: uv run --group dev maturin develop
-
-      - name: Test Python package
-        working-directory: python
-        run: uv run python -m unittest discover -s tests
-
       - name: Build ontoenv wheel
         shell: bash
         working-directory: python
         run: uv run --group dev maturin build --release
+
+      - name: Install ontoenv wheel
+        shell: bash
+        working-directory: python
+        run: uv run pip install target/wheels/ontoenv*.whl
+
+      - name: Test Python package
+        working-directory: python
+        run: uv run python -m unittest discover -s tests
 
       - name: Run pyontoenv unit tests
         working-directory: pyontoenv-shim
