@@ -37,6 +37,10 @@ jobs:
           enable-cache: true
           python-version: "3.12"
 
+      - name: Export uv Python for PyO3
+        shell: bash
+        run: echo "PYO3_PYTHON=$(uv python find)" >> "$GITHUB_ENV"
+
       - name: Install system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
@@ -48,12 +52,12 @@ jobs:
       - name: Build Rust workspace
         run: cargo build --workspace --release
         env:
-          PYO3_PYTHON: ${{ env.UV_PYTHON }}
+          PYO3_PYTHON: ${{ env.PYO3_PYTHON }}
 
       - name: Test Rust workspace
         run: cargo test --workspace --release
         env:
-          PYO3_PYTHON: ${{ env.UV_PYTHON }}
+          PYO3_PYTHON: ${{ env.PYO3_PYTHON }}
 
       - name: Build ontoenv wheel
         shell: bash
