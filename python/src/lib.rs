@@ -5,6 +5,7 @@ use ::ontoenv::errors::OfflineRetrievalError;
 use ::ontoenv::io::{GraphIO, StoreStats};
 use ::ontoenv::ontology::{GraphIdentifier, Ontology as OntologyRs, OntologyLocation};
 use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
+use ::ontoenv::transform;
 use ::ontoenv::util::{get_file_contents, get_url_contents};
 use ::ontoenv::ToUriString;
 use anyhow::{anyhow, Error, Result};
@@ -13,8 +14,8 @@ use chrono::prelude::*;
 use ontoenv_cli;
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{
-    BlankNode, Graph as OxigraphGraph, GraphNameRef, Literal, NamedNode, NamedOrBlankNode, Term,
-    Triple,
+    BlankNode, Graph as OxigraphGraph, GraphNameRef, Literal, NamedNode, NamedOrBlankNode,
+    NamedOrBlankNodeRef, Term, TermRef, Triple, TripleRef,
 };
 use oxigraph::store::Store;
 #[cfg(not(feature = "cli"))]
@@ -1067,10 +1068,36 @@ impl OntoEnv {
             }
         }
 
-        // Merge closure graphs via the Rust API, choosing the caller's root.
-        let merged = env
-            .import_graph_with_root(&graphid, recursion_depth, root_node)
+        // Merge closure graphs via the Rust API and then normalize onto the chosen root.
+        let mut merged = env
+            .import_graph(&graphid, recursion_depth)
             .map_err(anyhow_to_pyerr)?;
+        let root_nb = NamedOrBlankNodeRef::NamedNode(root_node);
+        transform::rewrite_sh_prefixes_graph(&mut merged, root_nb);
+        transform::remove_ontology_declarations_graph(&mut merged, root_nb);
+
+        let mut to_remove: Vec<Triple> = Vec::new();
+        let mut import_targets: Vec<NamedNode> = Vec::new();
+        {
+            for triple in merged.triples_for_predicate(IMPORTS) {
+                to_remove.push(triple.into());
+                if let TermRef::NamedNode(obj) = triple.object {
+                    import_targets.push(obj.into_owned());
+                }
+            }
+        }
+        for triple in to_remove {
+            merged.remove(triple.as_ref());
+        }
+        let mut seen = std::collections::HashSet::new();
+        for dep in import_targets {
+            if dep.as_ref() == root_node {
+                continue;
+            }
+            if seen.insert(dep.to_string()) {
+                merged.insert(TripleRef::new(root_node, IMPORTS, dep.as_ref()));
+            }
+        }
 
         // Flatten triples into the destination graph.
         for triple in merged.into_iter() {
@@ -1257,7 +1284,8 @@ impl OntoEnv {
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
         let is_strict = env.is_strict();
-        let mut all_ontologies = HashSet::new();
+        let mut all_ontologies: Vec<GraphIdentifier> = Vec::new();
+        let mut seen_ontologies: HashSet<GraphIdentifier> = HashSet::new();
         let mut all_closure_names: Vec<String> = Vec::new();
 
         for uri in &imports {
@@ -1307,7 +1335,9 @@ impl OntoEnv {
                 .map_err(anyhow_to_pyerr)?;
             for c_ont in closure {
                 all_closure_names.push(c_ont.to_uri_string());
-                all_ontologies.insert(c_ont.clone());
+                if seen_ontologies.insert(c_ont.clone()) {
+                    all_ontologies.push(c_ont);
+                }
             }
         }
 
@@ -1315,9 +1345,22 @@ impl OntoEnv {
             return Ok(Vec::new());
         }
 
-        let union = env
-            .get_union_graph(&all_ontologies, Some(true), Some(true))
-            .map_err(anyhow_to_pyerr)?;
+        let root_subject = extract_ontology_subject(graph)?;
+        let mut union = if root_subject.is_some() {
+            env.get_union_graph(&all_ontologies, Some(false), Some(true))
+                .map_err(anyhow_to_pyerr)?
+        } else {
+            env.get_union_graph(&all_ontologies, Some(true), Some(true))
+                .map_err(anyhow_to_pyerr)?
+        };
+        if let Some(root) = root_subject {
+            if let Ok(root_node) = NamedNode::new(root) {
+                transform::rewrite_sh_prefixes_dataset(
+                    &mut union.dataset,
+                    NamedOrBlankNodeRef::NamedNode(root_node.as_ref()),
+                );
+            }
+        }
 
         for triple in union.dataset.into_iter() {
             let s: Term = triple.subject.into();
@@ -1406,7 +1449,8 @@ impl OntoEnv {
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
         let is_strict = env.is_strict();
-        let mut all_ontologies = HashSet::new();
+        let mut all_ontologies: Vec<GraphIdentifier> = Vec::new();
+        let mut seen_ontologies: HashSet<GraphIdentifier> = HashSet::new();
         let mut all_closure_names: Vec<String> = Vec::new();
 
         for uri in &imports {
@@ -1456,7 +1500,9 @@ impl OntoEnv {
                 .map_err(anyhow_to_pyerr)?;
             for c_ont in closure {
                 all_closure_names.push(c_ont.to_uri_string());
-                all_ontologies.insert(c_ont.clone());
+                if seen_ontologies.insert(c_ont.clone()) {
+                    all_ontologies.push(c_ont);
+                }
             }
         }
 
@@ -1464,13 +1510,28 @@ impl OntoEnv {
             return Ok((destination_graph, Vec::new()));
         }
 
-        let union = env
-            .get_union_graph(
+        let root_subject = extract_ontology_subject(graph)?;
+        let mut union = if rewrite_sh_prefixes && root_subject.is_some() {
+            env.get_union_graph(&all_ontologies, Some(false), Some(remove_owl_imports))
+                .map_err(anyhow_to_pyerr)?
+        } else {
+            env.get_union_graph(
                 &all_ontologies,
                 Some(rewrite_sh_prefixes),
                 Some(remove_owl_imports),
             )
-            .map_err(anyhow_to_pyerr)?;
+            .map_err(anyhow_to_pyerr)?
+        };
+        if rewrite_sh_prefixes {
+            if let Some(root) = root_subject {
+                if let Ok(root_node) = NamedNode::new(root) {
+                    transform::rewrite_sh_prefixes_dataset(
+                        &mut union.dataset,
+                        NamedOrBlankNodeRef::NamedNode(root_node.as_ref()),
+                    );
+                }
+            }
+        }
 
         for triple in union.dataset.into_iter() {
             let s: Term = triple.subject.into();
