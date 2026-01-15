@@ -47,9 +47,13 @@ jobs:
 
       - name: Build Rust workspace
         run: cargo build --workspace --release
+        env:
+          PYO3_PYTHON: ${{ env.UV_PYTHON }}
 
       - name: Test Rust workspace
         run: cargo test --workspace --release
+        env:
+          PYO3_PYTHON: ${{ env.UV_PYTHON }}
 
       - name: Build ontoenv wheel
         shell: bash
