@@ -169,6 +169,80 @@ fn extract_ontology_subject(graph: &Bound<'_, PyAny>) -> PyResult<Option<String>
     Ok(None)
 }
 
+fn rewrite_sh_prefixes_rdflib(
+    py: Python,
+    graph: &Bound<'_, PyAny>,
+    root_uri: &str,
+) -> PyResult<()> {
+    let rdflib = py.import("rdflib")?;
+    let uriref = rdflib.getattr("URIRef")?;
+    let sh_prefixes = uriref.call1(("http://www.w3.org/ns/shacl#prefixes",))?;
+    let sh_declare = uriref.call1(("http://www.w3.org/ns/shacl#declare",))?;
+    let sh_prefix = uriref.call1(("http://www.w3.org/ns/shacl#prefix",))?;
+    let sh_namespace = uriref.call1(("http://www.w3.org/ns/shacl#namespace",))?;
+    let root_ref = uriref.call1((root_uri,))?;
+
+    let triples_iter = graph.call_method1("triples", ((py.None(), &sh_prefixes, py.None()),))?;
+    let mut to_rewrite = Vec::new();
+    for triple in triples_iter.try_iter()? {
+        to_rewrite.push(triple?);
+    }
+    for triple in to_rewrite {
+        graph.getattr("remove")?.call1((triple.clone(),))?;
+        let subj = triple.get_item(0)?;
+        let new_triple = PyTuple::new(py, &[subj, sh_prefixes.clone(), root_ref.clone()])?;
+        graph.getattr("add")?.call1((new_triple,))?;
+    }
+
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let root_decl_iter =
+        graph.call_method1("triples", ((&root_ref, &sh_declare, py.None()),))?;
+    for triple in root_decl_iter.try_iter()? {
+        let t = triple?;
+        let decl = t.get_item(2)?;
+        let pref = graph.call_method1("value", (&decl, &sh_prefix, py.None()))?;
+        let ns = graph.call_method1("value", (&decl, &sh_namespace, py.None()))?;
+        if !pref.is_none() && !ns.is_none() {
+            let pv = pyany_to_string(&pref)?;
+            let nv = pyany_to_string(&ns)?;
+            if !pv.is_empty() && !nv.is_empty() {
+                seen.insert((pv, nv));
+            }
+        }
+    }
+
+    let declare_iter =
+        graph.call_method1("triples", ((py.None(), &sh_declare, py.None()),))?;
+    let mut declare_triples = Vec::new();
+    for triple in declare_iter.try_iter()? {
+        declare_triples.push(triple?);
+    }
+    for triple in declare_triples {
+        let subj = triple.get_item(0)?;
+        if subj.eq(&root_ref)? {
+            continue;
+        }
+        let decl = triple.get_item(2)?;
+        graph.getattr("remove")?.call1((triple.clone(),))?;
+
+        let pref = graph.call_method1("value", (&decl, &sh_prefix, py.None()))?;
+        let ns = graph.call_method1("value", (&decl, &sh_namespace, py.None()))?;
+        if !pref.is_none() && !ns.is_none() {
+            let pv = pyany_to_string(&pref)?;
+            let nv = pyany_to_string(&ns)?;
+            if !pv.is_empty() && !nv.is_empty() {
+                if !seen.insert((pv, nv)) {
+                    continue;
+                }
+            }
+        }
+        let new_triple = PyTuple::new(py, &[root_ref.clone(), sh_declare.clone(), decl])?;
+        graph.getattr("add")?.call1((new_triple,))?;
+    }
+
+    Ok(())
+}
+
 // Helper function to format paths with forward slashes for cross-platform error messages
 #[allow(dead_code)]
 struct MyTerm(Term);
@@ -1272,6 +1346,7 @@ impl OntoEnv {
         let builtins = py.import("builtins")?;
         let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
         let imports: Vec<String> = objects_list.extract()?;
+        let root_subject = extract_ontology_subject(graph)?;
 
         if imports.is_empty() {
             return Ok(Vec::new());
@@ -1345,7 +1420,6 @@ impl OntoEnv {
             return Ok(Vec::new());
         }
 
-        let root_subject = extract_ontology_subject(graph)?;
         let mut union = if root_subject.is_some() {
             env.get_union_graph(&all_ontologies, Some(false), Some(true))
                 .map_err(anyhow_to_pyerr)?
@@ -1353,7 +1427,7 @@ impl OntoEnv {
             env.get_union_graph(&all_ontologies, Some(true), Some(true))
                 .map_err(anyhow_to_pyerr)?
         };
-        if let Some(root) = root_subject {
+        if let Some(root) = root_subject.clone() {
             if let Ok(root_node) = NamedNode::new(root) {
                 transform::rewrite_sh_prefixes_dataset(
                     &mut union.dataset,
@@ -1384,6 +1458,10 @@ impl OntoEnv {
             &[py.None(), py_imports_pred_for_remove.into(), py.None()],
         )?;
         graph.getattr("remove")?.call1((remove_tuple,))?;
+
+        if let Some(root) = root_subject {
+            rewrite_sh_prefixes_rdflib(py, graph, &root)?;
+        }
 
         all_closure_names.sort();
         all_closure_names.dedup();
@@ -1432,6 +1510,7 @@ impl OntoEnv {
         let builtins = py.import("builtins")?;
         let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
         let imports: Vec<String> = objects_list.extract()?;
+        let root_subject = extract_ontology_subject(graph)?;
 
         let destination_graph = match destination_graph {
             Some(g) => g.clone(),
@@ -1510,7 +1589,6 @@ impl OntoEnv {
             return Ok((destination_graph, Vec::new()));
         }
 
-        let root_subject = extract_ontology_subject(graph)?;
         let mut union = if rewrite_sh_prefixes && root_subject.is_some() {
             env.get_union_graph(&all_ontologies, Some(false), Some(remove_owl_imports))
                 .map_err(anyhow_to_pyerr)?
@@ -1523,7 +1601,7 @@ impl OntoEnv {
             .map_err(anyhow_to_pyerr)?
         };
         if rewrite_sh_prefixes {
-            if let Some(root) = root_subject {
+            if let Some(ref root) = root_subject {
                 if let Ok(root_node) = NamedNode::new(root) {
                     transform::rewrite_sh_prefixes_dataset(
                         &mut union.dataset,
@@ -1556,6 +1634,12 @@ impl OntoEnv {
                 destination_graph
                     .getattr("remove")?
                     .call1((remove_tuple,))?;
+            }
+        }
+
+        if rewrite_sh_prefixes {
+            if let Some(ref root) = root_subject {
+                rewrite_sh_prefixes_rdflib(py, &destination_graph, root)?;
             }
         }
 

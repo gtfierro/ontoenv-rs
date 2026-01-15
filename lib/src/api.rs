@@ -1569,14 +1569,43 @@ impl OntoEnv {
     where
         I: IntoIterator<Item = &'a GraphIdentifier>,
     {
-        let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
+        let mut graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
 
         // TODO: figure out failed imports
+        if graph_ids.is_empty() {
+            return Err(anyhow!("No graphs found"));
+        }
+
+        // Ensure the root ontology is first, even if callers pass an unordered collection.
+        let mut imported: HashSet<GraphIdentifier> = HashSet::new();
+        for graph_id in &graph_ids {
+            if let Ok(ontology) = self.get_ontology(graph_id) {
+                for import in &ontology.imports {
+                    if let Some(imp) = self.env.get_ontology_by_name(import.into()) {
+                        let imp_id = imp.id().clone();
+                        if graph_ids.contains(&imp_id) {
+                            imported.insert(imp_id);
+                        }
+                    }
+                }
+            }
+        }
+        let mut root_idx: Option<usize> = None;
+        for (idx, graph_id) in graph_ids.iter().enumerate() {
+            if !imported.contains(graph_id) {
+                root_idx = Some(idx);
+                break;
+            }
+        }
+        if let Some(idx) = root_idx {
+            if idx != 0 {
+                let root = graph_ids.remove(idx);
+                graph_ids.insert(0, root);
+            }
+        }
+
         let mut dataset = self.io.union_graph(&graph_ids);
-        let first_id = graph_ids
-            .first()
-            .ok_or_else(|| anyhow!("No graphs found"))?;
-        let root_ontology = NamedOrBlankNodeRef::NamedNode(first_id.name());
+        let root_ontology = NamedOrBlankNodeRef::NamedNode(graph_ids[0].name());
 
         let mut namespace_map = HashMap::new();
         for graph_id in &graph_ids {

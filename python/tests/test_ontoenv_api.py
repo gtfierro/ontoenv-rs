@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from ontoenv import OntoEnv
 from rdflib import Graph, URIRef
-from rdflib.namespace import RDF, OWL
+from rdflib.namespace import RDF, OWL, SH
 
 
 class TestOntoEnvAPI(unittest.TestCase):
@@ -213,6 +213,65 @@ class TestOntoEnvAPI(unittest.TestCase):
         # check that the fetched ontologies are now in the environment
         ontologies = self.env.get_ontology_names()
         self.assertIn(self.brick_144_name, ontologies)
+
+    def test_import_dependencies_rewrites_sh_prefixes_to_root(self):
+        """sh:prefixes should be rewritten onto the root ontology after import_dependencies."""
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        c_path = self.test_dir / "C.ttl"
+
+        a_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix ex: <http://ex.org/> .
+            <http://ex.org/A> a owl:Ontology ;
+              owl:imports <http://ex.org/B> .
+            ex:shape sh:prefixes <http://ex.org/A> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix exb: <http://ex.org/b#> .
+            <http://ex.org/B> a owl:Ontology ;
+              owl:imports <http://ex.org/C> .
+            exb:shape sh:prefixes <http://ex.org/B> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        c_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix exc: <http://ex.org/c#> .
+            <http://ex.org/C> a owl:Ontology .
+            exc:shape sh:prefixes <http://ex.org/C> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.env.add(str(a_path), fetch_imports=False)
+        self.env.add(str(b_path), fetch_imports=False)
+        self.env.add(str(c_path), fetch_imports=False)
+
+        g = Graph()
+        root = URIRef("http://ex.org/A")
+        g.add((root, RDF.type, OWL.Ontology))
+        g.add((root, OWL.imports, URIRef("http://ex.org/B")))
+
+        self.env.import_dependencies(g)
+
+        prefixes = list(g.triples((None, SH.prefixes, None)))
+        self.assertGreater(len(prefixes), 0)
+        self.assertTrue(all(o == root for _, _, o in prefixes))
 
     def test_list_closure(self):
         """Test env.list_closure()."""
