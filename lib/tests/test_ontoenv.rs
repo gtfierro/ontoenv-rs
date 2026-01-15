@@ -400,6 +400,122 @@ fn import_graph_handles_cycles() -> Result<()> {
 }
 
 #[test]
+fn union_graph_orders_root_for_sh_prefixes() -> Result<()> {
+    use ontoenv::consts::PREFIXES;
+    use oxigraph::model::TermRef;
+
+    let dir = TempDir::new("ontoenv-prefix-root-order")?;
+
+    let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex.org/> .
+<http://ex.org/A> a owl:Ontology ;
+  owl:imports <http://ex.org/B> .
+ex:shape sh:prefixes <http://ex.org/A> .
+"#;
+    let b_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix exb: <http://ex.org/b#> .
+<http://ex.org/B> a owl:Ontology .
+exb:shape sh:prefixes <http://ex.org/B> .
+"#;
+    fs::write(dir.path().join("A.ttl"), a_ttl)?;
+    fs::write(dir.path().join("B.ttl"), b_ttl)?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update_all(false)?;
+
+    let a_name = NamedNodeRef::new_unchecked("http://ex.org/A");
+    let b_name = NamedNodeRef::new_unchecked("http://ex.org/B");
+    let a_id = env
+        .resolve(ResolveTarget::Graph(a_name.into()))
+        .expect("A should resolve");
+    let b_id = env
+        .resolve(ResolveTarget::Graph(b_name.into()))
+        .expect("B should resolve");
+
+    // Intentionally pass root second to verify ordering logic.
+    let union = env.get_union_graph(vec![&b_id, &a_id], Some(true), Some(true))?;
+
+    let prefixes: Vec<_> = union.dataset.quads_for_predicate(PREFIXES).collect();
+    assert!(!prefixes.is_empty(), "Expected sh:prefixes quads");
+    assert!(
+        prefixes
+            .iter()
+            .all(|q| q.object == TermRef::NamedNode(a_id.name())),
+        "All sh:prefixes objects should point to the root ontology"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn union_graph_rewrites_sh_prefixes_from_deep_dependency() -> Result<()> {
+    use ontoenv::consts::PREFIXES;
+    use oxigraph::model::TermRef;
+
+    let dir = TempDir::new("ontoenv-prefix-root-deep")?;
+
+    let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex.org/> .
+<http://ex.org/A> a owl:Ontology ;
+  owl:imports <http://ex.org/B> .
+ex:shape sh:prefixes <http://ex.org/A> .
+"#;
+    let b_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix exb: <http://ex.org/b#> .
+<http://ex.org/B> a owl:Ontology ;
+  owl:imports <http://ex.org/C> .
+exb:shape sh:prefixes <http://ex.org/B> .
+"#;
+    let c_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix exc: <http://ex.org/c#> .
+<http://ex.org/C> a owl:Ontology .
+exc:shape sh:prefixes <http://ex.org/C> .
+"#;
+    fs::write(dir.path().join("A.ttl"), a_ttl)?;
+    fs::write(dir.path().join("B.ttl"), b_ttl)?;
+    fs::write(dir.path().join("C.ttl"), c_ttl)?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update_all(false)?;
+
+    let a_name = NamedNodeRef::new_unchecked("http://ex.org/A");
+    let b_name = NamedNodeRef::new_unchecked("http://ex.org/B");
+    let c_name = NamedNodeRef::new_unchecked("http://ex.org/C");
+    let a_id = env
+        .resolve(ResolveTarget::Graph(a_name.into()))
+        .expect("A should resolve");
+    let b_id = env
+        .resolve(ResolveTarget::Graph(b_name.into()))
+        .expect("B should resolve");
+    let c_id = env
+        .resolve(ResolveTarget::Graph(c_name.into()))
+        .expect("C should resolve");
+
+    // Intentionally pass an order that does not start with the root.
+    let union = env.get_union_graph(vec![&b_id, &c_id, &a_id], Some(true), Some(true))?;
+
+    let prefixes: Vec<_> = union.dataset.quads_for_predicate(PREFIXES).collect();
+    assert!(!prefixes.is_empty(), "Expected sh:prefixes quads");
+    assert!(
+        prefixes
+            .iter()
+            .all(|q| q.object == TermRef::NamedNode(a_id.name())),
+        "All sh:prefixes objects should point to the root ontology"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
 fn import_graph_respects_recursion_depth() -> Result<()> {
     let dir = TempDir::new("ontoenv-import-depth")?;
 
