@@ -215,7 +215,7 @@ fn ontology_regex_filters_exclude() -> Result<()> {
 
 #[test]
 fn import_graph_merges_closure_and_removes_imports() -> Result<()> {
-    use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
+    use ontoenv::consts::{IMPORTS, ONTOLOGY, PREFIXES, TYPE};
     use oxigraph::model::Triple;
     let dir = TempDir::new("ontoenv-import-merge")?;
 
@@ -266,6 +266,19 @@ ex:b ex:p ex:o .
     assert!(
         merged.contains(b_triple.as_ref()),
         "Merged graph missing B data"
+    );
+
+    // sh:prefixes should be rewritten onto the root (base) ontology
+    let prefixes: Vec<_> = merged.triples_for_predicate(PREFIXES).collect();
+    assert!(
+        !prefixes.is_empty(),
+        "Merged graph should contain rewritten sh:prefixes"
+    );
+    assert!(
+        prefixes
+            .iter()
+            .all(|t| t.object == TermRef::NamedNode(a_id.name())),
+        "All sh:prefixes objects should be the root ontology"
     );
 
     // owl:imports should be rewritten onto the root (base) ontology

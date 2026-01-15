@@ -1611,23 +1611,19 @@ impl OntoEnv {
     /// Merge an ontology and its imports closure into a single graph.
     ///
     /// - `recursion_depth` follows the semantics of [`get_closure`]; `-1` means unlimited.
-    /// - SHACL prefixes are rewritten to the supplied `root` ontology and `sh:declare` entries deduplicated.
+    /// - SHACL prefixes are rewritten to the requested ontology and `sh:declare` entries deduplicated.
     /// - `owl:imports` statements are removed to prevent downstream refetching.
-    /// - Additional `owl:Ontology` declarations are stripped, keeping only `root`.
-    pub fn import_graph_with_root(
-        &self,
-        id: &GraphIdentifier,
-        recursion_depth: i32,
-        root: NamedNodeRef,
-    ) -> Result<Graph> {
+    /// - Additional `owl:Ontology` declarations are stripped, keeping only the requested ontology.
+    pub fn import_graph(&self, id: &GraphIdentifier, recursion_depth: i32) -> Result<Graph> {
+        let root = id.name();
         let imported = self.get_ontology(id)?;
         let imported_imports = imported.imports.clone();
 
         let closure = self.get_closure(id, recursion_depth)?;
-        let mut union = self.get_union_graph(&closure, Some(true), Some(true))?;
+        let mut union = self.get_union_graph(&closure, Some(false), Some(false))?;
 
         let root_nb = NamedOrBlankNodeRef::NamedNode(root);
-        // Apply transforms with caller-chosen root.
+        // Apply transforms with the requested root.
         transform::rewrite_sh_prefixes_dataset(&mut union.dataset, root_nb);
         transform::remove_owl_imports(&mut union.dataset, None);
         transform::remove_ontology_declarations(&mut union.dataset, root_nb);
@@ -1662,11 +1658,6 @@ impl OntoEnv {
             add_import(root, dep_id.name());
         }
         Ok(graph)
-    }
-
-    /// Convenience wrapper that uses the target ontology as the root.
-    pub fn import_graph(&self, id: &GraphIdentifier, recursion_depth: i32) -> Result<Graph> {
-        self.import_graph_with_root(id, recursion_depth, id.name())
     }
 
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
