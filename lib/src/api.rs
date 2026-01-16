@@ -96,6 +96,11 @@ impl UnionGraph {
         self.dataset.len()
     }
 
+    /// Returns true if the union dataset is empty.
+    pub fn is_empty(&self) -> bool {
+        self.dataset.is_empty()
+    }
+
     /// Returns the union of all namespace maps from the ontologies in the graph.
     pub fn get_namespace_map(&self) -> &HashMap<String, String> {
         // Expose the merged prefix map for tooling and serialization.
@@ -212,7 +217,7 @@ impl<'a> Drop for BatchScope<'a> {
 
 enum FetchOutcome {
     Reused(GraphIdentifier),
-    Loaded(Ontology),
+    Loaded(Box<Ontology>),
 }
 
 pub struct OntoEnv {
@@ -624,9 +629,9 @@ impl OntoEnv {
         BatchScope::enter(self)?.run(f)
     }
 
-    pub fn io(&self) -> &Box<dyn GraphIO> {
+    pub fn io(&self) -> &dyn GraphIO {
         // Expose the IO backend for advanced integrations.
-        &self.io
+        self.io.as_ref()
     }
 
     pub fn stats(&self) -> Result<Stats> {
@@ -837,7 +842,7 @@ impl OntoEnv {
 
         let ontology = self.io.add(location.clone(), overwrite)?;
         self.batch_state.mark_seen(&location);
-        Ok(FetchOutcome::Loaded(ontology))
+        Ok(FetchOutcome::Loaded(Box::new(ontology)))
     }
 
     fn register_ontologies(
@@ -911,7 +916,7 @@ impl OntoEnv {
         ids.into_iter().next().ok_or_else(|| {
             let mut base = format!(
                 "Failed to add ontology for location {}",
-                location.to_string()
+                location
             );
             if !errors.is_empty() {
                 base.push_str(": ");
@@ -993,7 +998,7 @@ impl OntoEnv {
             let ttl = chrono::Duration::from_std(std::time::Duration::from_secs(
                 self.config.remote_cache_ttl_secs,
             ))
-            .unwrap_or_else(|_| chrono::Duration::MAX);
+            .unwrap_or(chrono::Duration::MAX);
             if let Some(last_updated) = existing.last_updated {
                 let age = Utc::now() - last_updated;
                 if age <= ttl {
@@ -1181,6 +1186,7 @@ impl OntoEnv {
 
             match self.fetch_location(job.location.clone(), job.overwrite, refresh) {
                 Ok(FetchOutcome::Loaded(ontology)) => {
+                    let ontology = *ontology;
                     let imports = ontology.imports.clone();
                     let id = ontology.id().clone();
                     if include_imports {

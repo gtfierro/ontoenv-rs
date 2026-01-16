@@ -1367,7 +1367,7 @@ fn test_cached_add_skips_unchanged_file() -> Result<()> {
     let first_updated = env
         .ontologies()
         .get(&id)
-        .and_then(|ont| ont.last_updated.clone())
+        .and_then(|ont| ont.last_updated)
         .expect("last_updated set");
     assert_eq!(env.stats()?.num_ontologies, 1);
 
@@ -1381,7 +1381,7 @@ fn test_cached_add_skips_unchanged_file() -> Result<()> {
     let reused_updated = env
         .ontologies()
         .get(&reused_id)
-        .and_then(|ont| ont.last_updated.clone())
+        .and_then(|ont| ont.last_updated)
         .expect("last_updated still set");
 
     assert_eq!(id, reused_id);
@@ -1412,7 +1412,7 @@ fn test_cached_add_reloads_on_file_change() -> Result<()> {
     let first_updated = env
         .ontologies()
         .get(&id)
-        .and_then(|ont| ont.last_updated.clone())
+        .and_then(|ont| ont.last_updated)
         .expect("last_updated set");
 
     thread::sleep(Duration::from_secs(1));
@@ -1430,7 +1430,7 @@ fn test_cached_add_reloads_on_file_change() -> Result<()> {
     let refreshed_updated = env
         .ontologies()
         .get(&refreshed_id)
-        .and_then(|ont| ont.last_updated.clone())
+        .and_then(|ont| ont.last_updated)
         .expect("last_updated set after refresh");
 
     assert_eq!(id, refreshed_id);
@@ -1460,7 +1460,7 @@ fn test_cached_add_force_refreshes() -> Result<()> {
     let first_updated = env
         .ontologies()
         .get(&id)
-        .and_then(|ont| ont.last_updated.clone())
+        .and_then(|ont| ont.last_updated)
         .expect("last_updated set");
 
     thread::sleep(Duration::from_secs(1));
@@ -1473,7 +1473,7 @@ fn test_cached_add_force_refreshes() -> Result<()> {
     let forced_updated = env
         .ontologies()
         .get(&forced_id)
-        .and_then(|ont| ont.last_updated.clone())
+        .and_then(|ont| ont.last_updated)
         .expect("last_updated set after force");
 
     assert_eq!(id, forced_id);

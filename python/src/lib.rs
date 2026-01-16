@@ -10,8 +10,6 @@ use ::ontoenv::util::{get_file_contents, get_url_contents};
 use ::ontoenv::ToUriString;
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
-#[cfg(feature = "cli")]
-use ontoenv_cli;
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{
     BlankNode, Graph as OxigraphGraph, GraphNameRef, Literal, NamedNode, NamedOrBlankNode,
@@ -308,11 +306,9 @@ fn rewrite_sh_prefixes_rdflib(
         if !pref.is_none() && !ns.is_none() {
             let pv = pyany_to_string(&pref)?;
             let nv = pyany_to_string(&ns)?;
-            if !pv.is_empty() && !nv.is_empty() {
-                if !seen.insert((pv, nv)) {
-                    // Duplicate declaration; skip re-attaching to root.
-                    continue;
-                }
+            if !pv.is_empty() && !nv.is_empty() && !seen.insert((pv, nv)) {
+                // Duplicate declaration; skip re-attaching to root.
+                continue;
             }
         }
         // Attach the declaration node to the root ontology.
@@ -981,6 +977,7 @@ struct OntoEnv {
 impl OntoEnv {
     #[new]
     #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
@@ -1059,7 +1056,7 @@ impl OntoEnv {
                     "graph_store cannot be combined with recreate or create_or_use_cached",
                 ));
             }
-            let desc = graph_store_description(_py, &store.bind(_py))?;
+            let desc = graph_store_description(_py, store.bind(_py))?;
             cfg.external_graph_store = Some(desc);
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
                 .map_err(anyhow_to_pyerr)?;
@@ -1524,7 +1521,7 @@ impl OntoEnv {
         }
 
         let rewrite_in_rust = root_graphid.is_some();
-        let mut union = env
+        let union = env
             .get_union_graph(&all_ontologies, Some(rewrite_in_rust), Some(true))
             .map_err(anyhow_to_pyerr)?;
 
@@ -1588,6 +1585,7 @@ impl OntoEnv {
     ///     tuple[rdflib.Graph, list[str]]: A tuple containing the populated dependency graph and the sorted list of
     ///     imported ontology IRIs.
     #[pyo3(signature = (graph, destination_graph=None, recursion_depth=-1, fetch_missing=false, rewrite_sh_prefixes=true, remove_owl_imports=true))]
+    #[allow(clippy::too_many_arguments)]
     fn get_dependencies_graph<'a>(
         &self,
         py: Python<'a>,
@@ -1693,7 +1691,7 @@ impl OntoEnv {
         }
 
         let rewrite_in_rust = rewrite_sh_prefixes && root_graphid.is_some();
-        let mut union = env
+        let union = env
             .get_union_graph(
                 &all_ontologies,
                 Some(rewrite_in_rust),
