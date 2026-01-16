@@ -226,8 +226,8 @@ pub trait GraphIO: Send + Sync {
     /// Returns the last time the graph with the given identifier was modified at its location
     /// - for on-disk files (file://), if the file has been modified since the last refresh
     /// - for online files (http://), the file's header has a Last-Modified header with a later
-    /// date than the last refresh. If there is no Last-Modified header, the store will always
-    /// refresh the file.
+    ///   date than the last refresh. If there is no Last-Modified header, the store will always
+    ///   refresh the file.
     fn source_last_modified(&self, id: &GraphIdentifier) -> Result<DateTime<Utc>> {
         let modified_time = match id.location() {
             OntologyLocation::File(path) => {
@@ -283,6 +283,7 @@ impl PersistentGraphIO {
         let lock_path = path.join("store.lock");
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)?;
@@ -701,6 +702,7 @@ impl ReadOnlyPersistentGraphIO {
         let lock_path = path.join("store.lock");
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)?;

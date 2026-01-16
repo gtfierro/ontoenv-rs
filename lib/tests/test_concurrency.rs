@@ -99,7 +99,7 @@ fn worker_ro() {
         .resolve(ResolveTarget::Graph(iri.clone()))
         .expect("resolve id");
     let g = env.get_graph(&id).expect("get_graph");
-    assert!(g.len() > 0, "graph should have triples");
+    assert!(!g.is_empty(), "graph should have triples");
     let ont = env.get_ontology(&id).expect("get_ontology");
     assert_eq!(ont.id().name().as_str(), iri.as_str());
 
@@ -124,7 +124,7 @@ fn worker_rw() {
                 .resolve(ResolveTarget::Graph(iri.clone()))
                 .expect("resolve id");
             let g = env.get_graph(&id).expect("get_graph");
-            assert!(g.len() > 0, "graph should have triples");
+            assert!(!g.is_empty(), "graph should have triples");
             let ont = env.get_ontology(&id).expect("get_ontology");
             assert_eq!(ont.id().name().as_str(), iri.as_str());
             println!("worker_rw acquired {}", iri);

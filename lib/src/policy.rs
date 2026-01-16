@@ -31,6 +31,7 @@ pub fn policy_to_name(policy: &dyn ResolutionPolicy) -> &'static str {
 }
 
 // custom derives for the resolution policies
+#[allow(clippy::borrowed_box)]
 pub fn policy_serialize<S>(
     policy: &Box<dyn ResolutionPolicy>,
     serializer: S,

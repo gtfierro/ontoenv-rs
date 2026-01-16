@@ -23,28 +23,29 @@ fn roundtrip_with_zstd_blocks_and_crc() {
     };
     let o3 = Term::BNode("_:b3".into());
 
-    let mut quints = Vec::new();
-    quints.push(Quint {
-        id: "src/A".into(),
-        s: s1.clone(),
-        p: p1.clone(),
-        o: o1.clone(),
-        gname: "g".into(),
-    });
-    quints.push(Quint {
-        id: "src/A".into(),
-        s: s1.clone(),
-        p: p2.clone(),
-        o: o2.clone(),
-        gname: "g".into(),
-    });
-    quints.push(Quint {
-        id: "src/B".into(),
-        s: s2.clone(),
-        p: p1.clone(),
-        o: o3.clone(),
-        gname: "g".into(),
-    });
+    let quints = vec![
+        Quint {
+            id: "src/A".into(),
+            s: s1.clone(),
+            p: p1.clone(),
+            o: o1.clone(),
+            gname: "g".into(),
+        },
+        Quint {
+            id: "src/A".into(),
+            s: s1.clone(),
+            p: p2.clone(),
+            o: o2.clone(),
+            gname: "g".into(),
+        },
+        Quint {
+            id: "src/B".into(),
+            s: s2.clone(),
+            p: p1.clone(),
+            o: o3.clone(),
+            gname: "g".into(),
+        },
+    ];
 
     let opts = WriterOptions {
         zstd: true,

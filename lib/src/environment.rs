@@ -226,12 +226,10 @@ impl Environment {
 
         // Take ownership to avoid borrow conflicts while rebuilding indices.
         for (_, mut ontology) in mem::take(&mut self.ontologies) {
-            if let Some(loc) = ontology.location().cloned() {
-                if let OntologyLocation::File(p) = &loc {
-                    if p.is_relative() {
-                        let abs = root.join(p);
-                        ontology.set_location(OntologyLocation::File(abs));
-                    }
+            if let Some(OntologyLocation::File(p)) = ontology.location().cloned() {
+                if p.is_relative() {
+                    let abs = root.join(&p);
+                    ontology.set_location(OntologyLocation::File(abs));
                 }
             }
             let id = ontology.id().clone();
