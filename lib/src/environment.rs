@@ -79,6 +79,7 @@ impl Environment {
     }
 
     pub fn new() -> Self {
+        // Initialize empty maps and a default resolution policy.
         Self {
             ontologies: HashMap::new(),
             default_policy: Box::new(policy::DefaultPolicy),
@@ -88,10 +89,12 @@ impl Environment {
     }
 
     pub fn ontologies(&self) -> &HashMap<GraphIdentifier, Ontology> {
+        // Provide read-only access to the cached ontology map.
         &self.ontologies
     }
 
     pub fn add_ontology(&mut self, mut ontology: Ontology) -> Result<()> {
+        // Record update time and register aliases/locations for fast lookups.
         ontology.last_updated = Some(Utc::now());
         let location = ontology
             .location()
@@ -106,6 +109,7 @@ impl Environment {
     }
 
     pub fn remove_ontology(&mut self, id: &GraphIdentifier) -> Result<Option<Ontology>> {
+        // Remove from all indexes to avoid stale aliases or locations.
         if let Some(existing) = self.ontologies.get(id) {
             if let Some(location) = existing.location() {
                 self.locations.remove(location);
@@ -118,17 +122,20 @@ impl Environment {
     }
 
     pub fn get_modified_time(&self, id: &GraphIdentifier) -> Option<DateTime<Utc>> {
+        // Convenience accessor used by update logic and diagnostics.
         self.ontologies
             .get(id)
             .and_then(|ontology| ontology.last_updated)
     }
 
     pub fn graphid_from_location(&self, location: &OntologyLocation) -> Option<&GraphIdentifier> {
+        // Fast reverse lookup from source location to identifier.
         self.locations.get(location)
     }
 
     /// Returns a cloned `Ontology` for the provided identifier using the default resolution policy.
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Option<Ontology> {
+        // Use the configured policy to resolve conflicts for a given name.
         self.get_ontology_with_policy(id.into(), &*self.default_policy)
     }
 
@@ -138,6 +145,7 @@ impl Environment {
         name: NamedNodeRef,
         policy: &dyn policy::ResolutionPolicy,
     ) -> Option<Ontology> {
+        // Delegate conflict resolution to the selected policy.
         let ontologies = self.ontologies.values().collect::<Vec<&Ontology>>();
         policy
             .resolve(name.as_str(), ontologies.as_slice())
@@ -146,6 +154,7 @@ impl Environment {
 
     /// Returns the first ontology whose name (or registered alias) matches the supplied value.
     pub fn get_ontology_by_name(&self, name: NamedNodeRef) -> Option<&Ontology> {
+        // Normalize names to handle trailing slashes/hashes and aliases.
         let target = Self::normalize_name(name.as_str());
         if let Some(id) = self.aliases.get(target) {
             if let Some(ontology) = self.ontologies.get(id) {
@@ -161,6 +170,7 @@ impl Environment {
 
     /// Returns the graph associated with the given name (respecting aliases) using the provided I/O backend.
     pub fn get_graph_by_name(&self, name: NamedNodeRef, store: impl GraphIO) -> Result<Graph> {
+        // Resolve by alias/name first, then load graph via the provided IO backend.
         let ontology = self
             .get_ontology_by_name(name)
             .ok_or(anyhow::anyhow!(format!("Ontology {} not found", name)))?;
@@ -169,6 +179,7 @@ impl Environment {
 
     /// Returns the first ontology with the given location
     pub fn get_ontology_by_location(&self, location: &OntologyLocation) -> Option<&Ontology> {
+        // Direct lookup by location for sync/refresh workflows.
         let id = self.locations.get(location)?;
         self.ontologies.get(id)
     }
@@ -193,6 +204,7 @@ impl Environment {
     }
 
     pub fn rebuild_aliases(&mut self) {
+        // Recompute alias map after bulk edits or deserialization.
         self.aliases.clear();
         let mut alias_data: Vec<(OntologyLocation, GraphIdentifier, NamedNode)> = Vec::new();
         for ontology in self.ontologies.values() {
@@ -208,9 +220,11 @@ impl Environment {
     /// Ensure file-based ontology locations are absolute using `root` as the base
     /// for any relative paths, and rebuild cached location/alias maps.
     pub fn normalize_file_locations(&mut self, root: &Path) {
+        // Normalize relative file paths so future comparisons are stable.
         let mut rebuilt: HashMap<GraphIdentifier, Ontology> = HashMap::new();
         self.locations.clear();
 
+        // Take ownership to avoid borrow conflicts while rebuilding indices.
         for (_, mut ontology) in mem::take(&mut self.ontologies) {
             if let Some(loc) = ontology.location().cloned() {
                 if let OntologyLocation::File(p) = &loc {
@@ -228,6 +242,7 @@ impl Environment {
         }
 
         self.ontologies = rebuilt;
+        // Rebuild alias map after normalizing paths.
         self.rebuild_aliases();
     }
 }

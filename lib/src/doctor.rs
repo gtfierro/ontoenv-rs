@@ -31,14 +31,17 @@ impl Default for Doctor {
 
 impl Doctor {
     pub fn new() -> Self {
+        // Start with no checks so callers can compose their own diagnostic suite.
         Self { checks: Vec::new() }
     }
 
     pub fn add_check(&mut self, check: Box<dyn EnvironmentCheck>) {
+        // Store boxed trait objects to allow heterogeneous checks.
         self.checks.push(check);
     }
 
     pub fn run(&mut self, env: &OntoEnv) -> Result<Vec<OntologyProblem>> {
+        // Execute checks sequentially so errors remain attributable and ordered.
         let mut problems = Vec::new();
         for check in &mut self.checks {
             check.check(env, &mut problems)?;

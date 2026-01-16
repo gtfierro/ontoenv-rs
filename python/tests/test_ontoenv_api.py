@@ -271,7 +271,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
         prefixes = list(g.triples((None, SH.prefixes, None)))
         self.assertGreater(len(prefixes), 0)
-        self.assertTrue(all(o == root for _, _, o in prefixes))
+        self.assertTrue(all(o == root for _, _, o in prefixes), prefixes)
 
     def test_list_closure(self):
         """Test env.list_closure()."""

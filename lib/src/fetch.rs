@@ -265,15 +265,18 @@ fn is_generic_content_type(ct: Option<&str>) -> bool {
 }
 
 pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
+    // Retrieve RDF with layered format detection and fallback URL heuristics.
     if opts.offline {
         return Err(anyhow!(OfflineRetrievalError {
             file: url.to_string()
         }));
     }
+    // Use a bounded-timeout client to avoid hanging on misbehaving endpoints.
     let client = Client::builder().timeout(opts.timeout).build()?;
     let accept = build_accept(&opts.accept_order);
 
     // First attempt
+    // Capture content-type and redirects from the initial GET.
     let (bytes, ct, link, final_url, status) = try_get(url, &client, &accept)?;
     let mut content_type = ct.clone();
 
@@ -294,6 +297,7 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
 
     // If success evaluate heuristics
     if status.is_success() {
+        // Prefer explicit content-type or URL extension hints, then sniff bytes.
         if let Some(fmt) = content_type
             .as_deref()
             .and_then(detect_format)
@@ -308,6 +312,7 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
             });
         }
 
+        // As a fallback, attempt to parse using common RDF formats.
         if let Some(fmt) = try_parse_candidates(&bytes) {
             return Ok(FetchResult {
                 bytes,
@@ -320,12 +325,14 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
 
     // Try Link: rel="alternate" with single pass
     if let Some(link_header) = link {
+        // Follow alternates advertised via Link headers (common for RDF endpoints).
         let mut headers = HeaderMap::new();
         headers.insert(
             LINK,
             HeaderValue::from_str(&link_header).unwrap_or(HeaderValue::from_static("")),
         );
         for alt in parse_link_alternates(&headers, &opts.accept_order) {
+            // Re-run format detection for each alternate URL.
             let (b2, ct2, _link2, fu2, st2) = try_get(&alt, &client, &accept)?;
             if st2.is_success() {
                 let guess = ct2
@@ -348,6 +355,7 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
 
     // Status-based or type-based fallbacks
     if !status.is_success() || is_generic_content_type(content_type.as_deref()) {
+        // If the server responded generically, try appending common RDF extensions.
         for candidate in build_extension_candidates(&final_url, &opts.extension_candidates) {
             let (b2, ct2, _link2, fu2, st2) = try_get(&candidate, &client, &accept)?;
             if st2.is_success() {
@@ -370,6 +378,7 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
     }
 
     if status.is_success() {
+        // Return bytes even if format is unknown; callers may still handle it.
         let fmt = content_type
             .as_deref()
             .and_then(detect_format)
@@ -392,6 +401,7 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
 }
 
 pub fn head_last_modified(url: &str, opts: &FetchOptions) -> Result<Option<DateTime<Utc>>> {
+    // Lightweight probe to support cache validation without full download.
     if opts.offline {
         return Err(anyhow!(OfflineRetrievalError {
             file: url.to_string()
@@ -414,6 +424,7 @@ pub fn head_last_modified(url: &str, opts: &FetchOptions) -> Result<Option<DateT
 }
 
 pub fn head_exists(url: &str, opts: &FetchOptions) -> Result<bool> {
+    // Quick existence check used by health checks and refresh logic.
     if opts.offline {
         return Err(anyhow!(OfflineRetrievalError {
             file: url.to_string()

@@ -37,6 +37,7 @@ struct R5GraphInfo {
 }
 
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
+    // Try multiple parsers to maximize compatibility with unknown RDF inputs.
     // Try preferred first, then fall back to other formats.
     let mut candidates = vec![RdfFormat::Turtle, RdfFormat::RdfXml, RdfFormat::NTriples];
     if let Some(p) = preferred {
@@ -45,6 +46,7 @@ fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> 
     }
     let store = Store::new()?;
     for fmt in candidates {
+        // Load into a temporary named graph so the parser has a stable target.
         let staging_graph = NamedNode::new_unchecked("temp:graph");
         let parser = RdfParser::from_format(fmt)
             .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
@@ -69,16 +71,19 @@ fn add_ontology_bytes(
     overwrite: Overwrite,
     strict: bool,
 ) -> Result<Ontology> {
+    // Parse into a temporary store to extract ontology metadata safely.
     let staging_graph = NamedNode::new_unchecked("temp:graph");
     let tmp_store = load_staging_store_from_bytes(bytes, format)?;
     let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
     let mut ontology = Ontology::from_store(&tmp_store, &staging_id, strict)?;
+    // Hash content for change detection without re-reading sources.
     let hash = blake3::hash(bytes).to_hex().to_string();
     ontology.set_content_hash(hash);
     ontology.with_last_updated(Utc::now());
     let id = ontology.id();
     let graphname: GraphName = id.graphname()?;
 
+    // Only write into the store if overwrite is allowed or the graph is absent.
     if overwrite.as_bool() || !store.contains_named_graph(id.name())? {
         store.remove_named_graph(id.name())?;
         let quads = tmp_store
@@ -107,6 +112,7 @@ fn add_ontology_to_store(
     offline: bool,
     strict: bool,
 ) -> Result<Ontology> {
+    // Resolve bytes from the location, honoring offline mode.
     let (bytes, format) = match &location {
         OntologyLocation::File(path) => get_file_contents(path)?,
         OntologyLocation::Url(url) => {
@@ -270,6 +276,7 @@ pub struct PersistentGraphIO {
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
+        // Create or open a persistent store with an exclusive lock for writers.
         // Ensure target directory exists before creating/locking files
         std::fs::create_dir_all(&path)?;
         // Try to acquire an exclusive lock for writer; if any readers/writers hold the lock, error out immediately
@@ -325,6 +332,7 @@ impl PersistentGraphIO {
     }
 
     fn load_r5tu_into_store(store: &Store, r5tu_path: &Path) -> Result<()> {
+        // Load the entire RDF5D file into the in-memory Oxigraph store.
         let file = R5tuFile::open(r5tu_path)?;
         // Enumerate all logical graphs and load triples into named graphs
         let mut loader = store.bulk_loader();
@@ -345,6 +353,7 @@ impl PersistentGraphIO {
                     graphname.clone(),
                 ));
             }
+            // Bulk load per-graph to reduce overhead and keep ordering deterministic.
             loader.load_quads(quads_buf.into_iter())?;
         }
         loader.commit()?;
@@ -352,6 +361,7 @@ impl PersistentGraphIO {
     }
 
     fn ensure_graph_loaded(&self, graphname: &str) -> Result<()> {
+        // Lazy-load graphs from RDF5D into the in-memory store on first access.
         let mut loaded = self
             .loaded_graphs
             .lock()
@@ -366,6 +376,7 @@ impl PersistentGraphIO {
         let Some(file) = self.r5_file.as_ref() else {
             return Ok(());
         };
+        // Convert RDF5D triples into quads for Oxigraph.
         let gnn = NamedNode::new(graphname)
             .map_err(|e| anyhow!("Invalid graph name IRI in RDF5D: {}", e))?;
         let graphname = GraphName::NamedNode(gnn);
@@ -381,6 +392,7 @@ impl PersistentGraphIO {
                 graphname.clone(),
             ));
         }
+        // Commit as a single batch for better performance.
         loader.load_quads(quads_buf.into_iter())?;
         loader.commit()?;
         loaded.insert(graphname_str);
@@ -424,6 +436,7 @@ impl PersistentGraphIO {
         if !self.dirty {
             return Ok(());
         }
+        // Serialize the in-memory dataset to RDF5D on disk, preserving graph boundaries.
         // Stream out all quads in the in-memory store to an RDF5D file atomically
         let opts = WriterOptions {
             zstd: true,
@@ -536,6 +549,7 @@ impl PersistentGraphIO {
             }
         }
 
+        // Finalize writes and mark the store clean.
         writer.finalize()?;
         self.dirty = false;
         Ok(())
@@ -682,6 +696,7 @@ pub struct ReadOnlyPersistentGraphIO {
 
 impl ReadOnlyPersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool) -> Result<Self> {
+        // Open a persistent store in read-only mode with a shared lock.
         // Acquire shared lock for readers; will block while a writer holds the exclusive lock
         let lock_path = path.join("store.lock");
         let lock_file = std::fs::OpenOptions::new()
@@ -788,6 +803,7 @@ pub struct ExternalStoreGraphIO {
 
 impl ExternalStoreGraphIO {
     pub fn new(store: Store, offline: bool, strict: bool) -> Self {
+        // Wrap an externally-managed Store without taking ownership of its path.
         Self {
             store,
             offline,
@@ -843,6 +859,7 @@ pub struct MemoryGraphIO {
 
 impl MemoryGraphIO {
     pub fn new(offline: bool, strict: bool) -> Result<Self> {
+        // Build an in-memory store for tests and ephemeral usage.
         Ok(Self {
             store: Store::new()?,
             offline,
@@ -851,6 +868,7 @@ impl MemoryGraphIO {
     }
 
     pub fn add_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
+        // Replace any existing named graph with the provided graph data.
         let graphname = id.graphname()?;
         self.store.remove_named_graph(id.name())?;
         let mut loader = self.store.bulk_loader();

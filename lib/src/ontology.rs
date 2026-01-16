@@ -75,6 +75,7 @@ impl<'a> From<&'a GraphIdentifier> for NamedNodeRef<'a> {
 
 impl GraphIdentifier {
     pub fn new(name: NamedNodeRef) -> Self {
+        // Default location mirrors the graph IRI for simple in-memory identifiers.
         // location is same as name
         GraphIdentifier {
             location: OntologyLocation::from_str(name.as_str()).unwrap(),
@@ -82,26 +83,31 @@ impl GraphIdentifier {
         }
     }
     pub fn new_with_location(name: NamedNodeRef, location: OntologyLocation) -> Self {
+        // Use explicit location when the graph IRI differs from its source.
         GraphIdentifier {
             location,
             name: name.into(),
         }
     }
     pub fn location(&self) -> &OntologyLocation {
+        // Borrow the location to avoid cloning for simple lookups.
         &self.location
     }
 
     pub fn name(&self) -> NamedNodeRef<'_> {
+        // Return a lightweight reference to the graph name.
         self.name.as_ref()
     }
 
     pub fn to_filename(&self) -> String {
+        // Create a filesystem-safe name for cache/storage paths.
         let name = self.name.as_str().replace(':', "+");
         let location = self.location.as_str().replace("file://", "");
         format!("{name}-{location}").replace('/', "_")
     }
 
     pub fn graphname(&self) -> Result<GraphName> {
+        // Convert identifier to an Oxigraph GraphName for store APIs.
         Ok(GraphName::NamedNode(self.name.clone()))
     }
 }
@@ -145,6 +151,7 @@ impl Default for OntologyLocation {
 
 impl OntologyLocation {
     pub fn as_str(&self) -> &str {
+        // Provide a shared string view for logging and comparisons.
         match self {
             OntologyLocation::File(p) => p.to_str().unwrap_or_default(),
             OntologyLocation::Url(u) => u.as_str(),
@@ -153,6 +160,7 @@ impl OntologyLocation {
     }
 
     pub fn graph(&self) -> Result<OxigraphGraph> {
+        // Load content from the underlying location when possible.
         match self {
             OntologyLocation::File(p) => read_file(p),
             OntologyLocation::Url(u) => read_url(u),
@@ -163,6 +171,7 @@ impl OntologyLocation {
     }
 
     pub fn is_file(&self) -> bool {
+        // Simple predicate used in filters and branching logic.
         match self {
             OntologyLocation::File(_) => true,
             OntologyLocation::Url(_) => false,
@@ -171,6 +180,7 @@ impl OntologyLocation {
     }
 
     pub fn is_url(&self) -> bool {
+        // Simple predicate used in filters and branching logic.
         match self {
             OntologyLocation::File(_) => false,
             OntologyLocation::Url(_) => true,
@@ -179,6 +189,7 @@ impl OntologyLocation {
     }
 
     pub fn from_str(s: &str) -> Result<Self> {
+        // Accept both IRIs and file paths, normalizing to absolute paths.
         if s.starts_with("http") || s.starts_with("<http") {
             Ok(OntologyLocation::Url(s.to_string()))
         } else {
@@ -194,6 +205,7 @@ impl OntologyLocation {
     }
 
     pub fn to_iri(&self) -> NamedNode {
+        // Convert location to a canonical IRI for graph identifiers.
         match self {
             OntologyLocation::File(p) => {
                 let effective_path = Self::normalized_file_path(p);
@@ -222,6 +234,7 @@ impl OntologyLocation {
     }
 
     pub fn as_path(&self) -> Option<&PathBuf> {
+        // Expose file paths only when the location is filesystem-based.
         match self {
             OntologyLocation::File(p) => Some(p),
             OntologyLocation::Url(_) => None,
@@ -375,29 +388,35 @@ impl Default for Ontology {
 
 impl Ontology {
     pub fn with_last_updated(&mut self, last_updated: DateTime<Utc>) {
+        // Update timestamp after a successful refresh.
         self.last_updated = Some(last_updated);
     }
 
     /// Update the ontology's location (and associated identifier) in one step.
     /// Keeps the name stable while swapping in the new location.
     pub fn set_location(&mut self, location: OntologyLocation) {
+        // Keep id/location consistent since both are persisted and indexed.
         self.id = GraphIdentifier::new_with_location(self.id.name(), location.clone());
         self.location = Some(location);
     }
 
     pub fn set_content_hash(&mut self, hash: String) {
+        // Record content hash for change detection without re-parsing.
         self.content_hash = Some(hash);
     }
 
     pub fn content_hash(&self) -> Option<&str> {
+        // Return borrowed hash string for lightweight comparisons.
         self.content_hash.as_deref()
     }
 
     pub fn id(&self) -> &GraphIdentifier {
+        // Return a reference to the stable identifier.
         &self.id
     }
 
     pub fn exists(&self) -> bool {
+        // Check presence based on location type without loading the graph.
         match &self.location {
             Some(OntologyLocation::File(p)) => p.exists(),
             Some(OntologyLocation::Url(u)) => {
@@ -410,14 +429,17 @@ impl Ontology {
     }
 
     pub fn version_properties(&self) -> &HashMap<NamedNode, String> {
+        // Expose collected version metadata for resolution policies.
         &self.version_properties
     }
 
     pub fn location(&self) -> Option<&OntologyLocation> {
+        // Borrow location to avoid cloning in common read paths.
         self.location.as_ref()
     }
 
     pub fn graph(&self) -> Result<OxigraphGraph> {
+        // Load graph from the best available source (explicit location or name).
         if let Some(location) = &self.location {
             return location.graph();
         }
@@ -433,14 +455,17 @@ impl Ontology {
     //}
 
     pub fn name(&self) -> NamedNode {
+        // Clone to preserve internal ownership semantics.
         self.name.clone()
     }
 
     pub fn dump(&self) -> String {
+        // Serialize for debugging or exports.
         serde_json::to_string_pretty(self).unwrap()
     }
 
     pub fn namespace_map(&self) -> &HashMap<String, String> {
+        // Share the cached prefix map for CLI and diagnostics.
         &self.namespace_map
     }
 
@@ -452,6 +477,7 @@ impl Ontology {
     ) -> Result<Self> {
         debug!("got ontology name: {ontology_subject}");
 
+        // Extract SHACL prefix declarations into a namespace map for later reuse.
         let mut namespace_map = HashMap::new();
 
         let declare_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#declare");
@@ -460,6 +486,7 @@ impl Ontology {
 
         let ontology_subject_ref = ontology_subject.as_ref();
 
+        // Walk sh:declare links off the ontology to find prefix/namespace pairs.
         for decl_obj in store
             .quads_for_pattern(
                 Some(ontology_subject_ref),
@@ -507,6 +534,7 @@ impl Ontology {
             }
         }
 
+        // Collect owl:imports objects from the ontology subject.
         let imports: Vec<Term> = store
             .quads_for_pattern(
                 Some(ontology_subject_ref),
@@ -518,7 +546,7 @@ impl Ontology {
             .map(|q| q.object)
             .collect::<Vec<_>>();
 
-        // get each of the ONNTOLOGY_VERSION_IRIS values, if they exist on the ontology
+        // Extract version properties directly on the ontology subject.
         let mut version_properties: HashMap<NamedNode, String> =
             ONTOLOGY_VERSION_IRIS
                 .iter()
@@ -547,8 +575,7 @@ impl Ontology {
                     acc
                 });
 
-        // check if any of the ONTOLOGY_VERSION_IRIS exist on the other side of a
-        // vaem:hasGraphMetadata predicate
+        // Check for version properties in linked graph metadata nodes.
         let graph_metadata: Vec<Term> = store
             .quads_for_pattern(
                 Some(ontology_subject_ref),
@@ -588,7 +615,7 @@ impl Ontology {
                 }
             }
         }
-        // dump version properties
+        // Log extracted version properties for debugging.
         for (k, v) in version_properties.iter() {
             debug!("{k}: {v}");
         }
@@ -600,6 +627,7 @@ impl Ontology {
             _ => panic!("Ontology name is not an IRI"),
         };
 
+        // Convert import terms to NamedNodes and drop self-imports.
         let imports: Vec<NamedNode> = imports
             .iter()
             .map(|t| match t {
@@ -631,6 +659,7 @@ impl Ontology {
         id: &GraphIdentifier,
         require_ontology_names: bool,
     ) -> Result<Self> {
+        // Build an Ontology by inspecting triples in the store for the given graph.
         let graph_name = id.graphname()?;
         let graph_name_ref = graph_name.as_ref();
         let location = id.location().clone();
@@ -668,6 +697,7 @@ impl Ontology {
                     location
                 ));
             }
+            // Fall back to the location IRI when no explicit ontology declaration exists.
             warn!("No ontology declaration found in {location}. Using this as the ontology name");
             let ontology_subject = NamedOrBlankNode::NamedNode(location.to_iri());
             Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
@@ -676,6 +706,7 @@ impl Ontology {
             let ontology_subject = match decl {
                 NamedOrBlankNode::NamedNode(s) => NamedOrBlankNode::NamedNode(s),
                 _ => {
+                    // Blank nodes are not stable ontology identifiers; fail in strict mode.
                     return Err(anyhow::anyhow!(
                         "Ontology declaration subject is not a NamedNode, skipping."
                     ));
@@ -686,6 +717,7 @@ impl Ontology {
     }
 
     pub fn from_str(s: &str) -> Result<Self> {
+        // Convenience for reading persisted ontology JSON.
         Ok(serde_json::from_str(s)?)
     }
 }

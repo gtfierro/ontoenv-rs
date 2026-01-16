@@ -11,6 +11,7 @@ pub enum Overwrite {
 
 impl Overwrite {
     pub fn as_bool(self) -> bool {
+        // Keep bool conversions centralized so CLI/config adapters stay consistent.
         matches!(self, Overwrite::Allow)
     }
 }
@@ -42,6 +43,7 @@ pub enum RefreshStrategy {
 
 impl RefreshStrategy {
     pub fn is_force(self) -> bool {
+        // Provide a readable predicate for higher-level logic and tests.
         matches!(self, RefreshStrategy::Force)
     }
 }
@@ -66,6 +68,7 @@ pub enum CacheMode {
 
 impl CacheMode {
     pub fn is_enabled(self) -> bool {
+        // Use a semantic flag to avoid direct enum comparisons at call sites.
         matches!(self, CacheMode::Enabled)
     }
 }
