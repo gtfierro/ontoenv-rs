@@ -188,6 +188,7 @@ impl OntologyLocation {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         // Accept both IRIs and file paths, normalizing to absolute paths.
         if s.starts_with("http") || s.starts_with("<http") {
@@ -716,6 +717,7 @@ impl Ontology {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         // Convenience for reading persisted ontology JSON.
         Ok(serde_json::from_str(s)?)

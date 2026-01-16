@@ -7,6 +7,14 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, LINK};
 use std::io::Cursor;
 use std::time::Duration;
 
+type FetchResponseParts = (
+    Vec<u8>,
+    Option<String>,
+    Option<String>,
+    String,
+    reqwest::StatusCode,
+);
+
 #[derive(Debug, Clone)]
 pub struct FetchOptions {
     pub offline: bool,
@@ -163,17 +171,7 @@ fn parse_link_alternates(headers: &HeaderMap, accept_order: &[&'static str]) -> 
     out
 }
 
-fn try_get(
-    url: &str,
-    client: &Client,
-    accept: &str,
-) -> Result<(
-    Vec<u8>,
-    Option<String>,
-    Option<String>,
-    String,
-    reqwest::StatusCode,
-)> {
+fn try_get(url: &str, client: &Client, accept: &str) -> Result<FetchResponseParts> {
     let resp = client.get(url).header(ACCEPT, accept).send()?;
     let status = resp.status();
     let final_url = resp.url().to_string();
@@ -224,11 +222,10 @@ fn sniff_format(bytes: &[u8]) -> Option<RdfFormat> {
 fn can_parse_as(bytes: &[u8], format: RdfFormat) -> bool {
     let cursor = Cursor::new(bytes);
     let parser = RdfParser::from_format(format);
-    let mut reader = parser.for_reader(cursor);
-    while let Some(result) = reader.next() {
-        match result {
-            Ok(_) => continue,
-            Err(_) => return false,
+    let reader = parser.for_reader(cursor);
+    for result in reader {
+        if result.is_err() {
+            return false;
         }
     }
     true
@@ -245,12 +242,7 @@ fn try_parse_candidates(bytes: &[u8]) -> Option<RdfFormat> {
             profile: JsonLdProfileSet::default(),
         },
     ];
-    for fmt in candidates {
-        if can_parse_as(bytes, fmt) {
-            return Some(fmt);
-        }
-    }
-    None
+    candidates.into_iter().find(|&fmt| can_parse_as(bytes, fmt))
 }
 
 fn is_generic_content_type(ct: Option<&str>) -> bool {

@@ -299,7 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Stat(args) => {
             let file = args.file;
-            let f = match { R5tuFile::open(&file) } {
+            let f = match R5tuFile::open(&file) {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!(

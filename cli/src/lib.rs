@@ -227,24 +227,25 @@ enum Commands {
     Config(ConfigCommands),
 }
 
-impl ToString for Commands {
-    fn to_string(&self) -> String {
-        match self {
-            Commands::Init { .. } => "Init".to_string(),
-            Commands::Version => "Version".to_string(),
-            Commands::Status { .. } => "Status".to_string(),
-            Commands::Update { .. } => "Update".to_string(),
-            Commands::Closure { .. } => "Closure".to_string(),
-            Commands::Get { .. } => "Get".to_string(),
-            Commands::Add { .. } => "Add".to_string(),
-            Commands::List { .. } => "List".to_string(),
-            Commands::Dump { .. } => "Dump".to_string(),
-            Commands::DepGraph { .. } => "DepGraph".to_string(),
-            Commands::Why { .. } => "Why".to_string(),
-            Commands::Doctor { .. } => "Doctor".to_string(),
-            Commands::Reset { .. } => "Reset".to_string(),
-            Commands::Config { .. } => "Config".to_string(),
-        }
+impl std::fmt::Display for Commands {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Commands::Init { .. } => "Init",
+            Commands::Version => "Version",
+            Commands::Status { .. } => "Status",
+            Commands::Update { .. } => "Update",
+            Commands::Closure { .. } => "Closure",
+            Commands::Get { .. } => "Get",
+            Commands::Add { .. } => "Add",
+            Commands::List { .. } => "List",
+            Commands::Dump { .. } => "Dump",
+            Commands::DepGraph { .. } => "DepGraph",
+            Commands::Why { .. } => "Why",
+            Commands::Doctor { .. } => "Doctor",
+            Commands::Reset { .. } => "Reset",
+            Commands::Config { .. } => "Config",
+        };
+        f.write_str(name)
     }
 }
 
