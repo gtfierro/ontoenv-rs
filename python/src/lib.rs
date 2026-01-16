@@ -169,11 +169,79 @@ fn extract_ontology_subject(graph: &Bound<'_, PyAny>) -> PyResult<Option<String>
     Ok(None)
 }
 
+fn extract_import_root_subject(graph: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    if !graph.hasattr("subjects")? {
+        return Ok(None);
+    }
+
+    let py = graph.py();
+    let namespace = PyModule::import(py, "rdflib.namespace")?;
+    let owl = namespace.getattr("OWL")?;
+    let imports_term = match owl.getattr("imports") {
+        Ok(term) => term,
+        Err(_) => owl.call_method1("__getitem__", ("imports",))?,
+    };
+
+    let subjects_iter = graph.call_method1("subjects", (imports_term, py.None()))?;
+    let mut iterator = subjects_iter.try_iter()?;
+
+    if let Some(first_res) = iterator.next() {
+        let first = first_res?;
+        let subject_str = pyany_to_string(&first)?;
+        if !subject_str.is_empty() {
+            return Ok(Some(subject_str));
+        }
+    }
+
+    Ok(None)
+}
+
+fn resolve_root_subject_and_graphid(
+    graph: &Bound<'_, PyAny>,
+    env: &OntoEnvRs,
+) -> PyResult<(Option<String>, Option<GraphIdentifier>)> {
+    let root_subject = match extract_import_root_subject(graph)? {
+        Some(root) => Some(root),
+        None => extract_ontology_subject(graph)?,
+    };
+
+    let mut root_graphid = None;
+    if let Some(ref root) = root_subject {
+        if let Ok(root_node) = NamedNode::new(root) {
+            root_graphid = env.resolve(ResolveTarget::Graph(root_node));
+        }
+    }
+
+    Ok((root_subject, root_graphid))
+}
+
+fn promote_root_graphid(
+    all_ontologies: &mut Vec<GraphIdentifier>,
+    root_graphid: &GraphIdentifier,
+) {
+    if let Some(pos) = all_ontologies.iter().position(|id| id == root_graphid) {
+        if pos != 0 {
+            let root = all_ontologies.remove(pos);
+            all_ontologies.insert(0, root);
+        }
+    } else {
+        all_ontologies.insert(0, root_graphid.clone());
+    }
+}
+
 fn rewrite_sh_prefixes_rdflib(
     py: Python,
     graph: &Bound<'_, PyAny>,
     root_uri: &str,
 ) -> PyResult<()> {
+    // This is a Python-side fallback for in-memory rdflib.Graph inputs.
+    // The Rust union graph rewrite only knows about OntoEnv-managed graphs,
+    // so for in-memory graphs we normalize sh:prefixes and sh:declare directly.
+    //
+    // Behavior:
+    // - Every (shape, sh:prefixes, X) becomes (shape, sh:prefixes, root).
+    // - Every (ontology, sh:declare, decl) is moved to the root ontology,
+    //   deduplicated by (sh:prefix, sh:namespace).
     let rdflib = py.import("rdflib")?;
     let uriref = rdflib.getattr("URIRef")?;
     let sh_prefixes = uriref.call1(("http://www.w3.org/ns/shacl#prefixes",))?;
@@ -182,18 +250,26 @@ fn rewrite_sh_prefixes_rdflib(
     let sh_namespace = uriref.call1(("http://www.w3.org/ns/shacl#namespace",))?;
     let root_ref = uriref.call1((root_uri,))?;
 
+    // Collect subjects that reference sh:prefixes so we can re-add them with the root.
     let triples_iter = graph.call_method1("triples", ((py.None(), &sh_prefixes, py.None()),))?;
-    let mut to_rewrite = Vec::new();
+    let mut subjects = Vec::new();
+    let mut to_remove = Vec::new();
     for triple in triples_iter.try_iter()? {
-        to_rewrite.push(triple?);
+        let t = triple?;
+        subjects.push(t.get_item(0)?);
+        to_remove.push(t);
     }
-    for triple in to_rewrite {
-        graph.getattr("remove")?.call1((triple.clone(),))?;
-        let subj = triple.get_item(0)?;
+    // Remove every existing sh:prefixes triple, regardless of its object.
+    for triple in to_remove {
+        graph.getattr("remove")?.call1((triple,))?;
+    }
+    // Re-add sh:prefixes with the root ontology as the object.
+    for subj in subjects {
         let new_triple = PyTuple::new(py, &[subj, sh_prefixes.clone(), root_ref.clone()])?;
         graph.getattr("add")?.call1((new_triple,))?;
     }
 
+    // Track existing (prefix, namespace) declarations on the root to avoid duplicates.
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let root_decl_iter =
         graph.call_method1("triples", ((&root_ref, &sh_declare, py.None()),))?;
@@ -211,6 +287,7 @@ fn rewrite_sh_prefixes_rdflib(
         }
     }
 
+    // Move all sh:declare entries to the root ontology, deduplicating by (prefix, namespace).
     let declare_iter =
         graph.call_method1("triples", ((py.None(), &sh_declare, py.None()),))?;
     let mut declare_triples = Vec::new();
@@ -225,6 +302,7 @@ fn rewrite_sh_prefixes_rdflib(
         let decl = triple.get_item(2)?;
         graph.getattr("remove")?.call1((triple.clone(),))?;
 
+        // Extract prefix/namespace from the declaration node (if present).
         let pref = graph.call_method1("value", (&decl, &sh_prefix, py.None()))?;
         let ns = graph.call_method1("value", (&decl, &sh_namespace, py.None()))?;
         if !pref.is_none() && !ns.is_none() {
@@ -232,10 +310,12 @@ fn rewrite_sh_prefixes_rdflib(
             let nv = pyany_to_string(&ns)?;
             if !pv.is_empty() && !nv.is_empty() {
                 if !seen.insert((pv, nv)) {
+                    // Duplicate declaration; skip re-attaching to root.
                     continue;
                 }
             }
         }
+        // Attach the declaration node to the root ontology.
         let new_triple = PyTuple::new(py, &[root_ref.clone(), sh_declare.clone(), decl])?;
         graph.getattr("add")?.call1((new_triple,))?;
     }
@@ -1338,15 +1418,26 @@ impl OntoEnv {
         recursion_depth: i32,
         fetch_missing: bool,
     ) -> PyResult<Vec<String>> {
+        // This method takes an in-memory rdflib.Graph, finds its owl:imports,
+        // resolves them in the OntoEnv store, computes the transitive closure,
+        // and merges all closure triples into the input graph.
+        //
+        // Root selection:
+        // - Prefer the subject of owl:imports (if present) as the "root" URI.
+        // - Otherwise fall back to the first owl:Ontology subject in the graph.
+        // - If the root URI resolves to a stored GraphIdentifier, we ensure that
+        //   graph is first in the union list so Rust rewrites sh:prefixes to it.
+        // - If it does NOT resolve, we skip Rust rewrite and do a Python-side
+        //   rewrite directly on the rdflib graph.
         let rdflib = py.import("rdflib")?;
         let py_imports_pred = term_to_python(py, &rdflib, Term::NamedNode(IMPORTS.into()))?;
 
+        // Gather owl:imports objects from the input graph.
         let kwargs = [("predicate", py_imports_pred)].into_py_dict(py)?;
         let objects_iter = graph.call_method("objects", (), Some(&kwargs))?;
         let builtins = py.import("builtins")?;
         let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
         let imports: Vec<String> = objects_list.extract()?;
-        let root_subject = extract_ontology_subject(graph)?;
 
         if imports.is_empty() {
             return Ok(Vec::new());
@@ -1358,11 +1449,17 @@ impl OntoEnv {
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
+        // Determine the root URI for sh:prefix rewrites.
+        // Prefer owl:imports subject, else the owl:Ontology subject.
+        let (root_subject, root_graphid) = resolve_root_subject_and_graphid(graph, env)?;
+
         let is_strict = env.is_strict();
         let mut all_ontologies: Vec<GraphIdentifier> = Vec::new();
         let mut seen_ontologies: HashSet<GraphIdentifier> = HashSet::new();
         let mut all_closure_names: Vec<String> = Vec::new();
 
+        // Resolve each import to a stored graph (optionally fetching),
+        // then collect the transitive closure for each.
         for uri in &imports {
             let iri = NamedNode::new(uri.as_str())
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -1420,21 +1517,16 @@ impl OntoEnv {
             return Ok(Vec::new());
         }
 
-        let mut union = if root_subject.is_some() {
-            env.get_union_graph(&all_ontologies, Some(false), Some(true))
-                .map_err(anyhow_to_pyerr)?
-        } else {
-            env.get_union_graph(&all_ontologies, Some(true), Some(true))
-                .map_err(anyhow_to_pyerr)?
-        };
-        if let Some(root) = root_subject.clone() {
-            if let Ok(root_node) = NamedNode::new(root) {
-                transform::rewrite_sh_prefixes_dataset(
-                    &mut union.dataset,
-                    NamedOrBlankNodeRef::NamedNode(root_node.as_ref()),
-                );
-            }
+        // If the root URI is in the env, move it to the front so Rust uses it
+        // as the root for sh:prefixes rewrite. Otherwise, we will rewrite later in Python.
+        if let Some(ref root_id) = root_graphid {
+            promote_root_graphid(&mut all_ontologies, root_id);
         }
+
+        let rewrite_in_rust = root_graphid.is_some();
+        let mut union = env
+            .get_union_graph(&all_ontologies, Some(rewrite_in_rust), Some(true))
+            .map_err(anyhow_to_pyerr)?;
 
         for triple in union.dataset.into_iter() {
             let s: Term = triple.subject.into();
@@ -1451,7 +1543,7 @@ impl OntoEnv {
             graph.getattr("add")?.call1((t,))?;
         }
 
-        // Remove all owl:imports from the original graph
+        // Remove all owl:imports from the original graph (they are now materialized).
         let py_imports_pred_for_remove = term_to_python(py, &rdflib, IMPORTS.into())?;
         let remove_tuple = PyTuple::new(
             py,
@@ -1459,8 +1551,12 @@ impl OntoEnv {
         )?;
         graph.getattr("remove")?.call1((remove_tuple,))?;
 
-        if let Some(root) = root_subject {
-            rewrite_sh_prefixes_rdflib(py, graph, &root)?;
+        // If Rust could not rewrite sh:prefixes (root not in env),
+        // perform the rewrite directly in the rdflib graph.
+        if !rewrite_in_rust {
+            if let Some(ref root) = root_subject {
+                rewrite_sh_prefixes_rdflib(py, graph, root)?;
+            }
         }
 
         all_closure_names.sort();
@@ -1510,7 +1606,6 @@ impl OntoEnv {
         let builtins = py.import("builtins")?;
         let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
         let imports: Vec<String> = objects_list.extract()?;
-        let root_subject = extract_ontology_subject(graph)?;
 
         let destination_graph = match destination_graph {
             Some(g) => g.clone(),
@@ -1526,6 +1621,10 @@ impl OntoEnv {
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+
+        // Determine the root URI for sh:prefix rewrites.
+        // Prefer owl:imports subject, else the owl:Ontology subject.
+        let (root_subject, root_graphid) = resolve_root_subject_and_graphid(graph, env)?;
 
         let is_strict = env.is_strict();
         let mut all_ontologies: Vec<GraphIdentifier> = Vec::new();
@@ -1589,27 +1688,18 @@ impl OntoEnv {
             return Ok((destination_graph, Vec::new()));
         }
 
-        let mut union = if rewrite_sh_prefixes && root_subject.is_some() {
-            env.get_union_graph(&all_ontologies, Some(false), Some(remove_owl_imports))
-                .map_err(anyhow_to_pyerr)?
-        } else {
-            env.get_union_graph(
+        if let Some(ref root_id) = root_graphid {
+            promote_root_graphid(&mut all_ontologies, root_id);
+        }
+
+        let rewrite_in_rust = rewrite_sh_prefixes && root_graphid.is_some();
+        let mut union = env
+            .get_union_graph(
                 &all_ontologies,
-                Some(rewrite_sh_prefixes),
+                Some(rewrite_in_rust),
                 Some(remove_owl_imports),
             )
-            .map_err(anyhow_to_pyerr)?
-        };
-        if rewrite_sh_prefixes {
-            if let Some(ref root) = root_subject {
-                if let Ok(root_node) = NamedNode::new(root) {
-                    transform::rewrite_sh_prefixes_dataset(
-                        &mut union.dataset,
-                        NamedOrBlankNodeRef::NamedNode(root_node.as_ref()),
-                    );
-                }
-            }
-        }
+            .map_err(anyhow_to_pyerr)?;
 
         for triple in union.dataset.into_iter() {
             let s: Term = triple.subject.into();
@@ -1637,7 +1727,7 @@ impl OntoEnv {
             }
         }
 
-        if rewrite_sh_prefixes {
+        if rewrite_sh_prefixes && !rewrite_in_rust {
             if let Some(ref root) = root_subject {
                 rewrite_sh_prefixes_rdflib(py, &destination_graph, root)?;
             }

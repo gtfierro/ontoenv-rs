@@ -113,6 +113,8 @@ use pretty_bytes::converter::convert as pretty_bytes;
 use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 
+// Small helper trait to normalize identifiers into URI strings across the
+// library without leaking concrete graph/node types into public APIs.
 pub trait ToUriString {
     fn to_uri_string(&self) -> String;
 }
@@ -123,24 +125,30 @@ impl ToUriString for NamedNode {
     }
 }
 
+// Accept borrowed nodes to reduce string allocation at call sites.
 impl ToUriString for &NamedNode {
     fn to_uri_string(&self) -> String {
         self.as_str().to_string()
     }
 }
 
+// GraphIdentifier is an internal wrapper used by the environment; implementing
+// ToUriString keeps diagnostics and formatting consistent with NamedNode.
 impl ToUriString for GraphIdentifier {
     fn to_uri_string(&self) -> String {
         self.name().as_str().to_string()
     }
 }
 
+// Mirror the owned impl so callers can pass &GraphIdentifier ergonomically.
 impl ToUriString for &GraphIdentifier {
     fn to_uri_string(&self) -> String {
         self.name().as_str().to_string()
     }
 }
 
+// Keep error context lightweight and printable without tying to a specific
+// error type; this gets surfaced in CLI output and logs.
 pub struct FailedImport {
     ontology: GraphIdentifier,
     error: String,
@@ -148,6 +156,7 @@ pub struct FailedImport {
 
 impl FailedImport {
     pub fn new(ontology: GraphIdentifier, error: String) -> Self {
+        // Store only the minimum context needed for user-facing diagnostics.
         Self { ontology, error }
     }
 }
@@ -163,6 +172,8 @@ impl Display for FailedImport {
     }
 }
 
+// Snapshot of the current on-disk environment for `doctor`-style diagnostics.
+// We keep it minimal and copyable to avoid holding locks on the store.
 pub struct EnvironmentStatus {
     // true if there is an environment that ontoenv can find
     exists: bool,
@@ -180,26 +191,32 @@ pub struct EnvironmentStatus {
 
 impl EnvironmentStatus {
     pub fn exists(&self) -> bool {
+        // Fast check for callers that only care whether an env was found.
         self.exists
     }
 
     pub fn ontoenv_path(&self) -> Option<&Path> {
+        // Expose path as a borrow to avoid cloning.
         self.ontoenv_path.as_deref()
     }
 
     pub fn num_ontologies(&self) -> usize {
+        // Report the current catalog size for status and UX.
         self.num_ontologies
     }
 
     pub fn last_updated(&self) -> Option<&DateTime<Utc>> {
+        // Provide a reference to preserve the original timestamp precision.
         self.last_updated.as_ref()
     }
 
     pub fn store_size(&self) -> u64 {
+        // Keep bytes for programmatic use; formatting happens in Display.
         self.store_size
     }
 
     pub fn missing_imports(&self) -> &[NamedNode] {
+        // Return a slice so callers cannot mutate internal state.
         &self.missing_imports
     }
 }
@@ -208,6 +225,7 @@ impl EnvironmentStatus {
 impl std::fmt::Display for EnvironmentStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if !self.exists {
+            // Avoid printing stale metadata when the environment is missing.
             return write!(f, "No environment found");
         }
         // convert last_updated to local timestamp, or display N/A if
@@ -224,6 +242,7 @@ impl std::fmt::Display for EnvironmentStatus {
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "N/A".to_string());
+        // Pretty-print store size so humans can spot growth/regressions quickly.
         write!(
             f,
             "Environment Path: {}\n\
@@ -239,6 +258,7 @@ impl std::fmt::Display for EnvironmentStatus {
         if !self.missing_imports.is_empty() {
             write!(f, "\n\nMissing Imports:")?;
             for import in &self.missing_imports {
+                // Render as URI for consistency with other environment output.
                 write!(f, "\n  - {}", import.to_uri_string())?;
             }
         }

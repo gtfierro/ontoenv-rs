@@ -16,6 +16,7 @@ use std::io::BufReader;
 use log::{debug, info};
 
 pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
+    // Read raw bytes and infer format from extension to avoid double parsing.
     let b = std::fs::read(path)?;
     let format = path
         .extension()
@@ -31,12 +32,14 @@ pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
 }
 
 pub fn get_url_contents(url: &str) -> Result<(Vec<u8>, Option<RdfFormat>)> {
+    // Delegate to fetcher so network behavior and format sniffing stay consistent.
     let opts = crate::fetch::FetchOptions::default();
     let res = crate::fetch::fetch_rdf(url, &opts)?;
     Ok((res.bytes, res.format))
 }
 
 pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
+    // Serialize as Turtle for human-friendly dumps and debugging artifacts.
     info!(
         "Writing dataset to file: {} with length {}",
         file,
@@ -56,6 +59,7 @@ pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
 }
 
 pub fn read_file(file: &Path) -> Result<OxigraphGraph> {
+    // Prefer streaming parse to keep memory usage bounded for large files.
     debug!("Reading file: {}", file.to_str().unwrap());
     let filename = file;
     let file = std::fs::File::open(file)?;
@@ -84,6 +88,7 @@ pub fn read_format<T: Read + Seek>(
     mut original_content: BufReader<T>,
     format: Option<RdfFormat>,
 ) -> Result<OxigraphGraph> {
+    // Try the caller-provided format first, then fall back to common ones.
     let format = format.unwrap_or(RdfFormat::Turtle);
     for format in [
         format,
@@ -91,6 +96,7 @@ pub fn read_format<T: Read + Seek>(
         RdfFormat::RdfXml,
         RdfFormat::NTriples,
     ] {
+        // Rewind so each parser sees the full input.
         let content = original_content.get_mut();
         content.rewind()?;
         let parser = RdfParser::from_format(format);
@@ -120,6 +126,7 @@ pub fn read_format<T: Read + Seek>(
 }
 
 pub fn read_url(file: &str) -> Result<OxigraphGraph> {
+    // Fetch into memory and reuse the same format fallback logic as files.
     debug!("Reading url: {file}");
     let opts = crate::fetch::FetchOptions::default();
     let res = crate::fetch::fetch_rdf(file, &opts)?;
@@ -133,6 +140,7 @@ pub fn graph_to_quads<'a>(
     graph: &'a OxigraphGraph,
     graph_name: GraphNameRef<'a>,
 ) -> impl IntoIterator<Item = impl Into<Quad> + use<'a>> {
+    // Provide a lightweight adapter for store APIs that accept quads.
     graph
         .into_iter()
         .map(move |triple| triple.in_graph(graph_name))

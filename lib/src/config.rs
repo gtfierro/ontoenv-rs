@@ -77,6 +77,7 @@ pub struct Config {
 impl Config {
     /// Creates a new `ConfigBuilder` to construct a `Config`.
     pub fn builder() -> ConfigBuilder {
+        // Keep construction centralized so defaults stay consistent.
         ConfigBuilder::new()
     }
 
@@ -127,21 +128,25 @@ impl Config {
     /// A convenient constructor for a default offline, non-temporary environment.
     /// Searches for ontologies in the root directory.
     pub fn default(root: PathBuf) -> Result<Self> {
+        // Provide a one-liner for the most common offline local use case.
         Config::builder().root(root).offline(true).build()
     }
 
     /// A convenient constructor for a temporary environment.
     pub fn temporary(root: PathBuf) -> Result<Self> {
+        // Avoid persisting state for short-lived or test workflows.
         Config::builder().root(root).temporary(true).build()
     }
 
     /// A convenient constructor for a default configuration that uses default file matching patterns.
     pub fn new_with_default_matches(root: PathBuf) -> Result<Self> {
+        // Defaults to include patterns suitable for RDF files.
         Config::builder().root(root).build()
     }
 
     /// Determines if a file is included in the ontology environment configuration
     pub fn is_included(&self, path: &Path) -> bool {
+        // Apply include/exclude glob logic with a safe fallback on invalid patterns.
         // Match relative to the config root when possible so globs like "lib/**/*.ttl"
         // behave intuitively even when walking absolute paths.
         let rel = path.strip_prefix(&self.root).unwrap_or(path).to_path_buf();
@@ -168,6 +173,7 @@ impl Config {
     }
 
     pub fn save_to_file(&self, file: &Path) -> Result<()> {
+        // Persist as JSON so config is editable and stable across versions.
         let config_str = serde_json::to_string_pretty(&self)?;
         let mut file = std::fs::File::create(file)?;
         file.write_all(config_str.as_bytes())?;
@@ -175,6 +181,7 @@ impl Config {
     }
 
     pub fn from_file(file: &Path) -> Result<Self> {
+        // Load config from disk without side effects (no path normalization here).
         let file = std::fs::File::open(file)?;
         let reader = BufReader::new(file);
         let config: Config = serde_json::from_reader(reader)?;
@@ -183,6 +190,7 @@ impl Config {
 
     /// Prints out the current Config in a clear and readable way for command line output.
     pub fn print(&self) {
+        // Prefer a human-readable dump for CLI output and debugging.
         println!("Configuration:");
         println!("  Root: {}", self.root.display());
         if let Some(store) = &self.external_graph_store {
@@ -250,6 +258,7 @@ pub struct ConfigBuilder {
 impl ConfigBuilder {
     /// Creates a new `ConfigBuilder` with default values.
     pub fn new() -> Self {
+        // Start from None so we can detect which fields were explicitly set.
         Self {
             root: None,
             locations: None,
@@ -270,18 +279,21 @@ impl ConfigBuilder {
 
     /// Sets the root directory for the environment. This is a required field.
     pub fn root(mut self, root: PathBuf) -> Self {
+        // Store the root so relative paths can be resolved consistently.
         self.root = Some(root);
         self
     }
 
     /// Sets the search locations for ontologies. If not set, no directories will be scanned.
     pub fn locations(mut self, locations: Vec<PathBuf>) -> Self {
+        // Allow explicit locations to override the default root scan behavior.
         self.locations = Some(locations);
         self
     }
 
     /// Sets the external graph store identifier (if using a non-default backend).
     pub fn external_graph_store<S: Into<String>>(mut self, store: Option<S>) -> Self {
+        // Store an optional backend identifier for cross-language IO integrations.
         self.external_graph_store = Some(store.map(|s| s.into()));
         self
     }
@@ -293,6 +305,7 @@ impl ConfigBuilder {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
+        // Convert iterable into owned strings for serialization.
         self.includes = Some(
             includes
                 .into_iter()
@@ -308,6 +321,7 @@ impl ConfigBuilder {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
+        // Convert iterable into owned strings for serialization.
         self.excludes = Some(
             excludes
                 .into_iter()
@@ -323,6 +337,7 @@ impl ConfigBuilder {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
+        // Store regex patterns as strings to keep config JSON compact.
         self.include_ontologies = Some(
             patterns
                 .into_iter()
@@ -338,6 +353,7 @@ impl ConfigBuilder {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
+        // Store regex patterns as strings to keep config JSON compact.
         self.exclude_ontologies = Some(
             patterns
                 .into_iter()
@@ -349,36 +365,42 @@ impl ConfigBuilder {
 
     /// Sets whether ontology names are required to be unique. Defaults to `false`.
     pub fn require_ontology_names(mut self, require: bool) -> Self {
+        // Toggle stricter validation for environments that rely on canonical names.
         self.require_ontology_names = Some(require);
         self
     }
 
     /// Sets strict mode. Defaults to `false`.
     pub fn strict(mut self, strict: bool) -> Self {
+        // Enable strict parsing/validation for CI or production use.
         self.strict = Some(strict);
         self
     }
 
     /// Sets offline mode. Defaults to `false`.
     pub fn offline(mut self, offline: bool) -> Self {
+        // Disable network retrieval for air-gapped or deterministic runs.
         self.offline = Some(offline);
         self
     }
 
     /// Sets whether to reuse cached ontologies when possible. Defaults to disabled.
     pub fn use_cached_ontologies(mut self, mode: CacheMode) -> Self {
+        // Control cache behavior explicitly instead of boolean flags.
         self.use_cached_ontologies = Some(mode);
         self
     }
 
     /// Sets the remote ontology cache TTL (seconds). Defaults to 24h.
     pub fn remote_cache_ttl_secs(mut self, ttl_secs: u64) -> Self {
+        // Keep cache freshness configurable for fast iteration vs. stability.
         self.remote_cache_ttl_secs = Some(ttl_secs);
         self
     }
 
     /// Sets the resolution policy. Defaults to `"default"`.
     pub fn resolution_policy(mut self, policy: String) -> Self {
+        // Store policy name for serialization and later policy lookup.
         self.resolution_policy = Some(policy);
         self
     }
@@ -386,6 +408,7 @@ impl ConfigBuilder {
     /// Sets temporary mode. If `true`, the environment is not persisted to disk.
     /// Defaults to `false`.
     pub fn temporary(mut self, temporary: bool) -> Self {
+        // Support ephemeral environments for testing and exploration.
         self.temporary = Some(temporary);
         self
     }
@@ -396,6 +419,7 @@ impl ConfigBuilder {
     ///
     /// Returns an error if the `root` is not set, or if any of the glob patterns are invalid.
     pub fn build(self) -> Result<Config> {
+        // Consolidate defaults and validate required fields before constructing.
         let root = self
             .root
             .ok_or_else(|| anyhow::anyhow!("Config 'root' is required"))?;

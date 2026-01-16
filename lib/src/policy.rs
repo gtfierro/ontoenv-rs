@@ -16,6 +16,7 @@ pub trait ResolutionPolicy: Debug + Send + Sync {
 }
 
 pub fn policy_from_name(name: &str) -> Option<Box<dyn ResolutionPolicy>> {
+    // Map config/CLI strings to concrete policy instances in one place.
     match name {
         "default" => Some(Box::new(DefaultPolicy)),
         "latest" => Some(Box::new(LatestPolicy)),
@@ -25,6 +26,7 @@ pub fn policy_from_name(name: &str) -> Option<Box<dyn ResolutionPolicy>> {
 }
 
 pub fn policy_to_name(policy: &dyn ResolutionPolicy) -> &'static str {
+    // Provide a stable string for serialization and display.
     policy.policy_name()
 }
 
@@ -36,6 +38,7 @@ pub fn policy_serialize<S>(
 where
     S: serde::Serializer,
 {
+    // Serialize just the policy name to keep config files compact and stable.
     serializer.serialize_str(policy.policy_name())
 }
 
@@ -43,6 +46,7 @@ pub fn policy_deserialize<'de, D>(deserializer: D) -> Result<Box<dyn ResolutionP
 where
     D: serde::Deserializer<'de>,
 {
+    // Rehydrate the boxed policy from its name during config loading.
     let policy_name = String::deserialize(deserializer)?;
     policy_from_name(&policy_name)
         .ok_or_else(|| serde::de::Error::custom(format!("Unknown policy name: {policy_name}")))

@@ -10,6 +10,7 @@ use std::collections::HashSet;
 /// Rewrites all `sh:prefixes` links in a graph so they point at `root`, moving each `sh:declare`
 /// block onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`.
 pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
+    // Normalize SHACL prefix declarations onto a single root for easier reuse downstream.
     let mut to_remove: Vec<Triple> = vec![];
     let mut to_add: Vec<Triple> = vec![];
     // find all sh:prefixes triples
@@ -116,6 +117,7 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
 /// all imports so that downstream tools do not attempt to fetch these graph dependencies
 /// themselves. If ontologies_to_remove is provided, only remove owl:imports to those ontologies
 pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+    // Strip owl:imports so consumers do not refetch already-resolved dependencies.
     let to_remove: Vec<Triple> = graph
         .triples_for_predicate(IMPORTS)
         .filter_map(|triple| match triple.object {
@@ -138,6 +140,7 @@ pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<
 
 /// Removes owl:Ontology declarations which are not the provided root
 pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
+    // Keep only the root ontology declaration to avoid multiple "main" declarations.
     // remove owl:Ontology declarations that are not the first graph
     let mut to_remove: Vec<Triple> = vec![];
     for triple in graph.triples_for_object(ONTOLOGY) {
@@ -155,6 +158,7 @@ pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankN
 /** Rewrites all `sh:prefixes` entries in the dataset to point at `root`, relocating `sh:declare`
 blocks onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`. */
 pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
+    // Dataset variant of prefix normalization, preserving named graph boundaries.
     let mut to_remove: Vec<Quad> = vec![];
     let mut to_add: Vec<Quad> = vec![];
     // find all sh:prefixes quads
@@ -264,6 +268,7 @@ pub fn remove_owl_imports_dataset(
     graph: &mut Dataset,
     ontologies_to_remove: Option<&[NamedNodeRef]>,
 ) {
+    // Dataset variant to prune owl:imports quads for resolved ontologies.
     let to_remove: Vec<Quad> = graph
         .quads_for_predicate(IMPORTS)
         .filter_map(|quad| match quad.object {
@@ -286,16 +291,19 @@ pub fn remove_owl_imports_dataset(
 
 /// Backwards-compat wrapper; prefer remove_ontology_declarations_dataset
 pub fn remove_ontology_declarations(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
+    // Forward to the newer name while keeping API compatibility.
     remove_ontology_declarations_dataset(graph, root)
 }
 
 /// Backwards-compat wrapper; prefer remove_owl_imports_dataset
 pub fn remove_owl_imports(graph: &mut Dataset, ontologies_to_remove: Option<&[NamedNodeRef]>) {
+    // Forward to the newer name while keeping API compatibility.
     remove_owl_imports_dataset(graph, ontologies_to_remove)
 }
 
 /// Removes owl:Ontology declarations in a dataset which are not the provided root
 pub fn remove_ontology_declarations_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
+    // Dataset variant to collapse ontology declarations onto the root subject.
     // remove owl:Ontology declarations that are not the first graph
     let mut to_remove: Vec<Quad> = vec![];
     for quad in graph.quads_for_object(ONTOLOGY) {
