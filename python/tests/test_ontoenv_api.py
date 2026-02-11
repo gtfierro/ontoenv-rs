@@ -273,6 +273,110 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertGreater(len(prefixes), 0)
         self.assertTrue(all(o == root for _, _, o in prefixes), prefixes)
 
+    def test_import_dependencies_rewrites_sh_prefixes_large_union(self):
+        """sh:prefixes should all point to root in a larger dependency graph."""
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        c_path = self.test_dir / "C.ttl"
+        d_path = self.test_dir / "D.ttl"
+        e_path = self.test_dir / "E.ttl"
+        f_path = self.test_dir / "F.ttl"
+
+        a_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix ex: <http://ex.org/> .
+            <http://ex.org/A> a owl:Ontology ;
+              owl:imports <http://ex.org/B> ,
+                          <http://ex.org/C> ,
+                          <http://ex.org/D> ,
+                          <http://ex.org/E> .
+            ex:shape sh:prefixes <http://ex.org/A> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix exb: <http://ex.org/b#> .
+            <http://ex.org/B> a owl:Ontology .
+            exb:shape sh:prefixes <http://ex.org/B> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        c_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix exc: <http://ex.org/c#> .
+            <http://ex.org/C> a owl:Ontology .
+            exc:shape sh:prefixes <http://ex.org/C> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        d_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix exd: <http://ex.org/d#> .
+            <http://ex.org/D> a owl:Ontology .
+            exd:shape sh:prefixes <http://ex.org/D> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        e_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix exe: <http://ex.org/e#> .
+            <http://ex.org/E> a owl:Ontology ;
+              owl:imports <http://ex.org/F> .
+            exe:shape sh:prefixes <http://ex.org/E> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        f_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix exf: <http://ex.org/f#> .
+            <http://ex.org/F> a owl:Ontology .
+            exf:shape sh:prefixes <http://ex.org/F> .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.env.add(str(a_path))
+        self.env.add(str(b_path))
+        self.env.add(str(c_path))
+        self.env.add(str(d_path))
+        self.env.add(str(e_path))
+        self.env.add(str(f_path))
+
+        g = Graph()
+        root = URIRef("http://ex.org/A")
+        g.add((root, RDF.type, OWL.Ontology))
+        g.add((root, OWL.imports, URIRef("http://ex.org/B")))
+        g.add((root, OWL.imports, URIRef("http://ex.org/C")))
+        g.add((root, OWL.imports, URIRef("http://ex.org/D")))
+        g.add((root, OWL.imports, URIRef("http://ex.org/E")))
+
+        self.env.import_dependencies(g)
+
+        prefixes = list(g.triples((None, SH.prefixes, None)))
+        self.assertGreater(len(prefixes), 0)
+        self.assertTrue(all(o == root for _, _, o in prefixes), prefixes)
+
     def test_list_closure(self):
         """Test env.list_closure()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
