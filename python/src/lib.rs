@@ -213,10 +213,7 @@ fn resolve_root_subject_and_graphid(
     Ok((root_subject, root_graphid))
 }
 
-fn promote_root_graphid(
-    all_ontologies: &mut Vec<GraphIdentifier>,
-    root_graphid: &GraphIdentifier,
-) {
+fn promote_root_graphid(all_ontologies: &mut Vec<GraphIdentifier>, root_graphid: &GraphIdentifier) {
     if let Some(pos) = all_ontologies.iter().position(|id| id == root_graphid) {
         if pos != 0 {
             let root = all_ontologies.remove(pos);
@@ -269,8 +266,7 @@ fn rewrite_sh_prefixes_rdflib(
 
     // Track existing (prefix, namespace) declarations on the root to avoid duplicates.
     let mut seen: HashSet<(String, String)> = HashSet::new();
-    let root_decl_iter =
-        graph.call_method1("triples", ((&root_ref, &sh_declare, py.None()),))?;
+    let root_decl_iter = graph.call_method1("triples", ((&root_ref, &sh_declare, py.None()),))?;
     for triple in root_decl_iter.try_iter()? {
         let t = triple?;
         let decl = t.get_item(2)?;
@@ -286,8 +282,7 @@ fn rewrite_sh_prefixes_rdflib(
     }
 
     // Move all sh:declare entries to the root ontology, deduplicating by (prefix, namespace).
-    let declare_iter =
-        graph.call_method1("triples", ((py.None(), &sh_declare, py.None()),))?;
+    let declare_iter = graph.call_method1("triples", ((py.None(), &sh_declare, py.None()),))?;
     let mut declare_triples = Vec::new();
     for triple in declare_iter.try_iter()? {
         declare_triples.push(triple?);
@@ -413,11 +408,7 @@ fn term_to_python<'a>(
 }
 
 fn term_from_python(node: &Bound<'_, PyAny>) -> Result<Term> {
-    let type_name = node
-        .get_type()
-        .name()
-        .map_err(pyerr_to_anyhow)?
-        .to_string();
+    let type_name = node.get_type().name().map_err(pyerr_to_anyhow)?.to_string();
     let value = pyany_to_string(node).map_err(pyerr_to_anyhow)?;
     let data_type: Option<NamedNode> = match node.getattr("datatype") {
         Ok(dt) => {
@@ -446,7 +437,8 @@ fn term_from_python(node: &Bound<'_, PyAny>) -> Result<Term> {
         "Literal" => match (data_type, lang) {
             (Some(dt), None) => Term::Literal(Literal::new_typed_literal(value, dt)),
             (None, Some(l)) => Term::Literal(
-                Literal::new_language_tagged_literal(value, l).map_err(|e| anyhow!(e.to_string()))?,
+                Literal::new_language_tagged_literal(value, l)
+                    .map_err(|e| anyhow!(e.to_string()))?,
             ),
             _ => Term::Literal(Literal::new_simple_literal(value)),
         },
@@ -491,10 +483,7 @@ fn graph_from_rdflib(_py: Python<'_>, graph: &Bound<'_, PyAny>) -> Result<Oxigra
     Ok(out)
 }
 
-fn graph_to_rdflib<'a>(
-    py: Python<'a>,
-    graph: &OxigraphGraph,
-) -> PyResult<Bound<'a, PyAny>> {
+fn graph_to_rdflib<'a>(py: Python<'a>, graph: &OxigraphGraph) -> PyResult<Bound<'a, PyAny>> {
     let rdflib = PyModule::import(py, "rdflib")?;
     let res = rdflib.getattr("Graph")?.call0()?;
     for t in graph.iter() {
@@ -631,9 +620,7 @@ impl PythonGraphIO {
             Ok(_) => Ok(()),
             Err(err) => {
                 if err.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {
-                    method
-                        .call1((id, graph_py))
-                        .map_err(pyerr_to_anyhow)?;
+                    method.call1((id, graph_py)).map_err(pyerr_to_anyhow)?;
                     Ok(())
                 } else {
                     Err(pyerr_to_anyhow(err))
@@ -647,10 +634,7 @@ impl PythonGraphIO {
         _py: Python<'_>,
         store: &Bound<'_, PyAny>,
     ) -> Result<Vec<String>> {
-        if !store
-            .hasattr("graph_ids")
-            .map_err(pyerr_to_anyhow)?
-        {
+        if !store.hasattr("graph_ids").map_err(pyerr_to_anyhow)? {
             return Err(anyhow!(
                 "Python graph store must define graph_ids() to report stored graphs"
             ));
@@ -813,9 +797,7 @@ impl GraphIO for PythonGraphIO {
             let num_graphs = ids.len();
             let mut num_triples = 0usize;
             if store.hasattr("num_triples").map_err(pyerr_to_anyhow)? {
-                let res = store
-                    .getattr("num_triples")
-                    .map_err(pyerr_to_anyhow)?;
+                let res = store.getattr("num_triples").map_err(pyerr_to_anyhow)?;
                 num_triples = if res.is_callable() {
                     res.call0()
                         .map_err(pyerr_to_anyhow)?
