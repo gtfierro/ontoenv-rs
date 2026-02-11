@@ -589,6 +589,7 @@ impl TermDict {
             return Err(R5Error::Corrupt("short term dict header".into()));
         }
         let _width = data[base]; // reserved
+        // Safety: bounds checked above (base + 1 + 8*4 <= data.len())
         let n_terms = u64::from_le_bytes(data[base + 1..base + 9].try_into().unwrap());
         let kinds_off = u64::from_le_bytes(data[base + 9..base + 17].try_into().unwrap());
         let data_off = u64::from_le_bytes(data[base + 17..base + 25].try_into().unwrap());
@@ -608,7 +609,7 @@ impl TermDict {
         let kinds_off = self.kinds_off as usize;
         let data_off = self.data_off as usize;
         let offs_off = self.offs_off as usize;
-        // offs is u64 * (n+1)
+        // offs is u64 * (n+1); slices are exactly 8 bytes so try_into cannot fail
         let s = u64::from_le_bytes(
             data[offs_off + term_id as usize * 8..offs_off + term_id as usize * 8 + 8]
                 .try_into()
@@ -679,6 +680,7 @@ impl TermDict {
         let kinds_off = self.kinds_off as usize;
         let data_off = self.data_off as usize;
         let offs_off = self.offs_off as usize;
+        // Slices are exactly 8 bytes so try_into cannot fail
         let s = u64::from_le_bytes(
             data[offs_off + term_id as usize * 8..offs_off + term_id as usize * 8 + 8]
                 .try_into()
@@ -861,6 +863,7 @@ impl R5tuFile {
         if base + 16 > bytes.len() {
             return Err(R5Error::Corrupt("gdir header OOB".into()));
         }
+        // Slices are exactly 8/4 bytes respectively; try_into cannot fail
         let n_rows = u64::from_le_bytes(bytes[base..base + 8].try_into().unwrap());
         let row_size = u32::from_le_bytes(bytes[base + 8..base + 12].try_into().unwrap()) as usize;
         Ok((n_rows, row_size))
