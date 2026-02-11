@@ -435,8 +435,8 @@ exb:shape sh:prefixes <http://ex.org/B> .
         .resolve(ResolveTarget::Graph(b_name.into()))
         .expect("B should resolve");
 
-    // Intentionally pass root second to verify ordering logic.
-    let union = env.get_union_graph(vec![&b_id, &a_id], Some(true), Some(true))?;
+    // Pass explicit root (A is the root ontology).
+    let union = env.get_union_graph(vec![&b_id, &a_id], a_id.name(), Some(true), Some(true))?;
 
     let prefixes: Vec<_> = union.dataset.quads_for_predicate(PREFIXES).collect();
     assert!(!prefixes.is_empty(), "Expected sh:prefixes quads");
@@ -499,8 +499,13 @@ exc:shape sh:prefixes <http://ex.org/C> .
         .resolve(ResolveTarget::Graph(c_name.into()))
         .expect("C should resolve");
 
-    // Intentionally pass an order that does not start with the root.
-    let union = env.get_union_graph(vec![&b_id, &c_id, &a_id], Some(true), Some(true))?;
+    // Pass explicit root (A is the root ontology).
+    let union = env.get_union_graph(
+        vec![&b_id, &c_id, &a_id],
+        a_id.name(),
+        Some(true),
+        Some(true),
+    )?;
 
     let prefixes: Vec<_> = union.dataset.quads_for_predicate(PREFIXES).collect();
     assert!(!prefixes.is_empty(), "Expected sh:prefixes quads");
@@ -509,6 +514,54 @@ exc:shape sh:prefixes <http://ex.org/C> .
             .iter()
             .all(|q| q.object == TermRef::NamedNode(a_id.name())),
         "All sh:prefixes objects should point to the root ontology"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn union_graph_errors_on_conflicting_sh_prefix() -> Result<()> {
+    let dir = TempDir::new("ontoenv-prefix-conflict")?;
+
+    let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+<http://ex.org/A> a owl:Ontology ;
+  owl:imports <http://ex.org/B> ;
+  sh:declare [
+    sh:prefix "ex" ;
+    sh:namespace <http://example.com/ns/one#>
+  ] .
+"#;
+    let b_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+<http://ex.org/B> a owl:Ontology ;
+  sh:declare [
+    sh:prefix "ex" ;
+    sh:namespace <http://example.com/ns/two#>
+  ] .
+"#;
+    fs::write(dir.path().join("A.ttl"), a_ttl)?;
+    fs::write(dir.path().join("B.ttl"), b_ttl)?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update_all(false)?;
+
+    let a_name = NamedNodeRef::new_unchecked("http://ex.org/A");
+    let a_id = env
+        .resolve(ResolveTarget::Graph(a_name.into()))
+        .expect("A should resolve");
+
+    let closure = env.get_closure(&a_id, -1)?;
+    let result = env.get_union_graph(&closure, a_id.name(), Some(true), Some(true));
+    let msg = match result {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("Expected a conflict error"),
+    };
+    assert!(
+        msg.contains("Conflicting sh:prefix \"ex\""),
+        "Error message should mention the conflicting prefix: {msg}"
     );
 
     teardown(dir);
@@ -1011,9 +1064,10 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let ont_graph = env.resolve(ResolveTarget::Graph(ont2.into())).unwrap();
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 2);
-    let union = env.get_union_graph(&closure, None, None)?;
+    let root = closure[0].name();
+    let union = env.get_union_graph(&closure, root, None, None)?;
     assert_eq!(union.len(), 4);
-    let union = env.get_union_graph(&closure, None, Some(false))?;
+    let union = env.get_union_graph(&closure, root, None, Some(false))?;
     assert_eq!(union.len(), 5);
 
     // ont3 => {ont3, ont2, ont1}
@@ -1021,9 +1075,10 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let ont_graph = env.resolve(ResolveTarget::Graph(ont3.into())).unwrap();
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 3);
-    let union = env.get_union_graph(&closure, None, None)?;
+    let root = closure[0].name();
+    let union = env.get_union_graph(&closure, root, None, None)?;
     assert_eq!(union.len(), 5);
-    let union = env.get_union_graph(&closure, None, Some(false))?;
+    let union = env.get_union_graph(&closure, root, None, Some(false))?;
     assert_eq!(union.len(), 8);
 
     // ont5 => {ont5, ont4, ont3, ont2, ont1}
@@ -1031,9 +1086,10 @@ fn test_ontoenv_dag_structure() -> Result<()> {
     let ont_graph = env.resolve(ResolveTarget::Graph(ont5.into())).unwrap();
     let closure = env.get_closure(&ont_graph, -1).unwrap();
     assert_eq!(closure.len(), 5);
-    let union = env.get_union_graph(&closure, None, None)?;
+    let root = closure[0].name();
+    let union = env.get_union_graph(&closure, root, None, None)?;
     assert_eq!(union.len(), 7);
-    let union = env.get_union_graph(&closure, None, Some(false))?;
+    let union = env.get_union_graph(&closure, root, None, Some(false))?;
     // print the union
     assert_eq!(union.len(), 14);
 

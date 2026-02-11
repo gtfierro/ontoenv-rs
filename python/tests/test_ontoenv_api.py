@@ -699,5 +699,81 @@ ex:B a owl:Class .
 
 
 
+    def test_import_dependencies_errors_on_conflicting_prefix(self):
+        """import_dependencies raises ValueError when the input rdflib graph declares
+        an sh:prefix that conflicts with one from a dependency ontology."""
+        b_path = self.test_dir / "B.ttl"
+        b_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            <http://ex.org/B> a owl:Ontology ;
+              sh:declare [
+                sh:prefix "ex" ;
+                sh:namespace <http://example.com/ns/two#>
+              ] .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        self.env.add(str(b_path))
+
+        g = Graph()
+        root = URIRef("http://ex.org/A")
+        g.add((root, RDF.type, OWL.Ontology))
+        g.add((root, OWL.imports, URIRef("http://ex.org/B")))
+        # Add a conflicting prefix declaration on the root: same prefix "ex", different namespace
+        from rdflib import BNode, Literal
+        decl = BNode()
+        g.add((root, SH.declare, decl))
+        g.add((decl, SH.prefix, Literal("ex")))
+        g.add((decl, SH.namespace, URIRef("http://example.com/ns/one#")))
+
+        with self.assertRaises(ValueError) as ctx:
+            self.env.import_dependencies(g)
+        self.assertIn('Conflicting sh:prefix "ex"', str(ctx.exception))
+
+    def test_get_closure_errors_on_conflicting_prefix(self):
+        """get_closure raises ValueError when two stored ontologies have conflicting
+        sh:prefix declarations and rewrite_sh_prefixes=True."""
+        a_path = self.test_dir / "A.ttl"
+        b_path = self.test_dir / "B.ttl"
+        a_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            <http://ex.org/A> a owl:Ontology ;
+              owl:imports <http://ex.org/B> ;
+              sh:declare [
+                sh:prefix "ex" ;
+                sh:namespace <http://example.com/ns/one#>
+              ] .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        b_path.write_text(
+            """
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            <http://ex.org/B> a owl:Ontology ;
+              sh:declare [
+                sh:prefix "ex" ;
+                sh:namespace <http://example.com/ns/two#>
+              ] .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        self.env.add(str(a_path))
+        self.env.add(str(b_path))
+
+        with self.assertRaises(ValueError) as ctx:
+            self.env.get_closure("http://ex.org/A", rewrite_sh_prefixes=True)
+        self.assertIn('Conflicting sh:prefix "ex"', str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
