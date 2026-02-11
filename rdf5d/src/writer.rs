@@ -968,11 +968,9 @@ fn write_postings_index(buf: &mut Vec<u8>, lists: &[Vec<u64>]) -> Result<Section
     let off = buf.len();
     buf.resize(buf.len() + 24, 0); // header
     let offs_off = buf.len();
-    let mut cur = 0u64;
-    buf.extend_from_slice(&cur.to_le_bytes());
+    buf.extend_from_slice(&0u64.to_le_bytes()); // first offset is always 0
     let mut blob = Vec::new();
     for list in lists {
-        // encode list
         if list.is_empty() {
             push_uvarint(0, &mut blob);
         } else {
@@ -982,7 +980,6 @@ fn write_postings_index(buf: &mut Vec<u8>, lists: &[Vec<u64>]) -> Result<Section
                 push_uvarint(w[1] - w[0], &mut blob);
             }
         }
-        cur += blob.len() as u64 - cur;
         buf.extend_from_slice(&(blob.len() as u64).to_le_bytes());
     }
     let blob_off = buf.len();
