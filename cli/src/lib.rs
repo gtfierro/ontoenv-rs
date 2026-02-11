@@ -705,7 +705,8 @@ fn execute(cmd: Cli) -> Result<()> {
             // Defaults: rewrite prefixes = ON, remove owl:imports = ON; flags disable these.
             let rewrite = !no_rewrite_sh_prefixes;
             let remove = !keep_owl_imports;
-            let union = env.get_union_graph(&closure, Some(rewrite), Some(remove))?;
+            let root = closure[0].name();
+            let union = env.get_union_graph(&closure, root, Some(rewrite), Some(remove))?;
             if let Some(failed_imports) = union.failed_imports {
                 for imp in failed_imports {
                     eprintln!("{imp}");
