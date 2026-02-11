@@ -1,15 +1,17 @@
 //! Provides functions for transforming RDF graphs and datasets within the OntoEnv context.
 //! This includes rewriting SHACL prefixes and removing OWL imports or ontology declarations.
 
+use anyhow::{anyhow, Result};
+
 use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, TYPE};
 use oxigraph::model::{
     Dataset, Graph, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef, TermRef, Triple, TripleRef,
 };
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 /// Rewrites all `sh:prefixes` links in a graph so they point at `root`, moving each `sh:declare`
 /// block onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`.
-pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
+pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) -> Result<()> {
     // Normalize SHACL prefix declarations onto a single root for easier reuse downstream.
     let mut to_remove: Vec<Triple> = vec![];
     let mut to_add: Vec<Triple> = vec![];
@@ -25,7 +27,7 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
     // move the sh:declare statements to the root ontology too, deduplicating by (sh:prefix, sh:namespace)
     let sh_prefix = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
     let sh_namespace = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
-    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut seen: HashMap<String, String> = HashMap::new();
 
     // Seed with any existing declarations on the root
     for t in graph.triples_for_predicate(DECLARE) {
@@ -52,7 +54,18 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
                     }
                 }
                 if let (Some(pv), Some(nv)) = (pref, ns) {
-                    seen.insert((pv, nv));
+                    if let Some(existing_ns) = seen.get(&pv) {
+                        if *existing_ns != nv {
+                            return Err(anyhow!(
+                                "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
+                                Fix the conflict or disable sh:prefixes rewriting \
+                                (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
+                                Rust: `rewrite_sh_prefixes=Some(false)`)."
+                            ));
+                        }
+                    } else {
+                        seen.insert(pv, nv);
+                    }
                 }
             }
         }
@@ -90,7 +103,18 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
                 }
             }
             if let (Some(pv), Some(nv)) = (pref, ns) {
-                if seen.insert((pv, nv)) {
+                if let Some(existing_ns) = seen.get(&pv) {
+                    if *existing_ns != nv {
+                        return Err(anyhow!(
+                            "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
+                            Fix the conflict or disable sh:prefixes rewriting \
+                            (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
+                            Rust: `rewrite_sh_prefixes=Some(false)`)."
+                        ));
+                    }
+                    // Same prefix, same namespace — deduplicate (skip adding)
+                } else {
+                    seen.insert(pv, nv);
                     // add a new triple <root, sh:declare, prefix>
                     let new_triple = TripleRef::new(root, DECLARE, o);
                     to_add.push(new_triple.into());
@@ -111,6 +135,7 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) {
     for triple in to_add {
         graph.insert(triple.as_ref());
     }
+    Ok(())
 }
 
 /// Remove owl:imports statements from a graph. Can be helpful to do after computing the union of
@@ -157,7 +182,7 @@ pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankN
 
 /** Rewrites all `sh:prefixes` entries in the dataset to point at `root`, relocating `sh:declare`
 blocks onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`. */
-pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) {
+pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) -> Result<()> {
     // Dataset variant of prefix normalization, preserving named graph boundaries.
     let mut to_remove: Vec<Quad> = vec![];
     let mut to_add: Vec<Quad> = vec![];
@@ -174,7 +199,7 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
     // move the sh:declare statements to the root ontology too, deduplicating by (sh:prefix, sh:namespace)
     let sh_prefix = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
     let sh_namespace = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
-    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut seen: HashMap<String, String> = HashMap::new();
 
     // Seed with any existing declarations on the root
     for q in graph.quads_for_predicate(DECLARE) {
@@ -200,7 +225,18 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
                     }
                 }
                 if let (Some(pv), Some(nv)) = (pref, ns) {
-                    seen.insert((pv, nv));
+                    if let Some(existing_ns) = seen.get(&pv) {
+                        if *existing_ns != nv {
+                            return Err(anyhow!(
+                                "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
+                                Fix the conflict or disable sh:prefixes rewriting \
+                                (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
+                                Rust: `rewrite_sh_prefixes=Some(false)`)."
+                            ));
+                        }
+                    } else {
+                        seen.insert(pv, nv);
+                    }
                 }
             }
         }
@@ -239,7 +275,18 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
                 }
             }
             if let (Some(pv), Some(nv)) = (pref, ns) {
-                if seen.insert((pv, nv)) {
+                if let Some(existing_ns) = seen.get(&pv) {
+                    if *existing_ns != nv {
+                        return Err(anyhow!(
+                            "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
+                            Fix the conflict or disable sh:prefixes rewriting \
+                            (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
+                            Rust: `rewrite_sh_prefixes=Some(false)`)."
+                        ));
+                    }
+                    // Same prefix, same namespace — deduplicate (skip adding)
+                } else {
+                    seen.insert(pv, nv);
                     let new_quad = QuadRef::new(root, DECLARE, o, g);
                     to_add.push(new_quad.into());
                 }
@@ -259,6 +306,7 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
     for quad in to_add {
         graph.insert(quad.as_ref());
     }
+    Ok(())
 }
 
 /// Remove owl:imports statements from a dataset. Can be helpful to do after computing the union of
@@ -408,7 +456,7 @@ mod tests {
 
         // Rewrite to root (ont1), deduplicating by (prefix, namespace)
         let root = NamedOrBlankNodeRef::NamedNode(ont1.as_ref());
-        rewrite_sh_prefixes_dataset(&mut ds, root);
+        rewrite_sh_prefixes_dataset(&mut ds, root).expect("rewrite should succeed");
 
         // Count root declarations and ensure there are none left on non-root subjects
         let declare_ref = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#declare");
@@ -488,5 +536,28 @@ mod tests {
         .collect();
 
         assert_eq!(pairs, expected);
+    }
+
+    #[test]
+    fn errors_on_conflicting_sh_prefix_across_graphs() {
+        let mut ds = Dataset::new();
+
+        let ont1 = NamedNode::new("http://example.com/ont1").unwrap();
+        let ont2 = NamedNode::new("http://example.com/ont2").unwrap();
+        let g1 = NamedNode::new("http://example.com/graph1").unwrap();
+        let g2 = NamedNode::new("http://example.com/graph2").unwrap();
+
+        // Same prefix "ex" but different namespaces
+        add_decl(&mut ds, &ont1, &g1, "ex", "http://example.com/ns/one#");
+        add_decl(&mut ds, &ont2, &g2, "ex", "http://example.com/ns/two#");
+
+        let root = NamedOrBlankNodeRef::NamedNode(ont1.as_ref());
+        let result = rewrite_sh_prefixes_dataset(&mut ds, root);
+        assert!(result.is_err(), "Expected conflict error");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Conflicting sh:prefix \"ex\""),
+            "Error message should mention the conflicting prefix: {msg}"
+        );
     }
 }
