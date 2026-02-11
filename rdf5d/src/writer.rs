@@ -234,17 +234,17 @@ pub fn write_file_with_options<P: AsRef<Path>>(
     let gdir_off = file.len();
     let n_rows = gid_rows.len() as u64;
     file.extend_from_slice(&n_rows.to_le_bytes());
-    file.extend_from_slice(&44u32.to_le_bytes()); // row_size actually written below
+    file.extend_from_slice(&44u32.to_le_bytes()); // row_size: u32+u32+u64+u64+u64+u32+u32+u32 = 44
     file.extend_from_slice(&0u32.to_le_bytes()); // reserved
     for (id_id, gn_id, sec, n_triples, n_s, n_p, n_o) in &gid_rows {
-        file.extend_from_slice(&id_id.to_le_bytes());
-        file.extend_from_slice(&gn_id.to_le_bytes());
-        file.extend_from_slice(&sec.off.to_le_bytes());
-        file.extend_from_slice(&sec.len.to_le_bytes());
-        file.extend_from_slice(&n_triples.to_le_bytes());
-        file.extend_from_slice(&n_s.to_le_bytes());
-        file.extend_from_slice(&n_p.to_le_bytes());
-        file.extend_from_slice(&n_o.to_le_bytes());
+        file.extend_from_slice(&id_id.to_le_bytes());   // u32
+        file.extend_from_slice(&gn_id.to_le_bytes());   // u32
+        file.extend_from_slice(&sec.off.to_le_bytes());  // u64
+        file.extend_from_slice(&sec.len.to_le_bytes());  // u64
+        file.extend_from_slice(&n_triples.to_le_bytes()); // u64
+        file.extend_from_slice(&n_s.to_le_bytes());      // u32
+        file.extend_from_slice(&n_p.to_le_bytes());      // u32
+        file.extend_from_slice(&n_o.to_le_bytes());      // u32
     }
     let gdir_sec = Section {
         off: gdir_off as u64,
@@ -485,17 +485,17 @@ impl StreamingWriter {
         let gdir_off = file.len();
         let n_rows = gid_rows.len() as u64;
         file.extend_from_slice(&n_rows.to_le_bytes());
-        file.extend_from_slice(&44u32.to_le_bytes());
-        file.extend_from_slice(&0u32.to_le_bytes());
+        file.extend_from_slice(&44u32.to_le_bytes()); // row_size: u32+u32+u64+u64+u64+u32+u32+u32 = 44
+        file.extend_from_slice(&0u32.to_le_bytes()); // reserved
         for (id_id, gn_id, sec, n_triples, n_s, n_p, n_o) in &gid_rows {
-            file.extend_from_slice(&id_id.to_le_bytes());
-            file.extend_from_slice(&gn_id.to_le_bytes());
-            file.extend_from_slice(&sec.off.to_le_bytes());
-            file.extend_from_slice(&sec.len.to_le_bytes());
-            file.extend_from_slice(&n_triples.to_le_bytes());
-            file.extend_from_slice(&n_s.to_le_bytes());
-            file.extend_from_slice(&n_p.to_le_bytes());
-            file.extend_from_slice(&n_o.to_le_bytes());
+            file.extend_from_slice(&id_id.to_le_bytes());   // u32
+            file.extend_from_slice(&gn_id.to_le_bytes());   // u32
+            file.extend_from_slice(&sec.off.to_le_bytes());  // u64
+            file.extend_from_slice(&sec.len.to_le_bytes());  // u64
+            file.extend_from_slice(&n_triples.to_le_bytes()); // u64
+            file.extend_from_slice(&n_s.to_le_bytes());      // u32
+            file.extend_from_slice(&n_p.to_le_bytes());      // u32
+            file.extend_from_slice(&n_o.to_le_bytes());      // u32
         }
         let gdir_sec = Section {
             off: gdir_off as u64,
@@ -827,6 +827,18 @@ fn write_term_dict(buf: &mut Vec<u8>, terms: &[Term]) -> Result<Section> {
     })
 }
 
+/// Encode sorted SPO triples into the compact CSR-like binary format.
+///
+/// Given triples sorted by (S, P, O), this builds a two-level compressed
+/// structure:
+///   - **S_vals / S_heads**: unique subjects, with each S_head pointing into P_vals
+///   - **P_vals / P_heads**: unique predicates per subject, with each P_head
+///     pointing into O_vals
+///   - **O_vals**: object term-ids for each (S, P) group
+///
+/// All value arrays are delta-coded (first value stored literally, subsequent
+/// values as differences from the predecessor). Counts and values are encoded
+/// as LEB128 uvarints.
 fn build_raw_spo(spo: &[(u64, u64, u64)]) -> Result<Vec<u8>> {
     // Precondition: spo sorted by (s,p,o)
     let n_t = spo.len();
@@ -944,6 +956,7 @@ fn build_raw_spo(spo: &[(u64, u64, u64)]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Read the (nS, nP, nT) counts from the header of a CSR-encoded triple block.
 fn raw_counts(raw: &[u8]) -> Result<(usize, usize, usize)> {
     let (n_s, o1) = read_uvarint(raw, 0).ok_or_else(|| R5Error::Corrupt("nS".into()))?;
     let (n_p, o2) = read_uvarint(raw, o1).ok_or_else(|| R5Error::Corrupt("nP".into()))?;
