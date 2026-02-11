@@ -77,7 +77,8 @@
 //! assert!(closure_names.contains("http://example.com/ontology_b"));
 //!
 //! // We can also get the union graph of the closure
-//! let union_graph_result = env.get_union_graph(&closure_ids, Some(false), Some(false))?;
+//! let root = closure_ids[0].name();
+//! let union_graph_result = env.get_union_graph(&closure_ids, root, Some(false), Some(false))?;
 //! // Each ontology has 1 triple, so the union should have 2.
 //! // the 'ontology_a' declaration gets removed by default so that the closure
 //! // only has one ontology declaration.

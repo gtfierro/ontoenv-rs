@@ -1633,6 +1633,7 @@ impl OntoEnv {
     pub fn get_union_graph<'a, I>(
         &self,
         graph_ids: I,
+        root: NamedNodeRef,
         rewrite_sh_prefixes: Option<bool>,
         remove_owl_imports: Option<bool>,
     ) -> Result<UnionGraph>
@@ -1640,45 +1641,16 @@ impl OntoEnv {
         I: IntoIterator<Item = &'a GraphIdentifier>,
     {
         // Merge multiple graphs into a dataset with optional cleanup transforms.
-        let mut graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
+        let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
 
         // TODO: figure out failed imports
         if graph_ids.is_empty() {
             return Err(anyhow!("No graphs found"));
         }
 
-        // Identify a root by finding a graph that is not imported by any others.
-        // Ensure the root ontology is first, even if callers pass an unordered collection.
-        let mut imported: HashSet<GraphIdentifier> = HashSet::new();
-        for graph_id in &graph_ids {
-            if let Ok(ontology) = self.get_ontology(graph_id) {
-                for import in &ontology.imports {
-                    if let Some(imp) = self.env.get_ontology_by_name(import.into()) {
-                        let imp_id = imp.id().clone();
-                        if graph_ids.contains(&imp_id) {
-                            imported.insert(imp_id);
-                        }
-                    }
-                }
-            }
-        }
-        let mut root_idx: Option<usize> = None;
-        for (idx, graph_id) in graph_ids.iter().enumerate() {
-            if !imported.contains(graph_id) {
-                root_idx = Some(idx);
-                break;
-            }
-        }
-        if let Some(idx) = root_idx {
-            if idx != 0 {
-                let root = graph_ids.remove(idx);
-                graph_ids.insert(0, root);
-            }
-        }
-
         // Merge all named graphs into a single dataset in IO order.
         let mut dataset = self.io.union_graph(&graph_ids);
-        let root_ontology = NamedOrBlankNodeRef::NamedNode(graph_ids[0].name());
+        let root_ontology = NamedOrBlankNodeRef::NamedNode(root);
 
         // Merge namespace maps so downstream tools can re-materialize prefixes.
         let mut namespace_map = HashMap::new();
@@ -1695,7 +1667,7 @@ impl OntoEnv {
         // Rewrite sh:prefixes
         // defaults to true if not specified
         if rewrite_sh_prefixes.unwrap_or(true) {
-            transform::rewrite_sh_prefixes_dataset(&mut dataset, root_ontology);
+            transform::rewrite_sh_prefixes_dataset(&mut dataset, root_ontology)?;
         }
         // remove owl:imports
         if remove_owl_imports.unwrap_or(true) {
@@ -1726,11 +1698,11 @@ impl OntoEnv {
 
         // Gather closure and merge into a dataset without transforms applied yet.
         let closure = self.get_closure(id, recursion_depth)?;
-        let mut union = self.get_union_graph(&closure, Some(false), Some(false))?;
+        let mut union = self.get_union_graph(&closure, root, Some(false), Some(false))?;
 
         let root_nb = NamedOrBlankNodeRef::NamedNode(root);
         // Apply transforms with the requested root.
-        transform::rewrite_sh_prefixes_dataset(&mut union.dataset, root_nb);
+        transform::rewrite_sh_prefixes_dataset(&mut union.dataset, root_nb)?;
         transform::remove_owl_imports(&mut union.dataset, None);
         transform::remove_ontology_declarations(&mut union.dataset, root_nb);
 
