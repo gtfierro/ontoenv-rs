@@ -914,10 +914,7 @@ impl OntoEnv {
 
         // Fall back to any loaded id and attach error context when nothing resolved.
         ids.into_iter().next().ok_or_else(|| {
-            let mut base = format!(
-                "Failed to add ontology for location {}",
-                location
-            );
+            let mut base = format!("Failed to add ontology for location {}", location);
             if !errors.is_empty() {
                 base.push_str(": ");
                 base.push_str(&errors.join("; "));
@@ -1112,11 +1109,13 @@ impl OntoEnv {
                         source_modified > last_updated
                     }
                     _ => {
-                        let source_modified = self
-                            .io
-                            .source_last_modified(ontology.id())
-                            .unwrap_or(Utc::now());
-                        source_modified > last_updated
+                        // For remote ontologies, use TTL-based staleness check
+                        // instead of HEAD requests (which fall back to Utc::now()
+                        // when the server has no Last-Modified header, causing
+                        // unnecessary refetches every update).
+                        let ttl =
+                            chrono::Duration::seconds(self.config.remote_cache_ttl_secs as i64);
+                        last_updated + ttl < Utc::now()
                     }
                 }
             })
