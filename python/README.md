@@ -56,6 +56,33 @@ env.import_dependencies(g)
 print(f"Graph with imported dependencies has {len(g)} triples")
 ```
 
+## Namespace prefixes
+
+OntoEnv can extract namespace prefix mappings from ontology source files.
+Prefixes come from both parser-level declarations (`@prefix` in Turtle,
+`PREFIX` in SPARQL-style syntaxes) and SHACL `sh:declare` entries.
+
+```python
+# Get all namespaces across the entire environment
+all_ns = env.get_namespaces()
+# {'owl': 'http://www.w3.org/2002/07/owl#', 'brick': 'https://brickschema.org/schema/Brick#', ...}
+
+# Get namespaces for a single ontology
+ns = env.get_namespaces("https://brickschema.org/schema/1.4-rc1/Brick")
+
+# Include namespaces from transitive owl:imports
+ns_with_imports = env.get_namespaces("https://brickschema.org/schema/1.4-rc1/Brick", include_closure=True)
+```
+
+From the CLI:
+
+```
+ontoenv namespaces                                     # all namespaces
+ontoenv namespaces https://example.org/my-ontology     # single ontology
+ontoenv namespaces https://example.org/my-ontology --closure   # with imports
+ontoenv namespaces --json                              # JSON output
+```
+
 ## Custom graph store
 
 If you want OntoEnv to write graphs into an existing Python-backed store, pass a `graph_store`
