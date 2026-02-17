@@ -120,6 +120,14 @@ Flags:
   --no-crc       skip writing per-section/global CRCs
 ```
 
+## Benchmarks
+
+Run the Criterion benchmarks (requires the `zstd` feature):
+
+```bash
+cargo bench -p rdf5d --features zstd
+```
+
 ## Notes
 - Reader returns empty lists for unknown ids/graphnames.
 - CRCs and footer are verified during open when present.
