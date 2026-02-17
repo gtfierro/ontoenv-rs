@@ -1684,6 +1684,91 @@ impl OntoEnv {
         })
     }
 
+    /// Collect namespace prefixes for a single ontology.
+    ///
+    /// Two sources are merged (in order of increasing priority):
+    ///
+    /// 1. **Parser-level prefixes** — `@prefix` / `PREFIX` declarations obtained
+    ///    by re-reading the ontology's source file or URL.
+    /// 2. **SHACL `sh:declare` entries** — stored in [`Ontology::namespace_map`].
+    ///    These take precedence when the same prefix name appears in both sources.
+    ///
+    /// If the source cannot be re-read (e.g. in-memory location, missing file),
+    /// the error is logged and only SHACL entries are returned.
+    fn collect_ontology_prefixes(&self, ontology: &Ontology) -> HashMap<String, String> {
+        // Start with parser-level @prefix / PREFIX declarations from the source.
+        let mut namespace_map = ontology
+            .location()
+            .map(|loc| {
+                crate::util::read_prefixes_from_location(loc).unwrap_or_else(|e| {
+                    warn!("Failed to read prefixes from {}: {}", loc, e);
+                    HashMap::new()
+                })
+            })
+            .unwrap_or_default();
+        // SHACL sh:declare entries take precedence over parser-level prefixes.
+        namespace_map.extend(
+            ontology
+                .namespace_map()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        namespace_map
+    }
+
+    /// Return namespace (prefix → IRI) mappings for an ontology.
+    ///
+    /// Prefixes come from two sources: parser-level `@prefix` / `PREFIX`
+    /// declarations (obtained by re-reading the source file) and SHACL
+    /// `sh:declare` entries stored in the ontology metadata.  When the same
+    /// prefix name appears in both, the SHACL value wins.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` — The graph identifier of the target ontology.
+    /// * `include_closure` — When `true`, the namespace maps of all ontologies
+    ///   in the transitive `owl:imports` closure are merged (later entries win
+    ///   on prefix conflicts).  When `false`, only the single ontology's
+    ///   prefixes are returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `id` is not found in the environment or (in strict
+    /// mode) if any import in the closure cannot be resolved.
+    pub fn get_namespaces(
+        &self,
+        id: &GraphIdentifier,
+        include_closure: bool,
+    ) -> Result<HashMap<String, String>> {
+        if include_closure {
+            let closure = self.get_closure(id, -1)?;
+            let mut namespace_map = HashMap::new();
+            for graph_id in &closure {
+                let ontology = self.get_ontology(graph_id)?;
+                namespace_map.extend(self.collect_ontology_prefixes(&ontology));
+            }
+            Ok(namespace_map)
+        } else {
+            let ontology = self.get_ontology(id)?;
+            Ok(self.collect_ontology_prefixes(&ontology))
+        }
+    }
+
+    /// Return merged namespace (prefix → IRI) mappings across **all** ontologies
+    /// in the environment.
+    ///
+    /// This is equivalent to calling [`get_namespaces`](Self::get_namespaces)
+    /// for every ontology and merging the results.  When two ontologies declare
+    /// the same prefix with different IRIs, the last one encountered wins
+    /// (iteration order is not guaranteed).
+    pub fn get_all_namespaces(&self) -> HashMap<String, String> {
+        let mut namespace_map = HashMap::new();
+        for ontology in self.ontologies().values() {
+            namespace_map.extend(self.collect_ontology_prefixes(ontology));
+        }
+        namespace_map
+    }
+
     /// Merge an ontology and its imports closure into a single graph.
     ///
     /// - `recursion_depth` follows the semantics of [`get_closure`]; `-1` means unlimited.

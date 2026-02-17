@@ -222,6 +222,21 @@ enum Commands {
         #[clap(long, short, action = clap::ArgAction::SetTrue, default_value = "false")]
         force: bool,
     },
+    /// Show namespace prefix-to-IRI mappings extracted from ontology source files.
+    ///
+    /// Prefixes come from parser-level declarations (@prefix / PREFIX) and SHACL
+    /// sh:declare entries. If no ONTOLOGY is given, all namespaces from the
+    /// entire environment are merged and printed.
+    Namespaces {
+        /// The IRI of the ontology to query. If omitted, shows namespaces from all ontologies.
+        ontology: Option<String>,
+        /// Include namespaces from the transitive owl:imports closure of the ontology
+        #[clap(long, action, default_value = "false")]
+        closure: bool,
+        /// Output as JSON object instead of "prefix: namespace" lines
+        #[clap(long, action, default_value = "false")]
+        json: bool,
+    },
     /// Manage ontoenv configuration.
     #[command(subcommand)]
     Config(ConfigCommands),
@@ -243,6 +258,7 @@ impl std::fmt::Display for Commands {
             Commands::Why { .. } => "Why",
             Commands::Doctor { .. } => "Doctor",
             Commands::Reset { .. } => "Reset",
+            Commands::Namespaces { .. } => "Namespaces",
             Commands::Config { .. } => "Config",
         };
         f.write_str(name)
@@ -861,6 +877,38 @@ fn execute(cmd: Cli) -> Result<()> {
                     for location in problem.locations {
                         println!("  - {location}");
                     }
+                }
+            }
+        }
+        Commands::Namespaces {
+            ontology,
+            closure,
+            json,
+        } => {
+            let env = require_ontoenv(env)?;
+            let namespaces = if let Some(ontology) = ontology {
+                let iri = NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let graphid = env
+                    .resolve(ResolveTarget::Graph(iri.clone()))
+                    .ok_or(anyhow::anyhow!(format!("Ontology {} not found", iri)))?;
+                env.get_namespaces(&graphid, closure)?
+            } else {
+                env.get_all_namespaces()
+            };
+            if json {
+                let map: BTreeMap<&str, &str> = namespaces
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&map)?);
+            } else {
+                let mut sorted: Vec<(&str, &str)> = namespaces
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                sorted.sort();
+                for (prefix, namespace) in sorted {
+                    println!("{}: {}", prefix, namespace);
                 }
             }
         }

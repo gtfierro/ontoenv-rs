@@ -134,6 +134,41 @@ pub fn read_url(file: &str) -> Result<OxigraphGraph> {
     read_format(content, res.format)
 }
 
+/// Read an RDF source from the given [`OntologyLocation`] and extract its
+/// parser-level prefix declarations (`@prefix` in Turtle/N3, `PREFIX` in
+/// SPARQL-style syntaxes, or XML namespace declarations in RDF/XML).
+///
+/// The source is fully parsed so that all prefix declarations — including
+/// those that appear after the first triple — are captured.  The triples
+/// themselves are discarded.
+///
+/// Returns a map from prefix name (e.g. `"owl"`) to namespace IRI
+/// (e.g. `"http://www.w3.org/2002/07/owl#"`).  For in-memory locations
+/// an empty map is returned because there is no file to re-read.
+pub fn read_prefixes_from_location(
+    location: &crate::ontology::OntologyLocation,
+) -> Result<std::collections::HashMap<String, String>> {
+    let (bytes, format) = match location {
+        crate::ontology::OntologyLocation::File(p) => get_file_contents(p)?,
+        crate::ontology::OntologyLocation::Url(u) => get_url_contents(u)?,
+        crate::ontology::OntologyLocation::InMemory { .. } => {
+            return Ok(std::collections::HashMap::new())
+        }
+    };
+    let format = format.unwrap_or(RdfFormat::Turtle);
+    let parser = RdfParser::from_format(format);
+    let mut reader = parser.for_reader(std::io::Cursor::new(bytes));
+    // Consume all quads so the parser sees all prefix declarations.
+    for quad in &mut reader {
+        let _ = quad;
+    }
+    let prefixes: std::collections::HashMap<String, String> = reader
+        .prefixes()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    Ok(prefixes)
+}
+
 // return a "impl IntoIterator<Item = impl Into<Quad>>" for a graph. Iter through
 // the input Graph and create a Quad for each Triple in the Graph using the given GraphName
 pub fn graph_to_quads<'a>(
