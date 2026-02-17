@@ -237,14 +237,14 @@ pub fn write_file_with_options<P: AsRef<Path>>(
     file.extend_from_slice(&44u32.to_le_bytes()); // row_size: u32+u32+u64+u64+u64+u32+u32+u32 = 44
     file.extend_from_slice(&0u32.to_le_bytes()); // reserved
     for (id_id, gn_id, sec, n_triples, n_s, n_p, n_o) in &gid_rows {
-        file.extend_from_slice(&id_id.to_le_bytes());   // u32
-        file.extend_from_slice(&gn_id.to_le_bytes());   // u32
-        file.extend_from_slice(&sec.off.to_le_bytes());  // u64
-        file.extend_from_slice(&sec.len.to_le_bytes());  // u64
+        file.extend_from_slice(&id_id.to_le_bytes()); // u32
+        file.extend_from_slice(&gn_id.to_le_bytes()); // u32
+        file.extend_from_slice(&sec.off.to_le_bytes()); // u64
+        file.extend_from_slice(&sec.len.to_le_bytes()); // u64
         file.extend_from_slice(&n_triples.to_le_bytes()); // u64
-        file.extend_from_slice(&n_s.to_le_bytes());      // u32
-        file.extend_from_slice(&n_p.to_le_bytes());      // u32
-        file.extend_from_slice(&n_o.to_le_bytes());      // u32
+        file.extend_from_slice(&n_s.to_le_bytes()); // u32
+        file.extend_from_slice(&n_p.to_le_bytes()); // u32
+        file.extend_from_slice(&n_o.to_le_bytes()); // u32
     }
     let gdir_sec = Section {
         off: gdir_off as u64,
@@ -488,14 +488,14 @@ impl StreamingWriter {
         file.extend_from_slice(&44u32.to_le_bytes()); // row_size: u32+u32+u64+u64+u64+u32+u32+u32 = 44
         file.extend_from_slice(&0u32.to_le_bytes()); // reserved
         for (id_id, gn_id, sec, n_triples, n_s, n_p, n_o) in &gid_rows {
-            file.extend_from_slice(&id_id.to_le_bytes());   // u32
-            file.extend_from_slice(&gn_id.to_le_bytes());   // u32
-            file.extend_from_slice(&sec.off.to_le_bytes());  // u64
-            file.extend_from_slice(&sec.len.to_le_bytes());  // u64
+            file.extend_from_slice(&id_id.to_le_bytes()); // u32
+            file.extend_from_slice(&gn_id.to_le_bytes()); // u32
+            file.extend_from_slice(&sec.off.to_le_bytes()); // u64
+            file.extend_from_slice(&sec.len.to_le_bytes()); // u64
             file.extend_from_slice(&n_triples.to_le_bytes()); // u64
-            file.extend_from_slice(&n_s.to_le_bytes());      // u32
-            file.extend_from_slice(&n_p.to_le_bytes());      // u32
-            file.extend_from_slice(&n_o.to_le_bytes());      // u32
+            file.extend_from_slice(&n_s.to_le_bytes()); // u32
+            file.extend_from_slice(&n_p.to_le_bytes()); // u32
+            file.extend_from_slice(&n_o.to_le_bytes()); // u32
         }
         let gdir_sec = Section {
             off: gdir_off as u64,
