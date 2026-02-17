@@ -1878,6 +1878,49 @@ impl OntoEnv {
         Ok(res.into())
     }
 
+    /// Get namespace prefix mappings.
+    ///
+    /// Prefixes are extracted from both parser-level declarations (``@prefix``
+    /// in Turtle, ``PREFIX`` in SPARQL-style syntaxes, XML namespace declarations)
+    /// and SHACL ``sh:declare`` entries.  SHACL entries take precedence when the
+    /// same prefix appears in both sources.
+    ///
+    /// Args:
+    ///     ontology: The IRI of the ontology to query.  If ``None``, returns
+    ///         merged namespaces from every ontology in the environment.
+    ///     include_closure: When ``True``, namespaces from the full transitive
+    ///         ``owl:imports`` closure of the ontology are included.  Ignored
+    ///         when ``ontology`` is ``None``.
+    ///
+    /// Returns:
+    ///     A ``dict[str, str]`` mapping prefix names (e.g. ``"owl"``) to
+    ///     namespace IRIs (e.g. ``"http://www.w3.org/2002/07/owl#"``).
+    #[pyo3(signature = (ontology = None, include_closure = false))]
+    fn get_namespaces(
+        &self,
+        ontology: Option<&str>,
+        include_closure: bool,
+    ) -> PyResult<HashMap<String, String>> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        if let Some(ontology) = ontology {
+            let iri = NamedNode::new(ontology)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let graphid = env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Ontology not found: {ontology}"
+                ))
+            })?;
+            env.get_namespaces(&graphid, include_closure)
+                .map_err(anyhow_to_pyerr)
+        } else {
+            Ok(env.get_all_namespaces())
+        }
+    }
+
     /// Get the names of all ontologies in the OntoEnv
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
