@@ -3,7 +3,7 @@ import shutil
 import os
 from pathlib import Path
 from ontoenv import OntoEnv
-from rdflib import Graph, URIRef
+from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import RDF, OWL, SH
 
 
@@ -91,19 +91,120 @@ class TestOntoEnvAPI(unittest.TestCase):
         # check that dependencies were not added
         self.assertEqual(len(ontologies), 1)
 
-    def test_add_rejects_in_memory_rdflib_graph(self):
-        """Adding an rdflib.Graph object should raise since it is in-memory."""
-        self.env = OntoEnv(temporary=True)
+    def test_add_in_memory_rdflib_graph_resolves_imports_and_dependency_edges(self):
+        """In-memory rdflib.Graph add should resolve imports and update dependency edges."""
+        dep_path = self.test_dir / "dep.ttl"
+        dep_iri = dep_path.resolve().as_uri()
+        dep_path.write_text(
+            f"""
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            <{dep_iri}> a owl:Ontology .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        root_iri = "http://example.com/root-in-memory"
         g = Graph()
-        ontology = URIRef("http://example.com/temp")
-        g.add((ontology, RDF.type, OWL.Ontology))
+        root = URIRef(root_iri)
+        g.add((root, RDF.type, OWL.Ontology))
+        g.add((root, OWL.imports, URIRef(dep_iri)))
+        g.add((URIRef(f"{root_iri}#s"), URIRef("http://example.com/p"), Literal("v")))
 
-        with self.assertRaises(TypeError) as ctx:
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        added_name = self.env.add(g)
+        self.assertEqual(added_name, root_iri)
+
+        names = self.env.get_ontology_names()
+        self.assertIn(root_iri, names)
+        self.assertIn(dep_iri, names)
+
+        closure = self.env.list_closure(root_iri)
+        self.assertIn(root_iri, closure)
+        self.assertIn(dep_iri, closure)
+
+        importers = self.env.get_importers(dep_iri)
+        self.assertIn(root_iri, importers)
+
+    def test_add_in_memory_rdflib_graph_matches_file_backed_closure(self):
+        """In-memory rdflib add should match file-backed add closure for same ontology content."""
+        dep_path = self.test_dir / "dep.ttl"
+        dep_iri = dep_path.resolve().as_uri()
+        dep_path.write_text(
+            f"""
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            <{dep_iri}> a owl:Ontology .
+            """.strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        root_iri = "http://example.com/root-parity"
+        g = Graph()
+        root = URIRef(root_iri)
+        g.add((root, RDF.type, OWL.Ontology))
+        g.add((root, OWL.imports, URIRef(dep_iri)))
+        g.add((URIRef(f"{root_iri}#s"), URIRef("http://example.com/p"), Literal("v")))
+        root_ttl = g.serialize(format="turtle")
+
+        root_path = self.test_dir / "root.ttl"
+        root_path.write_text(root_ttl, encoding="utf-8")
+
+        env_graph_path = self.test_dir / "env_graph"
+        env_file_path = self.test_dir / "env_file"
+        env_graph_path.mkdir()
+        env_file_path.mkdir()
+
+        env_graph = OntoEnv(path=env_graph_path, recreate=True, offline=True)
+        env_file = OntoEnv(path=env_file_path, recreate=True, offline=True)
+        try:
+            in_memory_root = env_graph.add(g)
+            file_root = env_file.add(str(root_path))
+
+            closure_graph = sorted(env_graph.list_closure(in_memory_root))
+            closure_file = sorted(env_file.list_closure(file_root))
+            self.assertEqual(closure_graph, closure_file)
+        finally:
+            env_graph.close()
+            env_file.close()
+
+    def test_add_in_memory_rdflib_graph_strict_errors_on_missing_import(self):
+        """Strict mode should error when an in-memory graph imports a missing ontology."""
+        missing_iri = (self.test_dir / "missing.ttl").resolve().as_uri()
+        root_iri = "http://example.com/root-strict-missing"
+
+        g = Graph()
+        root = URIRef(root_iri)
+        g.add((root, RDF.type, OWL.Ontology))
+        g.add((root, OWL.imports, URIRef(missing_iri)))
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, strict=True, offline=True)
+        with self.assertRaises(ValueError):
             self.env.add(g)
-        self.assertIn("In-memory rdflib graphs cannot be added", str(ctx.exception))
 
-        with self.assertRaises(TypeError):
-            self.env.add_no_imports(g)
+        self.assertEqual(self.env.get_ontology_names(), [])
+
+    def test_add_in_memory_rdflib_graph_non_strict_skips_missing_import(self):
+        """Non-strict mode should keep the root when an in-memory import is missing."""
+        missing_iri = (self.test_dir / "missing.ttl").resolve().as_uri()
+        root_iri = "http://example.com/root-non-strict-missing"
+
+        g = Graph()
+        root = URIRef(root_iri)
+        g.add((root, RDF.type, OWL.Ontology))
+        g.add((root, OWL.imports, URIRef(missing_iri)))
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, strict=False, offline=True)
+        added_name = self.env.add(g)
+        self.assertEqual(added_name, root_iri)
+
+        names = self.env.get_ontology_names()
+        self.assertIn(root_iri, names)
+        self.assertNotIn(missing_iri, names)
+
+        closure = self.env.list_closure(root_iri)
+        self.assertEqual(len(closure), 1)
+        self.assertEqual(closure[0], root_iri)
 
     def test_get_closure_with_in_memory_destination(self):
         """Closure can be materialized into an in-memory rdflib.Graph."""

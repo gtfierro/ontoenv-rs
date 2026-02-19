@@ -64,7 +64,7 @@ class OntoEnv:
 
     def add(
         self,
-        location: Union[str, Path],
+        location: Union[str, Path, Graph],
         overwrite: bool = False,
         fetch_imports: bool = True,
         force: bool = False,
@@ -72,7 +72,7 @@ class OntoEnv:
 
     def add_no_imports(
         self,
-        location: Union[str, Path],
+        location: Union[str, Path, Graph],
         overwrite: bool = False,
         force: bool = False,
     ) -> str: ...
