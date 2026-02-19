@@ -196,18 +196,30 @@ impl OntologyLocation {
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         // Accept both IRIs and file paths, normalizing to absolute paths.
-        if s.starts_with("http") || s.starts_with("<http") {
-            Ok(OntologyLocation::Url(s.to_string()))
+        let trimmed = s.trim();
+        let value = if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2 {
+            &trimmed[1..trimmed.len() - 1]
         } else {
-            // remove any leading file://
-            let s = s.trim_start_matches("file://");
-            let mut p = PathBuf::from(s);
-            // make sure p is absolute
-            if !p.is_absolute() {
-                p = std::env::current_dir()?.join(p);
-            }
-            Ok(OntologyLocation::File(p))
+            trimmed
+        };
+
+        if value.starts_with("http://") || value.starts_with("https://") {
+            return Ok(OntologyLocation::Url(value.to_string()));
         }
+
+        if value.starts_with("file://") {
+            let url = Url::parse(value)?;
+            let path = url.to_file_path().map_err(|_| {
+                anyhow::anyhow!("Failed to convert file URL to local path: {}", value)
+            })?;
+            return Ok(OntologyLocation::File(Self::normalized_file_path(&path)));
+        }
+
+        let mut p = PathBuf::from(value);
+        if !p.is_absolute() {
+            p = std::env::current_dir()?.join(p);
+        }
+        Ok(OntologyLocation::File(Self::normalized_file_path(&p)))
     }
 
     pub fn to_iri(&self) -> NamedNode {
@@ -282,6 +294,7 @@ impl SerializeAs<NamedNode> for LocalType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn assert_location_matches_path(display: &str, iri: &NamedNode, expected: &Path) {
         if let Some(url) = OntologyLocation::file_url_for(expected) {
@@ -327,6 +340,25 @@ mod tests {
         let iri = location.to_iri();
 
         assert_location_matches_path(&display, &iri, &expected);
+    }
+
+    #[test]
+    fn file_url_from_str_round_trips_to_path() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("import.ttl");
+        std::fs::write(&path, b"").unwrap();
+        let url = Url::from_file_path(&path).unwrap().to_string();
+
+        let parsed = OntologyLocation::from_str(&url).unwrap();
+        match parsed {
+            OntologyLocation::File(parsed_path) => {
+                assert_eq!(
+                    OntologyLocation::normalized_file_path(&parsed_path),
+                    OntologyLocation::normalized_file_path(&path)
+                );
+            }
+            other => panic!("Expected file location, got {other:?}"),
+        }
     }
 }
 
