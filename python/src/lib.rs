@@ -194,6 +194,70 @@ fn extract_import_root_subject(graph: &Bound<'_, PyAny>) -> PyResult<Option<Stri
     Ok(None)
 }
 
+fn rdflib_graph_to_turtle_bytes(graph: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    let py = graph.py();
+    let kwargs = [("format", "turtle")].into_py_dict(py)?;
+    let serialized = graph.call_method("serialize", (), Some(&kwargs))?;
+
+    if let Ok(bytes) = serialized.extract::<Vec<u8>>() {
+        return Ok(bytes);
+    }
+    if let Ok(text) = serialized.extract::<String>() {
+        return Ok(text.into_bytes());
+    }
+
+    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        "rdflib graph serialization must return bytes or str",
+    ))
+}
+
+fn add_resolved_to_env(
+    env: &mut OntoEnvRs,
+    py_location: &Bound<'_, PyAny>,
+    resolved: ResolvedLocation,
+    overwrite: Overwrite,
+    refresh: RefreshStrategy,
+    fetch_imports: bool,
+) -> PyResult<String> {
+    let preferred_name = resolved.preferred_name;
+    let location = resolved.location;
+
+    let graph_id = match location {
+        OntologyLocation::InMemory { .. } => {
+            let bytes = rdflib_graph_to_turtle_bytes(py_location)?;
+            if fetch_imports {
+                env.add_from_bytes(location, bytes, Some(RdfFormat::Turtle), overwrite, refresh)
+            } else {
+                env.add_from_bytes_no_imports(
+                    location,
+                    bytes,
+                    Some(RdfFormat::Turtle),
+                    overwrite,
+                    refresh,
+                )
+            }
+        }
+        _ => {
+            if fetch_imports {
+                env.add(location, overwrite, refresh)
+            } else {
+                env.add_no_imports(location, overwrite, refresh)
+            }
+        }
+    }
+    .map_err(anyhow_to_pyerr)?;
+
+    let actual_name = graph_id.to_uri_string();
+    if let Some(pref) = preferred_name {
+        if let Ok(candidate) = NamedNode::new(pref.clone()) {
+            if env.resolve(ResolveTarget::Graph(candidate)).is_some() {
+                return Ok(pref);
+            }
+        }
+    }
+    Ok(actual_name)
+}
+
 fn resolve_root_subject_and_graphid(
     graph: &Bound<'_, PyAny>,
     env: &OntoEnvRs,
@@ -1742,30 +1806,16 @@ impl OntoEnv {
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
 
         let resolved = ontology_location_from_py(location)?;
-        if matches!(resolved.location, OntologyLocation::InMemory { .. }) {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "In-memory rdflib graphs cannot be added to the environment",
-            ));
-        }
-        let preferred_name = resolved.preferred_name.clone();
-        let location = resolved.location;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
-        let graph_id = if fetch_imports {
-            env.add(location, overwrite_flag, refresh)
-        } else {
-            env.add_no_imports(location, overwrite_flag, refresh)
-        }
-        .map_err(anyhow_to_pyerr)?;
-        let actual_name = graph_id.to_uri_string();
-        if let Some(pref) = preferred_name {
-            if let Ok(candidate) = NamedNode::new(pref.clone()) {
-                if env.resolve(ResolveTarget::Graph(candidate)).is_some() {
-                    return Ok(pref);
-                }
-            }
-        }
-        Ok(actual_name)
+        add_resolved_to_env(
+            env,
+            location,
+            resolved,
+            overwrite_flag,
+            refresh,
+            fetch_imports,
+        )
     }
 
     /// Add a new ontology to the OntoEnv without exploring owl:imports.
@@ -1782,27 +1832,9 @@ impl OntoEnv {
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
         let resolved = ontology_location_from_py(location)?;
-        if matches!(resolved.location, OntologyLocation::InMemory { .. }) {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "In-memory rdflib graphs cannot be added to the environment",
-            ));
-        }
-        let preferred_name = resolved.preferred_name.clone();
-        let location = resolved.location;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
-        let graph_id = env
-            .add_no_imports(location, overwrite_flag, refresh)
-            .map_err(anyhow_to_pyerr)?;
-        let actual_name = graph_id.to_uri_string();
-        if let Some(pref) = preferred_name {
-            if let Ok(candidate) = NamedNode::new(pref.clone()) {
-                if env.resolve(ResolveTarget::Graph(candidate)).is_some() {
-                    return Ok(pref);
-                }
-            }
-        }
-        Ok(actual_name)
+        add_resolved_to_env(env, location, resolved, overwrite_flag, refresh, false)
     }
 
     /// Get the names of all ontologies that import the given ontology
