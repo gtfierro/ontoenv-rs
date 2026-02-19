@@ -5,9 +5,11 @@ use url::Url;
 #[test]
 fn test_ontology_location() {
     let url = "http://example.com/ontology.ttl";
-    let file = "/tmp/ontology.ttl";
+    let mut file_path = std::env::temp_dir();
+    file_path.push("ontology.ttl");
+    let file = file_path.to_string_lossy().to_string();
     let url_location = OntologyLocation::from_str(url).unwrap();
-    let file_location = OntologyLocation::from_str(file).unwrap();
+    let file_location = OntologyLocation::from_str(&file).unwrap();
     assert!(url_location.is_url());
     assert!(!url_location.is_file());
     assert!(!file_location.is_url());

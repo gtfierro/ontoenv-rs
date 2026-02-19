@@ -59,13 +59,18 @@ class TestOntoEnvInit(unittest.TestCase):
     def test_init_read_only(self):
         with tempfile.TemporaryDirectory() as td:
             env_path = Path(td) / "existing_env"
+            dummy_file = Path(td) / "dummy.ttl"
             env_path.mkdir()
+            dummy_file.write_text(
+                "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<urn:dummy> a owl:Ontology .\n",
+                encoding="utf-8",
+            )
             env1 = OntoEnv(path=env_path, recreate=True)
             env1.close()
             env = OntoEnv(path=env_path, read_only=True)
             self.assertTrue((env_path / ".ontoenv").is_dir())
             with self.assertRaisesRegex(ValueError, "Cannot add to read-only store"):
-                env.add("file:///dummy.ttl")
+                env.add(dummy_file.resolve().as_uri())
 
     def test_init_no_config_requires_existing(self):
         original_cwd = Path.cwd()
