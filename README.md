@@ -356,6 +356,9 @@ fs::remove_dir_all(&test_dir)?;
 - `OntoEnv::update_all(all: bool)`
 - `OntoEnv::add(location, Overwrite, RefreshStrategy) -> GraphIdentifier`
 - `OntoEnv::add_no_imports(location, Overwrite, RefreshStrategy) -> GraphIdentifier`
+- `OntoEnv::add_from_bytes(location, bytes, format, Overwrite, RefreshStrategy) -> GraphIdentifier`
+- `OntoEnv::add_from_bytes_no_imports(location, bytes, format, Overwrite, RefreshStrategy) -> GraphIdentifier`
+- `OntoEnv::add_from_bytes_with_import_depth(..., max_import_depth) -> GraphIdentifier`
 - `OntoEnv::get_graph(id) -> Graph`
 - `OntoEnv::get_union_graph(ids)` and `get_closure(id, recursion_depth)`
 - `OntoEnv::save_to_directory()`, `flush()` (persists to `.ontoenv/store.r5tu`)
@@ -372,6 +375,8 @@ Persistent storage details
 - Creation:
   - `OntoEnv::init(config, overwrite)` explicitly creates (or overwrites) an environment on disk.
   - `OntoEnv::add(..., Overwrite::Allow, RefreshStrategy::UseCache)` is the common way to add an ontology, while `RefreshStrategy::Force` skips cache reuse.
+  - `OntoEnv::add_from_bytes(...)` and `add_from_bytes_no_imports(...)` ingest a root ontology directly from in-memory RDF bytes (no temp files) while keeping the same import/dependency semantics as file/URL adds.
+  - For byte-backed adds, use `OntologyLocation::InMemory { identifier }` as stable metadata identity for the root source. Imports are still resolved from each `owl:imports` IRI (typically `http(s)` or `file`), not from the in-memory identifier.
   - Enable `use_cached_ontologies` in `Config` (or pass `use_cached_ontologies=True` to Python) to start with an empty environment that only fetches data when explicitly asked; keep it disabled (default) to run an implicit discovery during `init`.
 - Recommended pattern:
   - Try discovery (`find_ontoenv_root()`), then `load_from_directory`; if not found, prompt/init explicitly.

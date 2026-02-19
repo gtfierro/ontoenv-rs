@@ -118,6 +118,11 @@ pub enum OntologyLocation {
     File(PathBuf),
     #[serde(rename = "url")]
     Url(String),
+    /// Virtual source identifier for ontologies supplied as in-memory bytes.
+    ///
+    /// This identifier is used for environment bookkeeping only. `owl:imports` resolution still
+    /// uses the import IRIs declared in the ontology content and resolves those against permanent
+    /// locations (e.g., `http(s)`/`file`) when loaded through OntoEnv APIs.
     #[serde(rename = "in-memory")]
     InMemory { identifier: String },
 }
