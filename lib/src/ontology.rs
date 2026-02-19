@@ -209,9 +209,18 @@ impl OntologyLocation {
 
         if value.starts_with("file://") {
             let url = Url::parse(value)?;
-            let path = url.to_file_path().map_err(|_| {
-                anyhow::anyhow!("Failed to convert file URL to local path: {}", value)
-            })?;
+            let path = match url.to_file_path() {
+                Ok(path) => path,
+                Err(()) => {
+                    // Compatibility fallback for platform-dependent file URL handling
+                    // (e.g., `file:///dummy.ttl` on Windows).
+                    let mut p = PathBuf::from(value.trim_start_matches("file://"));
+                    if !p.is_absolute() {
+                        p = std::env::current_dir()?.join(p);
+                    }
+                    p
+                }
+            };
             return Ok(OntologyLocation::File(Self::normalized_file_path(&path)));
         }
 
@@ -359,6 +368,12 @@ mod tests {
             }
             other => panic!("Expected file location, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn file_url_root_only_path_is_accepted() {
+        let parsed = OntologyLocation::from_str("file:///dummy.ttl").unwrap();
+        assert!(matches!(parsed, OntologyLocation::File(_)));
     }
 }
 
