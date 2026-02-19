@@ -12,6 +12,7 @@ use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
+use oxigraph::io::RdfFormat;
 use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
@@ -31,10 +32,72 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 
 #[derive(Clone, Debug)]
-struct PendingImport {
-    location: OntologyLocation,
-    overwrite: Overwrite,
-    required: bool,
+enum PendingImport {
+    FromLocation {
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        required: bool,
+        depth: usize,
+    },
+    FromBytes {
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        required: bool,
+        depth: usize,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+    },
+}
+
+impl PendingImport {
+    fn from_location(
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        required: bool,
+        depth: usize,
+    ) -> Self {
+        Self::FromLocation {
+            location,
+            overwrite,
+            required,
+            depth,
+        }
+    }
+
+    fn from_bytes(
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        required: bool,
+        depth: usize,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+    ) -> Self {
+        Self::FromBytes {
+            location,
+            overwrite,
+            required,
+            depth,
+            bytes,
+            format,
+        }
+    }
+
+    fn meta(&self) -> (&OntologyLocation, bool, usize) {
+        match self {
+            Self::FromLocation {
+                location,
+                required,
+                depth,
+                ..
+            }
+            | Self::FromBytes {
+                location,
+                required,
+                depth,
+                ..
+            } => (location, *required, *depth),
+        }
+    }
 }
 
 /// Initializes logging for the ontoenv library.
@@ -810,6 +873,61 @@ impl OntoEnv {
         self.add_with_options(location, overwrite, refresh, false)
     }
 
+    /// Add an ontology from in-memory bytes and traverse its imports.
+    ///
+    /// The root ontology is parsed from `bytes` and associated with `location` without creating
+    /// a temporary file. Imported ontologies are still resolved from their declared permanent
+    /// locations (`http(s)`/`file`) using the same strict/offline/filter behavior as [`Self::add`].
+    pub fn add_from_bytes(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+    ) -> Result<GraphIdentifier> {
+        self.add_from_bytes_with_options(location, bytes, format, overwrite, refresh, true, None)
+    }
+
+    /// Add an ontology from in-memory bytes without traversing imports.
+    ///
+    /// Mirrors [`Self::add_no_imports`] for import traversal behavior while keeping the root
+    /// ontology content in memory.
+    pub fn add_from_bytes_no_imports(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+    ) -> Result<GraphIdentifier> {
+        self.add_from_bytes_with_options(location, bytes, format, overwrite, refresh, false, None)
+    }
+
+    /// Add an ontology from in-memory bytes with optional import traversal depth.
+    ///
+    /// `max_import_depth = None` means unbounded traversal (same as [`Self::add_from_bytes`]).
+    /// `Some(0)` loads only the root ontology bytes.
+    pub fn add_from_bytes_with_import_depth(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        max_import_depth: Option<usize>,
+    ) -> Result<GraphIdentifier> {
+        self.add_from_bytes_with_options(
+            location,
+            bytes,
+            format,
+            overwrite,
+            refresh,
+            true,
+            max_import_depth,
+        )
+    }
+
     fn add_with_options(
         &mut self,
         location: OntologyLocation,
@@ -819,30 +937,96 @@ impl OntoEnv {
     ) -> Result<GraphIdentifier> {
         let location = self.resolve_location(location);
         self.with_io_batch(move |env| {
-            env.add_with_options_inner(location, overwrite, refresh, update_dependencies)
+            env.add_with_options_inner(location, overwrite, refresh, update_dependencies, None)
+        })
+    }
+
+    fn add_from_bytes_with_options(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        update_dependencies: bool,
+        max_import_depth: Option<usize>,
+    ) -> Result<GraphIdentifier> {
+        let location = self.resolve_location(location);
+        self.with_io_batch(move |env| {
+            env.add_from_bytes_with_options_inner(
+                location,
+                bytes,
+                format,
+                overwrite,
+                refresh,
+                update_dependencies,
+                max_import_depth,
+            )
         })
     }
 
     fn fetch_location(
         &mut self,
-        location: OntologyLocation,
-        overwrite: Overwrite,
+        job: PendingImport,
         refresh: RefreshStrategy,
     ) -> Result<FetchOutcome> {
-        if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
-            self.batch_state.mark_seen(&location);
-            return Ok(FetchOutcome::Reused(existing_id));
-        }
+        match job {
+            PendingImport::FromBytes {
+                location,
+                overwrite,
+                bytes,
+                format,
+                ..
+            } => {
+                if let Some(existing_id) =
+                    self.try_reuse_cached_bytes(&location, bytes.as_slice(), refresh)?
+                {
+                    self.batch_state.mark_seen(&location);
+                    return Ok(FetchOutcome::Reused(existing_id));
+                }
 
-        if !refresh.is_force() && self.batch_state.has_seen(&location) {
-            if let Some(existing) = self.env.get_ontology_by_location(&location) {
-                return Ok(FetchOutcome::Reused(existing.id().clone()));
+                if let Some(existing_id) = self.reuse_if_seen_in_batch(&location, refresh) {
+                    return Ok(FetchOutcome::Reused(existing_id));
+                }
+
+                let ontology =
+                    self.io
+                        .add_from_bytes(location.clone(), bytes, format, overwrite)?;
+                self.batch_state.mark_seen(&location);
+                Ok(FetchOutcome::Loaded(Box::new(ontology)))
+            }
+            PendingImport::FromLocation {
+                location,
+                overwrite,
+                ..
+            } => {
+                if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
+                    self.batch_state.mark_seen(&location);
+                    return Ok(FetchOutcome::Reused(existing_id));
+                }
+
+                if let Some(existing_id) = self.reuse_if_seen_in_batch(&location, refresh) {
+                    return Ok(FetchOutcome::Reused(existing_id));
+                }
+
+                let ontology = self.io.add(location.clone(), overwrite)?;
+                self.batch_state.mark_seen(&location);
+                Ok(FetchOutcome::Loaded(Box::new(ontology)))
             }
         }
+    }
 
-        let ontology = self.io.add(location.clone(), overwrite)?;
-        self.batch_state.mark_seen(&location);
-        Ok(FetchOutcome::Loaded(Box::new(ontology)))
+    fn reuse_if_seen_in_batch(
+        &self,
+        location: &OntologyLocation,
+        refresh: RefreshStrategy,
+    ) -> Option<GraphIdentifier> {
+        if refresh.is_force() || !self.batch_state.has_seen(location) {
+            return None;
+        }
+        self.env
+            .get_ontology_by_location(location)
+            .map(|existing| existing.id().clone())
     }
 
     fn register_ontologies(
@@ -869,23 +1053,51 @@ impl OntoEnv {
         self.save_to_directory()?;
         Ok(ids)
     }
-
     fn add_with_options_inner(
         &mut self,
         location: OntologyLocation,
         overwrite: Overwrite,
         refresh: RefreshStrategy,
         update_dependencies: bool,
+        max_import_depth: Option<usize>,
     ) -> Result<GraphIdentifier> {
+        let seed = PendingImport::from_location(location, overwrite, self.config.strict, 0);
+        self.add_with_seed_inner(seed, refresh, update_dependencies, max_import_depth)
+    }
+
+    fn add_from_bytes_with_options_inner(
+        &mut self,
+        location: OntologyLocation,
+        bytes: Vec<u8>,
+        format: Option<RdfFormat>,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        update_dependencies: bool,
+        max_import_depth: Option<usize>,
+    ) -> Result<GraphIdentifier> {
+        let seed =
+            PendingImport::from_bytes(location, overwrite, self.config.strict, 0, bytes, format);
+        self.add_with_seed_inner(seed, refresh, update_dependencies, max_import_depth)
+    }
+
+    fn add_with_seed_inner(
+        &mut self,
+        seed: PendingImport,
+        refresh: RefreshStrategy,
+        update_dependencies: bool,
+        max_import_depth: Option<usize>,
+    ) -> Result<GraphIdentifier> {
+        let (location_ref, _, _) = seed.meta();
+        let location = location_ref.clone();
         // Reset per-call error tracking so stale failures do not leak across operations.
         self.failed_resolutions.clear();
         // Apply ontology filters early to keep store and env consistent.
         let ontology_filters = self.ontology_filters()?;
         self.prune_disallowed_ontologies(&ontology_filters, true)?;
         // Seed the import queue with the requested location and overwrite policy.
-        let seeds = vec![(location.clone(), overwrite)];
+        let seeds = vec![seed];
         let (ontologies, reused_ids, errors) =
-            self.process_import_queue(seeds, refresh, update_dependencies)?;
+            self.process_import_queue(seeds, refresh, update_dependencies, max_import_depth)?;
         // Filter newly fetched ontologies before registering them.
         let filtered_onts: Vec<Ontology> = ontologies
             .into_iter()
@@ -921,6 +1133,30 @@ impl OntoEnv {
             }
             anyhow!(base)
         })
+    }
+
+    fn try_reuse_cached_bytes(
+        &self,
+        location: &OntologyLocation,
+        bytes: &[u8],
+        refresh: RefreshStrategy,
+    ) -> Result<Option<GraphIdentifier>> {
+        // Mirror try_reuse_cached for in-memory sources by comparing content hashes.
+        if !self.config.use_cached_ontologies.is_enabled() || refresh.is_force() {
+            return Ok(None);
+        }
+        let existing = match self.env.get_ontology_by_location(location) {
+            Some(ontology) => ontology,
+            None => return Ok(None),
+        };
+        let Some(stored_hash) = existing.content_hash() else {
+            return Ok(None);
+        };
+        let current_hash = blake3::hash(bytes).to_hex().to_string();
+        if current_hash == stored_hash {
+            return Ok(Some(existing.id().clone()));
+        }
+        Ok(None)
     }
 
     fn try_reuse_cached(
@@ -1035,9 +1271,9 @@ impl OntoEnv {
 
         // Discover candidate locations (all vs only changed/new).
         let updated_files = self.collect_updated_files(all)?;
-        let seeds: Vec<(OntologyLocation, Overwrite)> = updated_files
+        let seeds: Vec<PendingImport> = updated_files
             .into_iter()
-            .map(|loc| (loc, Overwrite::Allow))
+            .map(|loc| PendingImport::from_location(loc, Overwrite::Allow, self.config.strict, 0))
             .collect();
         // Force refresh when requested, otherwise reuse cached where possible.
         let refresh = if all {
@@ -1045,7 +1281,8 @@ impl OntoEnv {
         } else {
             RefreshStrategy::UseCache
         };
-        let (ontologies, reused_ids, _errors) = self.process_import_queue(seeds, refresh, true)?;
+        let (ontologies, reused_ids, _errors) =
+            self.process_import_queue(seeds, refresh, true, None)?;
 
         // Register only ontologies allowed by filters; collect reused ids too.
         let filtered_onts: Vec<Ontology> = ontologies
@@ -1150,20 +1387,13 @@ impl OntoEnv {
 
     fn process_import_queue(
         &mut self,
-        seeds: Vec<(OntologyLocation, Overwrite)>,
+        seeds: Vec<PendingImport>,
         refresh: RefreshStrategy,
         include_imports: bool,
+        max_import_depth: Option<usize>,
     ) -> Result<(Vec<Ontology>, Vec<GraphIdentifier>, Vec<String>)> {
         // Use a BFS-style queue to load ontologies and (optionally) their imports.
-        let strict = self.config.strict;
-        let mut queue: VecDeque<PendingImport> = seeds
-            .into_iter()
-            .map(|(location, overwrite)| PendingImport {
-                location,
-                overwrite,
-                required: strict,
-            })
-            .collect();
+        let mut queue: VecDeque<PendingImport> = seeds.into_iter().collect();
         // Track locations to prevent cycles and duplicate fetches.
         let mut seen: HashSet<OntologyLocation> = HashSet::new();
         let mut fetched: Vec<Ontology> = Vec::new();
@@ -1179,20 +1409,23 @@ impl OntoEnv {
         };
 
         while let Some(job) = queue.pop_front() {
-            if !seen.insert(job.location.clone()) {
+            let (job_location_ref, job_required, job_depth) = job.meta();
+            let job_location = job_location_ref.clone();
+            if !seen.insert(job_location.clone()) {
                 continue;
             }
-
-            match self.fetch_location(job.location.clone(), job.overwrite, refresh) {
+            match self.fetch_location(job, refresh) {
                 Ok(FetchOutcome::Loaded(ontology)) => {
                     let ontology = *ontology;
                     let imports = ontology.imports.clone();
                     let id = ontology.id().clone();
                     if include_imports {
-                        // Queue imported ontologies to build a complete closure.
-                        for import in imports {
-                            self.queue_import_location(&import, &mut queue, self.config.strict)?;
-                        }
+                        self.enqueue_imports_for_job(
+                            imports,
+                            &mut queue,
+                            job_depth,
+                            max_import_depth,
+                        )?;
                     }
                     fetched.push(ontology);
                     record_id(&id);
@@ -1202,27 +1435,25 @@ impl OntoEnv {
                     record_id(&id);
                     if include_imports {
                         if let Ok(existing) = self.get_ontology(&id) {
-                            // Preserve traversal by pulling imports from cached metadata.
-                            for import in existing.imports {
-                                self.queue_import_location(
-                                    &import,
-                                    &mut queue,
-                                    self.config.strict,
-                                )?;
-                            }
+                            self.enqueue_imports_for_job(
+                                existing.imports,
+                                &mut queue,
+                                job_depth,
+                                max_import_depth,
+                            )?;
                         }
                     }
                 }
                 Err(err) => {
                     let err_str = err.to_string();
-                    let enriched = format!("Failed to load ontology {}: {}", job.location, err_str);
-                    if job.required {
+                    let enriched = format!("Failed to load ontology {}: {}", job_location, err_str);
+                    if job_required {
                         return Err(anyhow!(enriched));
                     }
                     // Non-strict mode records errors but continues processing.
                     warn!("{}", enriched);
                     errors.push(enriched);
-                    if let OntologyLocation::Url(url) = &job.location {
+                    if let OntologyLocation::Url(url) = &job_location {
                         if let Ok(node) = NamedNode::new(url.clone()) {
                             self.failed_resolutions.insert(node);
                         }
@@ -1234,11 +1465,32 @@ impl OntoEnv {
         Ok((fetched, touched_ids, errors))
     }
 
+    fn enqueue_imports_for_job(
+        &mut self,
+        imports: Vec<NamedNode>,
+        queue: &mut VecDeque<PendingImport>,
+        job_depth: usize,
+        max_import_depth: Option<usize>,
+    ) -> Result<()> {
+        let should_traverse = max_import_depth
+            .map(|max_depth| job_depth < max_depth)
+            .unwrap_or(true);
+        if !should_traverse {
+            return Ok(());
+        }
+
+        for import in imports {
+            self.queue_import_location(&import, queue, self.config.strict, job_depth + 1)?;
+        }
+        Ok(())
+    }
+
     fn queue_import_location(
         &mut self,
         import: &NamedNode,
         queue: &mut VecDeque<PendingImport>,
         strict: bool,
+        depth: usize,
     ) -> Result<()> {
         let iri = import.as_str();
         // Only queue imports we can actually retrieve (http(s) or file).
@@ -1251,22 +1503,24 @@ impl OntoEnv {
         // If the import is already known, reuse its resolved location.
         if let Some(existing) = self.env.get_ontology_by_name(import.into()) {
             if let Some(loc) = existing.location() {
-                queue.push_back(PendingImport {
-                    location: loc.clone(),
-                    overwrite: Overwrite::Preserve,
-                    required: strict,
-                });
+                queue.push_back(PendingImport::from_location(
+                    loc.clone(),
+                    Overwrite::Preserve,
+                    strict,
+                    depth,
+                ));
                 return Ok(());
             }
         }
 
         // Otherwise, treat the IRI as a location and enqueue it for retrieval.
         match OntologyLocation::from_str(iri) {
-            Ok(loc) => queue.push_back(PendingImport {
-                location: loc,
-                overwrite: Overwrite::Preserve,
-                required: strict,
-            }),
+            Ok(loc) => queue.push_back(PendingImport::from_location(
+                loc,
+                Overwrite::Preserve,
+                strict,
+                depth,
+            )),
             Err(err) => {
                 self.failed_resolutions.insert(import.clone());
                 if strict {

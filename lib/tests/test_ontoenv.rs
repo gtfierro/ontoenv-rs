@@ -5,6 +5,8 @@ use ontoenv::consts::IMPORTS;
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ontoenv::ToUriString;
+use oxigraph::io::RdfFormat;
+use oxigraph::model::NamedNode;
 use oxigraph::model::NamedNodeRef;
 use oxigraph::model::NamedOrBlankNodeRef;
 use oxigraph::model::TermRef;
@@ -946,6 +948,314 @@ fn test_ontoenv_add() -> Result<()> {
     )?;
     env.add(loc, Overwrite::Allow, RefreshStrategy::UseCache)?;
     assert_eq!(env.stats()?.num_graphs, 5);
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_add_from_bytes_resolves_imports_and_dependency_graph_edges() -> Result<()> {
+    let dir = TempDir::new("ontoenv_add_from_bytes_imports")?;
+    let dep_path = dir.path().join("dep.ttl");
+    let dep_iri = url::Url::from_file_path(&dep_path).unwrap().to_string();
+    let root_iri = "http://example.com/root-bytes";
+
+    fs::write(
+        &dep_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{dep}> a owl:Ontology .\n<{dep}#entity> <http://example.com/p> \"dep\" .",
+            dep = dep_iri
+        ),
+    )?;
+
+    let root_bytes = format!(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{root}> a owl:Ontology ;\n  owl:imports <{dep}> .\n<{root}#entity> <http://example.com/p> \"root\" .",
+        root = root_iri,
+        dep = dep_iri
+    )
+    .into_bytes();
+
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![])
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    let mut env = OntoEnv::init(cfg, true)?;
+
+    let root_id = env.add_from_bytes(
+        OntologyLocation::InMemory {
+            identifier: "urn:ontoenv:root-bytes".to_string(),
+        },
+        root_bytes,
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    let dep_id = env
+        .resolve(ResolveTarget::Graph(NamedNodeRef::new(&dep_iri)?.into()))
+        .expect("dependency ontology should resolve");
+
+    let closure = env.get_closure(&root_id, -1)?;
+    assert_eq!(closure.len(), 2, "closure should include root and import");
+    assert!(
+        closure.contains(&dep_id),
+        "closure should include dependency"
+    );
+
+    let dep_node = NamedNode::new(dep_iri.clone())?;
+    let importers = env.get_importers(&dep_node)?;
+    assert!(
+        importers.iter().any(|id| id == &root_id),
+        "dependency should have root as importer"
+    );
+
+    let import_paths = env.get_import_paths(&dep_node)?;
+    assert!(
+        import_paths
+            .iter()
+            .any(|path| path.len() == 2 && path[0] == root_id && path[1] == dep_id),
+        "dependency path should contain root -> dependency"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_add_from_bytes_matches_file_add_closure() -> Result<()> {
+    let dir = TempDir::new("ontoenv_add_from_bytes_parity")?;
+    let dep_path = dir.path().join("dep.ttl");
+    let root_path = dir.path().join("root.ttl");
+    let dep_iri = url::Url::from_file_path(&dep_path).unwrap().to_string();
+    let root_iri = "http://example.com/root-parity";
+    let root_ttl = format!(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{root}> a owl:Ontology ;\n  owl:imports <{dep}> .\n<{root}#entity> <http://example.com/p> \"root\" .",
+        root = root_iri,
+        dep = dep_iri
+    );
+
+    fs::write(
+        &dep_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{dep}> a owl:Ontology .\n<{dep}#entity> <http://example.com/p> \"dep\" .",
+            dep = dep_iri
+        ),
+    )?;
+    fs::write(&root_path, &root_ttl)?;
+
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![])
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    let mut env_bytes = OntoEnv::init(cfg.clone(), true)?;
+    let mut env_file = OntoEnv::init(cfg, true)?;
+
+    let bytes_id = env_bytes.add_from_bytes(
+        OntologyLocation::InMemory {
+            identifier: "urn:ontoenv:parity-root".to_string(),
+        },
+        root_ttl.as_bytes().to_vec(),
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    let file_id = env_file.add(
+        OntologyLocation::File(root_path),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+
+    let bytes_closure = env_bytes
+        .get_closure(&bytes_id, -1)?
+        .iter()
+        .map(|id| id.to_uri_string())
+        .collect::<std::collections::HashSet<String>>();
+    let file_closure = env_file
+        .get_closure(&file_id, -1)?
+        .iter()
+        .map(|id| id.to_uri_string())
+        .collect::<std::collections::HashSet<String>>();
+    assert_eq!(
+        bytes_closure, file_closure,
+        "byte-backed and file-backed adds should produce identical closure members"
+    );
+
+    let dep_node = NamedNode::new(dep_iri)?;
+    let bytes_paths = env_bytes.get_import_paths(&dep_node)?;
+    let file_paths = env_file.get_import_paths(&dep_node)?;
+    let bytes_path_names = bytes_paths
+        .into_iter()
+        .map(|path| {
+            path.into_iter()
+                .map(|id| id.to_uri_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<std::collections::HashSet<Vec<String>>>();
+    let file_path_names = file_paths
+        .into_iter()
+        .map(|path| {
+            path.into_iter()
+                .map(|id| id.to_uri_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<std::collections::HashSet<Vec<String>>>();
+    assert_eq!(
+        bytes_path_names, file_path_names,
+        "byte-backed and file-backed adds should build the same dependency edges"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_add_from_bytes_use_cache_reloads_when_bytes_change() -> Result<()> {
+    let dir = TempDir::new("ontoenv_add_from_bytes_cache_refresh")?;
+    let mut env = cached_env(&dir)?;
+    let location = OntologyLocation::InMemory {
+        identifier: "urn:ontoenv:cache-refresh-root".to_string(),
+    };
+
+    let bytes_v1 = b"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.com/cache-root> a owl:Ontology .\n<http://example.com/cache-root#s> <http://example.com/p> \"v1\" .".to_vec();
+    let id_v1 = env.add_from_bytes(
+        location.clone(),
+        bytes_v1,
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    let hash_v1 = env
+        .get_ontology(&id_v1)?
+        .content_hash()
+        .expect("content hash must be set for byte-backed add")
+        .to_string();
+
+    let bytes_v2 = b"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.com/cache-root> a owl:Ontology .\n<http://example.com/cache-root#s> <http://example.com/p> \"v2\" .".to_vec();
+    let id_v2 = env.add_from_bytes(
+        location,
+        bytes_v2,
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    assert_eq!(id_v1, id_v2, "root identifier should remain stable");
+
+    let hash_v2 = env
+        .get_ontology(&id_v2)?
+        .content_hash()
+        .expect("content hash must be set for byte-backed add")
+        .to_string();
+    assert_ne!(
+        hash_v1, hash_v2,
+        "changed bytes should refresh cached ontology metadata"
+    );
+
+    let refreshed_graph = env.get_graph(&id_v2)?;
+    let rendered_triples: Vec<String> =
+        refreshed_graph.iter().map(|t| format!("{:?}", t)).collect();
+    assert!(
+        rendered_triples.iter().any(|t| t.contains("\"v2\"")),
+        "refreshed graph should contain updated triple"
+    );
+    assert!(
+        !rendered_triples.iter().any(|t| t.contains("\"v1\"")),
+        "refreshed graph should not retain stale triple from prior bytes"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_add_from_bytes_strict_errors_on_missing_import() -> Result<()> {
+    let dir = TempDir::new("ontoenv_add_from_bytes_strict_missing")?;
+    let missing_path = dir.path().join("missing.ttl");
+    let missing_iri = url::Url::from_file_path(&missing_path).unwrap().to_string();
+    let root_bytes = format!(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.com/root-strict> a owl:Ontology ;\n  owl:imports <{missing}> .",
+        missing = missing_iri
+    )
+    .into_bytes();
+
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![])
+        .strict(true)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    let mut env = OntoEnv::init(cfg, true)?;
+
+    let result = env.add_from_bytes(
+        OntologyLocation::InMemory {
+            identifier: "urn:ontoenv:strict-root".to_string(),
+        },
+        root_bytes,
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    );
+    assert!(result.is_err(), "strict mode should fail on missing import");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to load ontology"),
+        "error should report failed import loading"
+    );
+    assert!(
+        env.ontologies().is_empty(),
+        "failed strict add should not register ontology metadata"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn test_add_from_bytes_non_strict_skips_missing_import() -> Result<()> {
+    let dir = TempDir::new("ontoenv_add_from_bytes_non_strict_missing")?;
+    let missing_path = dir.path().join("missing.ttl");
+    let missing_iri = url::Url::from_file_path(&missing_path).unwrap().to_string();
+    let root_bytes = format!(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<http://example.com/root-non-strict> a owl:Ontology ;\n  owl:imports <{missing}> .",
+        missing = missing_iri
+    )
+    .into_bytes();
+
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![])
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    let mut env = OntoEnv::init(cfg, true)?;
+
+    let root_id = env.add_from_bytes(
+        OntologyLocation::InMemory {
+            identifier: "urn:ontoenv:non-strict-root".to_string(),
+        },
+        root_bytes,
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )?;
+    let closure = env.get_closure(&root_id, -1)?;
+    assert_eq!(closure.len(), 1, "missing import should be skipped");
+    assert_eq!(
+        env.missing_imports()
+            .into_iter()
+            .filter(|n| n.as_str() == missing_iri)
+            .count(),
+        1,
+        "missing import should be tracked"
+    );
+
     teardown(dir);
     Ok(())
 }
