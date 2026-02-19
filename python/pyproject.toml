@@ -5,7 +5,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dynamic = ["version"]
 dependencies = [
-    "oxrdflib>=0.5.0-a7",
+    "oxrdflib>=0.5.0-a8",
     "rdflib>=7.1.3",
 ]
 authors = [
