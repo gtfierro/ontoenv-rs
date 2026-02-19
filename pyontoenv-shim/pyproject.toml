@@ -1,6 +1,6 @@
 [project]
 name = "pyontoenv"
-version = "0.5.0a7"
+version = "0.5.0"
 description = "Compatibility wrapper that installs the ontoenv package."
 readme = "README.md"
 requires-python = ">=3.11"
