@@ -43,6 +43,15 @@ rec_name = env.add("https://w3id.org/rec/rec.ttl")
 rec_graph = env.get_graph(rec_name)
 print(f"REC graph has {len(rec_graph)} triples")
 
+# you can add an in-memory rdflib.Graph directly
+in_memory = Graph()
+in_memory.parse(data="""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://example.com/in-memory> a owl:Ontology .
+""", format="turtle")
+in_memory_name = env.add(in_memory)
+print(f"Added in-memory ontology {in_memory_name}")
+
 # if you have an rdflib.Graph with an owl:Ontology declaration,
 # you can transitively import its dependencies into the graph
 g = Graph()
