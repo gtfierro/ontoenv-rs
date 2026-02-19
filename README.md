@@ -234,7 +234,8 @@ with tempfile.TemporaryDirectory() as temp_dir:
   - `includes` / `excludes`: gitignore-style globs (supports `**`); bare directories like `lib/tests` implicitly match everything under them.
   - `include_ontologies` / `exclude_ontologies`: regex filters applied to ontology IRIs; excludes run after includes.
 - `update(all=False)`: refresh discovered ontologies
-- `add(location, fetch_imports=True) -> str`: add graph from file or URL; returns graph IRI
+- `add(location, fetch_imports=True) -> str`: add graph from file path, URL, or in-memory `rdflib.Graph`; returns graph IRI
+- `add_no_imports(location) -> str`: same input types as `add`, but skips import traversal
 - `get_graph(name) -> rdflib.Graph`: get just one ontology graph
 - `get_closure(name, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1) -> (Graph, list[str])`
 - `import_dependencies(graph, fetch_missing=False) -> list[str]`: load imports into an rdflib graph, remove its `owl:imports`, and return the sorted IRIs that were imported

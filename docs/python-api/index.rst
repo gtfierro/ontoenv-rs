@@ -38,6 +38,8 @@ Some commonly used helpers when scripting with ``OntoEnv``:
 
 - ``OntoEnv(...)`` accepts knobs such as ``search_directories`` (paths to crawl), ``offline`` (skip remote fetches), and ``temporary`` (keep everything in memory).
 - ``update(all=False)`` refreshes discovery with the configured directories.
+- ``add(location, fetch_imports=True)`` accepts a file path, URL, or an in-memory ``rdflib.Graph`` with an ``owl:Ontology`` declaration.
+- ``add_no_imports(location)`` accepts the same input types as ``add`` and stores only the root ontology.
 - ``get_closure(name, destination_graph=None, recursion_depth=-1)`` merges the ontology named ``name`` together with the graphs for its imports.
 - ``import_dependencies(graph, fetch_missing=False)`` mutates an ``rdflib.Graph`` in place, inserting triples from its declared imports.
 - ``get_graph(name)`` returns the stored graph for a specific ontology IRI, which is useful if you only need one ontology rather than a merged closure.
