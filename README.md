@@ -238,7 +238,8 @@ with tempfile.TemporaryDirectory() as temp_dir:
 - `add_no_imports(location) -> str`: same input types as `add`, but skips import traversal
 - `get_graph(name) -> rdflib.Graph`: get just one ontology graph
 - `get_closure(name, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1) -> (Graph, list[str])`
-- `import_dependencies(graph, fetch_missing=False) -> list[str]`: load imports into an rdflib graph, remove its `owl:imports`, and return the sorted IRIs that were imported
+- `import_dependencies(graph, fetch_missing=False) -> list[str]`: inline all imports into an rdflib graph, remove its `owl:imports`, rewrite `sh:prefixes` onto the graph's root, and return the sorted IRIs that were imported
+- `get_dependencies(graph, graph_name=None, fetch_missing=False) -> (Graph, list[str])`: compute the import closure of a graph and return it as a **new** graph (original never modified); without `graph_name` each closure ontology keeps its own `owl:Ontology` declaration; with `graph_name` all declarations are collapsed onto that single IRI
 - `list_closure(name, recursion_depth=-1) -> list[str]`: list IRIs in the closure
 - `get_importers(name) -> list[str]`: ontologies that import `name`
 - `to_rdflib_dataset() -> rdflib.Dataset`: in‑memory Dataset with one named graph per ontology
@@ -254,17 +255,19 @@ with tempfile.TemporaryDirectory() as temp_dir:
   - Discover and load: Otherwise, the constructor walks up from `path` (or `root=.` if `path` is None) to find an existing `.ontoenv/`. If found, it loads it; if not, it raises `FileNotFoundError` with a hint to use `recreate=True`, `temporary=True`, or `create_or_use_cached=True`.
   - Flags such as `offline`, `strict`, `search_directories`, `includes`, `excludes` apply to created environments; loading respects the saved configuration. `search_directories` defaults to an empty list, so pass paths (e.g., `["."]`) when you want discovery at init-time.
 
-#### get_closure vs import_dependencies
+#### Dependency resolution methods at a glance
 
-- `get_closure(name, ...)` computes the transitive imports closure for the ontology identified by `name` and builds the union of all graphs in that closure.
-  - Returns: a new rdflib Graph (or writes into `destination_graph` if provided) plus the ordered list of ontology IRIs in the closure.
-  - Options: can rewrite SHACL prefix blocks to the chosen base ontology and remove `owl:imports` statements in the merged result.
-  - Use when you need a single, self‑contained graph representing an ontology and all of its imports (for reasoning, exchange, or export).
+| Method | Input | Mutates input? | Root ontology in result | Returns |
+|---|---|---|---|---|
+| `get_closure(name, ...)` | IRI string | No | `name` | `(Graph, list[str])` |
+| `import_dependencies(graph, ...)` | rdflib Graph | **Yes** — inlines into it | Graph’s existing root | `list[str]` |
+| `get_dependencies(graph, ...)` | rdflib Graph | No | Each ontology keeps its own, or collapsed to `graph_name` | `(Graph, list[str])` |
 
-- `import_dependencies(graph, fetch_missing=False)` scans an existing rdflib Graph for ontology declarations and `owl:imports`, then augments that same Graph by loading the referenced ontologies (from the environment, or from the web if `fetch_missing=True`).
-  - Returns: the list of ontology IRIs that were imported.
-  - Mutates: the provided rdflib Graph in‑place (does not create a union graph per se; it enriches the given graph with imported triples).
-  - Use when you already have a Graph and want to populate it with the triples from its declared imports, respecting your environment’s offline/strict settings.
+- **`get_closure(name, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`** — address an ontology by IRI and get its full closure as a new graph. `sh:prefixes` blocks are consolidated onto `name` and `owl:imports` are removed by default. Returns the graph plus the ordered list of closure IRIs. Use when you have an IRI and want a self-contained graph for reasoning, exchange, or export.
+
+- **`import_dependencies(graph, fetch_missing=False)`** — mutates the provided graph in-place. Reads the graph’s `owl:imports` statements, resolves each one transitively through the environment, merges all closure triples into the same graph, removes the `owl:imports` statements, and rewrites `sh:prefixes` onto the graph’s root. The graph ends up fully self-contained under its original ontology name. Returns the list of imported IRIs. Use when you have an in-memory graph and want to populate it with its declared imports.
+
+- **`get_dependencies(graph, graph_name=None, fetch_missing=False)`** — computes the same import closure as `import_dependencies` but **never touches the original graph**. The closure triples are returned in a brand-new graph. If `graph_name` is omitted, each ontology in the closure retains its own `owl:Ontology` declaration — the result is a proper union of the closure graphs with no collapsed root, so it is safe to combine with other graphs without name clashes. `sh:prefixes` are left distributed across their original ontologies. If `graph_name` is provided, all `owl:Ontology` declarations are stripped and replaced with a single one for that IRI, and `sh:prefixes` are rewritten onto it. Returns `(deps_graph, list_of_iris)`.
 
 ## Rust Library
 
