@@ -1620,34 +1620,31 @@ impl OntoEnv {
     /// This method will look for `owl:imports` statements in the provided `graph`,
     /// then find those ontologies within the `OntoEnv` and compute the full
     /// dependency closure. The triples of all ontologies in the closure are
-    /// returned as a new graph. The original `graph` is left untouched unless you also
-    /// supply it as the `destination_graph`.
+    /// returned as a new graph. The original `graph` is never modified.
     ///
     /// Args:
     ///     graph (rdflib.Graph): The graph to find dependencies for.
-    ///     destination_graph (Optional[rdflib.Graph]): If provided, the dependency graph will be added to this
-    ///         graph instead of creating a new one.
+    ///     graph_name (Optional[str]): If provided, all ``owl:Ontology`` declarations
+    ///         from the closure are replaced with a single one for this URI and
+    ///         ``sh:prefixes`` are rewritten to point at it. If ``None`` (default),
+    ///         each ontology in the closure retains its own ``owl:Ontology``
+    ///         declaration (a proper union of the closure graphs); ``sh:prefixes``
+    ///         are left distributed and no root is imposed.
     ///     recursion_depth (int): The maximum depth for recursive import resolution. A
     ///         negative value (default) means no limit.
     ///     fetch_missing (bool): If True, will fetch ontologies that are not in the environment.
-    ///     rewrite_sh_prefixes (bool): If True, will rewrite SHACL prefixes to be unique.
-    ///     remove_owl_imports (bool): If True, will remove `owl:imports` statements from the
-    ///         returned graph.
     ///
     /// Returns:
     ///     tuple[rdflib.Graph, list[str]]: A tuple containing the populated dependency graph and the sorted list of
     ///     imported ontology IRIs.
-    #[pyo3(signature = (graph, destination_graph=None, recursion_depth=-1, fetch_missing=false, rewrite_sh_prefixes=true, remove_owl_imports=true))]
-    #[allow(clippy::too_many_arguments)]
-    fn get_dependencies_graph<'a>(
+    #[pyo3(signature = (graph, graph_name=None, recursion_depth=-1, fetch_missing=false))]
+    fn get_dependencies<'a>(
         &self,
         py: Python<'a>,
         graph: &Bound<'a, PyAny>,
-        destination_graph: Option<&Bound<'a, PyAny>>,
+        graph_name: Option<&str>,
         recursion_depth: i32,
         fetch_missing: bool,
-        rewrite_sh_prefixes: bool,
-        remove_owl_imports: bool,
     ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
         let rdflib = py.import("rdflib")?;
         let py_imports_pred = term_to_python(py, &rdflib, Term::NamedNode(IMPORTS.into()))?;
@@ -1658,10 +1655,7 @@ impl OntoEnv {
         let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
         let imports: Vec<String> = objects_list.extract()?;
 
-        let destination_graph = match destination_graph {
-            Some(g) => g.clone(),
-            None => rdflib.getattr("Graph")?.call0()?,
-        };
+        let destination_graph = rdflib.getattr("Graph")?.call0()?;
 
         if imports.is_empty() {
             return Ok((destination_graph, Vec::new()));
@@ -1672,10 +1666,6 @@ impl OntoEnv {
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-
-        // Determine the root URI for sh:prefix rewrites.
-        // Prefer owl:imports subject, else the owl:Ontology subject.
-        let (root_subject, _root_graphid) = resolve_root_subject_and_graphid(graph, env)?;
 
         let is_strict = env.is_strict();
         let mut all_ontologies: Vec<GraphIdentifier> = Vec::new();
@@ -1739,20 +1729,20 @@ impl OntoEnv {
             return Ok((destination_graph, Vec::new()));
         }
 
-        // Use the first ontology's name as the explicit root for sh:prefixes rewrite.
-        // Always pass rewrite_sh_prefixes=false to get_union_graph; we rewrite in Python
-        // after merging so the rdflib graph's own triples are included.
+        // Use the first ontology as an internal root for get_union_graph mechanics.
+        // sh:prefixes rewriting is skipped here; we do it ourselves below if graph_name is set.
+        // owl:imports are always removed since they are fully materialized.
         let rust_root = all_ontologies[0].name();
         let union = env
-            .get_union_graph(
-                &all_ontologies,
-                rust_root,
-                Some(false),
-                Some(remove_owl_imports),
-            )
+            .get_union_graph(&all_ontologies, rust_root, Some(false), Some(true))
             .map_err(anyhow_to_pyerr)?;
 
+        // get_union_graph collapses all owl:Ontology declarations onto its internal root.
+        // We always strip that collapsed declaration and then restore the right set below.
         for triple in union.dataset.into_iter() {
+            if triple.predicate == TYPE && triple.object == TermRef::NamedNode(ONTOLOGY) {
+                continue;
+            }
             let s: Term = triple.subject.into();
             let p: Term = triple.predicate.into();
             let o: Term = triple.object.into();
@@ -1767,20 +1757,39 @@ impl OntoEnv {
             destination_graph.getattr("add")?.call1((t,))?;
         }
 
-        if remove_owl_imports {
-            for graphid in union.graph_ids {
-                let iri = term_to_python(py, &rdflib, Term::NamedNode(graphid.into()))?;
-                let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
-                let remove_tuple = PyTuple::new(py, &[py.None(), pred.into(), iri.into()])?;
-                destination_graph
-                    .getattr("remove")?
-                    .call1((remove_tuple,))?;
-            }
-        }
+        let type_term = term_to_python(py, &rdflib, Term::NamedNode(TYPE.into_owned()))?;
+        let ontology_term = term_to_python(py, &rdflib, Term::NamedNode(ONTOLOGY.into_owned()))?;
 
-        if rewrite_sh_prefixes {
-            if let Some(ref root) = root_subject {
-                rewrite_sh_prefixes_rdflib(py, &destination_graph, root)?;
+        match graph_name {
+            Some(gn) => {
+                // Named result: single owl:Ontology declaration for graph_name, sh:prefixes rewritten onto it.
+                let gn_node = NamedNode::new(gn)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                let decl_triple = PyTuple::new(
+                    py,
+                    &[
+                        term_to_python(py, &rdflib, Term::NamedNode(gn_node))?,
+                        type_term,
+                        ontology_term,
+                    ],
+                )?;
+                destination_graph.getattr("add")?.call1((decl_triple,))?;
+                rewrite_sh_prefixes_rdflib(py, &destination_graph, gn)?;
+            }
+            None => {
+                // Anonymous result: restore each closure ontology's own declaration so the
+                // result is a proper union of the closure graphs, not an ownerless bag.
+                for gid in &all_ontologies {
+                    let decl_triple = PyTuple::new(
+                        py,
+                        &[
+                            term_to_python(py, &rdflib, Term::NamedNode(gid.name().into_owned()))?,
+                            type_term.clone(),
+                            ontology_term.clone(),
+                        ],
+                    )?;
+                    destination_graph.getattr("add")?.call1((decl_triple,))?;
+                }
             }
         }
 
