@@ -744,8 +744,8 @@ ex:B a owl:Class .
         self.assertIn(name, env2.get_ontology_names())
         env2.close()
 
-    def test_get_dependencies_graph(self):
-        """Test env.get_dependencies_graph()."""
+    def test_get_dependencies(self):
+        """Test env.get_dependencies()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, offline=False)
         self.env.add(str(self.brick_file_path))
 
@@ -756,7 +756,7 @@ ex:B a owl:Class .
         g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/3.1.8/vocab/quantitykind")))
 
         num_triples_before = len(g)
-        deps_g, imported = self.env.get_dependencies_graph(g)
+        deps_g, imported = self.env.get_dependencies(g)
         num_triples_after = len(g)
 
         # original graph should not be modified
@@ -768,16 +768,21 @@ ex:B a owl:Class .
         self.assertIn("http://qudt.org/3.1.8/vocab/quantitykind", imported)
         self.assertIn("http://qudt.org/3.1.8/vocab/dimensionvector", imported)
 
-        # test with destination graph
-        dest_g = Graph()
-        self.assertEqual(len(dest_g), 0)
-        deps_g2, imported2 = self.env.get_dependencies_graph(g, destination_graph=dest_g)
+        # without graph_name: each closure ontology keeps its own owl:Ontology declaration;
+        # the result is a proper union, not an ownerless bag.
+        ontology_decls = list(deps_g.triples((None, RDF.type, OWL.Ontology)))
+        self.assertGreater(len(ontology_decls), 0, "deps graph should retain individual owl:Ontology declarations")
+        # each declared ontology should be one of the imported IRIs
+        declared_iris = {str(s) for s, _, _ in ontology_decls}
+        self.assertTrue(declared_iris.issubset(set(imported)), "all ontology declarations should be from the closure")
 
-        # check that the returned graph is the same object as the destination graph
-        self.assertIs(deps_g2, dest_g)
-        self.assertGreater(len(dest_g), 0)
-        self.assertEqual(len(deps_g), len(dest_g))
-        self.assertEqual(sorted(imported), sorted(imported2))
+        # with graph_name: returned graph has exactly one declaration (for graph_name only),
+        # with sh:prefixes rewritten onto it
+        named_uri = "http://example.org/my-merged-deps"
+        deps_named, _ = self.env.get_dependencies(g, graph_name=named_uri)
+        all_named_decls = list(deps_named.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(len(all_named_decls), 1, "named deps graph should have exactly one owl:Ontology declaration")
+        self.assertEqual(str(all_named_decls[0][0]), named_uri, "the single declaration should be for graph_name")
 
     def test_update_all_flag(self):
         """Test env.update(all=True) forces reloading of all ontologies."""
