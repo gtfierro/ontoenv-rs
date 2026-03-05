@@ -139,6 +139,7 @@ jobs:
         with:
           name: pyontoenv_dist_${{ github.run_attempt }}
           path: target/wheels/*.tar.gz
+          if-no-files-found: error
   python_pyontoenv_alias:
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
@@ -167,6 +168,7 @@ jobs:
         with:
           name: pyontoenv_alias_${{ github.run_attempt }}
           path: pyontoenv-shim/dist/*
+          if-no-files-found: error
 
   wheel_linux_cross:
     runs-on: macos-14
@@ -203,7 +205,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pyontoenv_${{ matrix.arch }}_linux_gnu_${{ github.run_attempt }}
-          path: python/target/wheels/*.whl
+          path: target/wheels/*.whl
+          if-no-files-found: error
 
   wheel_mac:
     runs-on: macos-latest
@@ -245,6 +248,7 @@ jobs:
         with:
           name: pyontoenv_macos_${{ github.run_attempt }}
           path: target/wheels/*.whl
+          if-no-files-found: error
 
   wheel_windows:
     runs-on: windows-latest
@@ -271,6 +275,7 @@ jobs:
         with:
           name: pyontoenv_windows_${{ github.run_attempt }}
           path: target/wheels/*.whl
+          if-no-files-found: error
 
   publish_pypi:
     if: github.event_name == 'release'
