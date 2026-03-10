@@ -52,6 +52,15 @@ Observed constraints from the current implementation:
   - switched `id` and `gname` interning from `BTreeMap` to `HashMap`
   - pre-sized batch writer vectors/maps from input size
   - added `StreamingWriter::with_capacity` for callers that know approximate input size
+- Reworked `StreamingWriter` into a chunked external-sort pipeline:
+  - `add()` now buffers fixed-size encoded quints instead of retaining grouped SPO vectors
+  - large inputs spill sorted runs to temporary files
+  - `finalize()` k-way merges runs and writes graph blocks one group at a time
+  - peak memory now scales with dictionaries + one chunk + one active group, rather than all triples
+- Added an explicit streaming spill-policy API:
+  - `StreamingWriterOptions`
+  - `SpillPolicy::{Auto, MaxPendingQuads, TargetPendingBytes}`
+  - existing `with_chunk_capacity` remains as the expert override
 - Added tests covering:
   - strict CRC mismatch rejection
   - structural open ignoring footer CRC mismatch
@@ -97,6 +106,16 @@ Observed constraints from the current implementation:
   - `write/10000`: about `15.60-16.34 ms`
   - `write_streaming/10000`: about `19.77-20.75 ms`
   - `write_zstd/10000`: about `17.26-17.52 ms`
+- Focused streaming-writer note after the 4.1 chunked-run rewrite:
+  - `write_streaming/10000`: about `16.25-16.38 ms`
+- Focused streaming-writer note after adding `StreamingWriteStats` observability:
+  - `write_streaming/10000`: about `16.04-16.20 ms`
+- Focused 4.1 memory-profile notes from `cargo run --release --bin streaming_profile` on a `20 x 10_000` workload:
+  - batch peak RSS: `250,191,872` bytes, about `238.6 MiB`
+  - streaming peak RSS with `chunk_quads=4096`: `131,309,568` bytes, about `125.2 MiB`
+  - streaming temp bytes written: `6,400,000` bytes, about `6.10 MiB`
+  - streaming elapsed time: `321.5 ms`
+  - batch elapsed time: `353.8 ms`
 - Compact `GDIR` rows reduce that section by 12 bytes per row, a 27.3% reduction versus the legacy 44-byte row.
 - Compact pair-index entries reduce that section by 4 bytes per pair, a 25% reduction versus the legacy 16-byte entry.
 - The synthetic benchmark shows the intended reader-side improvement clearly for non-strict open paths, but the full suite was noisy for unrelated write benchmarks and should not yet be used as a stable throughput comparison for write-path work.
@@ -309,21 +328,42 @@ Decision gate:
 
 ### 4.1 True streaming/external build
 
-- [ ] Redesign `StreamingWriter` so it does not retain all triples in memory.
-- [ ] Choose an external build strategy:
-  - chunked in-memory sorts + merge
+- [x] Redesign `StreamingWriter` so it does not retain all triples in memory.
+- [x] Choose an external build strategy:
+  - [x] chunked in-memory sorts + merge
   - append per-graph temporary runs then merge
   - two-pass build if required for dictionaries
-- [ ] Define memory budget targets for large ingest.
-- [ ] Preserve deterministic output ordering.
+- [x] Define memory budget targets for large ingest.
+- [x] Preserve deterministic output ordering.
 - [ ] Benchmark:
-  - peak RSS
-  - build throughput
-  - temp disk usage
+  - [x] peak RSS
+  - [x] build throughput
+  - [x] temp disk usage
 
 Success criteria:
 
 - `StreamingWriter` becomes meaningfully lower-memory than batch build.
+
+Notes:
+
+- `StreamingWriter` now emits sorted temporary runs of encoded `(id_id, gn_id, s, p, o)` records and merges them during `finalize()`.
+- Existing correctness coverage now includes a test that forces multiple run spills and validates merged SPO order.
+- `StreamingWriter::finalize_with_stats()` now returns `StreamingWriteStats` so callers and tests can observe:
+  - total accepted quads
+  - configured chunk size
+  - peak pending-quads watermark
+  - number of spilled runs
+  - total temporary bytes written
+- Coverage now includes both a forced-spill case and a no-spill case for the stats API.
+- On the current synthetic 10k-triple benchmark, `write_streaming/10000` improved from the previous roughly `19.77-20.75 ms` range to roughly `16.25-16.38 ms`.
+- The current tree remains in the same performance band after exposing streaming-build stats:
+  - `write_streaming/10000`: about `16.04-16.20 ms`
+- The current profiling path is `cargo run --release --bin streaming_profile -- --mode <batch|streaming> ...`.
+- Provisional 4.1 budget target for regression checks:
+  - on the synthetic `20 x 10_000` ingest with `chunk_quads=4096`, streaming peak RSS should stay below `150 MiB` and below `60%` of the equivalent batch-writer RSS
+  - temp-run bytes should stay within the same order of magnitude as the encoded spill payload, currently about `6.10 MiB` for this workload
+- The remaining operational follow-up is mostly policy:
+  - resolved by exposing `StreamingWriterOptions` and `SpillPolicy`
 
 ### 4.2 Writer hot-path cleanup
 
@@ -377,7 +417,7 @@ Decision gate:
 - [ ] Phase 2.1: string dictionary redesign
 - [ ] Phase 3.1: compact `GDIR` and pair index
 - [ ] Phase 4.2: writer hot-path cleanup
-- [ ] Phase 4.1: true streaming writer
+- [x] Phase 4.1: true streaming writer
 - [ ] Phase 2.3 and Phase 3.2 after new corpus benchmarks exist
 - [ ] Phase 5 only after earlier phases plateau
 

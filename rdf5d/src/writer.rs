@@ -1,6 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::fs;
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::header::{Section, SectionKind, TocEntry, crc32_ieee};
 use crate::reader::{R5Error, Result};
@@ -20,14 +23,20 @@ struct RawSpoBuild {
     n_t: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct EncodedQuint {
+    id_id: u32,
+    gn_id: u32,
+    s: u64,
+    p: u64,
+    o: u64,
+}
+
 fn compact_gdir_row_size(rows: &[GidRow]) -> u32 {
-    if rows.iter().all(|(_, _, sec, n_triples, n_s, n_p, n_o)| {
+    if rows.iter().all(|(_, _, sec, n_triples, _, _, _)| {
         u32::try_from(sec.off).is_ok()
             && u32::try_from(sec.len).is_ok()
             && u32::try_from(*n_triples).is_ok()
-            && u32::try_from(*n_s).is_ok()
-            && u32::try_from(*n_p).is_ok()
-            && u32::try_from(*n_o).is_ok()
     }) {
         32
     } else {
@@ -106,12 +115,48 @@ fn push_uvarint(mut v: u64, out: &mut Vec<u8>) {
 }
 
 /// Options controlling file emission.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WriterOptions {
     /// Compress triple blocks using zstd (requires `zstd` feature).
     pub zstd: bool,
     /// Compute and embed per‑section CRCs (TOC) and a global footer CRC.
     pub with_crc: bool,
+}
+
+/// Summary statistics from a [`StreamingWriter`] build.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamingWriteStats {
+    /// Total number of quads accepted by the writer.
+    pub total_quads: usize,
+    /// Target chunk size used by the writer.
+    pub chunk_quads: usize,
+    /// Maximum number of buffered quads held before a spill/finalize flush.
+    pub max_pending_quads: usize,
+    /// Number of sorted temporary runs written to disk.
+    pub run_count: usize,
+    /// Total bytes written to temporary run files.
+    pub temp_bytes_written: u64,
+}
+
+/// Spill policy controlling when [`StreamingWriter`] flushes pending quads to a sorted run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SpillPolicy {
+    /// Choose a chunk size from the workload hint, bounded to a conservative default range.
+    #[default]
+    Auto,
+    /// Spill once the pending in-memory encoded quads reach this count.
+    MaxPendingQuads(usize),
+    /// Spill once the pending in-memory encoded quads reach roughly this many bytes.
+    TargetPendingBytes(usize),
+}
+
+/// Public configuration for [`StreamingWriter`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamingWriterOptions {
+    /// File emission options shared with the batch writer.
+    pub writer: WriterOptions,
+    /// Spill policy for the external-sort pipeline.
+    pub spill_policy: SpillPolicy,
 }
 
 /// Convenience helper to write a `.r5tu` file with defaults.
@@ -390,28 +435,76 @@ pub struct StreamingWriter {
     id_vec: Vec<String>,
     gn_vec: Vec<String>,
     term_vec: Vec<Term>,
-    groups: GroupsMap,
+    pending: Vec<EncodedQuint>,
+    run_paths: Vec<PathBuf>,
+    chunk_quads: usize,
+    stats: StreamingWriteStats,
 }
 
 impl StreamingWriter {
     /// Create a streaming writer targeting `path` with `opts`.
     pub fn new<P: Into<PathBuf>>(path: P, opts: WriterOptions) -> Self {
-        Self::with_capacity(path, opts, 0)
+        Self::with_options(path, StreamingWriterOptions::from_writer_options(opts))
+    }
+
+    /// Create a streaming writer targeting `path` with explicit streaming options.
+    pub fn with_options<P: Into<PathBuf>>(path: P, opts: StreamingWriterOptions) -> Self {
+        Self::with_options_and_hint(path, opts, 0)
     }
 
     /// Create a streaming writer with reserved capacity for approximately `n_quads` quads.
     pub fn with_capacity<P: Into<PathBuf>>(path: P, opts: WriterOptions, n_quads: usize) -> Self {
+        Self::with_options_and_hint(
+            path,
+            StreamingWriterOptions::from_writer_options(opts),
+            n_quads,
+        )
+    }
+
+    /// Create a streaming writer with explicit options and an approximate workload hint.
+    pub fn with_options_and_hint<P: Into<PathBuf>>(
+        path: P,
+        opts: StreamingWriterOptions,
+        n_quads: usize,
+    ) -> Self {
+        let chunk_quads = resolve_chunk_quads(opts.spill_policy, n_quads);
+        Self::build(path.into(), opts.writer, n_quads, chunk_quads)
+    }
+
+    /// Create a streaming writer with reserved capacity and a target in-memory chunk size.
+    ///
+    /// This remains available as an expert API. Prefer [`StreamingWriter::with_options`] or
+    /// [`StreamingWriter::with_options_and_hint`] when callers want policy-driven configuration.
+    pub fn with_chunk_capacity<P: Into<PathBuf>>(
+        path: P,
+        opts: WriterOptions,
+        n_quads: usize,
+        chunk_quads: usize,
+    ) -> Self {
+        Self::build(path.into(), opts, n_quads, chunk_quads.max(1))
+    }
+
+    fn build(path: PathBuf, opts: WriterOptions, n_quads: usize, chunk_quads: usize) -> Self {
         let estimated_unique_strings = n_quads.min(256);
         Self {
             opts,
-            path: path.into(),
+            path,
             id_map: HashMap::with_capacity(estimated_unique_strings),
             gn_map: HashMap::with_capacity(estimated_unique_strings),
             term_map: HashMap::with_capacity(n_quads.saturating_mul(3)),
             id_vec: Vec::with_capacity(estimated_unique_strings),
             gn_vec: Vec::with_capacity(estimated_unique_strings),
             term_vec: Vec::with_capacity(n_quads.saturating_mul(3)),
-            groups: BTreeMap::new(),
+            pending: Vec::with_capacity(chunk_quads.max(1)),
+            run_paths: Vec::new(),
+            chunk_quads: chunk_quads.max(1),
+            stats: StreamingWriteStats {
+                total_quads: 0,
+                chunk_quads: chunk_quads.max(1),
+                max_pending_quads: 0,
+                run_count: 0,
+                temp_bytes_written: 0,
+            },
         }
     }
 
@@ -450,20 +543,28 @@ impl StreamingWriter {
         let s = self.intern_term(&q.s);
         let p = self.intern_term(&q.p);
         let o = self.intern_term(&q.o);
-        self.groups
-            .entry((id_id, gn_id))
-            .or_default()
-            .push((s, p, o));
+        self.pending.push(EncodedQuint {
+            id_id,
+            gn_id,
+            s,
+            p,
+            o,
+        });
+        self.stats.total_quads += 1;
+        self.stats.max_pending_quads = self.stats.max_pending_quads.max(self.pending.len());
+        if self.pending.len() >= self.chunk_quads {
+            self.flush_run()?;
+        }
         Ok(())
     }
 
     /// Finish building and write the file to disk.
-    pub fn finalize(mut self) -> Result<()> {
-        // Ensure per-group SPO sort
-        for v in self.groups.values_mut() {
-            v.sort_unstable();
-        }
+    pub fn finalize(self) -> Result<()> {
+        self.finalize_with_stats().map(|_| ())
+    }
 
+    /// Finish building, write the file to disk, and return streaming-build statistics.
+    pub fn finalize_with_stats(mut self) -> Result<StreamingWriteStats> {
         // Build buffers using the same logic as write_file_with_options
         let mut file = vec![0u8; 32];
         let mut toc: Vec<TocEntry> = Vec::new();
@@ -489,41 +590,7 @@ impl StreamingWriter {
 
         let tb_off = file.len();
         let mut gid_rows: Vec<GidRow> = Vec::new();
-        for ((id_id, gn_id), spo) in &self.groups {
-            let start = file.len();
-            let raw = build_raw_spo(spo)?;
-            if self.opts.zstd {
-                #[cfg(feature = "zstd")]
-                {
-                    file.push(1u8);
-                    let compressed = zstd::encode_all(&raw.raw[..], 0)
-                        .map_err(|_| R5Error::Corrupt("zstd encode".into()))?;
-                    file.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
-                    file.extend_from_slice(&compressed);
-                }
-                #[cfg(not(feature = "zstd"))]
-                {
-                    return Err(R5Error::Invalid("zstd feature not enabled"));
-                }
-            } else {
-                file.push(0u8);
-                file.extend_from_slice(&(raw.raw.len() as u32).to_le_bytes());
-                file.extend_from_slice(&raw.raw);
-            }
-            let sec = Section {
-                off: start as u64,
-                len: (file.len() - start) as u64,
-            };
-            gid_rows.push((
-                *id_id,
-                *gn_id,
-                sec,
-                raw.n_t as u64,
-                raw.n_s,
-                raw.n_p,
-                raw.n_t,
-            ));
-        }
+        self.write_sorted_triple_blocks(&mut file, &mut gid_rows)?;
         let tb_sec = Section {
             off: tb_off as u64,
             len: (file.len() - tb_off) as u64,
@@ -617,8 +684,245 @@ impl StreamingWriter {
         let tmp = self.path.with_extension(".tmp.r5tu");
         fs::write(&tmp, &file).map_err(R5Error::Io)?;
         fs::rename(&tmp, &self.path).map_err(R5Error::Io)?;
+        Ok(self.stats)
+    }
+
+    fn flush_run(&mut self) -> Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        self.pending.sort_unstable();
+        let path = temp_run_path(&self.path, self.run_paths.len());
+        let file = fs::File::create(&path).map_err(R5Error::Io)?;
+        let mut writer = BufWriter::new(file);
+        for record in &self.pending {
+            write_record(&mut writer, *record)?;
+        }
+        writer.flush().map_err(R5Error::Io)?;
+        self.stats.run_count += 1;
+        self.stats.temp_bytes_written += (self.pending.len() * 32) as u64;
+        self.pending.clear();
+        self.run_paths.push(path);
         Ok(())
     }
+
+    fn write_sorted_triple_blocks(
+        &mut self,
+        file: &mut Vec<u8>,
+        gid_rows: &mut Vec<GidRow>,
+    ) -> Result<()> {
+        let mut current_key: Option<GroupKey> = None;
+        let mut current_spo: Vec<TripleIds> = Vec::new();
+
+        if self.run_paths.is_empty() {
+            self.pending.sort_unstable();
+            for record in &self.pending {
+                process_sorted_record(
+                    *record,
+                    &mut current_key,
+                    &mut current_spo,
+                    file,
+                    gid_rows,
+                    self.opts,
+                )?;
+            }
+        } else {
+            self.flush_run()?;
+            let _cleanup = RunCleanup {
+                paths: self.run_paths.clone(),
+            };
+            let mut readers: Vec<BufReader<fs::File>> = self
+                .run_paths
+                .iter()
+                .map(|path| {
+                    fs::File::open(path)
+                        .map(BufReader::new)
+                        .map_err(R5Error::Io)
+                })
+                .collect::<Result<_>>()?;
+            let mut heap: BinaryHeap<Reverse<(EncodedQuint, usize)>> = BinaryHeap::new();
+            for (idx, reader) in readers.iter_mut().enumerate() {
+                if let Some(record) = read_record(reader)? {
+                    heap.push(Reverse((record, idx)));
+                }
+            }
+            while let Some(Reverse((record, idx))) = heap.pop() {
+                process_sorted_record(
+                    record,
+                    &mut current_key,
+                    &mut current_spo,
+                    file,
+                    gid_rows,
+                    self.opts,
+                )?;
+                if let Some(next) = read_record(&mut readers[idx])? {
+                    heap.push(Reverse((next, idx)));
+                }
+            }
+        }
+
+        if let Some((id_id, gn_id)) = current_key
+            && !current_spo.is_empty()
+        {
+            write_group_block(file, gid_rows, self.opts, id_id, gn_id, &current_spo)?;
+        }
+        Ok(())
+    }
+}
+
+impl StreamingWriterOptions {
+    /// Create streaming options from batch-style writer options, using [`SpillPolicy::Auto`].
+    pub fn from_writer_options(writer: WriterOptions) -> Self {
+        Self {
+            writer,
+            spill_policy: SpillPolicy::Auto,
+        }
+    }
+}
+
+fn resolve_chunk_quads(policy: SpillPolicy, n_quads: usize) -> usize {
+    const ENCODED_QUINT_BYTES: usize = 32;
+    const MIN_CHUNK_QUADS: usize = 1_024;
+    const DEFAULT_CHUNK_QUADS: usize = 65_536;
+    const MAX_CHUNK_QUADS: usize = 262_144;
+
+    match policy {
+        SpillPolicy::Auto => {
+            let hinted = if n_quads == 0 {
+                DEFAULT_CHUNK_QUADS
+            } else {
+                n_quads.clamp(MIN_CHUNK_QUADS, DEFAULT_CHUNK_QUADS)
+            };
+            hinted.min(MAX_CHUNK_QUADS)
+        }
+        SpillPolicy::MaxPendingQuads(quads) => quads.max(1),
+        SpillPolicy::TargetPendingBytes(bytes) => {
+            let quads = bytes / ENCODED_QUINT_BYTES;
+            quads.clamp(1, MAX_CHUNK_QUADS)
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RunCleanup {
+    paths: Vec<PathBuf>,
+}
+
+impl Drop for RunCleanup {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn temp_run_path(base: &Path, run_idx: usize) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut path = base.to_path_buf();
+    path.set_extension(format!("run.{run_idx}.{}.tmp", nanos));
+    path
+}
+
+fn write_record(writer: &mut BufWriter<fs::File>, record: EncodedQuint) -> Result<()> {
+    writer
+        .write_all(&record.id_id.to_le_bytes())
+        .map_err(R5Error::Io)?;
+    writer
+        .write_all(&record.gn_id.to_le_bytes())
+        .map_err(R5Error::Io)?;
+    writer
+        .write_all(&record.s.to_le_bytes())
+        .map_err(R5Error::Io)?;
+    writer
+        .write_all(&record.p.to_le_bytes())
+        .map_err(R5Error::Io)?;
+    writer
+        .write_all(&record.o.to_le_bytes())
+        .map_err(R5Error::Io)?;
+    Ok(())
+}
+
+fn read_record(reader: &mut BufReader<fs::File>) -> Result<Option<EncodedQuint>> {
+    let mut buf = [0u8; 32];
+    let mut read = 0usize;
+    while read < buf.len() {
+        let n = reader.read(&mut buf[read..]).map_err(R5Error::Io)?;
+        if n == 0 {
+            if read == 0 {
+                return Ok(None);
+            }
+            return Err(R5Error::Corrupt("truncated run record".into()));
+        }
+        read += n;
+    }
+    Ok(Some(EncodedQuint {
+        id_id: u32::from_le_bytes(buf[0..4].try_into().unwrap()),
+        gn_id: u32::from_le_bytes(buf[4..8].try_into().unwrap()),
+        s: u64::from_le_bytes(buf[8..16].try_into().unwrap()),
+        p: u64::from_le_bytes(buf[16..24].try_into().unwrap()),
+        o: u64::from_le_bytes(buf[24..32].try_into().unwrap()),
+    }))
+}
+
+fn process_sorted_record(
+    record: EncodedQuint,
+    current_key: &mut Option<GroupKey>,
+    current_spo: &mut Vec<TripleIds>,
+    file: &mut Vec<u8>,
+    gid_rows: &mut Vec<GidRow>,
+    opts: WriterOptions,
+) -> Result<()> {
+    let key = (record.id_id, record.gn_id);
+    if let Some((id_id, gn_id)) = *current_key
+        && key != (id_id, gn_id)
+    {
+        write_group_block(file, gid_rows, opts, id_id, gn_id, current_spo)?;
+        current_spo.clear();
+    }
+    if current_key.is_none() || current_key.as_ref() != Some(&key) {
+        *current_key = Some(key);
+    }
+    current_spo.push((record.s, record.p, record.o));
+    Ok(())
+}
+
+fn write_group_block(
+    file: &mut Vec<u8>,
+    gid_rows: &mut Vec<GidRow>,
+    opts: WriterOptions,
+    id_id: u32,
+    gn_id: u32,
+    spo: &[TripleIds],
+) -> Result<()> {
+    let start = file.len();
+    let raw = build_raw_spo(spo)?;
+    if opts.zstd {
+        #[cfg(feature = "zstd")]
+        {
+            file.push(1u8);
+            let compressed = zstd::encode_all(&raw.raw[..], 0)
+                .map_err(|_| R5Error::Corrupt("zstd encode".into()))?;
+            file.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+            file.extend_from_slice(&compressed);
+        }
+        #[cfg(not(feature = "zstd"))]
+        {
+            return Err(R5Error::Invalid("zstd feature not enabled"));
+        }
+    } else {
+        file.push(0u8);
+        file.extend_from_slice(&(raw.raw.len() as u32).to_le_bytes());
+        file.extend_from_slice(&raw.raw);
+    }
+    let sec = Section {
+        off: start as u64,
+        len: (file.len() - start) as u64,
+    };
+    gid_rows.push((id_id, gn_id, sec, raw.n_t as u64, raw.n_s, raw.n_p, raw.n_t));
+    Ok(())
 }
 
 // ---------------- Oxigraph helpers ----------------

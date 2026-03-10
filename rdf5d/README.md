@@ -90,6 +90,28 @@ w.add(Quint{ id:"src/A".into(), gname:"g".into(),
 w.finalize()?;
 ```
 
+Streaming writer with an explicit spill policy:
+
+```rust
+use rdf5d::{Quint, SpillPolicy, StreamingWriter, StreamingWriterOptions, Term, WriterOptions};
+
+let mut w = StreamingWriter::with_options(
+    "out.r5tu",
+    StreamingWriterOptions {
+        writer: WriterOptions { zstd: false, with_crc: true },
+        spill_policy: SpillPolicy::TargetPendingBytes(8 * 1024 * 1024),
+    },
+);
+w.add(Quint {
+    id: "src/A".into(),
+    gname: "g".into(),
+    s: Term::Iri("http://ex/s1".into()),
+    p: Term::Iri("http://ex/p1".into()),
+    o: Term::Iri("http://ex/o1".into()),
+})?;
+w.finalize()?;
+```
+
 With feature `oxigraph`, write from an Oxigraph Graph:
 
 ```rust
@@ -127,6 +149,30 @@ Run the Criterion benchmarks (requires the `zstd` feature):
 ```bash
 cargo bench -p rdf5d --features zstd
 ```
+
+Run the benchmark matrix script across feature combinations and configurable workload sizes:
+
+```bash
+python scripts/run_criterion_matrix.py \
+  --feature-set plain= \
+  --feature-set mmap=mmap \
+  --feature-set zstd=zstd \
+  --feature-set mmap_zstd=mmap,zstd \
+  --single-graph-triples 100,1000,10000,100000
+```
+
+The script writes per-run logs plus `summary.csv` and `summary.json` under
+`benchmark_runs/criterion_matrix_<timestamp>/`.
+
+Profile batch versus streaming-writer memory behavior on a larger synthetic ingest:
+
+```bash
+cargo run --release --bin streaming_profile -- --mode batch --graphs 20 --triples-per-graph 10000
+cargo run --release --bin streaming_profile -- --mode streaming --graphs 20 --triples-per-graph 10000 --chunk-quads 4096
+```
+
+The profiling binary samples `/proc/self/status` and reports peak RSS, elapsed time,
+final file size, and streaming spill statistics as JSON.
 
 ## Notes
 - Reader returns empty lists for unknown ids/graphnames.
