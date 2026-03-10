@@ -1,0 +1,39 @@
+{
+  "baseline": "matrix_02_mmap",
+  "command": [
+    "cargo",
+    "bench",
+    "--bench",
+    "rdf5d_bench",
+    "--features",
+    "mmap",
+    "--",
+    "--save-baseline",
+    "matrix_02_mmap",
+    "--sample-size",
+    "100",
+    "--measurement-time",
+    "5.0",
+    "--warm-up-time",
+    "3.0"
+  ],
+  "env": {
+    "RDF5D_BENCH_ENUMERATE_ALL_GRAPH_COUNTS": "5,20,100,500",
+    "RDF5D_BENCH_ENUMERATE_ALL_TRIPLES_PER_GRAPH": "10",
+    "RDF5D_BENCH_GRAPH_COUNTS": "5,20,100",
+    "RDF5D_BENCH_GRAPH_TRIPLES_PER_GRAPH": "50",
+    "RDF5D_BENCH_ROUNDTRIP_GRAPH_COUNTS": "3",
+    "RDF5D_BENCH_ROUNDTRIP_TRIPLES_PER_GRAPH": "1000,10000",
+    "RDF5D_BENCH_SINGLE_GRAPH_TRIPLES": "100,1000,10000,100000"
+  },
+  "exit_code": 0,
+  "features": [
+    "mmap"
+  ],
+  "filter": "",
+  "label": "mmap",
+  "log_path": "/home/gabe/src/ontoenv-rs/rdf5d/benchmark_runs/criterion_matrix_20260310_142229/logs/matrix_02_mmap.log",
+  "measurement_time_s": 5.0,
+  "sample_size": 100,
+  "warm_up_time_s": 3.0
+}

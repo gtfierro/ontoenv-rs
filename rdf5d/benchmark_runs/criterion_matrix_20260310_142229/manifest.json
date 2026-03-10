@@ -1,0 +1,34 @@
+{
+  "criterion_root": "/home/gabe/src/ontoenv-rs/rdf5d/target/criterion",
+  "failures": [],
+  "feature_sets": [
+    {
+      "features": [],
+      "label": "plain"
+    },
+    {
+      "features": [
+        "mmap"
+      ],
+      "label": "mmap"
+    },
+    {
+      "features": [
+        "zstd"
+      ],
+      "label": "zstd"
+    },
+    {
+      "features": [
+        "mmap",
+        "zstd"
+      ],
+      "label": "mmap_zstd"
+    }
+  ],
+  "generated_at": "2026-03-10T14:57:00.654835",
+  "output_dir": "/home/gabe/src/ontoenv-rs/rdf5d/benchmark_runs/criterion_matrix_20260310_142229",
+  "repo_root": "/home/gabe/src/ontoenv-rs/rdf5d",
+  "rows": 188,
+  "target_directory": "/home/gabe/src/ontoenv-rs/rdf5d/target"
+}

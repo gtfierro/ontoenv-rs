@@ -150,6 +150,13 @@ Run the Criterion benchmarks (requires the `zstd` feature):
 cargo bench -p rdf5d --features zstd
 ```
 
+Run the representative workload matrix that exercises many-small-graph, one-large-graph,
+repeated-literal, and high-cardinality-name scenarios:
+
+```bash
+cargo bench --bench rdf5d_bench --features mmap,zstd workload_matrix
+```
+
 Run the benchmark matrix script across feature combinations and configurable workload sizes:
 
 ```bash
@@ -173,6 +180,35 @@ cargo run --release --bin streaming_profile -- --mode streaming --graphs 20 --tr
 
 The profiling binary samples `/proc/self/status` and reports peak RSS, elapsed time,
 final file size, and streaming spill statistics as JSON.
+
+Inspect where bytes are going inside an `.r5tu` file:
+
+```bash
+cargo run --release --bin section_breakdown -- --file /tmp/rdf5d_phase0_sample.r5tu
+cargo run --release --bin section_breakdown -- --file /tmp/rdf5d_phase0_sample.r5tu --json
+```
+
+This reports top-level section sizes plus important internal subcomponents such as
+dictionary blobs, offset tables, coarse indexes, postings blobs, and triple-block payloads.
+
+Compare inline literal storage against the component-backed TERM_DICT mode:
+
+```bash
+cargo run --release --bin literal_component_profile -- --scenario repeated-lang --terms 10000
+cargo run --release --bin literal_component_profile -- --scenario repeated-datatype --terms 10000
+```
+
+This reports TERM_DICT byte counts for the legacy inline literal encoding and the new
+component-backed encoding so you can see when reuse-heavy literal workloads justify the new mode.
+
+Capture a machine-readable Phase 0 workload baseline with runtime and top-level section sizes:
+
+```bash
+CARGO_TARGET_DIR=/tmp/rdf5d-target cargo run --release --bin workload_profile --features mmap,zstd -- --iterations 5
+```
+
+This emits JSON for the representative workloads, including write/open/read/resolve timings and
+section bytes for `TERM_DICT`, string dictionaries, `GDIR`, indexes, and triple blocks.
 
 ## Notes
 - Reader returns empty lists for unknown ids/graphnames.
