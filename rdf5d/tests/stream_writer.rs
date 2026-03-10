@@ -1,4 +1,7 @@
-use rdf5d::{Quint, StreamingWriter, Term, reader::R5tuFile, writer::WriterOptions};
+use rdf5d::{
+    Quint, SpillPolicy, StreamingWriter, StreamingWriterOptions, Term, reader::R5tuFile,
+    writer::WriterOptions,
+};
 
 #[test]
 fn streaming_writer_roundtrip_interleaved_order() {
@@ -89,6 +92,157 @@ fn streaming_writer_roundtrip_interleaved_order() {
     assert_eq!(f.term_to_string(s).unwrap(), "http://ex/s2");
     assert_eq!(f.term_to_string(p).unwrap(), "http://ex/p1");
     assert_eq!(f.term_to_string(o).unwrap(), "_:b3");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn streaming_writer_spills_sorted_runs_and_merges() {
+    let mut path = std::env::temp_dir();
+    path.push("stream_runs_roundtrip.r5tu");
+    let opts = WriterOptions {
+        zstd: false,
+        with_crc: true,
+    };
+    let mut w = StreamingWriter::with_chunk_capacity(&path, opts, 0, 2);
+
+    for i in (0..8).rev() {
+        w.add(Quint {
+            id: if i % 2 == 0 { "src/A" } else { "src/B" }.into(),
+            s: Term::Iri(format!("http://ex/s{i}")),
+            p: Term::Iri("http://ex/p".into()),
+            o: Term::Iri(format!("http://ex/o{i}")),
+            gname: "g".into(),
+        })
+        .unwrap();
+    }
+
+    let stats = w.finalize_with_stats().expect("finalize");
+    assert_eq!(stats.total_quads, 8);
+    assert_eq!(stats.chunk_quads, 2);
+    assert_eq!(stats.max_pending_quads, 2);
+    assert_eq!(stats.run_count, 4);
+    assert_eq!(stats.temp_bytes_written, 256);
+
+    let f = R5tuFile::open(&path).expect("open");
+    let graphs = f.enumerate_by_graphname("g").unwrap();
+    assert_eq!(graphs.len(), 2);
+    for gr in graphs {
+        let triples: Vec<_> = f.triples_ids(gr.gid).unwrap().collect();
+        assert_eq!(triples.len(), 4);
+        let mut prev = None;
+        for t in triples {
+            if let Some(p) = prev {
+                assert!(p <= t);
+            }
+            prev = Some(t);
+        }
+    }
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn streaming_writer_reports_zero_temp_usage_without_spills() {
+    let mut path = std::env::temp_dir();
+    path.push("stream_no_spill_stats.r5tu");
+    let opts = WriterOptions {
+        zstd: false,
+        with_crc: true,
+    };
+    let mut w = StreamingWriter::with_chunk_capacity(&path, opts, 0, 16);
+
+    for i in 0..3 {
+        w.add(Quint {
+            id: "src/A".into(),
+            s: Term::Iri(format!("http://ex/s{i}")),
+            p: Term::Iri("http://ex/p".into()),
+            o: Term::Iri(format!("http://ex/o{i}")),
+            gname: "g".into(),
+        })
+        .unwrap();
+    }
+
+    let stats = w.finalize_with_stats().expect("finalize");
+    assert_eq!(stats.total_quads, 3);
+    assert_eq!(stats.chunk_quads, 16);
+    assert_eq!(stats.max_pending_quads, 3);
+    assert_eq!(stats.run_count, 0);
+    assert_eq!(stats.temp_bytes_written, 0);
+
+    let f = R5tuFile::open(&path).expect("open");
+    let gr = f.resolve_gid("src/A", "g").unwrap().unwrap();
+    let triples: Vec<_> = f.triples_ids(gr.gid).unwrap().collect();
+    assert_eq!(triples.len(), 3);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn streaming_writer_auto_policy_uses_workload_hint_without_spilling_small_inputs() {
+    let mut path = std::env::temp_dir();
+    path.push("stream_auto_policy.r5tu");
+    let mut w = StreamingWriter::with_options_and_hint(
+        &path,
+        StreamingWriterOptions {
+            writer: WriterOptions {
+                zstd: false,
+                with_crc: true,
+            },
+            spill_policy: SpillPolicy::Auto,
+        },
+        3,
+    );
+
+    for i in 0..3 {
+        w.add(Quint {
+            id: "src/A".into(),
+            s: Term::Iri(format!("http://ex/s{i}")),
+            p: Term::Iri("http://ex/p".into()),
+            o: Term::Iri(format!("http://ex/o{i}")),
+            gname: "g".into(),
+        })
+        .unwrap();
+    }
+
+    let stats = w.finalize_with_stats().expect("finalize");
+    assert_eq!(stats.chunk_quads, 1024);
+    assert_eq!(stats.run_count, 0);
+    assert_eq!(stats.temp_bytes_written, 0);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn streaming_writer_target_pending_bytes_maps_to_quad_threshold() {
+    let mut path = std::env::temp_dir();
+    path.push("stream_byte_policy.r5tu");
+    let mut w = StreamingWriter::with_options(
+        &path,
+        StreamingWriterOptions {
+            writer: WriterOptions {
+                zstd: false,
+                with_crc: true,
+            },
+            spill_policy: SpillPolicy::TargetPendingBytes(64),
+        },
+    );
+
+    for i in 0..3 {
+        w.add(Quint {
+            id: "src/A".into(),
+            s: Term::Iri(format!("http://ex/s{i}")),
+            p: Term::Iri("http://ex/p".into()),
+            o: Term::Iri(format!("http://ex/o{i}")),
+            gname: "g".into(),
+        })
+        .unwrap();
+    }
+
+    let stats = w.finalize_with_stats().expect("finalize");
+    assert_eq!(stats.chunk_quads, 2);
+    assert_eq!(stats.run_count, 2);
+    assert_eq!(stats.temp_bytes_written, 96);
 
     let _ = std::fs::remove_file(&path);
 }
