@@ -24,6 +24,10 @@ use crate::header::{
     Header, Section, SectionKind, TocEntry, crc32_ieee, parse_footer, parse_toc, section_in_bounds,
 };
 
+const STR_DICT_OFFS_FLAG_FRONT_CODED: u64 = 1 << 63;
+const STR_DICT_FRONT_BLOCK_SIZE: usize = 16;
+const STR_DICT_IDX_FLAG_GROUPED: u64 = 1 << 63;
+
 /// Errors that can arise when parsing or validating an R5TU file.
 #[derive(Debug)]
 pub enum R5Error {
@@ -453,6 +457,8 @@ struct Dict {
     offs: Section,
     idx: Option<Section>,
     idx_stride: usize,
+    front_coded: bool,
+    grouped_idx: bool,
 }
 
 impl Dict {
@@ -480,9 +486,13 @@ impl Dict {
         let blob_off = read_u64(base + 4);
         let blob_len = read_u64(base + 12);
         let offs_off = read_u64(base + 20);
-        let offs_len = read_u64(base + 28);
+        let offs_len_raw = read_u64(base + 28);
+        let front_coded = (offs_len_raw & STR_DICT_OFFS_FLAG_FRONT_CODED) != 0;
+        let offs_len = offs_len_raw & !STR_DICT_OFFS_FLAG_FRONT_CODED;
         let idx_off = read_u64(base + 36);
-        let idx_len = read_u64(base + 44);
+        let idx_len_raw = read_u64(base + 44);
+        let grouped_idx = (idx_len_raw & STR_DICT_IDX_FLAG_GROUPED) != 0;
+        let idx_len = idx_len_raw & !STR_DICT_IDX_FLAG_GROUPED;
 
         let blob = Section {
             off: blob_off,
@@ -511,6 +521,11 @@ impl Dict {
         let idx_stride = if let Some(idx) = idx {
             if n == 0 {
                 0
+            } else if grouped_idx {
+                if idx.len < 4 {
+                    return Err(R5Error::Corrupt("short grouped dict index".into()));
+                }
+                24
             } else {
                 let stride = idx.len as usize / n as usize;
                 if idx.len as usize != stride * n as usize || (stride != 20 && stride != 24) {
@@ -528,12 +543,17 @@ impl Dict {
             offs,
             idx,
             idx_stride,
+            front_coded,
+            grouped_idx,
         })
     }
 
-    fn get<'a>(&self, data: &'a [u8], id: u32) -> Option<&'a str> {
+    fn get<'a>(&self, data: &'a [u8], id: u32) -> Option<Cow<'a, str>> {
         if id >= self.n {
             return None;
+        }
+        if self.front_coded {
+            return self.get_front_coded(data, id);
         }
         let o_base = self.offs.off as usize;
         let s = u32::from_le_bytes(
@@ -547,11 +567,49 @@ impl Dict {
                 .ok()?,
         ) as usize;
         let b_base = self.blob.off as usize;
-        std::str::from_utf8(&data[b_base + s..b_base + e]).ok()
+        std::str::from_utf8(&data[b_base + s..b_base + e])
+            .ok()
+            .map(Cow::Borrowed)
+    }
+
+    fn get_front_coded<'a>(&self, data: &'a [u8], id: u32) -> Option<Cow<'a, str>> {
+        let block = id as usize / STR_DICT_FRONT_BLOCK_SIZE;
+        let within = id as usize % STR_DICT_FRONT_BLOCK_SIZE;
+        let offs_base = self.offs.off as usize;
+        let block_start = u32::from_le_bytes(
+            data[offs_base + block * 4..offs_base + block * 4 + 4]
+                .try_into()
+                .ok()?,
+        ) as usize;
+        let blob_base = self.blob.off as usize;
+        let blob = &data[blob_base + block_start..blob_base + self.blob.len as usize];
+        let (first_len, mut off) = read_uvarint(blob, 0)?;
+        let end = off + first_len as usize;
+        let mut current = std::str::from_utf8(&blob[off..end]).ok()?.to_string();
+        if within == 0 {
+            return Some(Cow::Owned(current));
+        }
+        off = end;
+        for _ in 0..within {
+            let (prefix_len, o2) = read_uvarint(blob, off)?;
+            let (suffix_len, o3) = read_uvarint(blob, o2)?;
+            let suffix_end = o3 + suffix_len as usize;
+            let suffix = std::str::from_utf8(&blob[o3..suffix_end]).ok()?;
+            let prefix = &current[..prefix_len as usize];
+            let mut rebuilt = String::with_capacity(prefix.len() + suffix.len());
+            rebuilt.push_str(prefix);
+            rebuilt.push_str(suffix);
+            off = suffix_end;
+            current = rebuilt;
+        }
+        Some(Cow::Owned(current))
     }
 
     fn find_id(&self, data: &[u8], s: &str) -> Option<u32> {
         if let Some(idx) = self.idx {
+            if self.grouped_idx {
+                return self.find_id_grouped(data, idx, s);
+            }
             let ib = idx.off as usize;
             let n = self.n as usize;
             let key16 = dict_key16(s);
@@ -603,6 +661,46 @@ impl Dict {
             None
         }
     }
+
+    fn find_id_grouped(&self, data: &[u8], idx: Section, s: &str) -> Option<u32> {
+        let ib = idx.off as usize;
+        let n_groups = u32::from_le_bytes(data[ib..ib + 4].try_into().ok()?) as usize;
+        let headers_off = ib + 4;
+        let stride = self.idx_stride;
+        let key16 = dict_key16(s);
+        let mut lo = 0usize;
+        let mut hi = n_groups;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let off = headers_off + mid * stride;
+            let k = &data[off..off + 16];
+            use std::cmp::Ordering::*;
+            match k.cmp(&key16) {
+                Less => lo = mid + 1,
+                Greater => hi = mid,
+                Equal => {
+                    let ids_off =
+                        u32::from_le_bytes(data[off + 16..off + 20].try_into().ok()?) as usize;
+                    let count =
+                        u32::from_le_bytes(data[off + 20..off + 24].try_into().ok()?) as usize;
+                    for i in 0..count {
+                        let id = u32::from_le_bytes(
+                            data[ib + ids_off + i * 4..ib + ids_off + i * 4 + 4]
+                                .try_into()
+                                .ok()?,
+                        );
+                        if let Some(ss) = self.get(data, id)
+                            && ss == s
+                        {
+                            return Some(id);
+                        }
+                    }
+                    return None;
+                }
+            }
+        }
+        None
+    }
 }
 
 fn dict_key16(s: &str) -> [u8; 16] {
@@ -621,6 +719,21 @@ struct TermDict {
     kinds_off: u64,
     data_off: u64,
     offs_off: u64,
+    literal_components: Option<LiteralComponentDicts>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ComponentDictRef {
+    n: u32,
+    blob_off: u64,
+    offs_off: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LiteralComponentDicts {
+    lex: ComponentDictRef,
+    dt: ComponentDictRef,
+    lang: ComponentDictRef,
 }
 
 impl TermDict {
@@ -632,7 +745,9 @@ impl TermDict {
         if base + 1 + 8 * 4 > data.len() {
             return Err(R5Error::Corrupt("short term dict header".into()));
         }
-        let width = data[base];
+        let width_and_flags = data[base];
+        let width = width_and_flags & 0x0f;
+        let has_literal_components = (width_and_flags & 0x80) != 0;
         if width != 4 && width != 8 {
             return Err(R5Error::Corrupt("unsupported term dict width".into()));
         }
@@ -641,13 +756,53 @@ impl TermDict {
         let kinds_off = u64::from_le_bytes(data[base + 9..base + 17].try_into().unwrap());
         let data_off = u64::from_le_bytes(data[base + 17..base + 25].try_into().unwrap());
         let offs_off = u64::from_le_bytes(data[base + 25..base + 33].try_into().unwrap());
+        let literal_components = if has_literal_components {
+            let mut next = data_off as usize;
+            let lex = parse_component_dict(data, next, offs_off)?;
+            next = component_dict_end(lex)?;
+            let dt = parse_component_dict(data, next, offs_off)?;
+            next = component_dict_end(dt)?;
+            let lang = parse_component_dict(data, next, offs_off)?;
+            Some(LiteralComponentDicts { lex, dt, lang })
+        } else {
+            None
+        };
         Ok(TermDict {
             width,
             n_terms,
             kinds_off,
             data_off,
             offs_off,
+            literal_components,
         })
+    }
+
+    fn decode_component_literal(
+        &self,
+        data: &[u8],
+        payload: &[u8],
+    ) -> Result<(String, Option<String>, Option<String>)> {
+        let dicts = self
+            .literal_components
+            .ok_or_else(|| R5Error::Corrupt("missing literal component dicts".into()))?;
+        let (lex_id, off) =
+            read_uvarint(payload, 0).ok_or_else(|| R5Error::Corrupt("lex id".into()))?;
+        let (dt_id, off) =
+            read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("dt id".into()))?;
+        let (lang_id, _) =
+            read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("lang id".into()))?;
+        let lex = component_string(data, dicts.lex, lex_id as u32)?;
+        let dt = if dt_id == 0 {
+            None
+        } else {
+            Some(component_string(data, dicts.dt, (dt_id - 1) as u32)?)
+        };
+        let lang = if lang_id == 0 {
+            None
+        } else {
+            Some(component_string(data, dicts.lang, (lang_id - 1) as u32)?)
+        };
+        Ok((lex, dt, lang))
     }
 
     fn term_to_string(&self, data: &[u8], term_id: u64) -> Result<String> {
@@ -698,6 +853,14 @@ impl TermDict {
                 } else {
                     None
                 };
+                Ok(match (dt, lang) {
+                    (Some(dt), _) => format!("\"{}\"^^<{}>", lex, dt),
+                    (None, Some(lang)) => format!("\"{}\"@{}", lex, lang),
+                    _ => format!("\"{}\"", lex),
+                })
+            }
+            3 => {
+                let (lex, dt, lang) = self.decode_component_literal(data, payload)?;
                 Ok(match (dt, lang) {
                     (Some(dt), _) => format!("\"{}\"^^<{}>", lex, dt),
                     (None, Some(lang)) => format!("\"{}\"@{}", lex, lang),
@@ -773,6 +936,10 @@ impl TermDict {
                 };
                 TermParts::Literal { lex, dt, lang }
             }
+            3 => {
+                let (lex, dt, lang) = self.decode_component_literal(data, payload)?;
+                TermParts::Literal { lex, dt, lang }
+            }
             _ => return Err(R5Error::Corrupt("unknown term kind".into())),
         })
     }
@@ -803,6 +970,63 @@ impl TermDict {
             _ => Err(R5Error::Corrupt("unsupported term dict width".into())),
         }
     }
+}
+
+fn parse_component_dict(data: &[u8], start: usize, max_end: u64) -> Result<ComponentDictRef> {
+    if start + 20 > data.len() {
+        return Err(R5Error::Corrupt("short component dict header".into()));
+    }
+    let n = u32::from_le_bytes(data[start..start + 4].try_into().unwrap());
+    let blob_len = u64::from_le_bytes(data[start + 4..start + 12].try_into().unwrap());
+    let offs_len = u64::from_le_bytes(data[start + 12..start + 20].try_into().unwrap());
+    let blob_off = (start + 20) as u64;
+    let offs_off = blob_off
+        .checked_add(blob_len)
+        .ok_or_else(|| R5Error::Corrupt("component dict overflow".into()))?;
+    let end = offs_off
+        .checked_add(offs_len)
+        .ok_or_else(|| R5Error::Corrupt("component dict overflow".into()))?;
+    if end > max_end || end as usize > data.len() {
+        return Err(R5Error::Corrupt("component dict OOB".into()));
+    }
+    let expected_offs_len = (u64::from(n) + 1) * 4;
+    if offs_len != expected_offs_len {
+        return Err(R5Error::Corrupt("component dict offsets".into()));
+    }
+    Ok(ComponentDictRef {
+        n,
+        blob_off,
+        offs_off,
+    })
+}
+
+fn component_dict_end(dict: ComponentDictRef) -> Result<usize> {
+    let end = dict
+        .offs_off
+        .checked_add((u64::from(dict.n) + 1) * 4)
+        .ok_or_else(|| R5Error::Corrupt("component dict overflow".into()))?;
+    usize::try_from(end).map_err(|_| R5Error::Corrupt("component dict overflow".into()))
+}
+
+fn component_string(data: &[u8], dict: ComponentDictRef, id: u32) -> Result<String> {
+    if id >= dict.n {
+        return Err(R5Error::Corrupt("component id out of range".into()));
+    }
+    let offs_base = dict.offs_off as usize;
+    let start = u32::from_le_bytes(
+        data[offs_base + id as usize * 4..offs_base + id as usize * 4 + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let end = u32::from_le_bytes(
+        data[offs_base + (id as usize + 1) * 4..offs_base + (id as usize + 1) * 4 + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let blob_base = dict.blob_off as usize;
+    std::str::from_utf8(&data[blob_base + start..blob_base + end])
+        .map(|s| s.to_string())
+        .map_err(|_| R5Error::Corrupt("utf8".into()))
 }
 
 #[derive(Debug, Clone)]
@@ -1646,6 +1870,66 @@ mod tests {
     }
 
     #[test]
+    fn term_dict_decode_literal_component_refs() {
+        let mut file = vec![0u8; 0];
+        let sec_off = file.len();
+        file.resize(file.len() + 33, 0);
+        let kinds_off = file.len();
+        file.extend_from_slice(&[3u8]);
+        let data_off = file.len();
+
+        // lex dict: ["hello"]
+        file.extend_from_slice(&1u32.to_le_bytes());
+        file.extend_from_slice(&(5u64).to_le_bytes());
+        file.extend_from_slice(&(8u64).to_le_bytes());
+        file.extend_from_slice(b"hello");
+        file.extend_from_slice(&0u32.to_le_bytes());
+        file.extend_from_slice(&5u32.to_le_bytes());
+
+        // dt dict: ["http://ex/dt"]
+        file.extend_from_slice(&1u32.to_le_bytes());
+        file.extend_from_slice(&(12u64).to_le_bytes());
+        file.extend_from_slice(&(8u64).to_le_bytes());
+        file.extend_from_slice(b"http://ex/dt");
+        file.extend_from_slice(&0u32.to_le_bytes());
+        file.extend_from_slice(&12u32.to_le_bytes());
+
+        // lang dict: []
+        file.extend_from_slice(&0u32.to_le_bytes());
+        file.extend_from_slice(&0u64.to_le_bytes());
+        file.extend_from_slice(&(4u64).to_le_bytes());
+        file.extend_from_slice(&0u32.to_le_bytes());
+
+        let payload_off = file.len();
+        push_uvarint(0, &mut file); // lex id
+        push_uvarint(1, &mut file); // dt id + 1
+        push_uvarint(0, &mut file); // no lang
+
+        let offs_off = file.len();
+        file.extend_from_slice(&(u32::try_from(payload_off - data_off).unwrap()).to_le_bytes());
+        file.extend_from_slice(&(u32::try_from(file.len() - data_off).unwrap()).to_le_bytes());
+
+        file[sec_off] = 4 | 0x80;
+        file[sec_off + 1..sec_off + 9].copy_from_slice(&(1u64).to_le_bytes());
+        file[sec_off + 9..sec_off + 17].copy_from_slice(&(kinds_off as u64).to_le_bytes());
+        file[sec_off + 17..sec_off + 25].copy_from_slice(&(data_off as u64).to_le_bytes());
+        file[sec_off + 25..sec_off + 33].copy_from_slice(&(offs_off as u64).to_le_bytes());
+
+        let td = TermDict::parse(
+            &file,
+            Section {
+                off: sec_off as u64,
+                len: (file.len() - sec_off) as u64,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            td.term_to_string(&file, 0).unwrap(),
+            "\"hello\"^^<http://ex/dt>"
+        );
+    }
+
+    #[test]
     fn triple_iter_starts_without_decoded_object_run_state() {
         let raw = {
             let mut buf = Vec::new();
@@ -1689,6 +1973,8 @@ mod tests {
                 offs: Section { off: 0, len: 0 },
                 idx: None,
                 idx_stride: 0,
+                front_coded: false,
+                grouped_idx: false,
             },
             gname_dict: Dict {
                 sec: Section { off: 0, len: 0 },
@@ -1697,6 +1983,8 @@ mod tests {
                 offs: Section { off: 0, len: 0 },
                 idx: None,
                 idx_stride: 0,
+                front_coded: false,
+                grouped_idx: false,
             },
             term_dict: TermDict {
                 width: 4,
@@ -1704,6 +1992,7 @@ mod tests {
                 kinds_off: 0,
                 data_off: 0,
                 offs_off: 0,
+                literal_components: None,
             },
             gdir: Section { off: 0, len: 0 },
             idx_id2gid: Section { off: 0, len: 0 },
@@ -1975,6 +2264,8 @@ mod tests {
                 offs: Section { off: 0, len: 0 },
                 idx: None,
                 idx_stride: 0,
+                front_coded: false,
+                grouped_idx: false,
             },
             gname_dict: Dict {
                 sec: Section { off: 0, len: 0 },
@@ -1983,6 +2274,8 @@ mod tests {
                 offs: Section { off: 0, len: 0 },
                 idx: None,
                 idx_stride: 0,
+                front_coded: false,
+                grouped_idx: false,
             },
             term_dict: TermDict {
                 width: 4,
@@ -1990,6 +2283,7 @@ mod tests {
                 kinds_off: 0,
                 data_off: 0,
                 offs_off: 0,
+                literal_components: None,
             },
             gdir: Section { off: 16, len: 48 },
             idx_id2gid: Section { off: 0, len: 0 },

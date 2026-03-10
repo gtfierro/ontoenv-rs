@@ -96,22 +96,40 @@ DICT:
 u32  n\_entries
 u64  str\_bytes\_off    --> \[UTF-8 bytes...]
 u64  str\_bytes\_len
-u64  offs\_off         --> \[u32 \* (n\_entries+1)]
-u64  offs\_len
-u64  idx\_off (0 if absent) --> \[IndexEntry \* n\_entries]
-u64  idx\_len
+u64  offs\_off         --> \[u32 \* (n\_entries+1)] or sparse restart table
+u64  offs\_len         // high bit 0x8000... => front-coded string storage
+u64  idx\_off (0 if absent) --> \[IndexEntry \* n\_entries] or grouped coarse index
+u64  idx\_len         // high bit 0x8000... => grouped coarse index
 
 ```
 
-- **Blob:** concatenation of all strings.
-- **Offsets:** `offs[i]` start of string i in blob; `offs[n]=blob_len`.
+- **Plain blob mode:** concatenation of all strings.
+- **Plain offsets mode:** `offs[i]` start of string i in blob; `offs[n]=blob_len`.
+- **Front-coded blob mode:** enabled when `offs_len` has high bit `0x8000_0000_0000_0000`.
+  - strings are grouped into fixed blocks of 16
+  - block head: `len:uvarint` + raw bytes
+  - subsequent strings in block: `prefix_len:uvarint` + `suffix_len:uvarint` + suffix bytes
+- **Front-coded offsets mode:** `offs` becomes a sparse restart table of `u32` block starts in the blob,
+  with one entry per block plus a final sentinel.
 - **IndexEntry (20 bytes in current writer; reader accepts legacy 24-byte entries):**
   - `key16[16]` — lowercased first up-to-16 bytes of string, zero-padded.
   - `id_u32` — the entry’s ordinal.
+- **Grouped coarse index:** enabled when `idx_len` has high bit `0x8000_0000_0000_0000`.
+  - `u32 n_groups`
+  - repeated group headers: `key16[16] + ids_off_u32 + count_u32`
+  - followed by a packed `u32` id blob
+  - all strings sharing the same `key16` share one group header
 
 **Operations:**
-- ID→string: slice `blob[offs[i]..offs[i+1]]`.
+- ID→string:
+  - plain mode: slice `blob[offs[i]..offs[i+1]]`
+  - front-coded mode: decode within the string’s 16-entry block from the nearest restart point
 - string→ID: binary search `key16` then string-compare inside blob.
+  - grouped index mode: binary search group headers by `key16`, then scan only that group’s ids
+
+**Writer policy (current implementation):**
+- `ID_DICT` stays on plain blob storage with the flat 20-byte coarse index.
+- `GNAME_DICT` may switch to front-coded storage and/or grouped coarse index when that is smaller.
 
 > Future: replace or augment with mmap-able FSTs for perfect lookups.
 
@@ -120,13 +138,14 @@ u64  idx\_len
 ### 2.2 Global Term Dictionary — `TERM_DICT`
 
 Maps unique RDF terms to `TermID`. `width_u8` controls the offset width used by the offsets table.
+The high bit of `width_u8` is reserved for literal-component dictionaries.
 
 **Layout:**
 ```
 
-u8   width              // 4 or 8; width of entries in offs array
+u8   width_flags        // low nibble: 4 or 8; high bit 0x80 => literal-component dicts present
 u64  n\_terms
-u64  kinds\_off          --> \[u8 \* n]  // 0=IRI, 1=BNODE, 2=LITERAL
+u64  kinds\_off          --> \[u8 \* n]  // 0=IRI, 1=BNODE, 2=LITERAL-inline, 3=LITERAL-component-ref
 u64  data\_off           --> \[bytes ...] payload blob
 u64  offs\_off           --> \[u32 \* (n+1)] or \[u64 \* (n+1)] per width
 
@@ -138,6 +157,30 @@ u64  offs\_off           --> \[u32 \* (n+1)] or \[u64 \* (n+1)] per width
   - `lex_len:uvarint` + `lex_bytes`
   - `has_dt:u8` + if 1: `dt_len:uvarint` + `dt_bytes`
   - `has_lang:u8` + if 1: `lang_len:uvarint` + `lang_bytes`
+- **LITERAL-component-ref:** only used when `width_flags & 0x80 != 0`
+  - `lex_id:uvarint`
+  - `dt_id_plus_one:uvarint` (`0` = none)
+  - `lang_id_plus_one:uvarint` (`0` = none)
+
+When the literal-component flag is set, `data_off` begins with three compact component dictionaries
+before the per-term payload region:
+
+1. lexical-form dictionary
+2. datatype dictionary
+3. language dictionary
+
+Each component dictionary is laid out as:
+
+```
+u32 n
+u64 blob_len
+u64 offs_len         // must equal (n + 1) * 4
+u8  blob[blob_len]
+u32 offs[n + 1]
+```
+
+The `offs` table indexes slices inside the immediately preceding blob. Term offsets in `offs_off`
+remain relative to `data_off`, so term payloads may start after these component dictionaries.
 
 ---
 
