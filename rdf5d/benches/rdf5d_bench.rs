@@ -1,5 +1,8 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use rdf5d::{Quint, R5tuFile, StreamingWriter, Term, WriterOptions, write_file_with_options};
+use rdf5d::{
+    IntegrityMode, OpenOptions, Quint, R5tuFile, StreamingWriter, Term, WriterOptions,
+    write_file_with_options,
+};
 use tempfile::NamedTempFile;
 
 /// Generate a dataset of `n_triples` spread across `n_graphs` graphs.
@@ -121,6 +124,43 @@ fn bench_open(c: &mut Criterion) {
                 R5tuFile::open(f.path()).unwrap();
             });
         });
+        group.bench_with_input(BenchmarkId::new("structural", n), &f, |b, f| {
+            b.iter(|| {
+                R5tuFile::open_with_options(
+                    f.path(),
+                    OpenOptions {
+                        integrity: IntegrityMode::Structural,
+                        prefer_mmap: false,
+                    },
+                )
+                .unwrap();
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("trusted", n), &f, |b, f| {
+            b.iter(|| {
+                R5tuFile::open_with_options(
+                    f.path(),
+                    OpenOptions {
+                        integrity: IntegrityMode::Trusted,
+                        prefer_mmap: false,
+                    },
+                )
+                .unwrap();
+            });
+        });
+        #[cfg(feature = "mmap")]
+        group.bench_with_input(BenchmarkId::new("mmap_structural", n), &f, |b, f| {
+            b.iter(|| {
+                R5tuFile::open_with_options(
+                    f.path(),
+                    OpenOptions {
+                        integrity: IntegrityMode::Structural,
+                        prefer_mmap: true,
+                    },
+                )
+                .unwrap();
+            });
+        });
     }
     group.finish();
 }
@@ -137,6 +177,24 @@ fn bench_read_triples(c: &mut Criterion) {
             b.iter(|| {
                 let iter = file.triples_ids(0).unwrap();
                 for _ in iter {}
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_first_triple(c: &mut Criterion) {
+    let mut group = c.benchmark_group("first_triple");
+    for n in [100, 1_000, 10_000] {
+        let quints = generate_quints(1, n);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let file = R5tuFile::open(f.path()).unwrap();
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &file, |b, file| {
+            b.iter(|| {
+                let mut iter = file.triples_ids(0).unwrap();
+                iter.next().unwrap()
             });
         });
     }
@@ -179,6 +237,47 @@ fn bench_graph_lookup(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_resolve_gid(c: &mut Criterion) {
+    let mut group = c.benchmark_group("resolve_gid");
+    for n_graphs in [5, 20, 100] {
+        let quints = generate_quints(n_graphs, 50);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let file = R5tuFile::open(f.path()).unwrap();
+        group.throughput(Throughput::Elements(n_graphs as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(n_graphs), &file, |b, file| {
+            b.iter(|| {
+                for g in 0..n_graphs {
+                    let _ = file
+                        .resolve_gid(
+                            &format!("dataset/{g}"),
+                            &format!("http://example.org/graph/{g}"),
+                        )
+                        .unwrap();
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_enumerate_all(c: &mut Criterion) {
+    let mut group = c.benchmark_group("enumerate_all");
+    for n_graphs in [5, 20, 100, 500] {
+        let quints = generate_quints(n_graphs, 10);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let file = R5tuFile::open(f.path()).unwrap();
+        group.throughput(Throughput::Elements(n_graphs as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(n_graphs), &file, |b, file| {
+            b.iter(|| {
+                let _ = file.enumerate_all().unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_roundtrip(c: &mut Criterion) {
     let mut group = c.benchmark_group("roundtrip");
     for n in [1_000, 10_000] {
@@ -208,7 +307,10 @@ criterion_group!(
     bench_write_streaming,
     bench_open,
     bench_read_triples,
+    bench_first_triple,
     bench_graph_lookup,
+    bench_resolve_gid,
+    bench_enumerate_all,
     bench_roundtrip,
 );
 criterion_main!(benches);

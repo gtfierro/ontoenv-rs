@@ -18,7 +18,7 @@
 //! }
 //! ```
 
-use std::{fmt, fs, path::Path};
+use std::{borrow::Cow, fmt, fs, path::Path};
 
 use crate::header::{
     Header, Section, SectionKind, TocEntry, crc32_ieee, parse_footer, parse_toc, section_in_bounds,
@@ -52,6 +52,36 @@ impl From<std::io::Error> for R5Error {
 }
 
 pub type Result<T> = std::result::Result<T, R5Error>;
+
+/// Controls how aggressively the reader validates on-disk integrity at open time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IntegrityMode {
+    /// Validate structure, section CRCs, and the global footer CRC if present.
+    #[default]
+    Strict,
+    /// Validate structural correctness but skip CRC verification.
+    Structural,
+    /// Perform the minimum validation needed to safely locate required sections.
+    Trusted,
+}
+
+/// Options for opening an R5TU file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenOptions {
+    /// Integrity policy to apply while opening the file.
+    pub integrity: IntegrityMode,
+    /// Prefer an mmap-backed reader when the `mmap` feature is enabled.
+    pub prefer_mmap: bool,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            integrity: IntegrityMode::Strict,
+            prefer_mmap: false,
+        }
+    }
+}
 
 /// Lightweight description of a logical graph group inside an R5TU file.
 #[derive(Debug, Clone)]
@@ -111,90 +141,18 @@ impl R5tuFile {
     /// Performs bounds checks, TOC validation, and optional section/global CRCs.
     /// Returns a handle capable of dictionary lookups and triple iteration.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_options(path, OpenOptions::default())
+    }
+
+    /// Open an R5TU file using the provided [`OpenOptions`].
+    pub fn open_with_options(path: &Path, opts: OpenOptions) -> Result<Self> {
+        #[cfg(feature = "mmap")]
+        if opts.prefer_mmap {
+            return Self::open_mmap_with_options(path, opts);
+        }
+
         let data = fs::read(path)?;
-        let header = Header::parse(&data).ok_or(R5Error::Invalid("short or invalid header"))?;
-        if &header.magic != b"R5TU" {
-            return Err(R5Error::Invalid("bad magic"));
-        }
-        // basic header sanity
-        if header.toc_off_u64 as usize > data.len() {
-            return Err(R5Error::Corrupt("TOC offset out of bounds".into()));
-        }
-        let toc =
-            parse_toc(&data, &header).ok_or_else(|| R5Error::Corrupt("TOC parse failed".into()))?;
-        // verify sections lie within file and optional CRCs
-        for e in &toc {
-            if !section_in_bounds(data.len(), e.section) {
-                return Err(R5Error::Corrupt(format!(
-                    "section {:?} out of bounds",
-                    e.kind
-                )));
-            }
-            if e.crc32_u32 != 0 {
-                let start = e.section.off as usize;
-                let end = start + e.section.len as usize;
-                if end > data.len() {
-                    return Err(R5Error::Corrupt("section crc OOB".into()));
-                }
-                let got = crc32_ieee(&data[start..end]);
-                if got != e.crc32_u32 {
-                    return Err(R5Error::Corrupt("section CRC mismatch".into()));
-                }
-            }
-        }
-        // Validate TOC ordering by offset and detect overlaps
-        let mut spans: Vec<(u64, u64)> =
-            toc.iter().map(|e| (e.section.off, e.section.len)).collect();
-        spans.sort_by_key(|(off, _)| *off);
-        for w in spans.windows(2) {
-            let (a_off, a_len) = w[0];
-            let (b_off, _b_len) = w[1];
-            if a_off + a_len > b_off {
-                return Err(R5Error::Corrupt("TOC sections overlap or unsorted".into()));
-            }
-        }
-        // Resolve required sections
-        let need = |k: SectionKind| -> Result<Section> {
-            parse_toc(&data, &header)
-                .and_then(|t| t.into_iter().find(|e| e.kind == k).map(|e| e.section))
-                .ok_or(R5Error::Invalid("missing required section"))
-        };
-        let id_sec = need(SectionKind::IdDict)?;
-        let gn_sec = need(SectionKind::GNameDict)?;
-        let term_sec = need(SectionKind::TermDict)?;
-        let gdir = need(SectionKind::GDir)?;
-        let idx_id2gid = need(SectionKind::IdxId2Gid)?;
-        let idx_gname2gid = need(SectionKind::IdxGName2Gid)?;
-        let idx_pair2gid = need(SectionKind::IdxPair2Gid)?;
-        let triple_blocks = need(SectionKind::TripleBlocks)?;
-
-        let id_dict = Dict::parse(&data, id_sec)?;
-        let gname_dict = Dict::parse(&data, gn_sec)?;
-        let term_dict = TermDict::parse(&data, term_sec)?;
-
-        // Footer/global CRC
-        if let Some((footer_crc, magic)) = parse_footer(&data) {
-            if &magic != b"R5TU_ENDMARK" {
-                return Err(R5Error::Corrupt("bad footer magic".into()));
-            }
-            let got = crc32_ieee(&data[..data.len() - 16]);
-            if got != footer_crc {
-                return Err(R5Error::Corrupt("global CRC mismatch".into()));
-            }
-        }
-        Ok(Self {
-            backing: Backing::Owned(data),
-            header,
-            toc,
-            id_dict,
-            gname_dict,
-            term_dict,
-            gdir,
-            idx_id2gid,
-            idx_gname2gid,
-            idx_pair2gid,
-            triple_blocks,
-        })
+        Self::from_backing(Backing::Owned(data), opts.integrity)
     }
 
     #[cfg(feature = "mmap")]
@@ -202,78 +160,16 @@ impl R5tuFile {
     ///
     /// Enabled with the `mmap` feature.
     pub fn open_mmap(path: &Path) -> Result<Self> {
+        Self::open_mmap_with_options(path, OpenOptions::default())
+    }
+
+    #[cfg(feature = "mmap")]
+    /// Open an R5TU file using `memmap2` and the provided [`OpenOptions`].
+    pub fn open_mmap_with_options(path: &Path, opts: OpenOptions) -> Result<Self> {
         use std::fs::File;
         let f = File::open(path)?;
         let mmap = unsafe { memmap2::MmapOptions::new().map(&f) }.map_err(R5Error::Io)?;
-        let data: &[u8] = &mmap;
-        let header = Header::parse(data).ok_or(R5Error::Invalid("short or invalid header"))?;
-        if &header.magic != b"R5TU" {
-            return Err(R5Error::Invalid("bad magic"));
-        }
-        if header.toc_off_u64 as usize > data.len() {
-            return Err(R5Error::Corrupt("TOC offset out of bounds".into()));
-        }
-        let toc =
-            parse_toc(data, &header).ok_or_else(|| R5Error::Corrupt("TOC parse failed".into()))?;
-        for e in &toc {
-            if !section_in_bounds(data.len(), e.section) {
-                return Err(R5Error::Corrupt(format!(
-                    "section {:?} out of bounds",
-                    e.kind
-                )));
-            }
-            if e.crc32_u32 != 0 {
-                let start = e.section.off as usize;
-                let end = start + e.section.len as usize;
-                if end > data.len() {
-                    return Err(R5Error::Corrupt("section crc OOB".into()));
-                }
-                let got = crc32_ieee(&data[start..end]);
-                if got != e.crc32_u32 {
-                    return Err(R5Error::Corrupt("section CRC mismatch".into()));
-                }
-            }
-        }
-        // Resolve sections
-        let need = |k: SectionKind| -> Result<Section> {
-            parse_toc(data, &header)
-                .and_then(|t| t.into_iter().find(|e| e.kind == k).map(|e| e.section))
-                .ok_or(R5Error::Invalid("missing required section"))
-        };
-        let id_sec = need(SectionKind::IdDict)?;
-        let gn_sec = need(SectionKind::GNameDict)?;
-        let term_sec = need(SectionKind::TermDict)?;
-        let gdir = need(SectionKind::GDir)?;
-        let idx_id2gid = need(SectionKind::IdxId2Gid)?;
-        let idx_gname2gid = need(SectionKind::IdxGName2Gid)?;
-        let idx_pair2gid = need(SectionKind::IdxPair2Gid)?;
-        let triple_blocks = need(SectionKind::TripleBlocks)?;
-        // Footer/global CRC if present
-        if let Some((footer_crc, magic)) = parse_footer(data) {
-            if &magic != b"R5TU_ENDMARK" {
-                return Err(R5Error::Corrupt("bad footer magic".into()));
-            }
-            let got = crc32_ieee(&data[..data.len() - 16]);
-            if got != footer_crc {
-                return Err(R5Error::Corrupt("global CRC mismatch".into()));
-            }
-        }
-        let id_dict = Dict::parse(data, id_sec)?;
-        let gname_dict = Dict::parse(data, gn_sec)?;
-        let term_dict = TermDict::parse(data, term_sec)?;
-        Ok(Self {
-            backing: Backing::Mmap(mmap),
-            header,
-            toc,
-            id_dict,
-            gname_dict,
-            term_dict,
-            gdir,
-            idx_id2gid,
-            idx_gname2gid,
-            idx_pair2gid,
-            triple_blocks,
-        })
+        Self::from_backing(Backing::Mmap(mmap), opts.integrity)
     }
 
     /// Returns the parsed file header.
@@ -283,6 +179,18 @@ impl R5tuFile {
     /// Returns the parsed table of contents (TOC).
     pub fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    /// Returns true when the file is backed by a memory map.
+    pub fn is_mmap_backed(&self) -> bool {
+        #[cfg(feature = "mmap")]
+        {
+            matches!(self.backing, Backing::Mmap(_))
+        }
+        #[cfg(not(feature = "mmap"))]
+        {
+            false
+        }
     }
 
     /// Finds a section by kind and returns its byte span, if present.
@@ -324,7 +232,7 @@ impl R5tuFile {
     /// Iterate over triples (S, P, O) as term ids for the given `gid`.
     ///
     /// Convert term ids to strings with [`Self::term_to_string`].
-    pub fn triples_ids(&self, gid: u64) -> Result<TripleIter> {
+    pub fn triples_ids(&self, gid: u64) -> Result<TripleIter<'_>> {
         self.decode_triple_block(gid)
     }
     /// Resolve a term id to a displayable string (IRI, bnode, or literal).
@@ -418,6 +326,123 @@ impl R5tuFile {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ParsedSections {
+    id_dict: Section,
+    gname_dict: Section,
+    term_dict: Section,
+    gdir: Section,
+    idx_id2gid: Section,
+    idx_gname2gid: Section,
+    idx_pair2gid: Section,
+    triple_blocks: Section,
+}
+
+impl R5tuFile {
+    fn from_backing(backing: Backing, integrity: IntegrityMode) -> Result<Self> {
+        let data = backing.as_bytes();
+        let header = Header::parse(data).ok_or(R5Error::Invalid("short or invalid header"))?;
+        if &header.magic != b"R5TU" {
+            return Err(R5Error::Invalid("bad magic"));
+        }
+        let toc =
+            parse_toc(data, &header).ok_or_else(|| R5Error::Corrupt("TOC parse failed".into()))?;
+        let sections = validate_open(data, &header, &toc, integrity)?;
+        let id_dict = Dict::parse(data, sections.id_dict)?;
+        let gname_dict = Dict::parse(data, sections.gname_dict)?;
+        let term_dict = TermDict::parse(data, sections.term_dict)?;
+
+        Ok(Self {
+            backing,
+            header,
+            toc,
+            id_dict,
+            gname_dict,
+            term_dict,
+            gdir: sections.gdir,
+            idx_id2gid: sections.idx_id2gid,
+            idx_gname2gid: sections.idx_gname2gid,
+            idx_pair2gid: sections.idx_pair2gid,
+            triple_blocks: sections.triple_blocks,
+        })
+    }
+}
+
+fn validate_open(
+    data: &[u8],
+    header: &Header,
+    toc: &[TocEntry],
+    integrity: IntegrityMode,
+) -> Result<ParsedSections> {
+    if header.toc_off_u64 as usize > data.len() {
+        return Err(R5Error::Corrupt("TOC offset out of bounds".into()));
+    }
+
+    for e in toc {
+        if !section_in_bounds(data.len(), e.section) {
+            return Err(R5Error::Corrupt(format!(
+                "section {:?} out of bounds",
+                e.kind
+            )));
+        }
+    }
+
+    if integrity != IntegrityMode::Trusted {
+        let mut spans: Vec<(u64, u64)> =
+            toc.iter().map(|e| (e.section.off, e.section.len)).collect();
+        spans.sort_by_key(|(off, _)| *off);
+        for w in spans.windows(2) {
+            let (a_off, a_len) = w[0];
+            let (b_off, _) = w[1];
+            if a_off + a_len > b_off {
+                return Err(R5Error::Corrupt("TOC sections overlap or unsorted".into()));
+            }
+        }
+    }
+
+    if integrity == IntegrityMode::Strict {
+        for e in toc {
+            if e.crc32_u32 == 0 {
+                continue;
+            }
+            let start = e.section.off as usize;
+            let end = start + e.section.len as usize;
+            if end > data.len() {
+                return Err(R5Error::Corrupt("section crc OOB".into()));
+            }
+            let got = crc32_ieee(&data[start..end]);
+            if got != e.crc32_u32 {
+                return Err(R5Error::Corrupt("section CRC mismatch".into()));
+            }
+        }
+
+        if let Some((footer_crc, _magic)) = parse_footer(data) {
+            let got = crc32_ieee(&data[..data.len() - 16]);
+            if got != footer_crc {
+                return Err(R5Error::Corrupt("global CRC mismatch".into()));
+            }
+        }
+    }
+
+    Ok(ParsedSections {
+        id_dict: required_section(toc, SectionKind::IdDict)?,
+        gname_dict: required_section(toc, SectionKind::GNameDict)?,
+        term_dict: required_section(toc, SectionKind::TermDict)?,
+        gdir: required_section(toc, SectionKind::GDir)?,
+        idx_id2gid: required_section(toc, SectionKind::IdxId2Gid)?,
+        idx_gname2gid: required_section(toc, SectionKind::IdxGName2Gid)?,
+        idx_pair2gid: required_section(toc, SectionKind::IdxPair2Gid)?,
+        triple_blocks: required_section(toc, SectionKind::TripleBlocks)?,
+    })
+}
+
+fn required_section(toc: &[TocEntry], kind: SectionKind) -> Result<Section> {
+    toc.iter()
+        .find(|e| e.kind == kind)
+        .map(|e| e.section)
+        .ok_or(R5Error::Invalid("missing required section"))
+}
+
 // ---------------- Dicts (ID/GNAME) ----------------
 #[derive(Debug, Clone, Copy)]
 struct Dict {
@@ -427,6 +452,7 @@ struct Dict {
     blob: Section,
     offs: Section,
     idx: Option<Section>,
+    idx_stride: usize,
 }
 
 impl Dict {
@@ -482,12 +508,26 @@ impl Dict {
         {
             return Err(R5Error::Corrupt("dict index OOB".into()));
         }
+        let idx_stride = if let Some(idx) = idx {
+            if n == 0 {
+                0
+            } else {
+                let stride = idx.len as usize / n as usize;
+                if idx.len as usize != stride * n as usize || (stride != 20 && stride != 24) {
+                    return Err(R5Error::Corrupt("unsupported dict index stride".into()));
+                }
+                stride
+            }
+        } else {
+            0
+        };
         Ok(Dict {
             sec,
             n,
             blob,
             offs,
             idx,
+            idx_stride,
         })
     }
 
@@ -514,21 +554,13 @@ impl Dict {
         if let Some(idx) = self.idx {
             let ib = idx.off as usize;
             let n = self.n as usize;
-            let mut key16 = [0u8; 16];
-            for (i, b) in s
-                .to_ascii_lowercase()
-                .as_bytes()
-                .iter()
-                .take(16)
-                .enumerate()
-            {
-                key16[i] = *b;
-            }
+            let key16 = dict_key16(s);
+            let stride = self.idx_stride;
             let mut lo = 0usize;
             let mut hi = n;
             while lo < hi {
                 let mid = (lo + hi) / 2;
-                let off = ib + mid * 24;
+                let off = ib + mid * stride;
                 let k = &data[off..off + 16];
                 use std::cmp::Ordering::*;
                 match k.cmp(&key16) {
@@ -537,12 +569,15 @@ impl Dict {
                     Equal => {
                         // scan neighbors with identical key16
                         let mut m = mid;
-                        while m > 0 && &data[ib + (m - 1) * 24..ib + (m - 1) * 24 + 16] == k {
+                        while m > 0 && &data[ib + (m - 1) * stride..ib + (m - 1) * stride + 16] == k
+                        {
                             m -= 1;
                         }
-                        while m < n && &data[ib + m * 24..ib + m * 24 + 16] == k {
+                        while m < n && &data[ib + m * stride..ib + m * stride + 16] == k {
                             let id = u32::from_le_bytes(
-                                data[ib + m * 24 + 16..ib + m * 24 + 20].try_into().ok()?,
+                                data[ib + m * stride + 16..ib + m * stride + 20]
+                                    .try_into()
+                                    .ok()?,
                             );
                             if let Some(ss) = self.get(data, id)
                                 && ss == s
@@ -570,9 +605,18 @@ impl Dict {
     }
 }
 
+fn dict_key16(s: &str) -> [u8; 16] {
+    let mut key = [0u8; 16];
+    for (dst, src) in key.iter_mut().zip(s.bytes()) {
+        *dst = src.to_ascii_lowercase();
+    }
+    key
+}
+
 // ---------------- Term Dict ----------------
 #[derive(Debug, Clone, Copy)]
 struct TermDict {
+    width: u8,
     n_terms: u64,
     kinds_off: u64,
     data_off: u64,
@@ -588,13 +632,17 @@ impl TermDict {
         if base + 1 + 8 * 4 > data.len() {
             return Err(R5Error::Corrupt("short term dict header".into()));
         }
-        let _width = data[base]; // reserved
+        let width = data[base];
+        if width != 4 && width != 8 {
+            return Err(R5Error::Corrupt("unsupported term dict width".into()));
+        }
         // Safety: bounds checked above (base + 1 + 8*4 <= data.len())
         let n_terms = u64::from_le_bytes(data[base + 1..base + 9].try_into().unwrap());
         let kinds_off = u64::from_le_bytes(data[base + 9..base + 17].try_into().unwrap());
         let data_off = u64::from_le_bytes(data[base + 17..base + 25].try_into().unwrap());
         let offs_off = u64::from_le_bytes(data[base + 25..base + 33].try_into().unwrap());
         Ok(TermDict {
+            width,
             n_terms,
             kinds_off,
             data_off,
@@ -608,18 +656,8 @@ impl TermDict {
         }
         let kinds_off = self.kinds_off as usize;
         let data_off = self.data_off as usize;
-        let offs_off = self.offs_off as usize;
-        // offs is u64 * (n+1); slices are exactly 8 bytes so try_into cannot fail
-        let s = u64::from_le_bytes(
-            data[offs_off + term_id as usize * 8..offs_off + term_id as usize * 8 + 8]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let e = u64::from_le_bytes(
-            data[offs_off + (term_id as usize + 1) * 8..offs_off + (term_id as usize + 1) * 8 + 8]
-                .try_into()
-                .unwrap(),
-        ) as usize;
+        let s = self.offset_at(data, term_id)? as usize;
+        let e = self.offset_at(data, term_id + 1)? as usize;
         let payload = &data[data_off + s..data_off + e];
         match data[kinds_off + term_id as usize] {
             0 | 1 => std::str::from_utf8(payload)
@@ -679,18 +717,8 @@ impl TermDict {
         }
         let kinds_off = self.kinds_off as usize;
         let data_off = self.data_off as usize;
-        let offs_off = self.offs_off as usize;
-        // Slices are exactly 8 bytes so try_into cannot fail
-        let s = u64::from_le_bytes(
-            data[offs_off + term_id as usize * 8..offs_off + term_id as usize * 8 + 8]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let e = u64::from_le_bytes(
-            data[offs_off + (term_id as usize + 1) * 8..offs_off + (term_id as usize + 1) * 8 + 8]
-                .try_into()
-                .unwrap(),
-        ) as usize;
+        let s = self.offset_at(data, term_id)? as usize;
+        let e = self.offset_at(data, term_id + 1)? as usize;
         let payload = &data[data_off + s..data_off + e];
         Ok(match data[kinds_off + term_id as usize] {
             0 => TermParts::Iri(
@@ -748,6 +776,33 @@ impl TermDict {
             _ => return Err(R5Error::Corrupt("unknown term kind".into())),
         })
     }
+
+    fn offset_at(&self, data: &[u8], idx: u64) -> Result<u64> {
+        if idx > self.n_terms {
+            return Err(R5Error::Invalid("term id out of range"));
+        }
+        let base = self.offs_off as usize;
+        let idx = idx as usize;
+        match self.width {
+            4 => {
+                let start = base + idx * 4;
+                let end = start + 4;
+                let bytes = data
+                    .get(start..end)
+                    .ok_or_else(|| R5Error::Corrupt("term offset OOB".into()))?;
+                Ok(u32::from_le_bytes(bytes.try_into().unwrap()) as u64)
+            }
+            8 => {
+                let start = base + idx * 8;
+                let end = start + 8;
+                let bytes = data
+                    .get(start..end)
+                    .ok_or_else(|| R5Error::Corrupt("term offset OOB".into()))?;
+                Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+            }
+            _ => Err(R5Error::Corrupt("unsupported term dict width".into())),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -764,7 +819,7 @@ pub(crate) enum TermParts {
 #[cfg(feature = "oxigraph")]
 pub struct OxTripleIter<'a> {
     file: &'a R5tuFile,
-    inner: TripleIter,
+    inner: TripleIter<'a>,
 }
 
 #[cfg(feature = "oxigraph")]
@@ -880,16 +935,29 @@ impl R5tuFile {
             return Err(R5Error::Corrupt("gdir row OOB".into()));
         }
         let b = &bytes[off..off + row_size];
-        Ok(GDirRow {
-            id_id: u32::from_le_bytes(b[0..4].try_into().unwrap()),
-            gn_id: u32::from_le_bytes(b[4..8].try_into().unwrap()),
-            triples_off: u64::from_le_bytes(b[8..16].try_into().unwrap()),
-            triples_len: u64::from_le_bytes(b[16..24].try_into().unwrap()),
-            n_triples: u64::from_le_bytes(b[24..32].try_into().unwrap()),
-            n_s: u32::from_le_bytes(b[32..36].try_into().unwrap()),
-            n_p: u32::from_le_bytes(b[36..40].try_into().unwrap()),
-            n_o: u32::from_le_bytes(b[40..44].try_into().unwrap()),
-        })
+        match row_size {
+            32 => Ok(GDirRow {
+                id_id: u32::from_le_bytes(b[0..4].try_into().unwrap()),
+                gn_id: u32::from_le_bytes(b[4..8].try_into().unwrap()),
+                triples_off: u32::from_le_bytes(b[8..12].try_into().unwrap()) as u64,
+                triples_len: u32::from_le_bytes(b[12..16].try_into().unwrap()) as u64,
+                n_triples: u32::from_le_bytes(b[16..20].try_into().unwrap()) as u64,
+                n_s: u32::from_le_bytes(b[20..24].try_into().unwrap()),
+                n_p: u32::from_le_bytes(b[24..28].try_into().unwrap()),
+                n_o: u32::from_le_bytes(b[28..32].try_into().unwrap()),
+            }),
+            44 => Ok(GDirRow {
+                id_id: u32::from_le_bytes(b[0..4].try_into().unwrap()),
+                gn_id: u32::from_le_bytes(b[4..8].try_into().unwrap()),
+                triples_off: u64::from_le_bytes(b[8..16].try_into().unwrap()),
+                triples_len: u64::from_le_bytes(b[16..24].try_into().unwrap()),
+                n_triples: u64::from_le_bytes(b[24..32].try_into().unwrap()),
+                n_s: u32::from_le_bytes(b[32..36].try_into().unwrap()),
+                n_p: u32::from_le_bytes(b[36..40].try_into().unwrap()),
+                n_o: u32::from_le_bytes(b[40..44].try_into().unwrap()),
+            }),
+            _ => Err(R5Error::Corrupt("unsupported gdir row size".into())),
+        }
     }
 
     fn graphref_for_gid(&self, gid: u64) -> Result<GraphRef> {
@@ -991,7 +1059,19 @@ impl R5tuFile {
         }
         let n_pairs = u64::from_le_bytes(b[0..8].try_into().unwrap()) as usize;
         let pairs_off = u64::from_le_bytes(b[8..16].try_into().unwrap()) as usize;
-        let entry_size = 16usize;
+        if pairs_off < sec.off as usize + 16 {
+            return Err(R5Error::Corrupt("pairs offset OOB".into()));
+        }
+        let payload_len = sec.len as usize - (pairs_off - sec.off as usize);
+        let entry_size = if n_pairs == 0 {
+            16usize
+        } else {
+            let stride = payload_len / n_pairs;
+            if payload_len != stride * n_pairs || (stride != 12 && stride != 16) {
+                return Err(R5Error::Corrupt("unsupported pair entry size".into()));
+            }
+            stride
+        };
         if pairs_off + n_pairs * entry_size > data.len() {
             return Err(R5Error::Corrupt("pairs OOB".into()));
         }
@@ -1007,7 +1087,11 @@ impl R5tuFile {
                 Less => lo = mid + 1,
                 Greater => hi = mid,
                 Equal => {
-                    let gid = u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+                    let gid = if entry_size == 12 {
+                        u32::from_le_bytes(data[off + 8..off + 12].try_into().unwrap()) as u64
+                    } else {
+                        u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap())
+                    };
                     return Ok(Some(gid));
                 }
             }
@@ -1033,39 +1117,66 @@ fn read_uvarint(buf: &[u8], mut off: usize) -> Option<(u64, usize)> {
 
 // ---------------- Triple blocks ----------------
 #[derive(Debug)]
-pub struct TripleIter {
+pub struct TripleIter<'a> {
+    raw: Cow<'a, [u8]>,
     s_vals: Vec<u64>,
     s_heads: Vec<u64>,
     p_vals: Vec<u64>,
     p_heads: Vec<u64>,
-    o_vals: Vec<u64>,
     si: usize,
     pi: usize,
-    oi: usize,
+    emitted: usize,
+    n_t: usize,
+    o_off: usize,
+    run_remaining: usize,
+    current_o: u64,
 }
 
-impl Iterator for TripleIter {
+impl Iterator for TripleIter<'_> {
     type Item = (u64, u64, u64);
+
     fn next(&mut self) -> Option<Self::Item> {
-        if self.oi >= self.o_vals.len() {
+        if self.emitted >= self.n_t {
             return None;
         }
-        while self.pi + 1 < self.p_heads.len() && self.p_heads[self.pi + 1] <= self.oi as u64 {
-            self.pi += 1;
+
+        while self.run_remaining == 0 {
+            if self.pi >= self.p_vals.len() {
+                return None;
+            }
+            while self.si + 1 < self.s_heads.len() && self.s_heads[self.si + 1] <= self.pi as u64 {
+                self.si += 1;
+            }
+            let start = self.p_heads[self.pi] as usize;
+            let end = self.p_heads[self.pi + 1] as usize;
+            if start == end {
+                self.pi += 1;
+                continue;
+            }
+            let (first, next_off) = read_uvarint(self.raw.as_ref(), self.o_off)?;
+            self.o_off = next_off;
+            self.current_o = first;
+            self.run_remaining = end - start;
         }
-        while self.si + 1 < self.s_heads.len() && self.s_heads[self.si + 1] <= self.pi as u64 {
-            self.si += 1;
-        }
+
         let s = self.s_vals[self.si];
         let p = self.p_vals[self.pi];
-        let o = self.o_vals[self.oi];
-        self.oi += 1;
+        let o = self.current_o;
+        self.emitted += 1;
+        self.run_remaining -= 1;
+        if self.run_remaining > 0 {
+            let (delta, next_off) = read_uvarint(self.raw.as_ref(), self.o_off)?;
+            self.o_off = next_off;
+            self.current_o = self.current_o.checked_add(delta)?;
+        } else {
+            self.pi += 1;
+        }
         Some((s, p, o))
     }
 }
 
 impl R5tuFile {
-    fn decode_triple_block(&self, gid: u64) -> Result<TripleIter> {
+    fn decode_triple_block(&self, gid: u64) -> Result<TripleIter<'_>> {
         let row = self.gdir_row(gid)?;
         let data = self.bytes();
         let base = row.triples_off as usize;
@@ -1087,7 +1198,7 @@ impl R5tuFile {
                     return Err(R5Error::Corrupt("raw len OOB".into()));
                 }
                 let raw = &data[payload_start..payload_start + raw_len];
-                self.decode_raw_payload(raw)
+                self.decode_raw_payload(Cow::Borrowed(raw))
             }
             1 => {
                 #[cfg(feature = "zstd")]
@@ -1098,7 +1209,7 @@ impl R5tuFile {
                     let frame = &data[payload_start..payload_start + raw_len];
                     let raw = zstd::decode_all(std::io::Cursor::new(frame))
                         .map_err(|_| R5Error::Corrupt("zstd decode".into()))?;
-                    self.decode_raw_payload(&raw)
+                    self.decode_raw_payload(Cow::Owned(raw))
                 }
                 #[cfg(not(feature = "zstd"))]
                 {
@@ -1109,13 +1220,14 @@ impl R5tuFile {
         }
     }
 
-    fn decode_raw_payload(&self, raw: &[u8]) -> Result<TripleIter> {
+    fn decode_raw_payload<'a>(&self, raw: Cow<'a, [u8]>) -> Result<TripleIter<'a>> {
+        let raw_ref = raw.as_ref();
         let mut off = 0usize;
-        let (n_s, o1) = read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("nS".into()))?;
+        let (n_s, o1) = read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("nS".into()))?;
         off = o1;
-        let (n_p, o2) = read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("nP".into()))?;
+        let (n_p, o2) = read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("nP".into()))?;
         off = o2;
-        let (n_t, o3) = read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("nT".into()))?;
+        let (n_t, o3) = read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("nT".into()))?;
         off = o3;
         let n_s = n_s as usize;
         let n_p = n_p as usize;
@@ -1124,12 +1236,12 @@ impl R5tuFile {
         let mut s_vals = Vec::with_capacity(n_s);
         if n_s > 0 {
             let (first, o) =
-                read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("S first".into()))?;
+                read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("S first".into()))?;
             off = o;
             s_vals.push(first);
             for _ in 1..n_s {
                 let (d, o2) =
-                    read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("S delta".into()))?;
+                    read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("S delta".into()))?;
                 off = o2;
                 let prev = *s_vals.last().unwrap();
                 s_vals.push(
@@ -1142,7 +1254,7 @@ impl R5tuFile {
         let mut s_heads = Vec::with_capacity(n_s + 1);
         for _ in 0..(n_s + 1) {
             let (v, o) =
-                read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("S_heads".into()))?;
+                read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("S_heads".into()))?;
             off = o;
             s_heads.push(v);
         }
@@ -1163,13 +1275,13 @@ impl R5tuFile {
             }
             // first absolute in run
             let (first, o) =
-                read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("P first".into()))?;
+                read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("P first".into()))?;
             off = o;
             p_vals[start] = first;
             let mut cur = first;
             for v in p_vals[start + 1..end].iter_mut() {
                 let (d, o2) =
-                    read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("P delta".into()))?;
+                    read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("P delta".into()))?;
                 off = o2;
                 cur = cur
                     .checked_add(d)
@@ -1181,7 +1293,7 @@ impl R5tuFile {
         let mut p_heads = Vec::with_capacity(n_p + 1);
         for _ in 0..(n_p + 1) {
             let (v, o) =
-                read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("P_heads".into()))?;
+                read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("P_heads".into()))?;
             off = o;
             p_heads.push(v);
         }
@@ -1189,44 +1301,61 @@ impl R5tuFile {
             return Err(R5Error::Corrupt("P_heads last != nT".into()));
         }
 
-        // O_vals (delta-coded per (S,P)-run)
-        let mut o_vals = vec![0u64; n_t];
-        for p in 0..n_p {
-            let start = p_heads[p] as usize;
-            let end = p_heads[p + 1] as usize;
-            if start > end || end > n_t {
-                return Err(R5Error::Corrupt("O run OOB".into()));
-            }
-            if start == end {
-                continue;
-            }
-            let (first, o) =
-                read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("O first".into()))?;
-            off = o;
-            o_vals[start] = first;
-            let mut cur = first;
-            for v in o_vals[start + 1..end].iter_mut() {
-                let (d, o2) =
-                    read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("O delta".into()))?;
-                off = o2;
-                cur = cur
-                    .checked_add(d)
-                    .ok_or_else(|| R5Error::Corrupt("O overflow".into()))?;
-                *v = cur;
-            }
+        let o_off = off;
+        validate_o_runs(raw_ref, o_off, n_t, &p_heads)?;
+
+        let mut si = 0usize;
+        while si + 1 < s_heads.len() && s_heads[si + 1] == 0 {
+            si += 1;
         }
 
         Ok(TripleIter {
+            raw,
             s_vals,
             s_heads,
             p_vals,
             p_heads,
-            o_vals,
-            si: 0,
+            si,
             pi: 0,
-            oi: 0,
+            emitted: 0,
+            n_t,
+            o_off,
+            run_remaining: 0,
+            current_o: 0,
         })
     }
+}
+
+fn validate_o_runs(raw: &[u8], mut off: usize, n_t: usize, p_heads: &[u64]) -> Result<()> {
+    for p in 0..p_heads.len().saturating_sub(1) {
+        let start = p_heads[p] as usize;
+        let end = p_heads[p + 1] as usize;
+        if start > end || end > n_t {
+            return Err(R5Error::Corrupt("O run OOB".into()));
+        }
+        if start == end {
+            continue;
+        }
+        let (first, next_off) =
+            read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("O first".into()))?;
+        off = next_off;
+        let mut cur = first;
+        for i in start..end {
+            if i == start {
+                continue;
+            }
+            let (delta, next_off) =
+                read_uvarint(raw, off).ok_or_else(|| R5Error::Corrupt("O delta".into()))?;
+            off = next_off;
+            cur = cur
+                .checked_add(delta)
+                .ok_or_else(|| R5Error::Corrupt("O overflow".into()))?;
+        }
+    }
+    if off > raw.len() {
+        return Err(R5Error::Corrupt("O payload OOB".into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1329,6 +1458,83 @@ mod tests {
     }
 
     #[test]
+    fn dict_parse_and_lookup_with_compact_index_stride_20() {
+        let mut file = vec![0u8; 0];
+        let sec_off = file.len();
+        file.resize(file.len() + 52, 0);
+        let blob_off = file.len();
+        file.extend_from_slice(b"AB");
+        let offs_off = file.len();
+        for n in [0u32, 1, 2] {
+            file.extend_from_slice(&n.to_le_bytes());
+        }
+        let idx_off = file.len();
+        for (key, id) in [(dict_key16("A"), 0u32), (dict_key16("B"), 1u32)] {
+            file.extend_from_slice(&key);
+            file.extend_from_slice(&id.to_le_bytes());
+        }
+        let idx_len = file.len() - idx_off;
+        file[sec_off..sec_off + 4].copy_from_slice(&2u32.to_le_bytes());
+        file[sec_off + 4..sec_off + 12].copy_from_slice(&(blob_off as u64).to_le_bytes());
+        file[sec_off + 12..sec_off + 20].copy_from_slice(&(2u64).to_le_bytes());
+        file[sec_off + 20..sec_off + 28].copy_from_slice(&(offs_off as u64).to_le_bytes());
+        file[sec_off + 28..sec_off + 36].copy_from_slice(&(12u64).to_le_bytes());
+        file[sec_off + 36..sec_off + 44].copy_from_slice(&(idx_off as u64).to_le_bytes());
+        file[sec_off + 44..sec_off + 52].copy_from_slice(&(idx_len as u64).to_le_bytes());
+
+        let dict = Dict::parse(
+            &file,
+            Section {
+                off: sec_off as u64,
+                len: (file.len() - sec_off) as u64,
+            },
+        )
+        .unwrap();
+        assert_eq!(dict.idx_stride, 20);
+        assert_eq!(dict.find_id(&file, "A"), Some(0));
+        assert_eq!(dict.find_id(&file, "B"), Some(1));
+    }
+
+    #[test]
+    fn dict_parse_and_lookup_with_legacy_index_stride_24() {
+        let mut file = vec![0u8; 0];
+        let sec_off = file.len();
+        file.resize(file.len() + 52, 0);
+        let blob_off = file.len();
+        file.extend_from_slice(b"AB");
+        let offs_off = file.len();
+        for n in [0u32, 1, 2] {
+            file.extend_from_slice(&n.to_le_bytes());
+        }
+        let idx_off = file.len();
+        for (key, id) in [(dict_key16("A"), 0u32), (dict_key16("B"), 1u32)] {
+            file.extend_from_slice(&key);
+            file.extend_from_slice(&id.to_le_bytes());
+            file.extend_from_slice(&0u32.to_le_bytes());
+        }
+        let idx_len = file.len() - idx_off;
+        file[sec_off..sec_off + 4].copy_from_slice(&2u32.to_le_bytes());
+        file[sec_off + 4..sec_off + 12].copy_from_slice(&(blob_off as u64).to_le_bytes());
+        file[sec_off + 12..sec_off + 20].copy_from_slice(&(2u64).to_le_bytes());
+        file[sec_off + 20..sec_off + 28].copy_from_slice(&(offs_off as u64).to_le_bytes());
+        file[sec_off + 28..sec_off + 36].copy_from_slice(&(12u64).to_le_bytes());
+        file[sec_off + 36..sec_off + 44].copy_from_slice(&(idx_off as u64).to_le_bytes());
+        file[sec_off + 44..sec_off + 52].copy_from_slice(&(idx_len as u64).to_le_bytes());
+
+        let dict = Dict::parse(
+            &file,
+            Section {
+                off: sec_off as u64,
+                len: (file.len() - sec_off) as u64,
+            },
+        )
+        .unwrap();
+        assert_eq!(dict.idx_stride, 24);
+        assert_eq!(dict.find_id(&file, "A"), Some(0));
+        assert_eq!(dict.find_id(&file, "B"), Some(1));
+    }
+
+    #[test]
     fn term_dict_decode() {
         // One IRI, one literal with dt, one literal with lang
         let mut file = vec![0u8; 0];
@@ -1361,10 +1567,10 @@ mod tests {
         push_uvarint(2, &mut lit2);
         lit2.extend_from_slice(b"en");
         file.extend_from_slice(&lit2);
-        // offs: u64*(n+1) = 4 entries
+        // offs: u32*(n+1) = 4 entries
         let offs_off = file.len();
-        let mut cur = 0u64;
-        let sizes = [iri_bytes.len() as u64, lit1.len() as u64, lit2.len() as u64];
+        let mut cur = 0u32;
+        let sizes = [iri_bytes.len() as u32, lit1.len() as u32, lit2.len() as u32];
         file.extend_from_slice(&cur.to_le_bytes());
         cur += sizes[0];
         file.extend_from_slice(&cur.to_le_bytes());
@@ -1373,7 +1579,7 @@ mod tests {
         cur += sizes[2];
         file.extend_from_slice(&cur.to_le_bytes());
         // fill header
-        file[sec_off] = 0; // width
+        file[sec_off] = 4; // width
         let n_terms = (3u64).to_le_bytes();
         file[sec_off + 1..sec_off + 9].copy_from_slice(&n_terms);
         file[sec_off + 9..sec_off + 17].copy_from_slice(&(kinds_off as u64).to_le_bytes());
@@ -1394,6 +1600,127 @@ mod tests {
             "\"42\"^^<http://ex/i>"
         );
         assert_eq!(td.term_to_string(&file, 2).unwrap(), "\"en\"@en");
+    }
+
+    #[test]
+    fn term_dict_decode_width_8_offsets() {
+        let mut file = vec![0u8; 0];
+        let sec_off = file.len();
+        file.resize(file.len() + 33, 0);
+        let kinds_off = file.len();
+        file.extend_from_slice(&[0u8, 2]);
+        let data_off = file.len();
+        let iri_bytes = b"http://ex/s";
+        file.extend_from_slice(iri_bytes);
+        let mut lit = Vec::new();
+        push_uvarint(1, &mut lit);
+        lit.extend_from_slice(b"x");
+        lit.push(0);
+        lit.push(0);
+        file.extend_from_slice(&lit);
+        let offs_off = file.len();
+        for off in [
+            0u64,
+            iri_bytes.len() as u64,
+            (iri_bytes.len() + lit.len()) as u64,
+        ] {
+            file.extend_from_slice(&off.to_le_bytes());
+        }
+        file[sec_off] = 8;
+        file[sec_off + 1..sec_off + 9].copy_from_slice(&(2u64).to_le_bytes());
+        file[sec_off + 9..sec_off + 17].copy_from_slice(&(kinds_off as u64).to_le_bytes());
+        file[sec_off + 17..sec_off + 25].copy_from_slice(&(data_off as u64).to_le_bytes());
+        file[sec_off + 25..sec_off + 33].copy_from_slice(&(offs_off as u64).to_le_bytes());
+
+        let td = TermDict::parse(
+            &file,
+            Section {
+                off: sec_off as u64,
+                len: (file.len() - sec_off) as u64,
+            },
+        )
+        .unwrap();
+        assert_eq!(td.width, 8);
+        assert_eq!(td.term_to_string(&file, 0).unwrap(), "http://ex/s");
+        assert_eq!(td.term_to_string(&file, 1).unwrap(), "\"x\"");
+    }
+
+    #[test]
+    fn triple_iter_starts_without_decoded_object_run_state() {
+        let raw = {
+            let mut buf = Vec::new();
+            // nS=1, nP=1, nT=3
+            push_uvarint(1, &mut buf);
+            push_uvarint(1, &mut buf);
+            push_uvarint(3, &mut buf);
+            // S_vals
+            push_uvarint(10, &mut buf);
+            // S_heads
+            push_uvarint(0, &mut buf);
+            push_uvarint(1, &mut buf);
+            // P_vals
+            push_uvarint(20, &mut buf);
+            // P_heads
+            push_uvarint(0, &mut buf);
+            push_uvarint(3, &mut buf);
+            // O_vals run: [30, 31, 33]
+            push_uvarint(30, &mut buf);
+            push_uvarint(1, &mut buf);
+            push_uvarint(2, &mut buf);
+            buf
+        };
+
+        let file = R5tuFile {
+            backing: Backing::Owned(Vec::new()),
+            header: Header {
+                magic: *b"R5TU",
+                version_u16: 1,
+                flags_u16: 0,
+                created_unix64: 0,
+                toc_off_u64: 0,
+                toc_len_u32: 0,
+                reserved_u32: 0,
+            },
+            toc: Vec::new(),
+            id_dict: Dict {
+                sec: Section { off: 0, len: 0 },
+                n: 0,
+                blob: Section { off: 0, len: 0 },
+                offs: Section { off: 0, len: 0 },
+                idx: None,
+                idx_stride: 0,
+            },
+            gname_dict: Dict {
+                sec: Section { off: 0, len: 0 },
+                n: 0,
+                blob: Section { off: 0, len: 0 },
+                offs: Section { off: 0, len: 0 },
+                idx: None,
+                idx_stride: 0,
+            },
+            term_dict: TermDict {
+                width: 4,
+                n_terms: 0,
+                kinds_off: 0,
+                data_off: 0,
+                offs_off: 0,
+            },
+            gdir: Section { off: 0, len: 0 },
+            idx_id2gid: Section { off: 0, len: 0 },
+            idx_gname2gid: Section { off: 0, len: 0 },
+            idx_pair2gid: Section { off: 0, len: 0 },
+            triple_blocks: Section { off: 0, len: 0 },
+        };
+
+        let mut iter = file.decode_raw_payload(Cow::Owned(raw)).unwrap();
+        assert_eq!(iter.run_remaining, 0);
+        assert_eq!(iter.emitted, 0);
+        assert_eq!(iter.n_t, 3);
+
+        assert_eq!(iter.next(), Some((10, 20, 30)));
+        assert_eq!(iter.next(), Some((10, 20, 31)));
+        assert_eq!(iter.next(), Some((10, 20, 33)));
+        assert_eq!(iter.next(), None);
     }
 
     #[test]
@@ -1446,8 +1773,8 @@ mod tests {
         let kinds_off = f.len(); // empty kinds
         let data_off = f.len(); // empty data
         let offs_off = f.len();
-        f.extend_from_slice(&0u64.to_le_bytes()); // single 0
-        f[td_sec_off] = 0;
+        f.extend_from_slice(&0u32.to_le_bytes()); // single 0
+        f[td_sec_off] = 4;
         f[td_sec_off + 1..td_sec_off + 9].copy_from_slice(&0u64.to_le_bytes());
         f[td_sec_off + 9..td_sec_off + 17].copy_from_slice(&(kinds_off as u64).to_le_bytes());
         f[td_sec_off + 17..td_sec_off + 25].copy_from_slice(&(data_off as u64).to_le_bytes());
@@ -1489,7 +1816,7 @@ mod tests {
         let gdir_sec_off = f.len();
         // header
         f.extend_from_slice(&1u64.to_le_bytes()); // n_rows
-        f.extend_from_slice(&56u32.to_le_bytes()); // row_size
+        f.extend_from_slice(&44u32.to_le_bytes()); // row_size
         f.extend_from_slice(&0u32.to_le_bytes()); // reserved
         // row 0
         f.extend_from_slice(&0u32.to_le_bytes()); // id_id
@@ -1611,6 +1938,74 @@ mod tests {
         let triples: Vec<_> = reader.triples_ids(gr.gid).unwrap().collect();
         assert_eq!(triples, vec![(1, 2, 3), (1, 4, 5)]);
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn gdir_row_supports_compact_row_size_32() {
+        let file = R5tuFile {
+            backing: Backing::Owned({
+                let mut bytes = vec![0u8; 16];
+                bytes.extend_from_slice(&1u64.to_le_bytes());
+                bytes.extend_from_slice(&32u32.to_le_bytes());
+                bytes.extend_from_slice(&0u32.to_le_bytes());
+                bytes.extend_from_slice(&7u32.to_le_bytes());
+                bytes.extend_from_slice(&9u32.to_le_bytes());
+                bytes.extend_from_slice(&100u32.to_le_bytes());
+                bytes.extend_from_slice(&25u32.to_le_bytes());
+                bytes.extend_from_slice(&3u32.to_le_bytes());
+                bytes.extend_from_slice(&4u32.to_le_bytes());
+                bytes.extend_from_slice(&5u32.to_le_bytes());
+                bytes.extend_from_slice(&6u32.to_le_bytes());
+                bytes
+            }),
+            header: Header {
+                magic: *b"R5TU",
+                version_u16: 1,
+                flags_u16: 0,
+                created_unix64: 0,
+                toc_off_u64: 0,
+                toc_len_u32: 0,
+                reserved_u32: 0,
+            },
+            toc: Vec::new(),
+            id_dict: Dict {
+                sec: Section { off: 0, len: 0 },
+                n: 0,
+                blob: Section { off: 0, len: 0 },
+                offs: Section { off: 0, len: 0 },
+                idx: None,
+                idx_stride: 0,
+            },
+            gname_dict: Dict {
+                sec: Section { off: 0, len: 0 },
+                n: 0,
+                blob: Section { off: 0, len: 0 },
+                offs: Section { off: 0, len: 0 },
+                idx: None,
+                idx_stride: 0,
+            },
+            term_dict: TermDict {
+                width: 4,
+                n_terms: 0,
+                kinds_off: 0,
+                data_off: 0,
+                offs_off: 0,
+            },
+            gdir: Section { off: 16, len: 48 },
+            idx_id2gid: Section { off: 0, len: 0 },
+            idx_gname2gid: Section { off: 0, len: 0 },
+            idx_pair2gid: Section { off: 0, len: 0 },
+            triple_blocks: Section { off: 0, len: 0 },
+        };
+        let row = file.gdir_row(0).unwrap();
+        assert_eq!(row.id_id, 7);
+        assert_eq!(row.gn_id, 9);
+        assert_eq!(row.triples_off, 100);
+        assert_eq!(row.triples_len, 25);
+        assert_eq!(row.n_triples, 3);
+        assert_eq!(row.n_s, 4);
+        assert_eq!(row.n_p, 5);
+        assert_eq!(row.n_o, 6);
     }
 
     #[test]

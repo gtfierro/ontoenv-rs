@@ -12,6 +12,55 @@ type GroupsMap = BTreeMap<GroupKey, Vec<TripleIds>>;
 type GidRow = (u32, u32, Section, u64, u32, u32, u32);
 type PairEntry = (u32, u32, u64);
 
+#[derive(Debug)]
+struct RawSpoBuild {
+    raw: Vec<u8>,
+    n_s: u32,
+    n_p: u32,
+    n_t: u32,
+}
+
+fn compact_gdir_row_size(rows: &[GidRow]) -> u32 {
+    if rows.iter().all(|(_, _, sec, n_triples, n_s, n_p, n_o)| {
+        u32::try_from(sec.off).is_ok()
+            && u32::try_from(sec.len).is_ok()
+            && u32::try_from(*n_triples).is_ok()
+            && u32::try_from(*n_s).is_ok()
+            && u32::try_from(*n_p).is_ok()
+            && u32::try_from(*n_o).is_ok()
+    }) {
+        32
+    } else {
+        44
+    }
+}
+
+fn write_gdir_rows(buf: &mut Vec<u8>, rows: &[GidRow]) {
+    let row_size = compact_gdir_row_size(rows);
+    buf.extend_from_slice(&(rows.len() as u64).to_le_bytes());
+    buf.extend_from_slice(&row_size.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    for (id_id, gn_id, sec, n_triples, n_s, n_p, n_o) in rows {
+        buf.extend_from_slice(&id_id.to_le_bytes());
+        buf.extend_from_slice(&gn_id.to_le_bytes());
+        if row_size == 32 {
+            buf.extend_from_slice(&(sec.off as u32).to_le_bytes());
+            buf.extend_from_slice(&(sec.len as u32).to_le_bytes());
+            buf.extend_from_slice(&(*n_triples as u32).to_le_bytes());
+            buf.extend_from_slice(&n_s.to_le_bytes());
+            buf.extend_from_slice(&n_p.to_le_bytes());
+            buf.extend_from_slice(&n_o.to_le_bytes());
+        } else {
+            buf.extend_from_slice(&sec.off.to_le_bytes());
+            buf.extend_from_slice(&sec.len.to_le_bytes());
+            buf.extend_from_slice(&n_triples.to_le_bytes());
+            buf.extend_from_slice(&n_s.to_le_bytes());
+            buf.extend_from_slice(&n_p.to_le_bytes());
+            buf.extend_from_slice(&n_o.to_le_bytes());
+        }
+    }
+}
+
 /// RDF term used by the writer when constructing quads.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Term {
@@ -99,14 +148,15 @@ pub fn write_file_with_options<P: AsRef<Path>>(
     opts: WriterOptions,
 ) -> Result<()> {
     // 1) Deduplicate ids, gnames, terms
-    let mut id_map: BTreeMap<String, u32> = BTreeMap::new();
-    let mut gn_map: BTreeMap<String, u32> = BTreeMap::new();
-    let mut term_map: HashMap<Term, u64> = HashMap::new();
-    let mut id_vec: Vec<String> = Vec::new();
-    let mut gn_vec: Vec<String> = Vec::new();
-    let mut term_vec: Vec<Term> = Vec::new();
+    let estimated_unique_strings = quads.len().min(256);
+    let mut id_map: HashMap<String, u32> = HashMap::with_capacity(estimated_unique_strings);
+    let mut gn_map: HashMap<String, u32> = HashMap::with_capacity(estimated_unique_strings);
+    let mut term_map: HashMap<Term, u64> = HashMap::with_capacity(quads.len().saturating_mul(3));
+    let mut id_vec: Vec<String> = Vec::with_capacity(estimated_unique_strings);
+    let mut gn_vec: Vec<String> = Vec::with_capacity(estimated_unique_strings);
+    let mut term_vec: Vec<Term> = Vec::with_capacity(quads.len().saturating_mul(3));
 
-    let mut triples: Vec<(u32, u32, u64, u64, u64)> = Vec::new();
+    let mut triples: Vec<(u32, u32, u64, u64, u64)> = Vec::with_capacity(quads.len());
     // (id_id, gn_id, s_id, p_id, o_id)
 
     let mut intern_id = |s: &str| -> u32 {
@@ -193,7 +243,7 @@ pub fn write_file_with_options<P: AsRef<Path>>(
             #[cfg(feature = "zstd")]
             {
                 file.push(1u8); // enc=ZSTD
-                let compressed = zstd::encode_all(&raw[..], 0)
+                let compressed = zstd::encode_all(&raw.raw[..], 0)
                     .map_err(|_| R5Error::Corrupt("zstd encode".into()))?;
                 let clen = compressed.len() as u32;
                 file.extend_from_slice(&clen.to_le_bytes());
@@ -206,18 +256,23 @@ pub fn write_file_with_options<P: AsRef<Path>>(
         } else {
             // RAW
             file.push(0u8);
-            let raw_len = raw.len() as u32;
+            let raw_len = raw.raw.len() as u32;
             file.extend_from_slice(&raw_len.to_le_bytes());
-            file.extend_from_slice(&raw);
+            file.extend_from_slice(&raw.raw);
         }
         let sec = Section {
             off: start as u64,
             len: (file.len() - start) as u64,
         };
         // counts
-        let (n_s, n_p, n_t) = raw_counts(&raw)?;
         gid_rows.push((
-            *id_id, *gn_id, sec, n_t as u64, n_s as u32, n_p as u32, n_t as u32,
+            *id_id,
+            *gn_id,
+            sec,
+            raw.n_t as u64,
+            raw.n_s,
+            raw.n_p,
+            raw.n_t,
         ));
     }
     let tb_sec = Section {
@@ -232,20 +287,7 @@ pub fn write_file_with_options<P: AsRef<Path>>(
 
     // GDIR
     let gdir_off = file.len();
-    let n_rows = gid_rows.len() as u64;
-    file.extend_from_slice(&n_rows.to_le_bytes());
-    file.extend_from_slice(&44u32.to_le_bytes()); // row_size: u32+u32+u64+u64+u64+u32+u32+u32 = 44
-    file.extend_from_slice(&0u32.to_le_bytes()); // reserved
-    for (id_id, gn_id, sec, n_triples, n_s, n_p, n_o) in &gid_rows {
-        file.extend_from_slice(&id_id.to_le_bytes()); // u32
-        file.extend_from_slice(&gn_id.to_le_bytes()); // u32
-        file.extend_from_slice(&sec.off.to_le_bytes()); // u64
-        file.extend_from_slice(&sec.len.to_le_bytes()); // u64
-        file.extend_from_slice(&n_triples.to_le_bytes()); // u64
-        file.extend_from_slice(&n_s.to_le_bytes()); // u32
-        file.extend_from_slice(&n_p.to_le_bytes()); // u32
-        file.extend_from_slice(&n_o.to_le_bytes()); // u32
-    }
+    write_gdir_rows(&mut file, &gid_rows);
     let gdir_sec = Section {
         off: gdir_off as u64,
         len: (file.len() - gdir_off) as u64,
@@ -342,8 +384,8 @@ pub fn write_file_with_options<P: AsRef<Path>>(
 pub struct StreamingWriter {
     opts: WriterOptions,
     path: PathBuf,
-    id_map: BTreeMap<String, u32>,
-    gn_map: BTreeMap<String, u32>,
+    id_map: HashMap<String, u32>,
+    gn_map: HashMap<String, u32>,
     term_map: HashMap<Term, u64>,
     id_vec: Vec<String>,
     gn_vec: Vec<String>,
@@ -354,15 +396,21 @@ pub struct StreamingWriter {
 impl StreamingWriter {
     /// Create a streaming writer targeting `path` with `opts`.
     pub fn new<P: Into<PathBuf>>(path: P, opts: WriterOptions) -> Self {
+        Self::with_capacity(path, opts, 0)
+    }
+
+    /// Create a streaming writer with reserved capacity for approximately `n_quads` quads.
+    pub fn with_capacity<P: Into<PathBuf>>(path: P, opts: WriterOptions, n_quads: usize) -> Self {
+        let estimated_unique_strings = n_quads.min(256);
         Self {
             opts,
             path: path.into(),
-            id_map: BTreeMap::new(),
-            gn_map: BTreeMap::new(),
-            term_map: HashMap::new(),
-            id_vec: Vec::new(),
-            gn_vec: Vec::new(),
-            term_vec: Vec::new(),
+            id_map: HashMap::with_capacity(estimated_unique_strings),
+            gn_map: HashMap::with_capacity(estimated_unique_strings),
+            term_map: HashMap::with_capacity(n_quads.saturating_mul(3)),
+            id_vec: Vec::with_capacity(estimated_unique_strings),
+            gn_vec: Vec::with_capacity(estimated_unique_strings),
+            term_vec: Vec::with_capacity(n_quads.saturating_mul(3)),
             groups: BTreeMap::new(),
         }
     }
@@ -448,7 +496,7 @@ impl StreamingWriter {
                 #[cfg(feature = "zstd")]
                 {
                     file.push(1u8);
-                    let compressed = zstd::encode_all(&raw[..], 0)
+                    let compressed = zstd::encode_all(&raw.raw[..], 0)
                         .map_err(|_| R5Error::Corrupt("zstd encode".into()))?;
                     file.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
                     file.extend_from_slice(&compressed);
@@ -459,16 +507,21 @@ impl StreamingWriter {
                 }
             } else {
                 file.push(0u8);
-                file.extend_from_slice(&(raw.len() as u32).to_le_bytes());
-                file.extend_from_slice(&raw);
+                file.extend_from_slice(&(raw.raw.len() as u32).to_le_bytes());
+                file.extend_from_slice(&raw.raw);
             }
             let sec = Section {
                 off: start as u64,
                 len: (file.len() - start) as u64,
             };
-            let (n_s, n_p, n_t) = raw_counts(&raw)?;
             gid_rows.push((
-                *id_id, *gn_id, sec, n_t as u64, n_s as u32, n_p as u32, n_t as u32,
+                *id_id,
+                *gn_id,
+                sec,
+                raw.n_t as u64,
+                raw.n_s,
+                raw.n_p,
+                raw.n_t,
             ));
         }
         let tb_sec = Section {
@@ -483,20 +536,7 @@ impl StreamingWriter {
 
         // GDIR
         let gdir_off = file.len();
-        let n_rows = gid_rows.len() as u64;
-        file.extend_from_slice(&n_rows.to_le_bytes());
-        file.extend_from_slice(&44u32.to_le_bytes()); // row_size: u32+u32+u64+u64+u64+u32+u32+u32 = 44
-        file.extend_from_slice(&0u32.to_le_bytes()); // reserved
-        for (id_id, gn_id, sec, n_triples, n_s, n_p, n_o) in &gid_rows {
-            file.extend_from_slice(&id_id.to_le_bytes()); // u32
-            file.extend_from_slice(&gn_id.to_le_bytes()); // u32
-            file.extend_from_slice(&sec.off.to_le_bytes()); // u64
-            file.extend_from_slice(&sec.len.to_le_bytes()); // u64
-            file.extend_from_slice(&n_triples.to_le_bytes()); // u64
-            file.extend_from_slice(&n_s.to_le_bytes()); // u32
-            file.extend_from_slice(&n_p.to_le_bytes()); // u32
-            file.extend_from_slice(&n_o.to_le_bytes()); // u32
-        }
+        write_gdir_rows(&mut file, &gid_rows);
         let gdir_sec = Section {
             off: gdir_off as u64,
             len: (file.len() - gdir_off) as u64,
@@ -716,20 +756,10 @@ fn write_str_dict(buf: &mut Vec<u8>, strings: &[String]) -> Result<Section> {
     }
     buf.extend_from_slice(&cur.to_le_bytes());
     let offs_len = buf.len() - offs_off;
-    // build coarse index (key16 + id + padding) entries sorted by key16 then id
+    // build coarse index (key16 + id) entries sorted by key16 then id
     let mut idx_entries: Vec<([u8; 16], u32)> = Vec::with_capacity(strings.len());
     for (i, s) in strings.iter().enumerate() {
-        let mut key = [0u8; 16];
-        for (j, b) in s
-            .to_ascii_lowercase()
-            .as_bytes()
-            .iter()
-            .take(16)
-            .enumerate()
-        {
-            key[j] = *b;
-        }
-        idx_entries.push((key, i as u32));
+        idx_entries.push((dict_key16(s), i as u32));
     }
     idx_entries.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     let idx_off;
@@ -739,7 +769,6 @@ fn write_str_dict(buf: &mut Vec<u8>, strings: &[String]) -> Result<Section> {
         for (key, id) in idx_entries {
             buf.extend_from_slice(&key);
             buf.extend_from_slice(&id.to_le_bytes());
-            buf.extend_from_slice(&0u32.to_le_bytes()); // padding to 24 bytes
         }
         idx_len = buf.len() - idx_off;
     } else {
@@ -761,7 +790,23 @@ fn write_str_dict(buf: &mut Vec<u8>, strings: &[String]) -> Result<Section> {
     })
 }
 
+fn dict_key16(s: &str) -> [u8; 16] {
+    let mut key = [0u8; 16];
+    for (dst, src) in key.iter_mut().zip(s.bytes()) {
+        *dst = src.to_ascii_lowercase();
+    }
+    key
+}
+
 fn write_term_dict(buf: &mut Vec<u8>, terms: &[Term]) -> Result<Section> {
+    write_term_dict_with_width(buf, terms, None)
+}
+
+fn write_term_dict_with_width(
+    buf: &mut Vec<u8>,
+    terms: &[Term],
+    force_width: Option<u8>,
+) -> Result<Section> {
     let off = buf.len();
     // header 33 bytes
     buf.resize(buf.len() + 33, 0);
@@ -809,14 +854,23 @@ fn write_term_dict(buf: &mut Vec<u8>, terms: &[Term]) -> Result<Section> {
         }
         offs.push(cur);
     }
-    // offs u64*(n+1)
+    let width = force_width.unwrap_or(if cur <= u32::MAX as u64 { 4 } else { 8 });
+    if width != 4 && width != 8 {
+        return Err(R5Error::Invalid("unsupported term dict width"));
+    }
+    // offs u32*(n+1) or u64*(n+1)
     let offs_off = buf.len();
     for o in offs {
-        buf.extend_from_slice(&o.to_le_bytes());
+        if width == 4 {
+            let o = u32::try_from(o).map_err(|_| R5Error::Invalid("term dict width overflow"))?;
+            buf.extend_from_slice(&o.to_le_bytes());
+        } else {
+            buf.extend_from_slice(&o.to_le_bytes());
+        }
     }
 
     // fill header
-    buf[off] = 0; // width
+    buf[off] = width;
     buf[off + 1..off + 9].copy_from_slice(&(terms.len() as u64).to_le_bytes());
     buf[off + 9..off + 17].copy_from_slice(&(kinds_off as u64).to_le_bytes());
     buf[off + 17..off + 25].copy_from_slice(&(data_off as u64).to_le_bytes());
@@ -839,7 +893,7 @@ fn write_term_dict(buf: &mut Vec<u8>, terms: &[Term]) -> Result<Section> {
 /// All value arrays are delta-coded (first value stored literally, subsequent
 /// values as differences from the predecessor). Counts and values are encoded
 /// as LEB128 uvarints.
-fn build_raw_spo(spo: &[(u64, u64, u64)]) -> Result<Vec<u8>> {
+fn build_raw_spo(spo: &[(u64, u64, u64)]) -> Result<RawSpoBuild> {
     // Precondition: spo sorted by (s,p,o)
     let n_t = spo.len();
     let mut out = Vec::with_capacity(n_t * 2);
@@ -953,15 +1007,12 @@ fn build_raw_spo(spo: &[(u64, u64, u64)]) -> Result<Vec<u8>> {
             }
         }
     }
-    Ok(out)
-}
-
-/// Read the (nS, nP, nT) counts from the header of a CSR-encoded triple block.
-fn raw_counts(raw: &[u8]) -> Result<(usize, usize, usize)> {
-    let (n_s, o1) = read_uvarint(raw, 0).ok_or_else(|| R5Error::Corrupt("nS".into()))?;
-    let (n_p, o2) = read_uvarint(raw, o1).ok_or_else(|| R5Error::Corrupt("nP".into()))?;
-    let (n_t, _) = read_uvarint(raw, o2).ok_or_else(|| R5Error::Corrupt("nT".into()))?;
-    Ok((n_s as usize, n_p as usize, n_t as usize))
+    Ok(RawSpoBuild {
+        raw: out,
+        n_s: s_vals.len() as u32,
+        n_p: p_vals.len() as u32,
+        n_t: o_vals.len() as u32,
+    })
 }
 
 fn write_postings_index(buf: &mut Vec<u8>, lists: &[Vec<u64>]) -> Result<Section> {
@@ -999,27 +1050,18 @@ fn write_pair_index(buf: &mut Vec<u8>, pairs: &[(u32, u32, u64)]) -> Result<Sect
     buf.extend_from_slice(&(pairs.len() as u64).to_le_bytes());
     let pairs_off = buf.len() + 8; // we will place entries after writing pairs_off
     buf.extend_from_slice(&(pairs_off as u64).to_le_bytes());
+    let compact = pairs.iter().all(|(_, _, gid)| u32::try_from(*gid).is_ok());
     for (id_id, gn_id, gid) in pairs {
         buf.extend_from_slice(&id_id.to_le_bytes());
         buf.extend_from_slice(&gn_id.to_le_bytes());
-        buf.extend_from_slice(&gid.to_le_bytes());
+        if compact {
+            buf.extend_from_slice(&(*gid as u32).to_le_bytes());
+        } else {
+            buf.extend_from_slice(&gid.to_le_bytes());
+        }
     }
     Ok(Section {
         off: off as u64,
         len: (buf.len() - off) as u64,
     })
-}
-
-fn read_uvarint(buf: &[u8], mut off: usize) -> Option<(u64, usize)> {
-    let (mut x, mut s) = (0u64, 0u32);
-    for _ in 0..10 {
-        let b = *buf.get(off)? as u64;
-        off += 1;
-        x |= (b & 0x7f) << s;
-        if b & 0x80 == 0 {
-            return Some((x, off));
-        }
-        s += 7;
-    }
-    None
 }

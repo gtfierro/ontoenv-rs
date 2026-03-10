@@ -1,5 +1,7 @@
 #![cfg(feature = "mmap")]
-use rdf5d::{Quint, R5tuFile, StreamingWriter, Term, writer::WriterOptions};
+use rdf5d::{
+    IntegrityMode, OpenOptions, Quint, R5tuFile, StreamingWriter, Term, writer::WriterOptions,
+};
 
 #[test]
 fn mmap_roundtrip_two_graphs() {
@@ -53,6 +55,7 @@ fn mmap_roundtrip_two_graphs() {
 
     // Open via mmap
     let f = R5tuFile::open_mmap(&path).expect("open_mmap");
+    assert!(f.is_mmap_backed());
 
     // enumerate_by_id
     let a = f.enumerate_by_id("src/A").unwrap();
@@ -72,6 +75,44 @@ fn mmap_roundtrip_two_graphs() {
         f.term_to_string(o).unwrap(),
         "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>"
     );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn open_with_options_prefers_mmap() {
+    let quints = vec![Quint {
+        id: "src/A".into(),
+        gname: "g".into(),
+        s: Term::Iri("http://ex/s1".into()),
+        p: Term::Iri("http://ex/p1".into()),
+        o: Term::Iri("http://ex/o1".into()),
+    }];
+
+    let mut path = std::env::temp_dir();
+    path.push("e2e_mmap_prefer.r5tu");
+    let mut w = StreamingWriter::new(
+        &path,
+        WriterOptions {
+            zstd: false,
+            with_crc: true,
+        },
+    );
+    for q in quints {
+        w.add(q).unwrap();
+    }
+    w.finalize().unwrap();
+
+    let f = R5tuFile::open_with_options(
+        &path,
+        OpenOptions {
+            integrity: IntegrityMode::Structural,
+            prefer_mmap: true,
+        },
+    )
+    .expect("open_with_options");
+    assert!(f.is_mmap_backed());
+    assert_eq!(f.enumerate_by_id("src/A").unwrap().len(), 1);
 
     let _ = std::fs::remove_file(&path);
 }

@@ -105,7 +105,7 @@ u64  idx\_len
 
 - **Blob:** concatenation of all strings.
 - **Offsets:** `offs[i]` start of string i in blob; `offs[n]=blob_len`.
-- **IndexEntry (24 bytes):**
+- **IndexEntry (20 bytes in current writer; reader accepts legacy 24-byte entries):**
   - `key16[16]` — lowercased first up-to-16 bytes of string, zero-padded.
   - `id_u32` — the entry’s ordinal.
 
@@ -119,16 +119,16 @@ u64  idx\_len
 
 ### 2.2 Global Term Dictionary — `TERM_DICT`
 
-Maps unique RDF terms to `TermID`. `width_u8` = 4 or 8 reserved; v0 decodes payloads as UTF-8 + LEB128.
+Maps unique RDF terms to `TermID`. `width_u8` controls the offset width used by the offsets table.
 
 **Layout:**
 ```
 
-u8   width              // 4 or 8 (reserved)
+u8   width              // 4 or 8; width of entries in offs array
 u64  n\_terms
 u64  kinds\_off          --> \[u8 \* n]  // 0=IRI, 1=BNODE, 2=LITERAL
 u64  data\_off           --> \[bytes ...] payload blob
-u64  offs\_off           --> \[u64 \* (n+1)]
+u64  offs\_off           --> \[u32 \* (n+1)] or \[u64 \* (n+1)] per width
 
 ```
 
@@ -149,12 +149,26 @@ One fixed row per graph (GID = row index). Sorted by `(id_id, gn_id)` at build t
 ```
 
 u64 n\_rows
-u32 row\_size = 56
+u32 row\_size = 32 or 44
 u32 reserved = 0
 
 ```
 
-**Row (56 bytes):**
+**Compact Row (32 bytes):**
+```
+
+u32 id\_id
+u32 gn\_id
+u32 triples\_off
+u32 triples\_len
+u32 n\_triples
+u32 n\_s
+u32 n\_p
+u32 n\_o
+
+```
+
+**Legacy Row (44 bytes):**
 ```
 
 u32 id\_id
@@ -210,7 +224,9 @@ u64 pairs\_off -> \[PairEntry \* n\_pairs] sorted by (id\_id, gn\_id)
 
 ```
 
-**PairEntry (16 bytes):** `u32 id_id | u32 gn_id | u64 gid`
+**Compact PairEntry (12 bytes):** `u32 id_id | u32 gn_id | u32 gid`
+
+**Legacy PairEntry (16 bytes):** `u32 id_id | u32 gn_id | u64 gid`
 
 ---
 

@@ -45,7 +45,7 @@ pub mod reader;
 pub mod update;
 pub mod writer;
 
-pub use reader::{GraphRef, R5tuFile};
+pub use reader::{GraphRef, IntegrityMode, OpenOptions, R5tuFile};
 pub use update::{replace_graph, replace_graph_with_options};
 pub use writer::{
     Quint, StreamingWriter, Term, WriterOptions, write_file, write_file_with_options,
