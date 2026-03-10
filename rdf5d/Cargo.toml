@@ -28,4 +28,3 @@ mmap = ["dep:memmap2"]
 [[bench]]
 name = "rdf5d_bench"
 harness = false
-required-features = ["zstd"]

@@ -1,0 +1,462 @@
+write/100               time:   [212.03 µs 213.44 µs 214.90 µs]
+                        thrpt:  [465.32 Kelem/s 468.51 Kelem/s 471.63 Kelem/s]
+                 change:
+                        time:   [-3.6339% -2.3648% -1.1201%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.1328% +2.4221% +3.7710%]
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+write/1000              time:   [1.4132 ms 1.4402 ms 1.4664 ms]
+                        thrpt:  [681.96 Kelem/s 694.37 Kelem/s 707.62 Kelem/s]
+                 change:
+                        time:   [-15.272% -12.559% -9.7302%] (p = 0.00 < 0.05)
+                        thrpt:  [+10.779% +14.363% +18.025%]
+                        Performance has improved.
+write/10000             time:   [13.421 ms 13.480 ms 13.545 ms]
+                        thrpt:  [738.27 Kelem/s 741.84 Kelem/s 745.12 Kelem/s]
+                 change:
+                        time:   [-4.4368% -3.3730% -2.4073%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.4667% +3.4908% +4.6428%]
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+write/100000            time:   [169.16 ms 169.47 ms 169.79 ms]
+                        thrpt:  [588.96 Kelem/s 590.08 Kelem/s 591.16 Kelem/s]
+                 change:
+                        time:   [-6.6414% -6.2934% -5.9353%] (p = 0.00 < 0.05)
+                        thrpt:  [+6.3098% +6.7161% +7.1138%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+write_streaming/100     time:   [229.84 µs 231.98 µs 234.35 µs]
+                        thrpt:  [426.72 Kelem/s 431.08 Kelem/s 435.08 Kelem/s]
+                 change:
+                        time:   [-6.1633% -4.4908% -3.0181%] (p = 0.00 < 0.05)
+                        thrpt:  [+3.1120% +4.7019% +6.5681%]
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+write_streaming/1000    time:   [1.5489 ms 1.5769 ms 1.6089 ms]
+                        thrpt:  [621.56 Kelem/s 634.18 Kelem/s 645.61 Kelem/s]
+                 change:
+                        time:   [-1.8432% +0.6180% +3.3465%] (p = 0.64 > 0.05)
+                        thrpt:  [-3.2381% -0.6142% +1.8778%]
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+write_streaming/10000   time:   [15.017 ms 15.080 ms 15.154 ms]
+                        thrpt:  [659.91 Kelem/s 663.14 Kelem/s 665.89 Kelem/s]
+                 change:
+                        time:   [-6.4313% -5.5266% -4.6590%] (p = 0.00 < 0.05)
+                        thrpt:  [+4.8867% +5.8499% +6.8733%]
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+write_streaming/100000  time:   [197.32 ms 198.26 ms 199.17 ms]
+                        thrpt:  [502.09 Kelem/s 504.40 Kelem/s 506.78 Kelem/s]
+Found 13 outliers among 100 measurements (13.00%)
+  4 (4.00%) low severe
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+
+open/100                time:   [98.223 µs 98.514 µs 98.898 µs]
+                        thrpt:  [1.0111 Melem/s 1.0151 Melem/s 1.0181 Melem/s]
+Found 13 outliers among 100 measurements (13.00%)
+  2 (2.00%) high mild
+  11 (11.00%) high severe
+open/structural/100     time:   [1.3199 µs 1.3303 µs 1.3454 µs]
+                        thrpt:  [74.329 Melem/s 75.170 Melem/s 75.766 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  2 (2.00%) high mild
+  5 (5.00%) high severe
+open/trusted/100        time:   [1.2876 µs 1.2957 µs 1.3052 µs]
+                        thrpt:  [76.618 Melem/s 77.180 Melem/s 77.666 Melem/s]
+Found 9 outliers among 100 measurements (9.00%)
+  7 (7.00%) high mild
+  2 (2.00%) high severe
+open/1000               time:   [899.94 µs 901.80 µs 904.17 µs]
+                        thrpt:  [1.1060 Melem/s 1.1089 Melem/s 1.1112 Melem/s]
+Found 18 outliers among 100 measurements (18.00%)
+  4 (4.00%) high mild
+  14 (14.00%) high severe
+open/structural/1000    time:   [2.2981 µs 2.3129 µs 2.3388 µs]
+                        thrpt:  [427.57 Melem/s 432.35 Melem/s 435.15 Melem/s]
+Found 16 outliers among 100 measurements (16.00%)
+  1 (1.00%) low severe
+  2 (2.00%) low mild
+  3 (3.00%) high mild
+  10 (10.00%) high severe
+open/trusted/1000       time:   [2.3399 µs 2.3566 µs 2.3836 µs]
+                        thrpt:  [419.53 Melem/s 424.34 Melem/s 427.37 Melem/s]
+Found 18 outliers among 100 measurements (18.00%)
+  2 (2.00%) low severe
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  13 (13.00%) high severe
+open/10000              time:   [9.3036 ms 9.3383 ms 9.3778 ms]
+                        thrpt:  [1.0664 Melem/s 1.0709 Melem/s 1.0749 Melem/s]
+Found 19 outliers among 100 measurements (19.00%)
+  1 (1.00%) high mild
+  18 (18.00%) high severe
+open/structural/10000   time:   [13.720 µs 13.808 µs 13.946 µs]
+                        thrpt:  [717.07 Melem/s 724.23 Melem/s 728.87 Melem/s]
+Found 14 outliers among 100 measurements (14.00%)
+  3 (3.00%) low mild
+  2 (2.00%) high mild
+  9 (9.00%) high severe
+open/trusted/10000      time:   [14.410 µs 14.523 µs 14.692 µs]
+                        thrpt:  [680.64 Melem/s 688.55 Melem/s 693.95 Melem/s]
+Found 25 outliers among 100 measurements (25.00%)
+  4 (4.00%) low severe
+  3 (3.00%) low mild
+  18 (18.00%) high severe
+open/100000             time:   [99.041 ms 99.247 ms 99.498 ms]
+                        thrpt:  [1.0050 Melem/s 1.0076 Melem/s 1.0097 Melem/s]
+Found 11 outliers among 100 measurements (11.00%)
+  11 (11.00%) high severe
+open/structural/100000  time:   [341.65 µs 343.96 µs 347.24 µs]
+                        thrpt:  [287.98 Melem/s 290.73 Melem/s 292.70 Melem/s]
+Found 11 outliers among 100 measurements (11.00%)
+  4 (4.00%) high mild
+  7 (7.00%) high severe
+open/trusted/100000     time:   [323.31 µs 325.17 µs 328.17 µs]
+                        thrpt:  [304.72 Melem/s 307.53 Melem/s 309.30 Melem/s]
+Found 10 outliers among 100 measurements (10.00%)
+  5 (5.00%) high mild
+  5 (5.00%) high severe
+
+read_triples/100        time:   [1.3916 µs 1.3993 µs 1.4094 µs]
+                        thrpt:  [70.952 Melem/s 71.466 Melem/s 71.858 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+read_triples/1000       time:   [13.240 µs 13.272 µs 13.307 µs]
+                        thrpt:  [75.148 Melem/s 75.344 Melem/s 75.526 Melem/s]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+read_triples/10000      time:   [137.08 µs 137.80 µs 138.97 µs]
+                        thrpt:  [71.960 Melem/s 72.569 Melem/s 72.951 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+read_triples/100000     time:   [1.3398 ms 1.3493 ms 1.3623 ms]
+                        thrpt:  [73.408 Melem/s 74.112 Melem/s 74.640 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+
+first_triple/100        time:   [874.15 ns 880.27 ns 889.79 ns]
+                        thrpt:  [1.1239 Melem/s 1.1360 Melem/s 1.1440 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+first_triple/1000       time:   [7.8870 µs 7.9673 µs 8.0778 µs]
+                        thrpt:  [123.80 Kelem/s 125.51 Kelem/s 126.79 Kelem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+first_triple/10000      time:   [87.713 µs 88.406 µs 89.452 µs]
+                        thrpt:  [11.179 Kelem/s 11.312 Kelem/s 11.401 Kelem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+first_triple/100000     time:   [865.56 µs 868.54 µs 872.31 µs]
+                        thrpt:  [1.1464 Kelem/s 1.1514 Kelem/s 1.1553 Kelem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+graph_lookup/enumerate_by_id/tpg=50/5
+                        time:   [580.61 ns 583.17 ns 587.27 ns]
+                        thrpt:  [425.70 Melem/s 428.69 Melem/s 430.58 Melem/s]
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+graph_lookup/enumerate_by_graphname/tpg=50/5
+                        time:   [630.89 ns 634.58 ns 639.94 ns]
+                        thrpt:  [390.66 Melem/s 393.96 Melem/s 396.27 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+graph_lookup/enumerate_by_id/tpg=50/20
+                        time:   [2.4837 µs 2.4974 µs 2.5200 µs]
+                        thrpt:  [396.82 Melem/s 400.41 Melem/s 402.63 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+graph_lookup/enumerate_by_graphname/tpg=50/20
+                        time:   [3.9507 µs 3.9762 µs 4.0178 µs]
+                        thrpt:  [248.89 Melem/s 251.50 Melem/s 253.12 Melem/s]
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high mild
+  5 (5.00%) high severe
+graph_lookup/enumerate_by_id/tpg=50/100
+                        time:   [13.384 µs 13.452 µs 13.542 µs]
+                        thrpt:  [369.22 Melem/s 371.69 Melem/s 373.57 Melem/s]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+graph_lookup/enumerate_by_graphname/tpg=50/100
+                        time:   [49.845 µs 50.236 µs 50.797 µs]
+                        thrpt:  [98.430 Melem/s 99.531 Melem/s 100.31 Melem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+
+resolve_gid/tpg=50/5    time:   [787.46 ns 790.02 ns 793.01 ns]
+                        thrpt:  [315.25 Melem/s 316.45 Melem/s 317.47 Melem/s]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+resolve_gid/tpg=50/20   time:   [4.6183 µs 4.6424 µs 4.6726 µs]
+                        thrpt:  [214.02 Melem/s 215.41 Melem/s 216.53 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+resolve_gid/tpg=50/100  time:   [60.771 µs 61.101 µs 61.499 µs]
+                        thrpt:  [81.303 Melem/s 81.831 Melem/s 82.275 Melem/s]
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) low mild
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+
+enumerate_all/tpg=10/5  time:   [255.13 ns 255.83 ns 256.63 ns]
+                        thrpt:  [194.83 Melem/s 195.44 Melem/s 195.98 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+enumerate_all/tpg=10/20 time:   [1.6689 µs 1.6813 µs 1.6998 µs]
+                        thrpt:  [117.66 Melem/s 118.96 Melem/s 119.84 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+enumerate_all/tpg=10/100
+                        time:   [9.0962 µs 9.1375 µs 9.1829 µs]
+                        thrpt:  [108.90 Melem/s 109.44 Melem/s 109.94 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+enumerate_all/tpg=10/500
+                        time:   [44.015 µs 44.236 µs 44.483 µs]
+                        thrpt:  [112.40 Melem/s 113.03 Melem/s 113.60 Melem/s]
+Found 29 outliers among 100 measurements (29.00%)
+  6 (6.00%) low severe
+  4 (4.00%) low mild
+  1 (1.00%) high mild
+  18 (18.00%) high severe
+
+roundtrip/graphs=3/1000 time:   [4.6876 ms 4.7058 ms 4.7267 ms]
+                        thrpt:  [634.69 Kelem/s 637.51 Kelem/s 639.99 Kelem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+roundtrip/graphs=3/10000
+                        time:   [50.161 ms 50.378 ms 50.653 ms]
+                        thrpt:  [592.27 Kelem/s 595.50 Kelem/s 598.07 Kelem/s]
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  4 (4.00%) high severe
+
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.11s
+     Running benches/rdf5d_bench.rs (target/release/deps/rdf5d_bench-50727abc28ae8153)
+Gnuplot not found, using plotters backend
+Benchmarking write/100
+Benchmarking write/100: Warming up for 3.0000 s
+Benchmarking write/100: Collecting 100 samples in estimated 5.6332 s (25k iterations)
+Benchmarking write/100: Analyzing
+Benchmarking write/1000
+Benchmarking write/1000: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.9s, enable flat sampling, or reduce sample count to 50.
+Benchmarking write/1000: Collecting 100 samples in estimated 6.9314 s (5050 iterations)
+Benchmarking write/1000: Analyzing
+Benchmarking write/10000
+Benchmarking write/10000: Warming up for 3.0000 s
+Benchmarking write/10000: Collecting 100 samples in estimated 5.4447 s (400 iterations)
+Benchmarking write/10000: Analyzing
+Benchmarking write/100000
+Benchmarking write/100000: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 17.1s, or reduce sample count to 20.
+Benchmarking write/100000: Collecting 100 samples in estimated 17.069 s (100 iterations)
+Benchmarking write/100000: Analyzing
+Benchmarking write_streaming/100
+Benchmarking write_streaming/100: Warming up for 3.0000 s
+Benchmarking write_streaming/100: Collecting 100 samples in estimated 6.1799 s (25k iterations)
+Benchmarking write_streaming/100: Analyzing
+Benchmarking write_streaming/1000
+Benchmarking write_streaming/1000: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.2s, enable flat sampling, or reduce sample count to 50.
+Benchmarking write_streaming/1000: Collecting 100 samples in estimated 8.1937 s (5050 iterations)
+Benchmarking write_streaming/1000: Analyzing
+Benchmarking write_streaming/10000
+Benchmarking write_streaming/10000: Warming up for 3.0000 s
+Benchmarking write_streaming/10000: Collecting 100 samples in estimated 6.0581 s (400 iterations)
+Benchmarking write_streaming/10000: Analyzing
+Benchmarking write_streaming/100000
+Benchmarking write_streaming/100000: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 19.9s, or reduce sample count to 20.
+Benchmarking write_streaming/100000: Collecting 100 samples in estimated 19.860 s (100 iterations)
+Benchmarking write_streaming/100000: Analyzing
+Benchmarking open/100
+Benchmarking open/100: Warming up for 3.0000 s
+Benchmarking open/100: Collecting 100 samples in estimated 5.4970 s (56k iterations)
+Benchmarking open/100: Analyzing
+Benchmarking open/structural/100
+Benchmarking open/structural/100: Warming up for 3.0000 s
+Benchmarking open/structural/100: Collecting 100 samples in estimated 5.0047 s (3.8M iterations)
+Benchmarking open/structural/100: Analyzing
+Benchmarking open/trusted/100
+Benchmarking open/trusted/100: Warming up for 3.0000 s
+Benchmarking open/trusted/100: Collecting 100 samples in estimated 5.0027 s (3.8M iterations)
+Benchmarking open/trusted/100: Analyzing
+Benchmarking open/1000
+Benchmarking open/1000: Warming up for 3.0000 s
+Benchmarking open/1000: Collecting 100 samples in estimated 9.1382 s (10k iterations)
+Benchmarking open/1000: Analyzing
+Benchmarking open/structural/1000
+Benchmarking open/structural/1000: Warming up for 3.0000 s
+Benchmarking open/structural/1000: Collecting 100 samples in estimated 5.0011 s (2.1M iterations)
+Benchmarking open/structural/1000: Analyzing
+Benchmarking open/trusted/1000
+Benchmarking open/trusted/1000: Warming up for 3.0000 s
+Benchmarking open/trusted/1000: Collecting 100 samples in estimated 5.0078 s (2.1M iterations)
+Benchmarking open/trusted/1000: Analyzing
+Benchmarking open/10000
+Benchmarking open/10000: Warming up for 3.0000 s
+Benchmarking open/10000: Collecting 100 samples in estimated 5.6130 s (600 iterations)
+Benchmarking open/10000: Analyzing
+Benchmarking open/structural/10000
+Benchmarking open/structural/10000: Warming up for 3.0000 s
+Benchmarking open/structural/10000: Collecting 100 samples in estimated 5.0381 s (364k iterations)
+Benchmarking open/structural/10000: Analyzing
+Benchmarking open/trusted/10000
+Benchmarking open/trusted/10000: Warming up for 3.0000 s
+Benchmarking open/trusted/10000: Collecting 100 samples in estimated 5.0033 s (343k iterations)
+Benchmarking open/trusted/10000: Analyzing
+Benchmarking open/100000
+Benchmarking open/100000: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 9.9s, or reduce sample count to 50.
+Benchmarking open/100000: Collecting 100 samples in estimated 9.9338 s (100 iterations)
+Benchmarking open/100000: Analyzing
+Benchmarking open/structural/100000
+Benchmarking open/structural/100000: Warming up for 3.0000 s
+Benchmarking open/structural/100000: Collecting 100 samples in estimated 5.2003 s (15k iterations)
+Benchmarking open/structural/100000: Analyzing
+Benchmarking open/trusted/100000
+Benchmarking open/trusted/100000: Warming up for 3.0000 s
+Benchmarking open/trusted/100000: Collecting 100 samples in estimated 6.4518 s (20k iterations)
+Benchmarking open/trusted/100000: Analyzing
+Benchmarking read_triples/100
+Benchmarking read_triples/100: Warming up for 3.0000 s
+Benchmarking read_triples/100: Collecting 100 samples in estimated 5.0034 s (3.6M iterations)
+Benchmarking read_triples/100: Analyzing
+Benchmarking read_triples/1000
+Benchmarking read_triples/1000: Warming up for 3.0000 s
+Benchmarking read_triples/1000: Collecting 100 samples in estimated 5.0547 s (379k iterations)
+Benchmarking read_triples/1000: Analyzing
+Benchmarking read_triples/10000
+Benchmarking read_triples/10000: Warming up for 3.0000 s
+Benchmarking read_triples/10000: Collecting 100 samples in estimated 5.6760 s (40k iterations)
+Benchmarking read_triples/10000: Analyzing
+Benchmarking read_triples/100000
+Benchmarking read_triples/100000: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.9s, enable flat sampling, or reduce sample count to 60.
+Benchmarking read_triples/100000: Collecting 100 samples in estimated 6.8678 s (5050 iterations)
+Benchmarking read_triples/100000: Analyzing
+Benchmarking first_triple/100
+Benchmarking first_triple/100: Warming up for 3.0000 s
+Benchmarking first_triple/100: Collecting 100 samples in estimated 5.0012 s (6.0M iterations)
+Benchmarking first_triple/100: Analyzing
+Benchmarking first_triple/1000
+Benchmarking first_triple/1000: Warming up for 3.0000 s
+Benchmarking first_triple/1000: Collecting 100 samples in estimated 5.0143 s (662k iterations)
+Benchmarking first_triple/1000: Analyzing
+Benchmarking first_triple/10000
+Benchmarking first_triple/10000: Warming up for 3.0000 s
+Benchmarking first_triple/10000: Collecting 100 samples in estimated 5.1135 s (61k iterations)
+Benchmarking first_triple/10000: Analyzing
+Benchmarking first_triple/100000
+Benchmarking first_triple/100000: Warming up for 3.0000 s
+Benchmarking first_triple/100000: Collecting 100 samples in estimated 8.4003 s (10k iterations)
+Benchmarking first_triple/100000: Analyzing
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/5
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/5: Warming up for 3.0000 s
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/5: Collecting 100 samples in estimated 5.0009 s (8.5M iterations)
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/5: Analyzing
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/5
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/5: Warming up for 3.0000 s
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/5: Collecting 100 samples in estimated 5.0028 s (7.9M iterations)
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/5: Analyzing
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/20
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/20: Warming up for 3.0000 s
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/20: Collecting 100 samples in estimated 5.0095 s (2.0M iterations)
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/20: Analyzing
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/20
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/20: Warming up for 3.0000 s
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/20: Collecting 100 samples in estimated 5.0166 s (1.3M iterations)
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/20: Analyzing
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/100
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/100: Warming up for 3.0000 s
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/100: Collecting 100 samples in estimated 5.0184 s (369k iterations)
+Benchmarking graph_lookup/enumerate_by_id/tpg=50/100: Analyzing
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/100
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/100: Warming up for 3.0000 s
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/100: Collecting 100 samples in estimated 5.0992 s (101k iterations)
+Benchmarking graph_lookup/enumerate_by_graphname/tpg=50/100: Analyzing
+Benchmarking resolve_gid/tpg=50/5
+Benchmarking resolve_gid/tpg=50/5: Warming up for 3.0000 s
+Benchmarking resolve_gid/tpg=50/5: Collecting 100 samples in estimated 5.0035 s (6.3M iterations)
+Benchmarking resolve_gid/tpg=50/5: Analyzing
+Benchmarking resolve_gid/tpg=50/20
+Benchmarking resolve_gid/tpg=50/20: Warming up for 3.0000 s
+Benchmarking resolve_gid/tpg=50/20: Collecting 100 samples in estimated 5.0134 s (1.1M iterations)
+Benchmarking resolve_gid/tpg=50/20: Analyzing
+Benchmarking resolve_gid/tpg=50/100
+Benchmarking resolve_gid/tpg=50/100: Warming up for 3.0000 s
+Benchmarking resolve_gid/tpg=50/100: Collecting 100 samples in estimated 5.2432 s (86k iterations)
+Benchmarking resolve_gid/tpg=50/100: Analyzing
+Benchmarking enumerate_all/tpg=10/5
+Benchmarking enumerate_all/tpg=10/5: Warming up for 3.0000 s
+Benchmarking enumerate_all/tpg=10/5: Collecting 100 samples in estimated 5.0013 s (19M iterations)
+Benchmarking enumerate_all/tpg=10/5: Analyzing
+Benchmarking enumerate_all/tpg=10/20
+Benchmarking enumerate_all/tpg=10/20: Warming up for 3.0000 s
+Benchmarking enumerate_all/tpg=10/20: Collecting 100 samples in estimated 5.0064 s (2.8M iterations)
+Benchmarking enumerate_all/tpg=10/20: Analyzing
+Benchmarking enumerate_all/tpg=10/100
+Benchmarking enumerate_all/tpg=10/100: Warming up for 3.0000 s
+Benchmarking enumerate_all/tpg=10/100: Collecting 100 samples in estimated 5.0338 s (525k iterations)
+Benchmarking enumerate_all/tpg=10/100: Analyzing
+Benchmarking enumerate_all/tpg=10/500
+Benchmarking enumerate_all/tpg=10/500: Warming up for 3.0000 s
+Benchmarking enumerate_all/tpg=10/500: Collecting 100 samples in estimated 5.1254 s (111k iterations)
+Benchmarking enumerate_all/tpg=10/500: Analyzing
+Benchmarking roundtrip/graphs=3/1000
+Benchmarking roundtrip/graphs=3/1000: Warming up for 3.0000 s
+Benchmarking roundtrip/graphs=3/1000: Collecting 100 samples in estimated 5.2019 s (1100 iterations)
+Benchmarking roundtrip/graphs=3/1000: Analyzing
+Benchmarking roundtrip/graphs=3/10000
+Benchmarking roundtrip/graphs=3/10000: Warming up for 3.0000 s
+Benchmarking roundtrip/graphs=3/10000: Collecting 100 samples in estimated 9.9960 s (200 iterations)
+Benchmarking roundtrip/graphs=3/10000: Analyzing

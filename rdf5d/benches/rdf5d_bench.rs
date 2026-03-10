@@ -50,6 +50,167 @@ fn generate_quints(n_graphs: usize, triples_per_graph: usize) -> Vec<Quint> {
     quints
 }
 
+#[derive(Clone, Copy, Debug)]
+enum WorkloadKind {
+    Balanced,
+    RepeatedLiterals,
+    HighCardinalityNames,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WorkloadCase {
+    name: &'static str,
+    kind: WorkloadKind,
+    n_graphs: usize,
+    triples_per_graph: usize,
+}
+
+impl WorkloadCase {
+    fn total_quads(self) -> usize {
+        self.n_graphs * self.triples_per_graph
+    }
+}
+
+fn workload_cases() -> [WorkloadCase; 4] {
+    [
+        WorkloadCase {
+            name: "many_small_graphs",
+            kind: WorkloadKind::Balanced,
+            n_graphs: 200,
+            triples_per_graph: 5,
+        },
+        WorkloadCase {
+            name: "one_large_graph",
+            kind: WorkloadKind::Balanced,
+            n_graphs: 1,
+            triples_per_graph: 20_000,
+        },
+        WorkloadCase {
+            name: "repeated_literals",
+            kind: WorkloadKind::RepeatedLiterals,
+            n_graphs: 25,
+            triples_per_graph: 400,
+        },
+        WorkloadCase {
+            name: "high_cardinality_names",
+            kind: WorkloadKind::HighCardinalityNames,
+            n_graphs: 200,
+            triples_per_graph: 5,
+        },
+    ]
+}
+
+fn dataset_id(kind: WorkloadKind, g: usize) -> String {
+    match kind {
+        WorkloadKind::Balanced => format!("dataset/{g}"),
+        WorkloadKind::RepeatedLiterals => format!("dataset/repeated/{g}"),
+        WorkloadKind::HighCardinalityNames => format!(
+            "urn:dataset:very:long:prefix:{g:04}:{}:{}",
+            g % 17,
+            10_000 + g
+        ),
+    }
+}
+
+fn graph_name(kind: WorkloadKind, g: usize) -> String {
+    match kind {
+        WorkloadKind::Balanced => format!("http://example.org/graph/{g}"),
+        WorkloadKind::RepeatedLiterals => format!("http://example.org/graph/repeated/{g}"),
+        WorkloadKind::HighCardinalityNames => format!(
+            "https://graphs.example.org/ns/really/long/graph/name/{g:04}/{}-{}",
+            g % 23,
+            1_000 + g
+        ),
+    }
+}
+
+fn generate_workload(case: WorkloadCase) -> Vec<Quint> {
+    match case.kind {
+        WorkloadKind::Balanced => generate_quints(case.n_graphs, case.triples_per_graph),
+        WorkloadKind::RepeatedLiterals => {
+            let mut quints = Vec::with_capacity(case.total_quads());
+            let lex_pool = [
+                "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+            ];
+            let dt_pool = [
+                "http://www.w3.org/2001/XMLSchema#string",
+                "http://www.w3.org/2001/XMLSchema#date",
+                "http://www.w3.org/2001/XMLSchema#integer",
+            ];
+            let lang_pool = ["en", "fr", "de"];
+            for g in 0..case.n_graphs {
+                let id = dataset_id(case.kind, g);
+                let gname = graph_name(case.kind, g);
+                for t in 0..case.triples_per_graph {
+                    let s = Term::Iri(format!("http://example.org/s/repeated/{g}/{}", t % 40));
+                    let p = Term::Iri(format!("http://example.org/p/{}", t % 8));
+                    let lex = format!("{}-{}", lex_pool[t % lex_pool.len()], t % 32);
+                    let o = if t % 3 == 0 {
+                        Term::Literal {
+                            lex,
+                            dt: Some(dt_pool[t % dt_pool.len()].into()),
+                            lang: None,
+                        }
+                    } else {
+                        Term::Literal {
+                            lex,
+                            dt: None,
+                            lang: Some(lang_pool[t % lang_pool.len()].into()),
+                        }
+                    };
+                    quints.push(Quint {
+                        id: id.clone(),
+                        s,
+                        p,
+                        o,
+                        gname: gname.clone(),
+                    });
+                }
+            }
+            quints
+        }
+        WorkloadKind::HighCardinalityNames => {
+            let mut quints = Vec::with_capacity(case.total_quads());
+            for g in 0..case.n_graphs {
+                let id = dataset_id(case.kind, g);
+                let gname = graph_name(case.kind, g);
+                for t in 0..case.triples_per_graph {
+                    quints.push(Quint {
+                        id: id.clone(),
+                        s: Term::Iri(format!(
+                            "https://entities.example.org/subject/{g:04}/{t:04}/{}",
+                            50_000 + g * 10 + t
+                        )),
+                        p: Term::Iri(format!("https://schema.example.org/p/{}", t % 11)),
+                        o: Term::Literal {
+                            lex: format!("value-{g:04}-{t:04}"),
+                            dt: Some("http://www.w3.org/2001/XMLSchema#string".into()),
+                            lang: None,
+                        },
+                        gname: gname.clone(),
+                    });
+                }
+            }
+            quints
+        }
+    }
+}
+
+fn read_all_graphs(file: &R5tuFile) {
+    let graphs = file.enumerate_all().unwrap();
+    for graph in graphs {
+        for _ in file.triples_ids(graph.gid).unwrap() {}
+    }
+}
+
+fn resolve_all_graphs(file: &R5tuFile, case: WorkloadCase) {
+    for g in 0..case.n_graphs {
+        let _ = file
+            .resolve_gid(&dataset_id(case.kind, g), &graph_name(case.kind, g))
+            .unwrap();
+    }
+}
+
 fn opts_plain() -> WriterOptions {
     WriterOptions {
         zstd: false,
@@ -363,6 +524,70 @@ fn bench_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_workload_matrix(c: &mut Criterion) {
+    let mut group = c.benchmark_group("workload_matrix");
+    for case in workload_cases() {
+        let quints = generate_workload(case);
+        let total = case.total_quads() as u64;
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let file = R5tuFile::open(f.path()).unwrap();
+
+        group.throughput(Throughput::Elements(total));
+        group.bench_with_input(
+            BenchmarkId::new("write", case.name),
+            &quints,
+            |b, quints| {
+                b.iter(|| {
+                    let f = NamedTempFile::new().unwrap();
+                    write_file_with_options(f.path(), quints, opts_plain()).unwrap();
+                });
+            },
+        );
+        group.bench_with_input(BenchmarkId::new("open_strict", case.name), &f, |b, f| {
+            b.iter(|| {
+                R5tuFile::open(f.path()).unwrap();
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("open_trusted", case.name), &f, |b, f| {
+            b.iter(|| {
+                R5tuFile::open_with_options(
+                    f.path(),
+                    OpenOptions {
+                        integrity: IntegrityMode::Trusted,
+                        prefer_mmap: false,
+                    },
+                )
+                .unwrap();
+            });
+        });
+        #[cfg(feature = "mmap")]
+        group.bench_with_input(BenchmarkId::new("open_mmap", case.name), &f, |b, f| {
+            b.iter(|| {
+                R5tuFile::open_with_options(
+                    f.path(),
+                    OpenOptions {
+                        integrity: IntegrityMode::Structural,
+                        prefer_mmap: true,
+                    },
+                )
+                .unwrap();
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("read_all", case.name), &file, |b, file| {
+            b.iter(|| read_all_graphs(file));
+        });
+        group.bench_with_input(
+            BenchmarkId::new("resolve_all", case.name),
+            &file,
+            |b, file| {
+                b.iter(|| resolve_all_graphs(file, case));
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_write,
@@ -375,5 +600,6 @@ criterion_group!(
     bench_resolve_gid,
     bench_enumerate_all,
     bench_roundtrip,
+    bench_workload_matrix,
 );
 criterion_main!(benches);
