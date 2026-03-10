@@ -183,6 +183,52 @@ fn string_dict_uses_compact_index_stride() {
 }
 
 #[test]
+fn string_dict_uses_front_coding_when_prefix_reuse_is_high() {
+    let mut quads = Vec::new();
+    for idx in 0..64 {
+        quads.push(Quint {
+            id: format!("http://example.org/dataset/shared/prefix/{idx:03}"),
+            s: Term::Iri(format!("http://ex/s/{idx}")),
+            p: Term::Iri("http://ex/p".into()),
+            o: Term::Iri(format!("http://ex/o/{idx}")),
+            gname: format!("http://example.org/graph/shared/prefix/{idx:03}"),
+        });
+    }
+    let path = mk_temp("dict_frontcoded.r5tu");
+    write_file(&path, &quads).unwrap();
+    let f = R5tuFile::open(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+
+    let id_sec = f.section(SectionKind::IdDict).unwrap();
+    let id_base = id_sec.off as usize;
+    let id_offs_len = u64::from_le_bytes(bytes[id_base + 28..id_base + 36].try_into().unwrap());
+    let id_idx_len = u64::from_le_bytes(bytes[id_base + 44..id_base + 52].try_into().unwrap());
+    assert_eq!(id_offs_len & (1u64 << 63), 0);
+    assert_eq!(id_idx_len & (1u64 << 63), 0);
+
+    let gname_sec = f.section(SectionKind::GNameDict).unwrap();
+    let gname_base = gname_sec.off as usize;
+    let gname_offs_len =
+        u64::from_le_bytes(bytes[gname_base + 28..gname_base + 36].try_into().unwrap());
+    let gname_idx_len =
+        u64::from_le_bytes(bytes[gname_base + 44..gname_base + 52].try_into().unwrap());
+    assert_ne!(gname_offs_len & (1u64 << 63), 0);
+    assert_ne!(gname_idx_len & (1u64 << 63), 0);
+
+    let hit = f
+        .resolve_gid(
+            "http://example.org/dataset/shared/prefix/007",
+            "http://example.org/graph/shared/prefix/007",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(hit.id, "http://example.org/dataset/shared/prefix/007");
+    assert_eq!(hit.graphname, "http://example.org/graph/shared/prefix/007");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn gdir_and_pair_index_use_compact_layouts_when_possible() {
     let q1 = Quint {
         id: "dataset/a".into(),
@@ -215,6 +261,42 @@ fn gdir_and_pair_index_use_compact_layouts_when_possible() {
         u64::from_le_bytes(bytes[pair_base + 8..pair_base + 16].try_into().unwrap()) as usize;
     let pair_stride = (pair.len as usize - (pairs_off - pair_base)) / n_pairs;
     assert_eq!(pair_stride, 12);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn term_dict_interns_literal_components_when_reuse_is_high() {
+    let mut quads = Vec::new();
+    for lang_idx in 0..10 {
+        for lex_idx in 0..10 {
+            quads.push(Quint {
+                id: "dataset/reuse".into(),
+                s: Term::Iri(format!("http://ex/s/{lang_idx}/{lex_idx}")),
+                p: Term::Iri("http://ex/p".into()),
+                o: Term::Literal {
+                    lex: format!("shared-lex-{}", lex_idx % 5),
+                    dt: None,
+                    lang: Some(format!("lang-{}", lang_idx % 5)),
+                },
+                gname: "g".into(),
+            });
+        }
+    }
+
+    let path = mk_temp("term_literal_components.r5tu");
+    write_file(&path, &quads).unwrap();
+    let f = R5tuFile::open(&path).unwrap();
+    let sec = f.section(SectionKind::TermDict).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_ne!(bytes[sec.off as usize] & 0x80, 0);
+
+    let graph = f.resolve_gid("dataset/reuse", "g").unwrap().unwrap();
+    let triples: Vec<_> = f.triples_ids(graph.gid).unwrap().collect();
+    let (_, _, o) = triples[0];
+    let rendered = f.term_to_string(o).unwrap();
+    assert!(rendered.starts_with("\"shared-lex-"));
+    assert!(rendered.contains("@lang-"));
 
     let _ = std::fs::remove_file(&path);
 }

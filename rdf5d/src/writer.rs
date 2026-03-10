@@ -15,12 +15,40 @@ type GroupsMap = BTreeMap<GroupKey, Vec<TripleIds>>;
 type GidRow = (u32, u32, Section, u64, u32, u32, u32);
 type PairEntry = (u32, u32, u64);
 
+const TERM_DICT_FLAG_LITERAL_COMPONENTS: u8 = 0x80;
+const TERM_DICT_WIDTH_MASK: u8 = 0x0f;
+const STR_DICT_OFFS_FLAG_FRONT_CODED: u64 = 1 << 63;
+const STR_DICT_IDX_FLAG_GROUPED: u64 = 1 << 63;
+const STR_DICT_FRONT_BLOCK_SIZE: usize = 16;
+const TERM_KIND_IRI: u8 = 0;
+const TERM_KIND_BNODE: u8 = 1;
+const TERM_KIND_LITERAL_INLINE: u8 = 2;
+const TERM_KIND_LITERAL_COMPONENTS: u8 = 3;
+
 #[derive(Debug)]
 struct RawSpoBuild {
     raw: Vec<u8>,
     n_s: u32,
     n_p: u32,
     n_t: u32,
+}
+
+#[derive(Debug, Default)]
+struct LiteralComponentPool {
+    lex: Vec<String>,
+    dt: Vec<String>,
+    lang: Vec<String>,
+    lex_map: HashMap<String, u32>,
+    dt_map: HashMap<String, u32>,
+    lang_map: HashMap<String, u32>,
+}
+
+#[derive(Debug)]
+struct TermDataBuild {
+    kinds: Vec<u8>,
+    data: Vec<u8>,
+    offs: Vec<u64>,
+    literal_components: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -112,6 +140,19 @@ fn push_uvarint(mut v: u64, out: &mut Vec<u8>) {
             break;
         }
     }
+}
+
+fn uvarint_len(mut v: u64) -> usize {
+    let mut len = 1usize;
+    while v >= 0x80 {
+        v >>= 7;
+        len += 1;
+    }
+    len
+}
+
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
 }
 
 /// Options controlling file emission.
@@ -255,14 +296,14 @@ pub fn write_file_with_options<P: AsRef<Path>>(
     let mut toc: Vec<TocEntry> = Vec::new();
 
     // ID_DICT
-    let id_sec = write_str_dict(&mut file, &id_vec)?;
+    let id_sec = write_str_dict(&mut file, &id_vec, StrDictMode::Id)?;
     toc.push(TocEntry {
         kind: SectionKind::IdDict,
         section: id_sec,
         crc32_u32: 0,
     });
     // GNAME_DICT
-    let gn_sec = write_str_dict(&mut file, &gn_vec)?;
+    let gn_sec = write_str_dict(&mut file, &gn_vec, StrDictMode::GraphName)?;
     toc.push(TocEntry {
         kind: SectionKind::GNameDict,
         section: gn_sec,
@@ -508,41 +549,44 @@ impl StreamingWriter {
         }
     }
 
-    fn intern_id(&mut self, s: &str) -> u32 {
-        if let Some(&v) = self.id_map.get(s) {
+    fn intern_id_owned(&mut self, s: String) -> u32 {
+        if let Some(&v) = self.id_map.get(s.as_str()) {
             return v;
         }
         let v = self.id_vec.len() as u32;
-        self.id_vec.push(s.to_string());
-        self.id_map.insert(s.to_string(), v);
+        self.id_vec.push(s.clone());
+        self.id_map.insert(s, v);
         v
     }
-    fn intern_gn(&mut self, s: &str) -> u32 {
-        if let Some(&v) = self.gn_map.get(s) {
+
+    fn intern_gn_owned(&mut self, s: String) -> u32 {
+        if let Some(&v) = self.gn_map.get(s.as_str()) {
             return v;
         }
         let v = self.gn_vec.len() as u32;
-        self.gn_vec.push(s.to_string());
-        self.gn_map.insert(s.to_string(), v);
+        self.gn_vec.push(s.clone());
+        self.gn_map.insert(s, v);
         v
     }
-    fn intern_term(&mut self, t: &Term) -> u64 {
-        if let Some(&v) = self.term_map.get(t) {
+
+    fn intern_term_owned(&mut self, t: Term) -> u64 {
+        if let Some(&v) = self.term_map.get(&t) {
             return v;
         }
         let v = self.term_vec.len() as u64;
         self.term_vec.push(t.clone());
-        self.term_map.insert(t.clone(), v);
+        self.term_map.insert(t, v);
         v
     }
 
     /// Add one 5‑tuple to the in‑memory builder.
     pub fn add(&mut self, q: Quint) -> Result<()> {
-        let id_id = self.intern_id(&q.id);
-        let gn_id = self.intern_gn(&q.gname);
-        let s = self.intern_term(&q.s);
-        let p = self.intern_term(&q.p);
-        let o = self.intern_term(&q.o);
+        let Quint { id, s, p, o, gname } = q;
+        let id_id = self.intern_id_owned(id);
+        let gn_id = self.intern_gn_owned(gname);
+        let s = self.intern_term_owned(s);
+        let p = self.intern_term_owned(p);
+        let o = self.intern_term_owned(o);
         self.pending.push(EncodedQuint {
             id_id,
             gn_id,
@@ -569,13 +613,13 @@ impl StreamingWriter {
         let mut file = vec![0u8; 32];
         let mut toc: Vec<TocEntry> = Vec::new();
 
-        let id_sec = write_str_dict(&mut file, &self.id_vec)?;
+        let id_sec = write_str_dict(&mut file, &self.id_vec, StrDictMode::Id)?;
         toc.push(TocEntry {
             kind: SectionKind::IdDict,
             section: id_sec,
             crc32_u32: 0,
         });
-        let gn_sec = write_str_dict(&mut file, &self.gn_vec)?;
+        let gn_sec = write_str_dict(&mut file, &self.gn_vec, StrDictMode::GraphName)?;
         toc.push(TocEntry {
             kind: SectionKind::GNameDict,
             section: gn_sec,
@@ -1040,41 +1084,36 @@ pub fn detect_graphname_from_store(store: &oxigraph::store::Store) -> Option<Str
     None
 }
 
-fn write_str_dict(buf: &mut Vec<u8>, strings: &[String]) -> Result<Section> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StrDictMode {
+    Id,
+    GraphName,
+}
+
+fn write_str_dict(buf: &mut Vec<u8>, strings: &[String], mode: StrDictMode) -> Result<Section> {
     let off = buf.len();
     // header 52 bytes
     buf.resize(buf.len() + 52, 0);
+    let (blob_bytes, offs_bytes, front_coded) = build_best_str_dict_storage(strings, mode)?;
     let blob_off = buf.len();
-    for s in strings {
-        buf.extend_from_slice(s.as_bytes());
-    }
-    let blob_len = buf.len() - blob_off;
+    buf.extend_from_slice(&blob_bytes);
+    let blob_len = blob_bytes.len();
     let offs_off = buf.len();
-    // offs len = (n+1) * 4
-    let mut cur = 0u32;
-    for s in strings {
-        buf.extend_from_slice(&cur.to_le_bytes());
-        cur = cur
-            .checked_add(s.len() as u32)
-            .ok_or_else(|| R5Error::Corrupt("blob size".into()))?;
+    buf.extend_from_slice(&offs_bytes);
+    let mut offs_len = offs_bytes.len() as u64;
+    if front_coded {
+        offs_len |= STR_DICT_OFFS_FLAG_FRONT_CODED;
     }
-    buf.extend_from_slice(&cur.to_le_bytes());
-    let offs_len = buf.len() - offs_off;
-    // build coarse index (key16 + id) entries sorted by key16 then id
-    let mut idx_entries: Vec<([u8; 16], u32)> = Vec::with_capacity(strings.len());
-    for (i, s) in strings.iter().enumerate() {
-        idx_entries.push((dict_key16(s), i as u32));
-    }
-    idx_entries.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let (idx_bytes, grouped_idx) = build_best_dict_index(strings, mode);
     let idx_off;
-    let idx_len;
-    if !idx_entries.is_empty() {
+    let mut idx_len;
+    if !idx_bytes.is_empty() {
         idx_off = buf.len();
-        for (key, id) in idx_entries {
-            buf.extend_from_slice(&key);
-            buf.extend_from_slice(&id.to_le_bytes());
+        buf.extend_from_slice(&idx_bytes);
+        idx_len = idx_bytes.len() as u64;
+        if grouped_idx {
+            idx_len |= STR_DICT_IDX_FLAG_GROUPED;
         }
-        idx_len = buf.len() - idx_off;
     } else {
         idx_off = 0;
         idx_len = 0;
@@ -1085,13 +1124,138 @@ fn write_str_dict(buf: &mut Vec<u8>, strings: &[String]) -> Result<Section> {
     buf[off + 4..off + 12].copy_from_slice(&(blob_off as u64).to_le_bytes());
     buf[off + 12..off + 20].copy_from_slice(&(blob_len as u64).to_le_bytes());
     buf[off + 20..off + 28].copy_from_slice(&(offs_off as u64).to_le_bytes());
-    buf[off + 28..off + 36].copy_from_slice(&(offs_len as u64).to_le_bytes());
+    buf[off + 28..off + 36].copy_from_slice(&offs_len.to_le_bytes());
     buf[off + 36..off + 44].copy_from_slice(&(idx_off as u64).to_le_bytes());
-    buf[off + 44..off + 52].copy_from_slice(&(idx_len as u64).to_le_bytes());
+    buf[off + 44..off + 52].copy_from_slice(&idx_len.to_le_bytes());
     Ok(Section {
         off: off as u64,
         len: (buf.len() - off) as u64,
     })
+}
+
+fn build_best_str_dict_storage(
+    strings: &[String],
+    mode: StrDictMode,
+) -> Result<(Vec<u8>, Vec<u8>, bool)> {
+    let plain = build_plain_str_dict_storage(strings)?;
+    if mode == StrDictMode::Id {
+        return Ok((plain.0, plain.1, false));
+    }
+
+    let front = build_front_coded_str_dict_storage(strings)?;
+    let plain_size = plain.0.len() + plain.1.len();
+    let front_size = front.0.len() + front.1.len();
+    if front_size < plain_size {
+        Ok((front.0, front.1, true))
+    } else {
+        Ok((plain.0, plain.1, false))
+    }
+}
+
+fn build_plain_str_dict_storage(strings: &[String]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let mut blob = Vec::new();
+    let mut offs = Vec::with_capacity((strings.len() + 1) * 4);
+    let mut cur = 0u32;
+    for s in strings {
+        offs.extend_from_slice(&cur.to_le_bytes());
+        blob.extend_from_slice(s.as_bytes());
+        cur = cur
+            .checked_add(s.len() as u32)
+            .ok_or_else(|| R5Error::Corrupt("blob size".into()))?;
+    }
+    offs.extend_from_slice(&cur.to_le_bytes());
+    Ok((blob, offs))
+}
+
+fn build_front_coded_str_dict_storage(strings: &[String]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let mut blob = Vec::new();
+    let mut restarts: Vec<u32> =
+        Vec::with_capacity(strings.len().div_ceil(STR_DICT_FRONT_BLOCK_SIZE) + 1);
+    let mut block_prev = "";
+    for (idx, s) in strings.iter().enumerate() {
+        if idx % STR_DICT_FRONT_BLOCK_SIZE == 0 {
+            restarts.push(
+                u32::try_from(blob.len())
+                    .map_err(|_| R5Error::Corrupt("front-coded blob too large".into()))?,
+            );
+            push_uvarint(s.len() as u64, &mut blob);
+            blob.extend_from_slice(s.as_bytes());
+            block_prev = s;
+        } else {
+            let prefix = common_prefix_len(block_prev, s);
+            let suffix = &s.as_bytes()[prefix..];
+            push_uvarint(prefix as u64, &mut blob);
+            push_uvarint(suffix.len() as u64, &mut blob);
+            blob.extend_from_slice(suffix);
+            block_prev = s;
+        }
+    }
+    restarts.push(
+        u32::try_from(blob.len())
+            .map_err(|_| R5Error::Corrupt("front-coded blob too large".into()))?,
+    );
+    let mut offs = Vec::with_capacity(restarts.len() * 4);
+    for restart in restarts {
+        offs.extend_from_slice(&restart.to_le_bytes());
+    }
+    Ok((blob, offs))
+}
+
+fn build_best_dict_index(strings: &[String], mode: StrDictMode) -> (Vec<u8>, bool) {
+    let mut entries: Vec<([u8; 16], u32)> = Vec::with_capacity(strings.len());
+    for (i, s) in strings.iter().enumerate() {
+        entries.push((dict_key16(s), i as u32));
+    }
+    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let flat = build_flat_dict_index(&entries);
+    if mode == StrDictMode::Id {
+        return (flat, false);
+    }
+    let grouped = build_grouped_dict_index(&entries);
+    if !grouped.is_empty() && grouped.len() < flat.len() {
+        (grouped, true)
+    } else {
+        (flat, false)
+    }
+}
+
+fn build_flat_dict_index(entries: &[([u8; 16], u32)]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(entries.len() * 20);
+    for (key, id) in entries {
+        out.extend_from_slice(key);
+        out.extend_from_slice(&id.to_le_bytes());
+    }
+    out
+}
+
+fn build_grouped_dict_index(entries: &[([u8; 16], u32)]) -> Vec<u8> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let mut groups: Vec<([u8; 16], Vec<u32>)> = Vec::new();
+    for (key, id) in entries {
+        match groups.last_mut() {
+            Some((last_key, ids)) if last_key == key => ids.push(*id),
+            _ => groups.push((*key, vec![*id])),
+        }
+    }
+    let mut out = Vec::new();
+    let n_groups = groups.len() as u32;
+    out.extend_from_slice(&n_groups.to_le_bytes());
+    let header_len = 4 + groups.len() * 24;
+    let mut ids_off = header_len as u32;
+    let mut ids_blob = Vec::with_capacity(entries.len() * 4);
+    for (key, ids) in &groups {
+        out.extend_from_slice(key);
+        out.extend_from_slice(&ids_off.to_le_bytes());
+        out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+        for id in ids {
+            ids_blob.extend_from_slice(&id.to_le_bytes());
+        }
+        ids_off += (ids.len() * 4) as u32;
+    }
+    out.extend_from_slice(&ids_blob);
+    out
 }
 
 fn dict_key16(s: &str) -> [u8; 16] {
@@ -1100,6 +1264,208 @@ fn dict_key16(s: &str) -> [u8; 16] {
         *dst = src.to_ascii_lowercase();
     }
     key
+}
+
+fn intern_component(
+    map: &mut HashMap<String, u32>,
+    vec: &mut Vec<String>,
+    value: &str,
+) -> Result<u32> {
+    if let Some(&id) = map.get(value) {
+        return Ok(id);
+    }
+    let id = u32::try_from(vec.len()).map_err(|_| R5Error::Invalid("component dict too large"))?;
+    let owned = value.to_string();
+    vec.push(owned.clone());
+    map.insert(owned, id);
+    Ok(id)
+}
+
+fn component_dict_size(strings: &[String]) -> Result<u64> {
+    let blob_len = strings.iter().try_fold(0u64, |acc, s| {
+        acc.checked_add(s.len() as u64)
+            .ok_or_else(|| R5Error::Corrupt("component blob overflow".into()))
+    })?;
+    let offs_len = (u64::try_from(strings.len())
+        .map_err(|_| R5Error::Invalid("component dict too large"))?
+        + 1)
+    .checked_mul(4)
+    .ok_or_else(|| R5Error::Corrupt("component offsets overflow".into()))?;
+    20u64
+        .checked_add(blob_len)
+        .and_then(|v| v.checked_add(offs_len))
+        .ok_or_else(|| R5Error::Corrupt("component dict size overflow".into()))
+}
+
+fn write_component_dict(buf: &mut Vec<u8>, strings: &[String]) -> Result<()> {
+    let n =
+        u32::try_from(strings.len()).map_err(|_| R5Error::Invalid("component dict too large"))?;
+    let blob_len = strings.iter().try_fold(0u32, |acc, s| {
+        acc.checked_add(s.len() as u32)
+            .ok_or_else(|| R5Error::Corrupt("component blob overflow".into()))
+    })?;
+    let offs_len = (u64::from(n) + 1)
+        .checked_mul(4)
+        .ok_or_else(|| R5Error::Corrupt("component offsets overflow".into()))?;
+
+    buf.extend_from_slice(&n.to_le_bytes());
+    buf.extend_from_slice(&(u64::from(blob_len)).to_le_bytes());
+    buf.extend_from_slice(&offs_len.to_le_bytes());
+    for s in strings {
+        buf.extend_from_slice(s.as_bytes());
+    }
+    let mut cur = 0u32;
+    for s in strings {
+        buf.extend_from_slice(&cur.to_le_bytes());
+        cur = cur
+            .checked_add(s.len() as u32)
+            .ok_or_else(|| R5Error::Corrupt("component blob overflow".into()))?;
+    }
+    buf.extend_from_slice(&cur.to_le_bytes());
+    Ok(())
+}
+
+fn build_inline_term_data(terms: &[Term]) -> Result<TermDataBuild> {
+    let mut kinds = Vec::with_capacity(terms.len());
+    let mut data = Vec::new();
+    let mut offs = Vec::with_capacity(terms.len() + 1);
+    let mut cur = 0u64;
+    offs.push(cur);
+    for t in terms {
+        match t {
+            Term::Iri(s) => {
+                kinds.push(TERM_KIND_IRI);
+                data.extend_from_slice(s.as_bytes());
+                cur += s.len() as u64;
+            }
+            Term::BNode(s) => {
+                kinds.push(TERM_KIND_BNODE);
+                data.extend_from_slice(s.as_bytes());
+                cur += s.len() as u64;
+            }
+            Term::Literal { lex, dt, lang } => {
+                kinds.push(TERM_KIND_LITERAL_INLINE);
+                push_uvarint(lex.len() as u64, &mut data);
+                data.extend_from_slice(lex.as_bytes());
+                match dt {
+                    Some(d) => {
+                        data.push(1);
+                        push_uvarint(d.len() as u64, &mut data);
+                        data.extend_from_slice(d.as_bytes());
+                    }
+                    None => data.push(0),
+                }
+                match lang {
+                    Some(l) => {
+                        data.push(1);
+                        push_uvarint(l.len() as u64, &mut data);
+                        data.extend_from_slice(l.as_bytes());
+                    }
+                    None => data.push(0),
+                }
+                cur = data.len() as u64;
+            }
+        }
+        offs.push(cur);
+    }
+    Ok(TermDataBuild {
+        kinds,
+        data,
+        offs,
+        literal_components: false,
+    })
+}
+
+fn build_component_term_data(terms: &[Term]) -> Result<Option<TermDataBuild>> {
+    let mut pool = LiteralComponentPool::default();
+    let mut inline_literal_bytes = 0usize;
+    let mut component_literal_bytes = 0usize;
+    let mut literal_count = 0usize;
+
+    for term in terms {
+        if let Term::Literal { lex, dt, lang } = term {
+            literal_count += 1;
+            inline_literal_bytes += uvarint_len(lex.len() as u64) + lex.len() + 2;
+            let lex_id = intern_component(&mut pool.lex_map, &mut pool.lex, lex)?;
+            component_literal_bytes += uvarint_len(lex_id as u64);
+            if let Some(dt) = dt {
+                inline_literal_bytes += uvarint_len(dt.len() as u64) + dt.len();
+                let dt_id = intern_component(&mut pool.dt_map, &mut pool.dt, dt)?;
+                component_literal_bytes += uvarint_len(dt_id as u64 + 1);
+            } else {
+                component_literal_bytes += 1;
+            }
+            if let Some(lang) = lang {
+                inline_literal_bytes += uvarint_len(lang.len() as u64) + lang.len();
+                let lang_id = intern_component(&mut pool.lang_map, &mut pool.lang, lang)?;
+                component_literal_bytes += uvarint_len(lang_id as u64 + 1);
+            } else {
+                component_literal_bytes += 1;
+            }
+        }
+    }
+
+    if literal_count == 0 {
+        return Ok(None);
+    }
+
+    let dict_overhead = component_dict_size(&pool.lex)?
+        .checked_add(component_dict_size(&pool.dt)?)
+        .ok_or_else(|| R5Error::Corrupt("component dict size overflow".into()))?
+        .checked_add(component_dict_size(&pool.lang)?)
+        .ok_or_else(|| R5Error::Corrupt("component dict size overflow".into()))?;
+
+    if dict_overhead + component_literal_bytes as u64 >= inline_literal_bytes as u64 {
+        return Ok(None);
+    }
+
+    let mut data = Vec::new();
+    write_component_dict(&mut data, &pool.lex)?;
+    write_component_dict(&mut data, &pool.dt)?;
+    write_component_dict(&mut data, &pool.lang)?;
+
+    let mut kinds = Vec::with_capacity(terms.len());
+    let mut offs = Vec::with_capacity(terms.len() + 1);
+    let mut cur = data.len() as u64;
+    offs.push(cur);
+    for term in terms {
+        match term {
+            Term::Iri(s) => {
+                kinds.push(TERM_KIND_IRI);
+                data.extend_from_slice(s.as_bytes());
+            }
+            Term::BNode(s) => {
+                kinds.push(TERM_KIND_BNODE);
+                data.extend_from_slice(s.as_bytes());
+            }
+            Term::Literal { lex, dt, lang } => {
+                kinds.push(TERM_KIND_LITERAL_COMPONENTS);
+                let lex_id = pool.lex_map[lex] as u64;
+                push_uvarint(lex_id, &mut data);
+                push_uvarint(
+                    dt.as_ref()
+                        .map(|value| u64::from(pool.dt_map[value]) + 1)
+                        .unwrap_or(0),
+                    &mut data,
+                );
+                push_uvarint(
+                    lang.as_ref()
+                        .map(|value| u64::from(pool.lang_map[value]) + 1)
+                        .unwrap_or(0),
+                    &mut data,
+                );
+            }
+        }
+        cur = data.len() as u64;
+        offs.push(cur);
+    }
+
+    Ok(Some(TermDataBuild {
+        kinds,
+        data,
+        offs,
+        literal_components: true,
+    }))
 }
 
 fn write_term_dict(buf: &mut Vec<u8>, terms: &[Term]) -> Result<Section> {
@@ -1114,57 +1480,28 @@ fn write_term_dict_with_width(
     let off = buf.len();
     // header 33 bytes
     buf.resize(buf.len() + 33, 0);
-    // kinds
+    let inline = build_inline_term_data(terms)?;
+    let term_data = match build_component_term_data(terms)? {
+        Some(component) if component.data.len() < inline.data.len() => component,
+        _ => inline,
+    };
+
     let kinds_off = buf.len();
-    for t in terms {
-        buf.push(match t {
-            Term::Iri(_) => 0,
-            Term::BNode(_) => 1,
-            Term::Literal { .. } => 2,
-        });
-    }
-    // data blob
+    buf.extend_from_slice(&term_data.kinds);
     let data_off = buf.len();
-    let mut offs: Vec<u64> = Vec::with_capacity(terms.len() + 1);
-    let mut cur: u64 = 0;
-    offs.push(cur);
-    for t in terms {
-        match t {
-            Term::Iri(s) | Term::BNode(s) => {
-                buf.extend_from_slice(s.as_bytes());
-                cur += s.len() as u64;
-            }
-            Term::Literal { lex, dt, lang } => {
-                push_uvarint(lex.len() as u64, buf);
-                buf.extend_from_slice(lex.as_bytes());
-                match dt {
-                    Some(d) => {
-                        buf.push(1);
-                        push_uvarint(d.len() as u64, buf);
-                        buf.extend_from_slice(d.as_bytes());
-                    }
-                    None => buf.push(0),
-                }
-                match lang {
-                    Some(l) => {
-                        buf.push(1);
-                        push_uvarint(l.len() as u64, buf);
-                        buf.extend_from_slice(l.as_bytes());
-                    }
-                    None => buf.push(0),
-                }
-                cur = (buf.len() - data_off) as u64;
-            }
-        }
-        offs.push(cur);
-    }
-    let width = force_width.unwrap_or(if cur <= u32::MAX as u64 { 4 } else { 8 });
+    buf.extend_from_slice(&term_data.data);
+    let data_len = term_data
+        .offs
+        .last()
+        .copied()
+        .unwrap_or(term_data.data.len() as u64);
+    let width = force_width.unwrap_or(if data_len <= u32::MAX as u64 { 4 } else { 8 });
     if width != 4 && width != 8 {
         return Err(R5Error::Invalid("unsupported term dict width"));
     }
     // offs u32*(n+1) or u64*(n+1)
     let offs_off = buf.len();
-    for o in offs {
+    for o in term_data.offs {
         if width == 4 {
             let o = u32::try_from(o).map_err(|_| R5Error::Invalid("term dict width overflow"))?;
             buf.extend_from_slice(&o.to_le_bytes());
@@ -1174,7 +1511,12 @@ fn write_term_dict_with_width(
     }
 
     // fill header
-    buf[off] = width;
+    buf[off] = (width & TERM_DICT_WIDTH_MASK)
+        | if term_data.literal_components {
+            TERM_DICT_FLAG_LITERAL_COMPONENTS
+        } else {
+            0
+        };
     buf[off + 1..off + 9].copy_from_slice(&(terms.len() as u64).to_le_bytes());
     buf[off + 9..off + 17].copy_from_slice(&(kinds_off as u64).to_le_bytes());
     buf[off + 17..off + 25].copy_from_slice(&(data_off as u64).to_le_bytes());
