@@ -488,6 +488,54 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn("http://qudt.org/3.1.8/schema/qudt", closure_list)
         self.assertIn("http://qudt.org/3.1.8/vocab/quantitykind", closure_list)
 
+    def test_list_closure_is_selective(self):
+        """list_closure(A) must return only A's transitive imports, not unrelated ontologies."""
+        # Build two independent import chains: A -> B and C -> D
+        a_path = self.test_dir / "a.ttl"
+        b_path = self.test_dir / "b.ttl"
+        c_path = self.test_dir / "c.ttl"
+        d_path = self.test_dir / "d.ttl"
+
+        a_iri = a_path.resolve().as_uri()
+        b_iri = b_path.resolve().as_uri()
+        c_iri = c_path.resolve().as_uri()
+        d_iri = d_path.resolve().as_uri()
+
+        b_path.write_text(
+            f"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{b_iri}> a owl:Ontology .\n",
+            encoding="utf-8",
+        )
+        a_path.write_text(
+            f"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            f"<{a_iri}> a owl:Ontology ; owl:imports <{b_iri}> .\n",
+            encoding="utf-8",
+        )
+        d_path.write_text(
+            f"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{d_iri}> a owl:Ontology .\n",
+            encoding="utf-8",
+        )
+        c_path.write_text(
+            f"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            f"<{c_iri}> a owl:Ontology ; owl:imports <{d_iri}> .\n",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(b_path))
+        self.env.add(str(a_path))
+        self.env.add(str(d_path))
+        self.env.add(str(c_path))
+
+        closure_a = self.env.list_closure(a_iri)
+
+        # A's closure must contain A and B
+        self.assertIn(a_iri, closure_a)
+        self.assertIn(b_iri, closure_a)
+
+        # A's closure must NOT contain C or D (they are in a separate chain)
+        self.assertNotIn(c_iri, closure_a)
+        self.assertNotIn(d_iri, closure_a)
+
     def test_get_importers(self):
         """Test env.get_importers()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
