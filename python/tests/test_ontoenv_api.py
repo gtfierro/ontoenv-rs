@@ -544,6 +544,130 @@ class TestOntoEnvAPI(unittest.TestCase):
         dependents = self.env.get_importers("http://qudt.org/3.1.8/vocab/quantitykind")
         self.assertIn(self.brick_name, dependents)
 
+    def test_missing_imports_environment_level(self):
+        """missing_imports() with no args returns IRIs of unresolvable imports across the env."""
+        ont_path = self.test_dir.resolve() / "ont.ttl"
+        ont_iri = ont_path.as_uri()
+        missing_iri = "http://example.com/missing-ontology"
+
+        ont_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{ont_iri}> a owl:Ontology ;
+    owl:imports <{missing_iri}> .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(ont_path), fetch_imports=False)
+
+        missing = self.env.missing_imports()
+        self.assertIn(missing_iri, missing)
+
+    def test_missing_imports_per_graph(self):
+        """missing_imports(uri) returns only the unresolvable imports for that ontology."""
+        a_path = (self.test_dir / "a.ttl").resolve()
+        b_path = (self.test_dir / "b.ttl").resolve()
+        a_iri = a_path.as_uri()
+        b_iri = b_path.as_uri()
+        missing_iri = "http://example.com/not-here"
+
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology .
+""",
+            encoding="utf-8",
+        )
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> ;
+    owl:imports <{missing_iri}> .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(b_path))
+        self.env.add(str(a_path), fetch_imports=False)
+
+        missing = self.env.missing_imports(a_iri)
+        self.assertIn(missing_iri, missing)
+        self.assertNotIn(b_iri, missing)
+
+    def test_missing_imports_per_graph_transitive(self):
+        """missing_imports(uri) surfaces missing imports from the full transitive closure."""
+        a_path = (self.test_dir / "a.ttl").resolve()
+        b_path = (self.test_dir / "b.ttl").resolve()
+        a_iri = a_path.as_uri()
+        b_iri = b_path.as_uri()
+        missing_iri = "http://example.com/transitively-missing"
+
+        # B is present but declares an import that is not in the env.
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology ;
+    owl:imports <{missing_iri}> .
+""",
+            encoding="utf-8",
+        )
+        # A imports B (which is present); A has no missing direct imports.
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(b_path), fetch_imports=False)
+        self.env.add(str(a_path), fetch_imports=False)
+
+        # The env-level call should surface the transitively-missing IRI.
+        self.assertIn(missing_iri, self.env.missing_imports())
+
+        # The per-graph call starting from A should also find it, even though
+        # it is declared by B (not A directly).
+        missing = self.env.missing_imports(a_iri)
+        self.assertIn(missing_iri, missing)
+        self.assertNotIn(b_iri, missing)
+
+    def test_missing_imports_empty_when_all_resolved(self):
+        """missing_imports() returns empty list when all imports are resolvable."""
+        a_path = (self.test_dir / "a.ttl").resolve()
+        b_path = (self.test_dir / "b.ttl").resolve()
+        a_iri = a_path.as_uri()
+        b_iri = b_path.as_uri()
+
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology .
+""",
+            encoding="utf-8",
+        )
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(b_path))
+        self.env.add(str(a_path))
+
+        self.assertEqual(self.env.missing_imports(), [])
+        self.assertEqual(self.env.missing_imports(a_iri), [])
+
     def test_import_graph_flattens_to_single_ontology(self):
         """import_graph merges closure into one ontology declaration and removes owl:imports."""
         base_path = self.test_dir / "base.ttl"
