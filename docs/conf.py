@@ -61,6 +61,7 @@ exclude_patterns: list[str] = [
 html_theme = "furo"
 html_static_path = ["_static"]
 html_title = "OntoEnv Documentation"
+html_css_files = ["custom.css"]
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", {}),

@@ -1,104 +1,150 @@
 Getting Started
 ===============
 
-This section shows how to spin up an ``ontoenv`` workspace, filter what gets loaded, and keep cached ontologies fresh. The CLI, the Python package, and the Rust API now share the same vocabulary for configuration (``includes``, regex filters, cache modes, etc.), so you can jump between them without surprises.
+.. raw:: html
 
-Install the CLI or Python bindings
-----------------------------------
+   <div class="oe-section-intro">
+     Everything you need to set up a workspace, control what gets loaded, and keep your cached
+     ontologies fresh — using the <strong>CLI</strong>, the <strong>Python package</strong>, or both.
+   </div>
+
+Install
+-------
+
+**1. Install the CLI (Rust)** — requires a Rust toolchain; the binary is published on crates.io.
 
 .. code-block:: bash
 
-   # CLI from crates.io
    cargo install ontoenv-cli
 
-   # or from this workspace (after cloning the repo)
+   # or build from this workspace after cloning:
    cargo build -p ontoenv-cli --release
 
-   # Python bindings (build the native module once)
-   cd python
-   uv run maturin develop
+**2. Install the Python package** — pre-built wheels on PyPI; no Rust toolchain needed.
 
-Initialize an ontology workspace
---------------------------------
+.. code-block:: bash
 
-``ontoenv`` stores its metadata under ``.ontoenv``. Discovery now happens only when you explicitly pass directories to ``ontoenv init``:
+   pip install ontoenv
+
+   # To build from source (e.g., after cloning):
+   cd python && uv run maturin develop
+
+Initialize a workspace
+----------------------
+
+``ontoenv`` stores its metadata under ``.ontoenv/``. Run ``init`` and pass the directories you want
+scanned:
 
 .. code-block:: console
 
-   # Discover ontologies under the current directory
+   # Discover every ontology under the current directory
    ontoenv init .
 
-   # Create an empty environment (no discovery yet)
+   # Create an empty container (add ontologies later with ontoenv add)
    ontoenv init
 
-   # Seed from multiple paths
+   # Seed from multiple directories at once
    ontoenv init ./ontologies ./models
 
-Running ``init`` again with ``--overwrite`` rebuilds the environment in place. Every command walks up from your current directory to find ``.ontoenv`` unless ``ONTOENV_DIR`` is set.
+.. raw:: html
+
+   <div class="oe-tip">
+     <span class="oe-tip-icon">&#x1F4A1;</span>
+     <p>
+       <strong>Re-running init?</strong> Pass <code>--overwrite</code> to rebuild the environment
+       in place. Every command walks up from the current directory to find <code>.ontoenv/</code>
+       unless <code>ONTOENV_DIR</code> is set.
+     </p>
+   </div>
 
 Add and refresh ontologies
 --------------------------
 
-Once the workspace exists you can add specific files or URLs, or re-run discovery:
+Once the workspace exists, register individual files or URLs and keep them fresh:
 
 .. code-block:: console
 
-   # Add a single ontology without exploring its imports
+   # Add a single ontology (fetches owl:imports by default)
+   ontoenv add ./ontologies/site.ttl
+
+   # Add without following imports
    ontoenv add ./ontologies/site.ttl --no-imports
 
-   # Refresh anything whose remote cache entry is stale
+   # Refresh stale remote cache entries
    ontoenv update
-   ontoenv update --all              # force every ontology to re-download
+
+   # Force every ontology to re-download
+   ontoenv update --all
 
 Use ``ontoenv list ontologies`` or ``ontoenv dump`` to inspect what is currently cached.
 
 Control discovery scope
 -----------------------
 
-Two layers of filters govern what gets pulled in:
+Two independent filter layers govern what gets pulled in:
 
-* ``-i/--includes`` and ``-e/--excludes`` accept gitignore-style globs. Bare directories (``lib/tests``) automatically expand to ``lib/tests/**`` so you can target entire trees.
-* ``--include-ontology`` / ``--exclude-ontology`` accept regex patterns that run against ontology IRIs after parsing. Includes act as a whitelist and excludes prune whatever slips through.
+.. raw:: html
 
-Example:
+   <div class="oe-protocol-box">
+     <h3>Filter layers</h3>
+     <ul>
+       <li><code>-i/--includes</code> and <code>-e/--excludes</code> — gitignore-style globs on
+           <strong>file paths</strong>. Bare directories (e.g. <code>lib/tests</code>) auto-expand
+           to <code>lib/tests/**</code>.</li>
+       <li><code>--include-ontology</code> / <code>--exclude-ontology</code> — regex patterns run
+           against <strong>ontology IRIs</strong> after parsing. Includes act as a whitelist;
+           excludes prune what slips through.</li>
+     </ul>
+   </div>
 
 .. code-block:: console
 
    ontoenv init ontologies \
      --includes '*.ttl' \
      --exclude-ontology 'experimental' \
-     --include-ontology '^https://example\\.com/'
+     --include-ontology '^https://example\.com/'
 
-Those settings are saved into ``.ontoenv/config.json`` so future commands inherit them. The ``ontoenv config`` helper currently supports ``locations``, ``includes``, and ``excludes`` via ``add``/``remove``; regex filters must be supplied on the command line or edited directly in the config file.
+Settings are saved into ``.ontoenv/config.json`` and re-applied by every subsequent command.
 
 Cache strategy and TTL
 ----------------------
 
-Remote ontologies live in a cache on disk. You can tune two independent knobs:
+Remote ontologies are stored on disk. Two knobs control how aggressively they are refreshed:
 
-* ``use_cached_ontologies`` (exposed as ``use_cached_ontologies`` in Python or ``CacheMode`` in Rust) controls whether ``init`` eagerly scans the configured locations (disabled/default) or skips discovery until you explicitly add/update (enabled).
-* ``--remote-cache-ttl-secs`` sets the maximum age of each cached remote ontology before ``update`` re-fetches it (default 86,400 seconds).
+.. raw:: html
+
+   <div class="oe-protocol-box">
+     <h3>Cache options</h3>
+     <ul>
+       <li><code>use_cached_ontologies</code> — when enabled, discovery is skipped at init time
+           and the environment only fills when you explicitly call <code>add</code> or
+           <code>update</code>.</li>
+       <li><code>--remote-cache-ttl-secs</code> — maximum age (seconds) of a cached remote
+           ontology before <code>update</code> re-fetches it. Default: <strong>86,400</strong>
+           (24 hours).</li>
+     </ul>
+   </div>
 
 .. code-block:: console
 
    # Keep cached copies for a week before refreshing
    ontoenv update --remote-cache-ttl-secs 604800
 
-   # Persist default settings in the config
+   # Persist these as defaults
    ontoenv config set remote_cache_ttl_secs 604800
    ontoenv config add locations ./ontologies
 
 Python quickstart
 -----------------
 
-The Python API mirrors the same configuration surface:
+The Python API exposes the same configuration surface as the CLI:
 
 .. code-block:: python
 
    from ontoenv import OntoEnv
 
    env = OntoEnv(
-       path=".",                    # use ./ .ontoenv if it exists
+       path=".",                    # look for (or create) .ontoenv here
        recreate=True,               # create/overwrite metadata
        search_directories=["."],    # scan the current project
        includes=["*.ttl", "*.xml"],
@@ -111,32 +157,28 @@ The Python API mirrors the same configuration surface:
 
    env.update(all=True)
 
-Pass ``use_cached_ontologies=True`` to start with an empty container that only fills when you explicitly call ``add``/``update``.
+   # Retrieve a merged graph of an ontology and all its transitive imports
+   g, imported = env.get_closure("https://example.com/myOntology")
+   print(f"Merged {imported} imports, {len(g)} triples total")
 
-Working on this documentation
------------------------------
+Pass ``use_cached_ontologies=True`` to start with an empty container that only fills when you
+explicitly call ``add`` or ``update``.
 
-Documentation lives under ``docs/`` with its own ``pyproject.toml``. To build or preview the site:
+Building the docs
+-----------------
+
+The documentation lives under ``docs/`` with its own ``pyproject.toml``:
 
 .. code-block:: bash
 
    cd docs
-   uv sync                 # installs Sphinx + theme into docs/.venv
+   uv sync                              # install Sphinx + theme
    uv run sphinx-build -M html . _build
    open _build/html/index.html
 
-The repo also ships helper scripts:
+Helper scripts in the repo root:
 
 .. code-block:: bash
 
-   ./builddocs          # sync deps, build the extension module, render HTML
-   ./builddocs llms     # render docs/_build/llms.txt for LLM ingestion
-
-If ``autodoc`` needs the Python bindings, rebuild them in editable mode:
-
-.. code-block:: bash
-
-   cd python
-   uv run maturin develop
-
-Publishing to GitHub Pages still follows the same steps: build HTML, push ``docs/_build/html`` (or configure Pages to use ``/docs``), and update the Pages source accordingly.
+   ./builddocs          # sync deps, build the extension, render HTML
+   ./builddocs llms     # also render docs/_build/llms.txt for LLM ingestion

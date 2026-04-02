@@ -1,34 +1,55 @@
-Python Graph Store Interface
-============================
+Graph Store Interface
+=====================
 
-OntoEnv can write graphs into a caller-provided Python store via the
-``graph_store`` argument. This is useful when integrating OntoEnv into
-applications that already manage graph storage.
+.. raw:: html
 
-Interface
----------
+   <div class="oe-section-intro">
+     OntoEnv can route all graph reads and writes through a caller-provided Python object.
+     This is useful when you already manage graph storage — an in-memory dict, a database,
+     or a custom triplestore — and want OntoEnv to slot in without touching the filesystem.
+   </div>
 
-Provide an object that implements the following methods:
+Protocol
+--------
 
-.. code-block:: python
+Pass a ``graph_store=`` object to ``OntoEnv()``. It must implement the following methods:
 
-   class GraphStore:
-       def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None: ...
-       def get_graph(self, iri: str) -> Graph: ...
-       def remove_graph(self, iri: str) -> None: ...
-       def graph_ids(self) -> list[str]: ...
-       def size(self) -> dict[str, int]: ...  # optional: {"num_graphs": ..., "num_triples": ...}
+.. raw:: html
 
-Notes
------
+   <div class="oe-protocol-box">
+     <h3>Required</h3>
+     <ul>
+       <li><code>add_graph(iri: str, graph: Graph, overwrite: bool = False) → None</code>
+           — store a graph under the given IRI.</li>
+       <li><code>get_graph(iri: str) → Graph</code>
+           — retrieve a previously stored graph by IRI.</li>
+       <li><code>remove_graph(iri: str) → None</code>
+           — delete a graph from the store.</li>
+       <li><code>graph_ids() → list[str]</code>
+           — return all currently stored IRIs.</li>
+     </ul>
+     <h3>Optional</h3>
+     <ul>
+       <li><code>size() → dict[str, int]</code>
+           — return <code>{"num_graphs": …, "num_triples": …}</code> for diagnostic use.</li>
+     </ul>
+   </div>
 
-- ``graph_store`` cannot be combined with ``recreate`` or ``create_or_use_cached``.
-- Graphs are passed as ``rdflib.Graph`` instances.
+.. raw:: html
+
+   <div class="oe-tip">
+     <span class="oe-tip-icon">&#x26A0;&#xFE0F;</span>
+     <p>
+       <strong>Constraint:</strong> <code>graph_store</code> cannot be combined with
+       <code>recreate=True</code> or <code>create_or_use_cached</code>. Graphs are always
+       passed as <code>rdflib.Graph</code> instances.
+     </p>
+   </div>
 
 Example
 -------
 
-Here is a minimal in-memory store and how to register it:
+A minimal in-memory store and how to register it:
 
 .. code-block:: python
 
@@ -63,3 +84,6 @@ Here is a minimal in-memory store and how to register it:
 
    store = DictGraphStore()
    env = OntoEnv(graph_store=store, temporary=True)
+
+   env.add("./ontologies/my.ttl")
+   print(store.graph_ids())   # ['https://example.com/myOntology']
