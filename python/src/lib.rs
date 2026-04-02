@@ -1860,6 +1860,45 @@ impl OntoEnv {
         Ok(names)
     }
 
+    /// Return IRIs of imports that cannot be resolved in the environment.
+    ///
+    /// If ``uri`` is ``None``, scans every ontology in the environment and
+    /// returns the union of all unresolvable imports (de-duplicated).
+    ///
+    /// If ``uri`` is provided, walks the full transitive ``owl:imports`` closure
+    /// of that ontology and returns every import IRI that cannot be resolved,
+    /// including those declared by transitively-imported ontologies.
+    #[pyo3(signature = (uri = None))]
+    fn missing_imports(&self, uri: Option<&str>) -> PyResult<Vec<String>> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        if let Some(uri) = uri {
+            let iri = NamedNode::new(uri)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let graphid = env
+                .resolve(ResolveTarget::Graph(iri.clone()))
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to resolve graph for URI: {uri}"
+                    ))
+                })?;
+            let missing = env
+                .missing_imports_in_closure(&graphid)
+                .map_err(anyhow_to_pyerr)?;
+            Ok(missing.into_iter().map(|n| n.to_uri_string()).collect())
+        } else {
+            let missing = env
+                .missing_imports()
+                .into_iter()
+                .map(|n| n.to_uri_string())
+                .collect();
+            Ok(missing)
+        }
+    }
+
     /// Get the ontology metadata with the given URI
     fn get_ontology(&self, uri: &str) -> PyResult<PyOntology> {
         let iri = NamedNode::new(uri)
