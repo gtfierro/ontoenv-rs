@@ -1,7 +1,14 @@
-CLI Usage
-=========
+CLI Reference
+=============
 
-The ``ontoenv`` CLI wraps the Rust core with commands for discovering and materializing ontology imports. Every command operates on the nearest ``.ontoenv`` directory (walked upward from the current working directory) unless you override ``ONTOENV_DIR``.
+.. raw:: html
+
+   <div class="oe-section-intro">
+     The <strong>ontoenv</strong> CLI wraps the Rust core with commands for discovering,
+     fetching, and querying RDF ontology imports. Every command locates the nearest
+     <code>.ontoenv/</code> directory by walking up from the current working directory —
+     override with <code>ONTOENV_DIR</code>.
+   </div>
 
 Install
 -------
@@ -9,121 +16,305 @@ Install
 .. code-block:: bash
 
    cargo install ontoenv-cli
-   # or from the workspace:
+
+   # or build from this workspace after cloning:
    cargo build -p ontoenv-cli --release
    ./target/release/ontoenv --help
 
-Lifecycle overview
-------------------
+Typical workflow
+----------------
 
-* ``ontoenv init`` - create or reset the environment metadata under ``.ontoenv``.
-* ``ontoenv add <path-or-iri>`` - register an ontology; fetch its ``owl:imports`` unless ``--no-imports`` is passed.
-* ``ontoenv update`` - refresh cached ontologies (use ``--all`` to force a refresh).
-* ``ontoenv dump`` / ``ontoenv list`` - inspect what is stored.
+#. ``ontoenv init`` — create or reset the environment under ``.ontoenv/``. Pass directories to
+   discover immediately, or omit them to start empty.
+#. ``ontoenv add`` — register an ontology by file path or IRI. Follows ``owl:imports`` by default;
+   pass ``--no-imports`` to skip.
+#. ``ontoenv update`` — re-ingest modified local files and re-fetch stale remote ontologies.
+   Use ``--all`` to force a full refresh regardless of modification times.
+#. ``ontoenv closure`` / ``ontoenv get`` — export a merged graph of an ontology plus all its
+   imports, or retrieve a single graph.
 
-Global options of note
-----------------------
+Commands: status and inspection
+--------------------------------
 
-When you invoke any command you can also pass:
+.. raw:: html
 
-* ``-i/--includes`` and ``-e/--excludes``: gitignore-style globs for files (``**`` and bare directory prefixes like ``lib/tests`` are supported). By default the CLI looks for ``*.ttl``, ``*.xml``, and ``*.n3``.
-* ``--include-ontology`` / ``--exclude-ontology``: regex filters applied to ontology IRIs *after* discovery. Includes act as a whitelist, excludes run last.
-* ``--remote-cache-ttl-secs``: the maximum age (in seconds) for cached remote ontologies before they are re-fetched. The default is 86,400 (24 hours).
-* ``--require-ontology-names``, ``--strict``, ``--offline``, ``-p/--policy``, and ``-t/--temporary`` mirror the corresponding builder flags in the Rust/Python APIs.
+   <div class="oe-cmd-grid">
 
-``ontoenv init`` semantics
---------------------------
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv list</span>
+       <p>List things stored in the environment.
+          Subcommands: <code>ontologies</code> (declared IRIs), <code>locations</code>
+          (file paths), <code>missing</code> (unresolved imports).</p>
+     </div>
 
-``ontoenv init`` separates environment creation from discovery. Pass one or more ``LOCATION`` arguments when you want the command to immediately scan directories; omit them to create an empty container that you can populate later via ``ontoenv add`` or a subsequent ``ontoenv init`` with locations.
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv status</span>
+       <p>Print a summary of the environment: how many ontologies are loaded, where
+          <code>.ontoenv/</code> lives, and active config settings.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv dump</span>
+       <p>Print the full current state of the environment — all stored ontologies
+          and their metadata — to <code>STDOUT</code>. Pass a string to filter by name.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv why</span>
+       <p>Show all import paths that lead to a given ontology IRI — each path runs
+          from the most distant importer down to the target.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv dep-graph</span>
+       <p>Generate a PDF visualisation of the import dependency graph (requires
+          Graphviz). Pass one or more root IRIs to limit the graph to a subgraph.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv doctor</span>
+       <p>Check the environment for common problems: duplicate ontology IRIs, files
+          missing an <code>owl:Ontology</code> declaration, and conflicting namespace
+          prefixes.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv namespaces</span>
+       <p>Show prefix-to-IRI namespace mappings extracted from ontology files. If no
+          IRI is given, merges namespaces from all ontologies. <code>--closure</code>
+          includes transitive imports.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv version</span>
+       <p>Print the version of the installed <code>ontoenv</code> binary.</p>
+     </div>
+
+   </div>
 
 .. code-block:: console
 
-   # Discover ontologies under the current directory
-   ontoenv init .
+   # list all discovered ontologies
+   ontoenv list ontologies
 
-   # Bootstrap an empty environment (no discovery yet)
-   ontoenv init
+   # list ontology file locations on disk
+   ontoenv list locations
 
-   # Seed from multiple directories
-   ontoenv init ./ontologies ./models
+   # list imports that could not be resolved
+   ontoenv list missing
 
-``--overwrite`` rebuilds ``.ontoenv`` in place. Combine it with ``--offline`` to stay strictly local.
+   # show environment summary (or as JSON)
+   ontoenv status
+   ontoenv status --json
 
-Filtering ontologies by IRI
----------------------------
+   # dump full environment state, optionally filtered
+   ontoenv dump
+   ontoenv dump brick
 
-Use regex filters when directory-based filtering is not enough:
+   # find what imports a given ontology
+   ontoenv why https://brickschema.org/schema/Brick
+
+   # generate a full dependency graph PDF
+   ontoenv dep-graph
+   # limit to one root's subgraph
+   ontoenv dep-graph https://brickschema.org/schema/Brick -o brick_deps.pdf
+
+   # check for environment problems
+   ontoenv doctor
+
+   # show all known namespace prefixes
+   ontoenv namespaces
+   # show prefixes for one ontology and its imports
+   ontoenv namespaces https://brickschema.org/schema/Brick --closure
+
+   # print the binary version
+   ontoenv version
+
+Commands: update and manage
+----------------------------
+
+.. raw:: html
+
+   <div class="oe-cmd-grid">
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv init</span>
+       <p>Create or overwrite the environment. Pass directory paths to trigger immediate
+          discovery, or omit them to start empty. <code>--overwrite</code> rebuilds in place.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv add</span>
+       <p>Register a single ontology by file path or URL. Fetches
+          <code>owl:imports</code> unless <code>--no-imports</code> is passed.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv update</span>
+       <p>Re-ingest modified local files and re-fetch stale remote ontologies.
+          <code>--all</code> forces a full refresh regardless of modification times or
+          cache age.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv config</span>
+       <p>Read or update the persisted configuration. Supports
+          <code>get</code>, <code>set</code>, <code>unset</code>, <code>add</code>,
+          <code>remove</code>, and <code>list</code> subcommands.</p>
+     </div>
+
+     <div class="oe-cmd-card">
+       <span class="cmd-name">ontoenv reset</span>
+       <p>Remove the <code>.ontoenv/</code> directory entirely, wiping all cached
+          state and configuration.</p>
+     </div>
+
+   </div>
 
 .. code-block:: console
 
-   # Keep only IRIs under example.com, drop anything mentioning experimental
+   # create an environment scanning two directories
+   ontoenv init ./ontologies ./vendor
+
+   # rebuild the environment in place
+   ontoenv init ./ontologies --overwrite
+
+   # add a local file (follows owl:imports by default)
+   ontoenv add ./ontologies/myont.ttl
+
+   # add a remote ontology without following its imports
+   ontoenv add https://brickschema.org/schema/Brick --no-imports
+
+   # re-ingest changed local files and re-fetch stale remote ontologies
+   ontoenv update
+
+   # force a full refresh of everything regardless of modification times
+   ontoenv update --all
+
+   # show all persisted config keys and values
+   ontoenv config list
+
+   # read or change a single value
+   ontoenv config get locations
+   ontoenv config set remote_cache_ttl_secs 3600
+
+   # add or remove a value from a list-type key
+   ontoenv config add locations ./more-ontologies
+   ontoenv config remove locations ./old-path
+
+   # wipe the environment (prompts for confirmation)
+   ontoenv reset
+   # skip the confirmation prompt
+   ontoenv reset --force
+
+Commands: extract graphs
+------------------------
+
+Two commands export graph data; they differ in scope and how imports are handled:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 30 30 22
+
+   * - Command
+     - What is returned
+     - Import handling
+     - Output
+   * - ``ontoenv get``
+     - The single stored graph for one ontology IRI
+     - None — raw graph only, imports not followed
+     - ``STDOUT`` or ``-o <file>``
+   * - ``ontoenv closure``
+     - The ontology merged with all transitive ``owl:imports``
+     - Full transitive closure resolved and merged
+     - ``-o <file>`` (required)
+
+.. code-block:: console
+
+   # print a single ontology graph to STDOUT
+   ontoenv get https://brickschema.org/schema/Brick
+
+   # write it to a file in a specific format
+   ontoenv get https://brickschema.org/schema/Brick \
+     --output brick.ttl --format turtle
+
+   # compute the full transitive closure and write to a file
+   ontoenv closure https://brickschema.org/schema/Brick brick_closure.ttl
+
+   # closure but keep owl:imports statements in the output
+   ontoenv closure https://brickschema.org/schema/Brick brick_closure.ttl \
+     --keep-owl-imports
+
+Global flags
+------------
+
+These flags are accepted by every subcommand:
+
+.. raw:: html
+
+   <div class="oe-protocol-box">
+     <h3>Filtering</h3>
+     <ul>
+       <li><code>-i/--includes</code>, <code>-e/--excludes</code> — gitignore-style globs on
+           file paths. Bare directories expand to <code>dir/**</code> automatically.</li>
+       <li><code>--include-ontology</code>, <code>--exclude-ontology</code> — regex filters on
+           ontology IRIs after parsing. Includes are a whitelist; excludes run last.</li>
+     </ul>
+   </div>
+
+   <div class="oe-protocol-box">
+     <h3>Behaviour</h3>
+     <ul>
+       <li><code>--remote-cache-ttl-secs</code> — max age of cached remote ontologies before
+           re-fetch (default 86,400 s).</li>
+       <li><code>-o/--offline</code> — skip all network access; use only what is already
+           on disk.</li>
+       <li><code>--require-ontology-names</code> — reject files that lack an
+           <code>owl:Ontology</code> declaration.</li>
+       <li><code>--strict</code> — treat missing imports as errors instead of warnings.</li>
+       <li><code>-t/--temporary</code> — keep everything in memory; do not write
+           <code>.ontoenv/</code> to disk.</li>
+       <li><code>-p/--policy</code> — conflict-resolution policy when multiple files
+           declare the same ontology IRI.</li>
+       <li><code>-v/--verbose</code>, <code>--debug</code> — increase log verbosity.</li>
+     </ul>
+   </div>
+
+Filtering by IRI
+----------------
+
+Use regex filters when path-based globs are not enough:
+
+.. code-block:: console
+
    ontoenv init . \
-     --include-ontology '^https://example\\.com/' \
+     --include-ontology '^https://example\.com/' \
      --exclude-ontology 'experimental'
 
-The same switches are accepted on every command so that subsequent ``update`` or ``add`` runs keep applying the filter set.
+.. raw:: html
 
-.. note::
+   <div class="oe-tip">
+     <span class="oe-tip-icon">&#x1F4CC;</span>
+     <p>
+       <strong>Persisted filters:</strong> Regex lists are saved inside
+       <code>.ontoenv/config.json</code> at init time and re-applied on every subsequent command.
+       The <code>ontoenv config</code> helper currently supports <code>locations</code>,
+       <code>includes</code>, and <code>excludes</code> via <code>add</code>/<code>remove</code>;
+       edit the JSON file directly to change regex filters after init.
+     </p>
+   </div>
 
-   The ``ontoenv config`` helper does not yet support modifying the regex lists. Set them during ``init`` (they are persisted inside ``.ontoenv/config.json``) or edit that file directly.
-
-Tuning cache strategy
----------------------
-
-Remote ontologies are stored on disk. The CLI keeps them for 24 hours by default; raise or lower the threshold per command:
+Tuning cache behaviour
+----------------------
 
 .. code-block:: console
 
-   ontoenv update --remote-cache-ttl-secs 172800
+   # Keep remote copies for a week
+   ontoenv update --remote-cache-ttl-secs 604800
 
-If you prefer to reuse whatever is already in ``.ontoenv`` without implicit fetches, enable cached-only mode inside the config before running commands that would ordinarily touch the network:
-
-.. code-block:: console
-
+   # Persist the TTL and add a new search location
    ontoenv config set remote_cache_ttl_secs 604800
-   # For list-like fields (locations/includes/excludes) use add/remove:
    ontoenv config add locations ./ontologies
 
-``ontoenv config list`` prints the persisted values (including include/exclude patterns and regex filters) so you can confirm what will be used by the next command.
-
-Reference help
---------------
-
-.. code-block:: text
-
-   $ ontoenv --help
-   Ontology environment manager
-
-   Usage: ontoenv [OPTIONS] <COMMAND>
-
-   Commands:
-     init        Create a new ontology environment
-     version     Prints the version of the ontoenv binary
-     status      Prints the status of the ontology environment
-     update      Update the ontology environment
-     closure     Compute the owl:imports closure of an ontology and write it to a file
-     get         Retrieve a single graph from the environment and write it to STDOUT or a file
-     add         Add an ontology to the environment
-     list        List various properties of the environment
-     dump        Print out the current state of the ontology environment
-     dep-graph   Generate a PDF of the dependency graph
-     why         Lists which ontologies import the given ontology
-     doctor      Run the doctor to check the environment for issues
-     reset       Reset the ontology environment by removing the .ontoenv directory
-     config      Manage ontoenv configuration
-     help        Print this message or the help of the given subcommand(s)
-
-   Options:
-     -v, --verbose
-     --debug
-     -p, --policy <POLICY>
-     -t, --temporary
-     --require-ontology-names
-     --strict
-     -o, --offline
-     -i, --includes <INCLUDES>...
-     -e, --excludes <EXCLUDES>...
-     --include-ontology <INCLUDE_ONTOLOGIES>...
-     --exclude-ontology <EXCLUDE_ONTOLOGIES>...
-     --remote-cache-ttl-secs <REMOTE_CACHE_TTL_SECS>
-     -h, --help
+   # Confirm what is stored
+   ontoenv config list
