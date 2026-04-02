@@ -1601,6 +1601,41 @@ impl OntoEnv {
         missing.into_iter().collect()
     }
 
+    /// Returns all imports that could not be resolved within the transitive closure
+    /// of the given ontology.  Walks the full import graph starting from `id`,
+    /// visiting every reachable (i.e. resolvable) ontology and collecting any
+    /// declared `owl:imports` that cannot be found in the environment.
+    pub fn missing_imports_in_closure(&self, id: &GraphIdentifier) -> Result<Vec<NamedNode>> {
+        let mut missing: HashSet<NamedNode> = HashSet::new();
+        let mut visited: HashSet<GraphIdentifier> = HashSet::new();
+        let mut stack: VecDeque<GraphIdentifier> = VecDeque::new();
+
+        stack.push_back(id.clone());
+        while let Some(graph) = stack.pop_front() {
+            if !visited.insert(graph.clone()) {
+                continue;
+            }
+            let ontology = self
+                .ontologies()
+                .get(&graph)
+                .ok_or_else(|| anyhow!("Ontology {} not found", graph.to_uri_string()))?;
+            for import in &ontology.imports {
+                match self.env.get_ontology_by_name(import.into()) {
+                    Some(imp) => {
+                        let imp_id = imp.id().clone();
+                        if !visited.contains(&imp_id) {
+                            stack.push_back(imp_id);
+                        }
+                    }
+                    None => {
+                        missing.insert(import.clone());
+                    }
+                }
+            }
+        }
+        Ok(missing.into_iter().collect())
+    }
+
     /// Lists all ontologies in the search directories which match
     /// the include/exclude glob patterns
     pub fn find_files(&self) -> Result<Vec<OntologyLocation>> {
