@@ -638,6 +638,40 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn(missing_iri, missing)
         self.assertNotIn(b_iri, missing)
 
+    def test_missing_imports_three_level_chain(self):
+        """A->B->C where C is not loaded: both missing_imports(A) and missing_imports(B) report C."""
+        a_path = (self.test_dir / "a.ttl").resolve()
+        b_path = (self.test_dir / "b.ttl").resolve()
+        a_iri = a_path.as_uri()
+        b_iri = b_path.as_uri()
+        c_iri = "http://example.com/c-not-loaded"
+
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology ;
+    owl:imports <{c_iri}> .
+""",
+            encoding="utf-8",
+        )
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(b_path), fetch_imports=False)
+        self.env.add(str(a_path), fetch_imports=False)
+
+        # B directly declares C as missing.
+        self.assertIn(c_iri, self.env.missing_imports(b_iri))
+        # A's closure includes B, which declares C — so A should also report C.
+        self.assertIn(c_iri, self.env.missing_imports(a_iri))
+
     def test_missing_imports_empty_when_all_resolved(self):
         """missing_imports() returns empty list when all imports are resolvable."""
         a_path = (self.test_dir / "a.ttl").resolve()
