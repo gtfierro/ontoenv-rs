@@ -284,9 +284,24 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 | `get_ontology(name)` | Inspect metadata: imports list, version, namespace map, last-updated |
 | `get_importers(name) -> list[str]` | Reverse dependency lookup |
 | `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings |
+| `missing_imports(uri=None) -> list[str]` | List unresolvable `owl:imports` IRIs (see below) |
 | `to_rdflib_dataset() -> rdflib.Dataset` | Export full environment as a named-graph Dataset |
 | `store_path() -> str \| None` | Path to `.ontoenv/`, or `None` for temporary environments |
 | `close()` | Persist (if applicable) and release resources |
+
+**`missing_imports(uri=None) -> list[str]`**
+Returns a list of `owl:imports` IRIs that could not be resolved in the environment.
+
+- `uri=None` — scans every ontology in the environment and returns the de-duplicated union of all unresolvable imports.
+- `uri="http://..."` — walks the full transitive `owl:imports` closure of the given ontology and returns every import IRI that cannot be found, including those declared by transitively-imported ontologies.
+
+```python
+# All missing imports across the whole environment
+missing = env.missing_imports()
+
+# Missing imports reachable from a specific ontology
+missing = env.missing_imports("http://example.org/ont/MyOntology")
+```
 
 ---
 
