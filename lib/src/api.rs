@@ -13,7 +13,9 @@ use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
 use oxigraph::io::RdfFormat;
-use oxigraph::model::{Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TripleRef};
+use oxigraph::model::{
+    Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, Quad, TripleRef,
+};
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
 use regex::Regex;
@@ -506,6 +508,66 @@ impl OntoEnv {
         let mut ontoenv = Self::new(Environment::new(), io, config);
         let _ = ontoenv.update_all(false)?;
         Ok(ontoenv)
+    }
+
+    /// Creates a new OntoEnv by reading the graphs already present in a caller-provided
+    /// GraphIO store.  Ontology metadata and the import dependency graph are reconstructed
+    /// from the store contents; no filesystem discovery or network fetching is performed.
+    pub fn new_with_graph_io_from_existing(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
+        let mut ontoenv = Self::new(Environment::new(), io, config);
+        ontoenv.init_from_graph_io()?;
+        Ok(ontoenv)
+    }
+
+    /// Re-synchronizes the environment with the current contents of the underlying GraphIO
+    /// store.  Use this when the store has been mutated externally and the in-memory
+    /// environment state (ontology metadata, import graph) needs to be brought up to date.
+    pub fn refresh_from_graph_io(&mut self) -> Result<()> {
+        self.env = Environment::new();
+        self.dependency_graph = DiGraph::new();
+        self.init_from_graph_io()
+    }
+
+    /// Reads all graphs from the IO layer, derives `Ontology` metadata from each one, and
+    /// registers them in the environment together with a freshly-built dependency graph.
+    fn init_from_graph_io(&mut self) -> Result<()> {
+        let ids = self.io.graph_ids()?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let strict = self.config.strict;
+        let mut ontologies = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let graph = match self.io.get_graph(id) {
+                Ok(g) => g,
+                Err(e) => {
+                    warn!("init_from_graph_io: could not read graph {id}: {e}");
+                    continue;
+                }
+            };
+            // Copy the graph's triples into a temporary store under the correct named graph
+            // so that Ontology::from_store can locate the right graph context.
+            let tmp_store = Store::new()?;
+            let graphname = id.graphname()?;
+            let quads = graph.iter().map(|t| {
+                Ok::<_, oxigraph::store::StorageError>(Quad::new(
+                    t.subject.into_owned(),
+                    t.predicate.into_owned(),
+                    t.object.into_owned(),
+                    graphname.clone(),
+                ))
+            });
+            let mut loader = tmp_store.bulk_loader();
+            loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
+            loader.commit().map_err(|e| anyhow!(e.to_string()))?;
+            match Ontology::from_store(&tmp_store, id, strict) {
+                Ok(ont) => ontologies.push(ont),
+                Err(e) => warn!("init_from_graph_io: could not parse ontology from {id}: {e}"),
+            }
+        }
+        let filters = self.ontology_filters()?;
+        self.register_ontologies(ontologies, true, &filters)?;
+        Ok(())
     }
 
     /// returns the graph identifier for the given resolve target, if it exists
