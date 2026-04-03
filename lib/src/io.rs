@@ -146,6 +146,22 @@ pub trait GraphIO: Send + Sync {
     /// Returns a reference to the underlying store
     fn store(&self) -> &Store;
 
+    /// Returns the identifiers of all graphs currently held in the store.
+    fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
+        self.store()
+            .named_graphs()
+            .map(|r| {
+                let named = r.map_err(|e| anyhow!(e.to_string()))?;
+                match named {
+                    NamedOrBlankNode::NamedNode(n) => Ok(GraphIdentifier::new(n.as_ref())),
+                    NamedOrBlankNode::BlankNode(_) => {
+                        Err(anyhow!("blank-node graph names are not supported"))
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// Adds a graph to the store and returns the ontology metadata.
     /// Existing graphs are replaced only when `overwrite` allows it.
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology>;

@@ -743,6 +743,19 @@ impl GraphIO for PythonGraphIO {
         &self.scratch
     }
 
+    fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
+        self.with_store(|py, store| {
+            let ids = self.graph_ids_from_store(py, &store)?;
+            ids.into_iter()
+                .map(|id| {
+                    NamedNode::new(&id)
+                        .map(|n| GraphIdentifier::new(n.as_ref()))
+                        .map_err(|e| anyhow!(e.to_string()))
+                })
+                .collect()
+        })
+    }
+
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<OntologyRs> {
         if self.read_only {
             return Err(anyhow!("Cannot add to read-only store"));
@@ -1033,7 +1046,7 @@ struct OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -1055,6 +1068,7 @@ impl OntoEnv {
         temporary: bool,
         remote_cache_ttl_secs: Option<u64>,
         graph_store: Option<Py<PyAny>>,
+        init_from_store: bool,
     ) -> PyResult<Self> {
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
@@ -1117,7 +1131,12 @@ impl OntoEnv {
             cfg.external_graph_store = Some(desc);
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
                 .map_err(anyhow_to_pyerr)?;
-            let env = OntoEnvRs::new_with_graph_io(cfg, Box::new(io)).map_err(anyhow_to_pyerr)?;
+            let env = if init_from_store {
+                OntoEnvRs::new_with_graph_io_from_existing(cfg, Box::new(io))
+            } else {
+                OntoEnvRs::new_with_graph_io(cfg, Box::new(io))
+            }
+            .map_err(anyhow_to_pyerr)?;
             let inner = Arc::new(Mutex::new(Some(env)));
             return Ok(OntoEnv { inner });
         }
@@ -1169,6 +1188,17 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ))
         }
+    }
+
+    /// Re-reads all graphs from the attached graph store and rebuilds the environment's
+    /// ontology metadata and import dependency graph.  Call this whenever the graph store
+    /// has been mutated externally and you need OntoEnv's view to catch up.
+    fn refresh_from_store(&self) -> PyResult<()> {
+        let mut guard = self.inner.lock().unwrap();
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        env.refresh_from_graph_io().map_err(anyhow_to_pyerr)
     }
 
     // fn is_read_only(&self) -> PyResult<bool> {
