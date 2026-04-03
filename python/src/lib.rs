@@ -258,6 +258,20 @@ fn add_resolved_to_env(
     Ok(actual_name)
 }
 
+/// Extract the objects of every `owl:imports` triple from an rdflib.Graph.
+fn extract_imports_from_py_graph(
+    py: Python<'_>,
+    graph: &Bound<'_, PyAny>,
+) -> PyResult<Vec<String>> {
+    let rdflib = py.import("rdflib")?;
+    let py_imports_pred = term_to_python(py, &rdflib, Term::NamedNode(IMPORTS.into()))?;
+    let kwargs = [("predicate", py_imports_pred)].into_py_dict(py)?;
+    let objects_iter = graph.call_method("objects", (), Some(&kwargs))?;
+    let builtins = py.import("builtins")?;
+    let objects_list = builtins.getattr("list")?.call1((objects_iter,))?;
+    objects_list.extract::<Vec<String>>()
+}
+
 fn resolve_root_subject_and_graphid(
     graph: &Bound<'_, PyAny>,
     env: &OntoEnvRs,
@@ -1368,31 +1382,87 @@ impl OntoEnv {
         Ok(())
     }
 
-    /// List the ontologies in the imports closure of the given ontology
+    /// List the ontologies in the imports closure of the given ontology.
+    ///
+    /// ``uri`` may be either:
+    ///
+    /// * a string IRI of an ontology already in the environment, or
+    /// * an ``rdflib.Graph`` that has not yet been added to the environment.
+    ///   In that case the closure is computed from the graph's ``owl:imports``
+    ///   declarations without modifying the environment.
     #[pyo3(signature = (uri, recursion_depth = -1))]
-    fn list_closure(&self, _py: Python, uri: &str, recursion_depth: i32) -> PyResult<Vec<String>> {
-        let iri = NamedNode::new(uri)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
-        let env = guard
-            .as_mut()
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let graphid = env
-            .resolve(ResolveTarget::Graph(iri.clone()))
-            .ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Failed to resolve graph for URI: {uri}"
-                ))
+    fn list_closure(
+        &self,
+        py: Python,
+        uri: &Bound<'_, PyAny>,
+        recursion_depth: i32,
+    ) -> PyResult<Vec<String>> {
+        // --- string / URI path (existing behaviour) ---
+        if let Ok(uri_str) = uri.extract::<String>() {
+            let iri = NamedNode::new(&uri_str)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let inner = self.inner.clone();
+            let mut guard = inner.lock().unwrap();
+            let env = guard.as_mut().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
-        let ont = env.ontologies().get(&graphid).ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
-        })?;
-        let closure = env
-            .get_closure(ont.id(), recursion_depth)
-            .map_err(anyhow_to_pyerr)?;
-        let names: Vec<String> = closure.iter().map(|ont| ont.to_uri_string()).collect();
-        Ok(names)
+            let graphid = env
+                .resolve(ResolveTarget::Graph(iri.clone()))
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to resolve graph for URI: {uri_str}"
+                    ))
+                })?;
+            let ont = env.ontologies().get(&graphid).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology {iri} not found"))
+            })?;
+            let closure = env
+                .get_closure(ont.id(), recursion_depth)
+                .map_err(anyhow_to_pyerr)?;
+            return Ok(closure.iter().map(|id| id.to_uri_string()).collect());
+        }
+
+        // --- rdflib.Graph path (transient graph not in env) ---
+        if uri.hasattr("subjects")? {
+            let root_iri = extract_ontology_subject(uri)?;
+            let imports = extract_imports_from_py_graph(py, uri)?;
+
+            let inner = self.inner.clone();
+            let mut guard = inner.lock().unwrap();
+            let env = guard.as_mut().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+            })?;
+
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut names: Vec<String> = Vec::new();
+
+            // The transient graph itself leads the list (mirrors the URI-based behaviour).
+            if let Some(ref root) = root_iri {
+                seen.insert(root.clone());
+                names.push(root.clone());
+            }
+
+            for import_uri in &imports {
+                let iri = NamedNode::new(import_uri.as_str())
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                if let Some(graphid) = env.resolve(ResolveTarget::Graph(iri)) {
+                    let sub = env
+                        .get_closure(&graphid, recursion_depth)
+                        .map_err(anyhow_to_pyerr)?;
+                    for id in sub {
+                        let n = id.to_uri_string();
+                        if seen.insert(n.clone()) {
+                            names.push(n);
+                        }
+                    }
+                }
+            }
+            return Ok(names);
+        }
+
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "uri must be a string IRI or an rdflib.Graph",
+        ))
     }
 
     /// Merge the imports closure of `uri` into a single graph and return it alongside the closure list.
@@ -1892,41 +1962,77 @@ impl OntoEnv {
 
     /// Return IRIs of imports that cannot be resolved in the environment.
     ///
-    /// If ``uri`` is ``None``, scans every ontology in the environment and
-    /// returns the union of all unresolvable imports (de-duplicated).
+    /// ``uri`` may be:
     ///
-    /// If ``uri`` is provided, walks the full transitive ``owl:imports`` closure
-    /// of that ontology and returns every import IRI that cannot be resolved,
-    /// including those declared by transitively-imported ontologies.
+    /// * ``None`` — scans every ontology in the environment and returns the
+    ///   union of all unresolvable imports (de-duplicated).
+    /// * a string IRI of an ontology already in the environment — walks its
+    ///   full transitive closure and returns every unresolvable import IRI.
+    /// * an ``rdflib.Graph`` not yet in the environment — extracts its direct
+    ///   ``owl:imports``, then for each import that *is* in the environment
+    ///   walks that import's closure.  Imports absent from the environment
+    ///   are themselves reported as missing.
     #[pyo3(signature = (uri = None))]
-    fn missing_imports(&self, uri: Option<&str>) -> PyResult<Vec<String>> {
+    fn missing_imports(&self, py: Python, uri: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
         let guard = inner.lock().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        if let Some(uri) = uri {
-            let iri = NamedNode::new(uri)
+
+        let Some(uri) = uri else {
+            // No argument: return all missing across the whole environment.
+            return Ok(env
+                .missing_imports()
+                .into_iter()
+                .map(|n| n.to_uri_string())
+                .collect());
+        };
+
+        // --- string / URI path (existing behaviour) ---
+        if let Ok(uri_str) = uri.extract::<String>() {
+            let iri = NamedNode::new(&uri_str)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let graphid = env
                 .resolve(ResolveTarget::Graph(iri.clone()))
                 .ok_or_else(|| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Failed to resolve graph for URI: {uri}"
+                        "Failed to resolve graph for URI: {uri_str}"
                     ))
                 })?;
             let missing = env
                 .missing_imports_in_closure(&graphid)
                 .map_err(anyhow_to_pyerr)?;
-            Ok(missing.into_iter().map(|n| n.to_uri_string()).collect())
-        } else {
-            let missing = env
-                .missing_imports()
-                .into_iter()
-                .map(|n| n.to_uri_string())
-                .collect();
-            Ok(missing)
+            return Ok(missing.into_iter().map(|n| n.to_uri_string()).collect());
         }
+
+        // --- rdflib.Graph path (transient graph not in env) ---
+        if uri.hasattr("subjects")? {
+            let imports = extract_imports_from_py_graph(py, uri)?;
+            let mut missing: HashSet<String> = HashSet::new();
+            for import_uri in &imports {
+                let iri = NamedNode::new(import_uri.as_str())
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                match env.resolve(ResolveTarget::Graph(iri)) {
+                    None => {
+                        // Not in environment — it's missing.
+                        missing.insert(import_uri.clone());
+                    }
+                    Some(graphid) => {
+                        // In environment — collect missing from its closure.
+                        let sub = env
+                            .missing_imports_in_closure(&graphid)
+                            .map_err(anyhow_to_pyerr)?;
+                        missing.extend(sub.into_iter().map(|n| n.to_uri_string()));
+                    }
+                }
+            }
+            return Ok(missing.into_iter().collect());
+        }
+
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "uri must be None, a string IRI, or an rdflib.Graph",
+        ))
     }
 
     /// Get the ontology metadata with the given URI
