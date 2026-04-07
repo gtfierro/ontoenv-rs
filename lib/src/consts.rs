@@ -41,6 +41,10 @@ pub const PREFIXES: NamedNodeRef<'_> =
     NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefixes");
 pub const DECLARE: NamedNodeRef<'_> =
     NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#declare");
+pub const SH_PREFIX: NamedNodeRef<'_> =
+    NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
+pub const SH_NAMESPACE: NamedNodeRef<'_> =
+    NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
 
 pub const ONTOLOGY_VERSION_IRIS: [NamedNodeRef<'_>; 10] = [
     VERSION_INFO,

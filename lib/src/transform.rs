@@ -3,69 +3,78 @@
 
 use anyhow::{anyhow, Result};
 
-use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, TYPE};
+use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, SH_NAMESPACE, SH_PREFIX, TYPE};
 use oxigraph::model::{
     Dataset, Graph, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef, TermRef, Triple, TripleRef,
 };
 use std::collections::HashMap;
 
+/// Extract the `(sh:prefix, sh:namespace)` pair from a declaration node in a `Graph`.
+fn extract_decl_prefix_ns_graph(
+    graph: &Graph,
+    decl_node: NamedOrBlankNodeRef,
+) -> (Option<String>, Option<String>) {
+    let mut pref: Option<String> = None;
+    let mut ns: Option<String> = None;
+    for t in graph.triples_for_subject(decl_node) {
+        if t.predicate == SH_PREFIX {
+            if let TermRef::Literal(l) = t.object {
+                pref = Some(l.value().to_string());
+            }
+        } else if t.predicate == SH_NAMESPACE {
+            match t.object {
+                TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
+                TermRef::Literal(l) => ns = Some(l.value().to_string()),
+                _ => {}
+            }
+        }
+    }
+    (pref, ns)
+}
+
+const CONFLICT_HINT: &str = "Fix the conflict or disable sh:prefixes rewriting \
+    (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
+    Rust: `rewrite_sh_prefixes=Some(false)`).";
+
+fn check_and_insert(seen: &mut HashMap<String, String>, pv: String, nv: String) -> Result<bool> {
+    if let Some(existing_ns) = seen.get(&pv) {
+        if *existing_ns != nv {
+            return Err(anyhow!(
+                "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". {CONFLICT_HINT}"
+            ));
+        }
+        // Same prefix, same namespace — deduplicate
+        return Ok(false);
+    }
+    seen.insert(pv, nv);
+    Ok(true)
+}
+
 /// Rewrites all `sh:prefixes` links in a graph so they point at `root`, moving each `sh:declare`
 /// block onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`.
 pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) -> Result<()> {
-    // Normalize SHACL prefix declarations onto a single root for easier reuse downstream.
     let mut to_remove: Vec<Triple> = vec![];
     let mut to_add: Vec<Triple> = vec![];
-    // find all sh:prefixes triples
+
     for triple in graph.triples_for_predicate(PREFIXES) {
         let s = triple.subject;
-        let new_triple = TripleRef::new(s, PREFIXES, root);
-        // remove the old triple <shape or rule, sh:prefixes, ontology>
         to_remove.push(triple.into());
-        // add a new triple <shape or rule, sh:prefixes, root>
-        to_add.push(new_triple.into());
+        to_add.push(TripleRef::new(s, PREFIXES, root).into());
     }
-    // move the sh:declare statements to the root ontology too, deduplicating by (sh:prefix, sh:namespace)
-    let sh_prefix = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
-    let sh_namespace = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
+
     let mut seen: HashMap<String, String> = HashMap::new();
 
     // Seed with any existing declarations on the root
     for t in graph.triples_for_predicate(DECLARE) {
         if t.subject == root {
-            // Attempt to extract (prefix, namespace) pair
             if let Some(decl_node) = match t.object {
                 TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
                 TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
                 _ => None,
             } {
-                let mut pref: Option<String> = None;
-                let mut ns: Option<String> = None;
-                for t2 in graph.triples_for_subject(decl_node) {
-                    if t2.predicate == sh_prefix {
-                        if let TermRef::Literal(l) = t2.object {
-                            pref = Some(l.value().to_string());
-                        }
-                    } else if t2.predicate == sh_namespace {
-                        match t2.object {
-                            TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
-                            TermRef::Literal(l) => ns = Some(l.value().to_string()),
-                            _ => {}
-                        }
-                    }
-                }
+                let (pref, ns) = extract_decl_prefix_ns_graph(graph, decl_node);
                 if let (Some(pv), Some(nv)) = (pref, ns) {
-                    if let Some(existing_ns) = seen.get(&pv) {
-                        if *existing_ns != nv {
-                            return Err(anyhow!(
-                                "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
-                                Fix the conflict or disable sh:prefixes rewriting \
-                                (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
-                                Rust: `rewrite_sh_prefixes=Some(false)`)."
-                            ));
-                        }
-                    } else {
-                        seen.insert(pv, nv);
-                    }
+                    check_and_insert(&mut seen, pv, nv)?;
                 }
             }
         }
@@ -77,58 +86,26 @@ pub fn rewrite_sh_prefixes_graph(graph: &mut Graph, root: NamedOrBlankNodeRef) -
             continue;
         }
         let o = triple.object;
-
-        // remove the old triple <ontology, sh:declare, prefix>
         to_remove.push(triple.into());
 
-        // Attempt to deduplicate using (prefix, namespace)
         if let Some(decl_node) = match o {
             TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
             TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
             _ => None,
         } {
-            let mut pref: Option<String> = None;
-            let mut ns: Option<String> = None;
-            for t2 in graph.triples_for_subject(decl_node) {
-                if t2.predicate == sh_prefix {
-                    if let TermRef::Literal(l) = t2.object {
-                        pref = Some(l.value().to_string());
-                    }
-                } else if t2.predicate == sh_namespace {
-                    match t2.object {
-                        TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
-                        TermRef::Literal(l) => ns = Some(l.value().to_string()),
-                        _ => {}
-                    }
-                }
-            }
+            let (pref, ns) = extract_decl_prefix_ns_graph(graph, decl_node);
             if let (Some(pv), Some(nv)) = (pref, ns) {
-                if let Some(existing_ns) = seen.get(&pv) {
-                    if *existing_ns != nv {
-                        return Err(anyhow!(
-                            "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
-                            Fix the conflict or disable sh:prefixes rewriting \
-                            (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
-                            Rust: `rewrite_sh_prefixes=Some(false)`)."
-                        ));
-                    }
-                    // Same prefix, same namespace — deduplicate (skip adding)
-                } else {
-                    seen.insert(pv, nv);
-                    // add a new triple <root, sh:declare, prefix>
-                    let new_triple = TripleRef::new(root, DECLARE, o);
-                    to_add.push(new_triple.into());
+                if check_and_insert(&mut seen, pv, nv)? {
+                    to_add.push(TripleRef::new(root, DECLARE, o).into());
                 }
                 continue;
             }
         }
 
         // If we can't determine prefix/namespace, conservatively move it
-        let new_triple = TripleRef::new(root, DECLARE, o);
-        to_add.push(new_triple.into());
+        to_add.push(TripleRef::new(root, DECLARE, o).into());
     }
 
-    // apply all changes
     for triple in to_remove {
         graph.remove(triple.as_ref());
     }
@@ -180,25 +157,41 @@ pub fn remove_ontology_declarations_graph(graph: &mut Graph, root: NamedOrBlankN
     }
 }
 
+fn extract_decl_prefix_ns_dataset(
+    ds: &Dataset,
+    decl_node: NamedOrBlankNodeRef,
+) -> (Option<String>, Option<String>) {
+    let mut pref: Option<String> = None;
+    let mut ns: Option<String> = None;
+    for q in ds.quads_for_subject(decl_node) {
+        if q.predicate == SH_PREFIX {
+            if let TermRef::Literal(l) = q.object {
+                pref = Some(l.value().to_string());
+            }
+        } else if q.predicate == SH_NAMESPACE {
+            match q.object {
+                TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
+                TermRef::Literal(l) => ns = Some(l.value().to_string()),
+                _ => {}
+            }
+        }
+    }
+    (pref, ns)
+}
+
 /** Rewrites all `sh:prefixes` entries in the dataset to point at `root`, relocating `sh:declare`
 blocks onto `root` and deduplicating declarations by `(sh:prefix, sh:namespace)`. */
 pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRef) -> Result<()> {
-    // Dataset variant of prefix normalization, preserving named graph boundaries.
     let mut to_remove: Vec<Quad> = vec![];
     let mut to_add: Vec<Quad> = vec![];
-    // find all sh:prefixes quads
+
     for quad in graph.quads_for_predicate(PREFIXES) {
         let s = quad.subject;
         let g = quad.graph_name;
-        let new_quad = QuadRef::new(s, PREFIXES, root, g);
-        // remove the old quad <shape or rule, sh:prefixes, ontology>
         to_remove.push(quad.into());
-        // add a new quad <shape or rule, sh:prefixes, root>
-        to_add.push(new_quad.into());
+        to_add.push(QuadRef::new(s, PREFIXES, root, g).into());
     }
-    // move the sh:declare statements to the root ontology too, deduplicating by (sh:prefix, sh:namespace)
-    let sh_prefix = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#prefix");
-    let sh_namespace = NamedNodeRef::new_unchecked("http://www.w3.org/ns/shacl#namespace");
+
     let mut seen: HashMap<String, String> = HashMap::new();
 
     // Seed with any existing declarations on the root
@@ -209,34 +202,9 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
                 TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
                 _ => None,
             } {
-                let mut pref: Option<String> = None;
-                let mut ns: Option<String> = None;
-                for q2 in graph.quads_for_subject(decl_node) {
-                    if q2.predicate == sh_prefix {
-                        if let TermRef::Literal(l) = q2.object {
-                            pref = Some(l.value().to_string());
-                        }
-                    } else if q2.predicate == sh_namespace {
-                        match q2.object {
-                            TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
-                            TermRef::Literal(l) => ns = Some(l.value().to_string()),
-                            _ => {}
-                        }
-                    }
-                }
+                let (pref, ns) = extract_decl_prefix_ns_dataset(graph, decl_node);
                 if let (Some(pv), Some(nv)) = (pref, ns) {
-                    if let Some(existing_ns) = seen.get(&pv) {
-                        if *existing_ns != nv {
-                            return Err(anyhow!(
-                                "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
-                                Fix the conflict or disable sh:prefixes rewriting \
-                                (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
-                                Rust: `rewrite_sh_prefixes=Some(false)`)."
-                            ));
-                        }
-                    } else {
-                        seen.insert(pv, nv);
-                    }
+                    check_and_insert(&mut seen, pv, nv)?;
                 }
             }
         }
@@ -249,57 +217,26 @@ pub fn rewrite_sh_prefixes_dataset(graph: &mut Dataset, root: NamedOrBlankNodeRe
         }
         let o = quad.object;
         let g = quad.graph_name;
-
-        // remove the old quad <ontology, sh:declare, prefix>
         to_remove.push(quad.into());
 
-        // Attempt to deduplicate using (prefix, namespace)
         if let Some(decl_node) = match o {
             TermRef::NamedNode(nn) => Some(NamedOrBlankNodeRef::NamedNode(nn)),
             TermRef::BlankNode(bn) => Some(NamedOrBlankNodeRef::BlankNode(bn)),
             _ => None,
         } {
-            let mut pref: Option<String> = None;
-            let mut ns: Option<String> = None;
-            for q2 in graph.quads_for_subject(decl_node) {
-                if q2.predicate == sh_prefix {
-                    if let TermRef::Literal(l) = q2.object {
-                        pref = Some(l.value().to_string());
-                    }
-                } else if q2.predicate == sh_namespace {
-                    match q2.object {
-                        TermRef::NamedNode(nn) => ns = Some(nn.as_str().to_string()),
-                        TermRef::Literal(l) => ns = Some(l.value().to_string()),
-                        _ => {}
-                    }
-                }
-            }
+            let (pref, ns) = extract_decl_prefix_ns_dataset(graph, decl_node);
             if let (Some(pv), Some(nv)) = (pref, ns) {
-                if let Some(existing_ns) = seen.get(&pv) {
-                    if *existing_ns != nv {
-                        return Err(anyhow!(
-                            "Conflicting sh:prefix \"{pv}\": namespace \"{existing_ns}\" vs \"{nv}\". \
-                            Fix the conflict or disable sh:prefixes rewriting \
-                            (CLI: `--no-rewrite-sh-prefixes`, Python: `rewrite_sh_prefixes=False`, \
-                            Rust: `rewrite_sh_prefixes=Some(false)`)."
-                        ));
-                    }
-                    // Same prefix, same namespace — deduplicate (skip adding)
-                } else {
-                    seen.insert(pv, nv);
-                    let new_quad = QuadRef::new(root, DECLARE, o, g);
-                    to_add.push(new_quad.into());
+                if check_and_insert(&mut seen, pv, nv)? {
+                    to_add.push(QuadRef::new(root, DECLARE, o, g).into());
                 }
                 continue;
             }
         }
 
         // If we can't determine prefix/namespace, conservatively move it
-        let new_quad = QuadRef::new(root, DECLARE, o, g);
-        to_add.push(new_quad.into());
+        to_add.push(QuadRef::new(root, DECLARE, o, g).into());
     }
 
-    // apply all changes
     for quad in to_remove {
         graph.remove(quad.as_ref());
     }

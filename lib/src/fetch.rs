@@ -114,6 +114,10 @@ fn build_accept(accept_order: &[&'static str]) -> String {
     parts.join(", ")
 }
 
+const STEM_EXTENSIONS: &[&str] = &[
+    ".ttl", ".rdf", ".owl", ".rdf.xml", ".owl.xml", ".xml", ".jsonld", ".nt", ".nq",
+];
+
 fn build_extension_candidates(orig: &str, exts: &[&str]) -> Vec<String> {
     let mut cands = Vec::new();
     if orig.ends_with('/') {
@@ -122,23 +126,15 @@ fn build_extension_candidates(orig: &str, exts: &[&str]) -> Vec<String> {
         }
         return cands;
     }
-    // split path
     let slash_pos = orig.rfind('/').map(|i| i + 1).unwrap_or(0);
     let (prefix, filename) = orig.split_at(slash_pos);
-    if let Some(dot) = filename.rfind('.') {
-        let stem = &filename[..dot];
-        let base = format!("{prefix}{stem}");
-        for rep in [
-            ".ttl", ".rdf", ".owl", ".rdf.xml", ".owl.xml", ".xml", ".jsonld", ".nt", ".nq",
-        ] {
-            cands.push(format!("{base}{rep}"));
-        }
+    let base = if let Some(dot) = filename.rfind('.') {
+        format!("{prefix}{}", &filename[..dot])
     } else {
-        for rep in [
-            ".ttl", ".rdf", ".owl", ".rdf.xml", ".owl.xml", ".xml", ".jsonld", ".nt", ".nq",
-        ] {
-            cands.push(format!("{orig}{rep}"));
-        }
+        orig.to_string()
+    };
+    for rep in STEM_EXTENSIONS {
+        cands.push(format!("{base}{rep}"));
     }
     cands
 }
@@ -392,16 +388,19 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
     ))
 }
 
+fn head_request(url: &str, opts: &FetchOptions) -> Result<reqwest::blocking::Response> {
+    let client = Client::builder().timeout(opts.timeout).build()?;
+    let accept = build_accept(&opts.accept_order);
+    Ok(client.head(url).header(ACCEPT, accept).send()?)
+}
+
 pub fn head_last_modified(url: &str, opts: &FetchOptions) -> Result<Option<DateTime<Utc>>> {
-    // Lightweight probe to support cache validation without full download.
     if opts.offline {
         return Err(anyhow!(OfflineRetrievalError {
             file: url.to_string()
         }));
     }
-    let client = Client::builder().timeout(opts.timeout).build()?;
-    let accept = build_accept(&opts.accept_order);
-    let resp = client.head(url).header(ACCEPT, accept).send()?;
+    let resp = head_request(url, opts)?;
     if !resp.status().is_success() {
         return Ok(None);
     }
@@ -416,14 +415,10 @@ pub fn head_last_modified(url: &str, opts: &FetchOptions) -> Result<Option<DateT
 }
 
 pub fn head_exists(url: &str, opts: &FetchOptions) -> Result<bool> {
-    // Quick existence check used by health checks and refresh logic.
     if opts.offline {
         return Err(anyhow!(OfflineRetrievalError {
             file: url.to_string()
         }));
     }
-    let client = Client::builder().timeout(opts.timeout).build()?;
-    let accept = build_accept(&opts.accept_order);
-    let resp = client.head(url).header(ACCEPT, accept).send()?;
-    Ok(resp.status().is_success())
+    Ok(head_request(url, opts)?.status().is_success())
 }

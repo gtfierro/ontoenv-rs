@@ -499,14 +499,6 @@ impl Ontology {
         OntologyLocation::from_str(self.name.as_str()).and_then(|loc| loc.graph())
     }
 
-    ///// Returns the graph for this ontology from the OntoEnv
-    //pub fn graph(&self, env: &OntoEnv) -> Result<LightGraph> {
-    //    if let Some(location) = &self.location {
-    //        return location.graph();
-    //    }
-    //    return OntologyLocation::from_str(self.name.as_str()).and_then(|loc| loc.graph());
-    //}
-
     pub fn name(&self) -> NamedNode {
         // Clone to preserve internal ownership semantics.
         self.name.clone()
