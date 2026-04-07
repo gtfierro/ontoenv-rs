@@ -224,9 +224,13 @@ pub trait GraphIO: Send + Sync {
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.store()
+        #[cfg(feature = "rocksdb")]
+        return self
+            .store()
             .flush()
-            .map_err(|e| anyhow!("Failed to flush store: {}", e))
+            .map_err(|e| anyhow!("Failed to flush store: {}", e));
+        #[cfg(not(feature = "rocksdb"))]
+        Ok(())
     }
 
     /// Begin a batch of mutations; default implementation is a no-op.
