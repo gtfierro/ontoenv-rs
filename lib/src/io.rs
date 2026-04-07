@@ -280,6 +280,36 @@ pub trait GraphIO: Send + Sync {
     }
 }
 
+fn oxigraph_subject_to_r5term(s: NamedOrBlankNode) -> R5Term {
+    match s {
+        NamedOrBlankNode::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
+        NamedOrBlankNode::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
+    }
+}
+
+fn oxigraph_object_to_r5term(o: oxigraph::model::Term) -> R5Term {
+    match o {
+        oxigraph::model::Term::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
+        oxigraph::model::Term::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
+        oxigraph::model::Term::Literal(lit) => {
+            let lex = lit.value().to_string();
+            if let Some(lang) = lit.language() {
+                R5Term::Literal {
+                    lex,
+                    dt: None,
+                    lang: Some(lang.to_string()),
+                }
+            } else {
+                R5Term::Literal {
+                    lex,
+                    dt: Some(lit.datatype().as_str().to_string()),
+                    lang: None,
+                }
+            }
+        }
+    }
+}
+
 pub struct PersistentGraphIO {
     store: Store,
     offline: bool,
@@ -469,7 +499,6 @@ impl PersistentGraphIO {
         let iter = self.store.quads_for_pattern(None, None, None, None);
         for q in iter {
             let q = q?;
-            // Dataset id: reuse graph name string; Graph name: same string
             let gname_str = match q.graph_name {
                 oxigraph::model::GraphName::NamedNode(ref nn) => nn.as_str().to_string(),
                 _ => return Err(anyhow!("Only named graphs are supported in RDF5D backend")),
@@ -477,39 +506,11 @@ impl PersistentGraphIO {
             let id_str = gname_str.clone();
             written_graphs.insert(gname_str.clone());
 
-            // Map Oxigraph terms to rdf5d writer terms
-            let s_term = match q.subject {
-                NamedOrBlankNode::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
-                NamedOrBlankNode::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
-            };
-            let p_term = R5Term::Iri(q.predicate.as_str().to_string());
-            let o_term = match q.object {
-                oxigraph::model::Term::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
-                oxigraph::model::Term::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
-                oxigraph::model::Term::Literal(lit) => {
-                    let lex = lit.value().to_string();
-                    if let Some(lang) = lit.language() {
-                        R5Term::Literal {
-                            lex,
-                            dt: None,
-                            lang: Some(lang.to_string()),
-                        }
-                    } else {
-                        let dt = lit.datatype().as_str().to_string();
-                        R5Term::Literal {
-                            lex,
-                            dt: Some(dt),
-                            lang: None,
-                        }
-                    }
-                }
-            };
-
             writer.add(Quint {
                 id: id_str,
-                s: s_term,
-                p: p_term,
-                o: o_term,
+                s: oxigraph_subject_to_r5term(q.subject),
+                p: R5Term::Iri(q.predicate.as_str().to_string()),
+                o: oxigraph_object_to_r5term(q.object),
                 gname: gname_str,
             })?;
         }
@@ -529,41 +530,11 @@ impl PersistentGraphIO {
                     } else {
                         info.id.clone()
                     };
-                    let s_term = match t.subject {
-                        NamedOrBlankNode::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
-                        NamedOrBlankNode::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
-                    };
-                    let p_term = R5Term::Iri(t.predicate.as_str().to_string());
-                    let o_term = match t.object {
-                        oxigraph::model::Term::NamedNode(nn) => {
-                            R5Term::Iri(nn.as_str().to_string())
-                        }
-                        oxigraph::model::Term::BlankNode(bn) => {
-                            R5Term::BNode(bn.as_str().to_string())
-                        }
-                        oxigraph::model::Term::Literal(lit) => {
-                            let lex = lit.value().to_string();
-                            if let Some(lang) = lit.language() {
-                                R5Term::Literal {
-                                    lex,
-                                    dt: None,
-                                    lang: Some(lang.to_string()),
-                                }
-                            } else {
-                                let dt = lit.datatype().as_str().to_string();
-                                R5Term::Literal {
-                                    lex,
-                                    dt: Some(dt),
-                                    lang: None,
-                                }
-                            }
-                        }
-                    };
                     writer.add(Quint {
                         id: id_str,
-                        s: s_term,
-                        p: p_term,
-                        o: o_term,
+                        s: oxigraph_subject_to_r5term(t.subject),
+                        p: R5Term::Iri(t.predicate.as_str().to_string()),
+                        o: oxigraph_object_to_r5term(t.object),
                         gname: gname_str,
                     })?;
                 }

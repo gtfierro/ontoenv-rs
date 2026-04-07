@@ -307,6 +307,13 @@ impl std::fmt::Debug for OntoEnv {
     }
 }
 
+fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    let json = serde_json::to_string_pretty(value)?;
+    let mut file = File::create(path)?;
+    file.write_all(json.as_bytes())?;
+    Ok(())
+}
+
 impl OntoEnv {
     // Constructors
     fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
@@ -587,7 +594,6 @@ impl OntoEnv {
 
     /// Saves the current environment to the .ontoenv directory.
     pub fn save_to_directory(&self) -> Result<()> {
-        // Persist config, environment, and dependency graph to `.ontoenv`.
         if self.config.temporary {
             warn!("Cannot save a temporary environment");
             return Ok(());
@@ -596,21 +602,12 @@ impl OntoEnv {
         info!("Saving ontology environment to: {ontoenv_dir:?}");
         std::fs::create_dir_all(&ontoenv_dir)?;
 
-        // Save the environment configuration
-        let config_path = ontoenv_dir.join("ontoenv.json");
-        let config_str = serde_json::to_string_pretty(&self.config)?;
-        let mut file = std::fs::File::create(config_path)?;
-        file.write_all(config_str.as_bytes())?;
-
-        // Save the environment
-        let env_path = ontoenv_dir.join("environment.json");
-        let env_str = serde_json::to_string_pretty(&self.env)?;
-        let mut file = std::fs::File::create(env_path)?;
-        file.write_all(env_str.as_bytes())?;
-        let graph_path = ontoenv_dir.join("dependency_graph.json");
-        let graph_str = serde_json::to_string_pretty(&self.dependency_graph)?;
-        let mut file = std::fs::File::create(graph_path)?;
-        file.write_all(graph_str.as_bytes())?;
+        write_json_file(&ontoenv_dir.join("ontoenv.json"), &self.config)?;
+        write_json_file(&ontoenv_dir.join("environment.json"), &self.env)?;
+        write_json_file(
+            &ontoenv_dir.join("dependency_graph.json"),
+            &self.dependency_graph,
+        )?;
 
         Ok(())
     }
@@ -692,7 +689,6 @@ impl OntoEnv {
         let env_path = ontoenv_dir.join("environment.json");
         let file = std::fs::File::open(env_path)?;
         let reader = BufReader::new(file);
-        // TODO: clean up the locations field loading
         let mut env: Environment = serde_json::from_reader(reader)?;
         env.normalize_file_locations(&config.root);
 
