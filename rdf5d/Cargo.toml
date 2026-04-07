@@ -23,6 +23,7 @@ tempfile = "3"
 default = []
 zstd = ["dep:zstd"]
 oxigraph = ["dep:oxigraph"]
+rocksdb = ["oxigraph/rocksdb"]
 mmap = ["dep:memmap2"]
 
 [[bench]]
