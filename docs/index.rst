@@ -13,6 +13,7 @@ OntoEnv
        <a href="https://crates.io/crates/ontoenv"><img src="https://img.shields.io/crates/v/ontoenv.svg" alt="crates.io"></a>
        <a href="https://pypi.org/project/ontoenv/"><img src="https://img.shields.io/pypi/v/ontoenv.svg" alt="PyPI"></a>
        <a href="https://docs.rs/ontoenv"><img src="https://docs.rs/ontoenv/badge.svg" alt="docs.rs"></a>
+       <a href="https://github.com/gtfierro/ontoenv-rs"><img src="https://img.shields.io/badge/GitHub-ontoenv--rs-181717?logo=github" alt="GitHub"></a>
        <a href="https://github.com/gtfierro/ontoenv-rs"><img src="https://img.shields.io/github/license/gtfierro/ontoenv-rs" alt="License"></a>
      </div>
      <code class="oe-install">pip install ontoenv</code>
