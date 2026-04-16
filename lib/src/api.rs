@@ -102,6 +102,122 @@ impl PendingImport {
     }
 }
 
+fn plural<'a>(n: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if n == 1 {
+        singular
+    } else {
+        plural
+    }
+}
+
+#[derive(Default)]
+struct ProgressReporter {
+    enabled: bool,
+    last_len: usize,
+    discovered: usize,
+    processed: usize,
+    loaded: usize,
+    reused: usize,
+}
+
+impl ProgressReporter {
+    fn new() -> Self {
+        Self {
+            enabled: cfg!(feature = "progress-output"),
+            ..Self::default()
+        }
+    }
+
+    fn silent() -> Self {
+        Self::default()
+    }
+
+    fn add_discovered(&mut self, n: usize) {
+        self.discovered = self.discovered.saturating_add(n);
+    }
+
+    fn announce_discovered(&mut self, n: usize) {
+        self.add_discovered(n);
+        if !self.enabled {
+            return;
+        }
+        self.render(&format!(
+            "Discovered {} {} to process...",
+            n,
+            plural(n, "source", "sources")
+        ));
+    }
+
+    fn tick_loaded(&mut self) {
+        self.loaded += 1;
+    }
+
+    fn tick_reused(&mut self) {
+        self.reused += 1;
+    }
+
+    fn tick_processed(&mut self) {
+        self.processed += 1;
+    }
+
+    fn loading<D: std::fmt::Display>(&mut self, target: D, queued_sources: usize) {
+        if !self.enabled {
+            return;
+        }
+        self.render(&format!(
+            "Processed {}/{} sources, loaded {}, reused {}, queue {}, loading {}",
+            self.processed,
+            self.discovered.max(self.processed),
+            self.loaded,
+            self.reused,
+            queued_sources.saturating_sub(1),
+            target
+        ));
+    }
+
+    fn expanding<D: std::fmt::Display>(&mut self, target: D, imports: usize) {
+        if !self.enabled {
+            return;
+        }
+        self.render(&format!(
+            "Processed {}/{} sources, loaded {}, reused {}, expanding {} to {} {}",
+            self.processed,
+            self.discovered.max(self.processed),
+            self.loaded,
+            self.reused,
+            target,
+            imports,
+            plural(imports, "import", "imports")
+        ));
+    }
+
+    fn render(&mut self, line: &str) {
+        let pad = self.last_len.saturating_sub(line.len());
+        let stderr = std::io::stderr();
+        let mut handle = stderr.lock();
+        let _ = write!(handle, "\r{line}{:pad$}", "");
+        let _ = handle.flush();
+        self.last_len = line.len();
+    }
+
+    fn finish(&mut self) {
+        if !self.enabled || self.last_len == 0 {
+            return;
+        }
+        let stderr = std::io::stderr();
+        let mut handle = stderr.lock();
+        let _ = write!(handle, "\r{:width$}\r", "", width = self.last_len);
+        let _ = handle.flush();
+        self.last_len = 0;
+    }
+}
+
+impl Drop for ProgressReporter {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
 /// Initializes logging for the ontoenv library.
 ///
 /// This function checks for the `ONTOENV_LOG` environment variable. If it is set,
@@ -1154,8 +1270,13 @@ impl OntoEnv {
         self.prune_disallowed_ontologies(&ontology_filters, true)?;
         // Seed the import queue with the requested location and overwrite policy.
         let seeds = vec![seed];
-        let (ontologies, reused_ids, errors) =
-            self.process_import_queue(seeds, refresh, update_dependencies, max_import_depth)?;
+        let (ontologies, reused_ids, errors) = self.process_import_queue(
+            seeds,
+            refresh,
+            update_dependencies,
+            max_import_depth,
+            &mut ProgressReporter::silent(),
+        )?;
         // Filter newly fetched ontologies before registering them.
         let filtered_onts: Vec<Ontology> = ontologies
             .into_iter()
@@ -1329,6 +1450,8 @@ impl OntoEnv {
 
         // Discover candidate locations (all vs only changed/new).
         let updated_files = self.collect_updated_files(all)?;
+        let mut progress = ProgressReporter::new();
+        progress.announce_discovered(updated_files.len());
         let seeds: Vec<PendingImport> = updated_files
             .into_iter()
             .map(|loc| PendingImport::from_location(loc, Overwrite::Allow, self.config.strict, 0))
@@ -1340,7 +1463,7 @@ impl OntoEnv {
             RefreshStrategy::UseCache
         };
         let (ontologies, reused_ids, _errors) =
-            self.process_import_queue(seeds, refresh, true, None)?;
+            self.process_import_queue(seeds, refresh, true, None, &mut progress)?;
 
         // Register only ontologies allowed by filters; collect reused ids too.
         let filtered_onts: Vec<Ontology> = ontologies
@@ -1449,6 +1572,7 @@ impl OntoEnv {
         refresh: RefreshStrategy,
         include_imports: bool,
         max_import_depth: Option<usize>,
+        progress: &mut ProgressReporter,
     ) -> Result<(Vec<Ontology>, Vec<GraphIdentifier>, Vec<String>)> {
         // Use a BFS-style queue to load ontologies and (optionally) their imports.
         let mut queue: VecDeque<PendingImport> = seeds.into_iter().collect();
@@ -1459,6 +1583,7 @@ impl OntoEnv {
         let mut touched_ids: Vec<GraphIdentifier> = Vec::new();
         let mut touched_set: HashSet<GraphIdentifier> = HashSet::new();
         let mut errors: Vec<String> = Vec::new();
+        progress.add_discovered(queue.len());
 
         let mut record_id = |id: &GraphIdentifier| {
             if touched_set.insert(id.clone()) {
@@ -1472,12 +1597,19 @@ impl OntoEnv {
             if !seen.insert(job_location.clone()) {
                 continue;
             }
+            progress.loading(&job_location, queue.len() + 1);
             match self.fetch_location(job, refresh) {
                 Ok(FetchOutcome::Loaded(ontology)) => {
                     let ontology = *ontology;
                     let imports = ontology.imports.clone();
                     let id = ontology.id().clone();
+                    progress.tick_loaded();
                     if include_imports {
+                        let import_count = imports.len();
+                        if import_count > 0 {
+                            progress.expanding(id.to_uri_string(), import_count);
+                            progress.add_discovered(import_count);
+                        }
                         self.enqueue_imports_for_job(
                             imports,
                             &mut queue,
@@ -1490,11 +1622,18 @@ impl OntoEnv {
                 }
                 Ok(FetchOutcome::Reused(id)) => {
                     // Reused ontologies still contribute to the dependency graph.
+                    progress.tick_reused();
                     record_id(&id);
                     if include_imports {
                         if let Ok(existing) = self.get_ontology(&id) {
+                            let imports = existing.imports;
+                            let import_count = imports.len();
+                            if import_count > 0 {
+                                progress.expanding(id.to_uri_string(), import_count);
+                                progress.add_discovered(import_count);
+                            }
                             self.enqueue_imports_for_job(
-                                existing.imports,
+                                imports,
                                 &mut queue,
                                 job_depth,
                                 max_import_depth,
@@ -1518,6 +1657,7 @@ impl OntoEnv {
                     }
                 }
             }
+            progress.tick_processed();
         }
 
         Ok((fetched, touched_ids, errors))
