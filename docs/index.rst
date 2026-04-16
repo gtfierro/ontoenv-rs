@@ -114,11 +114,6 @@ Explore the docs
        <strong>CLI Reference</strong>
        <span>All subcommands, flags, and configuration options.</span>
      </a>
-     <a class="oe-nav-card" href="rdf5d.html">
-       <span class="nav-icon">&#x26A1;</span>
-       <strong>RDF5D Storage</strong>
-       <span>Compact, mmap-friendly storage for RDF graphs.</span>
-     </a>
      <a class="oe-nav-card" href="https://docs.rs/ontoenv" target="_blank">
        <span class="nav-icon">&#x1F4D6;</span>
        <strong>Rust API</strong>
@@ -133,7 +128,6 @@ Explore the docs
    getting-started
    python-api/index
    cli/index
-   rdf5d
    Rust API (docs.rs) <https://docs.rs/ontoenv>
 
 ----
