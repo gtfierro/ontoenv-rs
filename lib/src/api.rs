@@ -122,8 +122,12 @@ struct ProgressReporter {
 
 impl ProgressReporter {
     fn new() -> Self {
+        use std::io::IsTerminal;
+        // Gate on the feature (CLI-only) AND a real TTY, so integration tests
+        // that capture stderr through a pipe never see progress output.
+        let enabled = cfg!(feature = "progress-output") && std::io::stderr().is_terminal();
         Self {
-            enabled: cfg!(feature = "progress-output"),
+            enabled,
             ..Self::default()
         }
     }
