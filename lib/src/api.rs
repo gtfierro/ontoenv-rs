@@ -26,24 +26,13 @@ use std::path::PathBuf;
 
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
+use crate::progress::ProgressReporter;
 use anyhow::{anyhow, Result};
 use blake3;
 use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-/// Global switch for carriage-return progress lines on stderr. Defaults to off
-/// so library, test, and Python consumers are silent; the CLI opts in at startup.
-static PROGRESS_OUTPUT_ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Enable or disable the progress reporter globally for this process. Only the CLI
-/// binary calls this; using a Cargo feature would leak through workspace feature
-/// unification into every crate that depends on ontoenv.
-pub fn set_progress_output_enabled(enabled: bool) {
-    PROGRESS_OUTPUT_ENABLED.store(enabled, Ordering::Relaxed);
-}
 
 #[derive(Clone, Debug)]
 enum PendingImport {
@@ -111,127 +100,6 @@ impl PendingImport {
                 ..
             } => (location, *required, *depth),
         }
-    }
-}
-
-fn plural<'a>(n: usize, singular: &'a str, plural: &'a str) -> &'a str {
-    if n == 1 {
-        singular
-    } else {
-        plural
-    }
-}
-
-#[derive(Default)]
-struct ProgressReporter {
-    enabled: bool,
-    last_len: usize,
-    discovered: usize,
-    processed: usize,
-    loaded: usize,
-    reused: usize,
-}
-
-impl ProgressReporter {
-    fn new() -> Self {
-        use std::io::IsTerminal;
-        // Gate on the CLI-level opt-in AND a real TTY, so integration tests and
-        // piped output never see progress lines.
-        let enabled =
-            PROGRESS_OUTPUT_ENABLED.load(Ordering::Relaxed) && std::io::stderr().is_terminal();
-        Self {
-            enabled,
-            ..Self::default()
-        }
-    }
-
-    fn silent() -> Self {
-        Self::default()
-    }
-
-    fn add_discovered(&mut self, n: usize) {
-        self.discovered = self.discovered.saturating_add(n);
-    }
-
-    fn announce_discovered(&mut self, n: usize) {
-        self.add_discovered(n);
-        if !self.enabled {
-            return;
-        }
-        self.render(&format!(
-            "Discovered {} {} to process...",
-            n,
-            plural(n, "source", "sources")
-        ));
-    }
-
-    fn tick_loaded(&mut self) {
-        self.loaded += 1;
-    }
-
-    fn tick_reused(&mut self) {
-        self.reused += 1;
-    }
-
-    fn tick_processed(&mut self) {
-        self.processed += 1;
-    }
-
-    fn loading<D: std::fmt::Display>(&mut self, target: D, queued_sources: usize) {
-        if !self.enabled {
-            return;
-        }
-        self.render(&format!(
-            "Processed {}/{} sources, loaded {}, reused {}, queue {}, loading {}",
-            self.processed,
-            self.discovered.max(self.processed),
-            self.loaded,
-            self.reused,
-            queued_sources.saturating_sub(1),
-            target
-        ));
-    }
-
-    fn expanding<D: std::fmt::Display>(&mut self, target: D, imports: usize) {
-        if !self.enabled {
-            return;
-        }
-        self.render(&format!(
-            "Processed {}/{} sources, loaded {}, reused {}, expanding {} to {} {}",
-            self.processed,
-            self.discovered.max(self.processed),
-            self.loaded,
-            self.reused,
-            target,
-            imports,
-            plural(imports, "import", "imports")
-        ));
-    }
-
-    fn render(&mut self, line: &str) {
-        let pad = self.last_len.saturating_sub(line.len());
-        let stderr = std::io::stderr();
-        let mut handle = stderr.lock();
-        let _ = write!(handle, "\r{line}{:pad$}", "");
-        let _ = handle.flush();
-        self.last_len = line.len();
-    }
-
-    fn finish(&mut self) {
-        if !self.enabled || self.last_len == 0 {
-            return;
-        }
-        let stderr = std::io::stderr();
-        let mut handle = stderr.lock();
-        let _ = write!(handle, "\r{:width$}\r", "", width = self.last_len);
-        let _ = handle.flush();
-        self.last_len = 0;
-    }
-}
-
-impl Drop for ProgressReporter {
-    fn drop(&mut self) {
-        self.finish();
     }
 }
 
