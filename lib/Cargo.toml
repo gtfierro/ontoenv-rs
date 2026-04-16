@@ -36,7 +36,6 @@ url = "2.5"
 blake3.workspace = true
 
 [features]
-progress-output = []
 rocksdb = ["oxigraph/rocksdb"]
 
 [package.metadata.docs.rs]

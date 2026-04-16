@@ -463,6 +463,8 @@ fn execute(cmd: Cli) -> Result<()> {
     }
     let _ = env_logger::try_init();
 
+    ontoenv::api::set_progress_output_enabled(true);
+
     let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
 
     let cwd = current_dir()?;
