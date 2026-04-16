@@ -22,7 +22,7 @@ doc = false
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-ontoenv = { workspace = true, features = ["progress-output"] }
+ontoenv.workspace = true
 env_logger.workspace = true
 oxigraph.workspace = true
 chrono.workspace = true

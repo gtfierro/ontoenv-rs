@@ -32,6 +32,18 @@ use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global switch for carriage-return progress lines on stderr. Defaults to off
+/// so library, test, and Python consumers are silent; the CLI opts in at startup.
+static PROGRESS_OUTPUT_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enable or disable the progress reporter globally for this process. Only the CLI
+/// binary calls this; using a Cargo feature would leak through workspace feature
+/// unification into every crate that depends on ontoenv.
+pub fn set_progress_output_enabled(enabled: bool) {
+    PROGRESS_OUTPUT_ENABLED.store(enabled, Ordering::Relaxed);
+}
 
 #[derive(Clone, Debug)]
 enum PendingImport {
@@ -123,9 +135,10 @@ struct ProgressReporter {
 impl ProgressReporter {
     fn new() -> Self {
         use std::io::IsTerminal;
-        // Gate on the feature (CLI-only) AND a real TTY, so integration tests
-        // that capture stderr through a pipe never see progress output.
-        let enabled = cfg!(feature = "progress-output") && std::io::stderr().is_terminal();
+        // Gate on the CLI-level opt-in AND a real TTY, so integration tests and
+        // piped output never see progress lines.
+        let enabled =
+            PROGRESS_OUTPUT_ENABLED.load(Ordering::Relaxed) && std::io::stderr().is_terminal();
         Self {
             enabled,
             ..Self::default()
