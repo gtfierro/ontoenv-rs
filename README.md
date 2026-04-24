@@ -1,183 +1,200 @@
 # OntoEnv
 
+[![crates.io](https://img.shields.io/crates/v/ontoenv.svg)](https://crates.io/crates/ontoenv)
+[![PyPI](https://img.shields.io/pypi/v/ontoenv.svg)](https://pypi.org/project/ontoenv/)
+[![docs.rs](https://docs.rs/ontoenv/badge.svg)](https://docs.rs/ontoenv/latest/ontoenv/)
+[![License](https://img.shields.io/crates/l/ontoenv.svg)](LICENSE)
+
 `ontoenv` is a lightweight environment manager for RDF ontologies and their imports. It helps you:
 
 - Discover ontologies locally and on the web
 - Resolve and materialize `owl:imports` closures
 - Query and export graphs
 
-Project components:
-- CLI: `ontoenv` (installable via `cargo install ontoenv-cli`)
-- Rust library: [`ontoenv`](https://docs.rs/ontoenv/latest/ontoenv/)
-- Python bindings: [`ontoenv`](https://pypi.org/project/ontoenv/)
+**Components:**
+| | Install | Docs |
+|---|---|---|
+| CLI | `cargo install --locked ontoenv-cli` or `pip install ontoenv` | This README |
+| Python library | `pip install ontoenv` | [Python API](#python-api-ontoenv) |
+| Rust library | `cargo add ontoenv` | [docs.rs](https://docs.rs/ontoenv/latest/ontoenv/) |
 
-## Building From Source
+---
 
-### Rust workspace
-- `cargo build --workspace --release` compiles every crate (`lib/`, `cli/`, `rdf5d/`) and produces optimized binaries in `target/release/`.
-- `cargo test --workspace` exercises all Rust tests; the convenience wrapper `./test` also drives the Python suites.
+## Quick Start
 
-### Python package (`python/`)
-- From `python/`, run `uv run --group dev maturin develop` to build the extension module in editable mode against the local Rust library.
-- `uv run python -m unittest discover -s tests` (also from `python/`) executes the Python test suite.
-- Packages drop into `python/target/wheels/` after `uv run --group dev maturin build --release`.
+```bash
+# Install the CLI
+cargo install --locked ontoenv-cli
 
-### Compatibility shim (`pyontoenv-shim/`)
-- From `pyontoenv-shim/`, run `uv build --wheel` to produce the `pyontoenv` wheel that re-exports the bindings.
-- `uv run python -m unittest discover -s tests` (inside `pyontoenv-shim/`) validates the shim and its aliasing behavior.
-- `uv run python scripts/test_pyontoenv.py` (run from `pyontoenv-shim/`) installs the freshly built wheels into a throwaway virtualenv and sanity-checks imports and the CLI; it reads the ontoenv wheel from `../python/target/wheels/` by default.
-- The helper `./version <new-version>` bumps the workspace version and refreshes related manifests for both Rust and Python packages.
+# Initialize an environment in a directory containing ontology files
+ontoenv init ./ontologies
 
-## Overview
+# Compute the imports closure of an ontology and write it to a file
+ontoenv closure http://example.org/ont/MyOntology result.ttl
+```
 
-Imagine you have an RDF graph which imports some ontologies in order to use those concepts.
-Those ontologies might in import other ontologies, and so on.
+Or from Python:
 
-The design goals of this project are:
-- **be lightweight**:  big fancy ontology tools will handle ontology imports automatically, but do so within a heavyweight GUI and usually without an easy-to-use API; I wanted something that could be used in a Python library or a command line tool
-- **configurable**: when doing ontology development, I want to refer to some files locally, and others on the web; I want to be able to control which files are included and which are not.
-- **fast**: I want to be able to quickly refresh my workspace when I make changes to local files.
+```python
+from ontoenv import OntoEnv
+from rdflib import Graph
 
-## How does it work?
+env = OntoEnv(search_directories=["./ontologies"], strict=False, temporary=True)
 
-Specifically, `ontoenv` looks for patterns like the following inside local ontology files:
+g = Graph()
+env.get_closure("http://example.org/ont/MyOntology", destination_graph=g)
+print(f"Closure has {len(g)} triples")
+```
 
-```ttl
-@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+---
+
+## How It Works
+
+`ontoenv` looks for patterns like this in local ontology files:
+
+```turtle
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix : <urn:my_ontology/> .
 
-<urn:my_ontology> rdf:type owl:Ontology ;
+<urn:my_ontology> a owl:Ontology ;
     owl:imports <https://brickschema.org/schema/1.4/Brick>,
                 <http://qudt.org/2.1/vocab/quantitykind> .
 ```
 
-When initialized, `ontoenv` searches the specified directories for ontology declarations, identifies their `owl:imports`, and recursively pulls in dependencies. Runtime queries operate on an in‑memory Oxigraph store. Persistent on‑disk state uses a compact RDF5D file at `.ontoenv/store.r5tu` with single‑writer, shared reader locking.
+When initialized, `ontoenv` searches configured directories for ontology declarations, identifies their `owl:imports`, and recursively pulls in dependencies. The central operation is computing the *imports closure*: the set of all ontologies transitively required by a given root, optionally merged into a single flat graph.
+
+**Implementation:** Built in Rust using [oxigraph](https://github.com/oxigraph/oxigraph) as the internal RDF store and [petgraph](https://github.com/petgraph/petgraph) for dependency graph traversal. Python bindings are generated via [PyO3](https://pyo3.rs/). Persistent on-disk state uses a compact binary format (RDF5D) at `.ontoenv/store.r5tu` with single-writer/shared-reader locking.
+
+**Design goals:**
+- **Lightweight** — usable from a Python library or CLI without a heavyweight GUI
+- **Configurable** — control which files are local vs. remote, which IRIs to include/exclude
+- **Fast** — quickly refresh a workspace after local file changes
 
 ### Canonical IRIs and Source URLs
 
-Ontologies fetched from a URL often declare a different, usually versioned, ontology IRI inside the file. `ontoenv` now remembers that relationship. When an ontology is added we record the source location and, if its declared name differs, create an alias from the normalized URL to the canonical ontology identifier. Future `owl:imports` that reference the versionless URL will therefore reuse the already downloaded ontology instead of refetching it. Removing an ontology clears any aliases associated with it, and loading an existing environment rebuilds the mapping automatically.
+Ontologies fetched from a URL often declare a different (usually versioned) ontology IRI inside the file. `ontoenv` remembers that relationship: when an ontology is added, the source URL is recorded and, if its declared name differs, an alias is created from the normalized URL to the canonical ontology IRI. Future `owl:imports` referencing the versionless URL reuse the already-downloaded ontology instead of re-fetching it.
+
+---
 
 ## CLI
 
 ### Installation
 
-- Install from crates.io with `cargo install --locked ontoenv-cli`
-- From a local checkout, run `cargo install --path cli --locked` to build the current workspace
-- Install via PyPI with `pip install ontoenv` to get the CLI together with the Python bindings
-- Download a binary from the [Releases](https://github.com/gtfierro/ontoenv-rs/releases) tab
+- `cargo install --locked ontoenv-cli` — from crates.io
+- `cargo install --path cli --locked` — from a local checkout
+- `pip install ontoenv` — alongside Python bindings
+- [Download a binary](https://github.com/gtfierro/ontoenv-rs/releases) from the Releases tab
 
-### Usage
+### Local State
 
-#### init
+| Path | Purpose |
+|---|---|
+| `.ontoenv/` | Environment directory |
+| `.ontoenv/store.r5tu` | RDF5D persistent store |
+| `.ontoenv/store.lock` | File lock (single writer, shared readers) |
 
-Begin by initializing an `ontoenv` workspace in a directory containing some ontology files (Turtle files, etc).
+Set `ONTOENV_DIR` to override the environment location. Logging is controlled via `ONTOENV_LOG` or `RUST_LOG`.
 
-```ignore
-ontoenv init
+### Commands
+
+#### `init`
+
+Initialize an `ontoenv` workspace. Must be run once per environment; all other commands auto-discover the nearest `.ontoenv/` by walking up from the current directory.
+
 ```
-
-Initializes `.ontoenv/` in the current directory (or specified root). Pass one or more `LOCATION` arguments (for example `.`) to discover ontologies immediately; if you omit them, the environment starts empty and you can populate it later via `ontoenv add` or by rerunning `init` with locations. You must run `init` once per environment. Subsequent commands will auto‑discover the nearest `.ontoenv/` in parent directories.
-
-```ignore
-$ ontoenv init -h
-Create a new ontology environment
-
 Usage: ontoenv init [OPTIONS] [LOCATION]...
 
 Arguments:
-  [LOCATION]...  Directories to search for ontologies. If omitted, no directories are scanned and you must add ontologies explicitly or rerun init with locations.
+  [LOCATION]...  Directories to search for ontologies. If omitted, no
+                 directories are scanned; add ontologies manually or
+                 rerun init with explicit paths.
 
 Options:
-      --overwrite                 Overwrite the environment if it already exists
-  -r, --require-ontology-names  Require ontology names to be unique; will raise an error if multiple ontologies have the same name
-  -s, --strict                  Strict mode - will raise an error if an ontology is not found
-  -o, --offline                 Offline mode - will not attempt to fetch ontologies from the web
-  -p, --policy <POLICY>         Resolution policy for determining which ontology to use when there are multiple with the same name. One of 'default', 'latest', 'version' [default: default]
-  -i, --includes <INCLUDES>...  Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3']. Supports **, ?, and bare directories (e.g., 'lib/tests' expands to 'lib/tests/**').
-  -e, --excludes <EXCLUDES>...  Glob patterns for which files to exclude, supports ** and directory prefixes
-      --include-ontology, --io <REGEX>...  Regex patterns of ontology IRIs to include; if set, only matches are kept
-      --exclude-ontology, --eo <REGEX>...  Regex patterns of ontology IRIs to exclude (checked after includes)
-  -h, --help                    Print help
+      --overwrite                       Overwrite an existing environment
+  -r, --require-ontology-names          Raise an error if multiple ontologies share the same name
+  -s, --strict                          Raise an error if an import is not found
+  -o, --offline                         Do not fetch ontologies from the web
+  -p, --policy <POLICY>                 Resolution policy: 'default', 'latest', or 'version' [default: default]
+  -i, --includes <INCLUDES>...          Glob patterns to include [default: *.ttl *.xml *.n3]
+  -e, --excludes <EXCLUDES>...          Glob patterns to exclude
+      --include-ontology, --io <REGEX>  Regex patterns of ontology IRIs to include
+      --exclude-ontology, --eo <REGEX>  Regex patterns of ontology IRIs to exclude
+  -h, --help                            Print help
 ```
 
-Offline mode in particular is helpful when you want to limit which ontologies get loaded. Simply download the ontologies you want, and then enable offline mode.
+**Examples:**
+```bash
+ontoenv init .                                       # scan current directory
+ontoenv init ./ontologies ./models                   # scan multiple directories
+ontoenv init                                         # empty environment, add ontologies manually
+ontoenv init --overwrite --offline ./ontologies      # rebuild from scratch, offline
+```
 
-- `ontoenv init .` — initialize and scan the current directory (recursive)
-- `ontoenv init ./ontologies ./models` — initialize and search these directories (recursive)
-- `ontoenv init` — create an empty environment (no discovery) so you can add ontologies manually
-- `ontoenv init --overwrite --offline ./ontologies` — rebuild from scratch and work offline
+Offline mode is particularly useful when you want to limit which ontologies are loaded: download the ones you want, then enable `--offline` to prevent any further network access.
 
-#### Local State
+#### `update`
 
-- Directory: `.ontoenv/`
-- Persistent store: `.ontoenv/store.r5tu` (RDF5D)
-- Lock file: `.ontoenv/store.lock` (single writer, shared readers)
+Refresh the environment based on file timestamps and configuration.
 
-### Behavior
+```bash
+ontoenv update        # refresh only changed/added files
+ontoenv update --all  # rebuild the in-memory view from all sources
+```
 
-- Discovery: Commands (except `init`) discover an environment by walking up parent directories from the current working directory, looking for `.ontoenv/`.
-- Override: Set `ONTOENV_DIR` to point to a specific environment; if it points at a `.ontoenv` directory the parent of that directory is used as the root.
-- Creation: Only `ontoenv init` creates an environment on disk. Other commands will error if no environment is found.
-- Positional search directories: Only `ontoenv init` accepts positional search directories (LOCATIONS). If you omit them, no directories are scanned automatically; add ontologies manually or rerun `init` with explicit paths. Other commands ignore trailing positionals.
-- Temporary mode: Pass `--temporary` to run with an in‑memory environment (no `.ontoenv/`).
+To change search paths or flags, re-run `ontoenv init`.
 
-#### update
+#### `closure`
 
-- Refreshes the environment based on file timestamps and configuration.
-- Re‑run `init` to change search paths or flags.
+Compute and write the imports closure (union of a graph and its transitive imports).
 
-Examples:
-- `ontoenv update` — refresh only changed/added files
-- `ontoenv update --all` — rebuild the in‑memory view from sources
+```bash
+ontoenv closure http://example.org/ont/MyOntology                        # writes output.ttl
+ontoenv closure http://example.org/ont/MyOntology result.ttl             # writes result.ttl
+ontoenv closure http://example.org/ont/MyOntology --no-rewrite-sh-prefixes
+ontoenv closure http://example.org/ont/MyOntology --keep-owl-imports
+```
 
-#### closure
+By default, SHACL `sh:prefixes` references are rewritten onto the root node and `owl:imports` triples are removed from the output.
 
-Compute and optionally write the imports closure (union of a graph and its transitive imports). Useful for reasoning, exchange, or exporting a single file.
+#### `get`
 
-Examples:
-- `ontoenv closure http://example.org/ont/MyOntology` (writes `output.ttl`)
-- `ontoenv closure http://example.org/ont/MyOntology result.ttl` (auto‑rewrites SHACL prefixes and removes owl:imports)
-- To disable either behavior:
-  - `ontoenv closure http://example.org/ont/MyOntology --no-rewrite-sh-prefixes`
-  - `ontoenv closure http://example.org/ont/MyOntology --keep-owl-imports`
+Retrieve a single ontology graph from the environment.
 
-#### get
+```bash
+ontoenv get http://example.org/ont/MyOntology                    # Turtle to STDOUT
+ontoenv get http://example.org/ont/MyOntology --format jsonld    # JSON-LD to STDOUT
+ontoenv get http://example.org/ont/MyOntology --output my.ttl    # write to file
 
-Retrieve a single ontology graph from the environment and write it to STDOUT or a file in a chosen serialization format.
+# Disambiguate when multiple sources share the same IRI
+ontoenv get http://example.org/ont/MyOntology --location ./ontologies/MyOntology-1.4.ttl
+```
 
-Examples:
-- `ontoenv get http://example.org/ont/MyOntology` — prints Turtle to STDOUT
-- `ontoenv get http://example.org/ont/MyOntology --format jsonld` — prints JSON‑LD to STDOUT
-- `ontoenv get http://example.org/ont/MyOntology --output my.ttl` — writes Turtle to `my.ttl`
-- Disambiguate when multiple copies share the same IRI (different locations):
-  - `ontoenv get http://example.org/ont/MyOntology --location ./ontologies/MyOntology-1.4.ttl`
-  - `ontoenv get http://example.org/ont/MyOntology -l https://example.org/MyOntology-1.3.ttl`
-
-Notes:
-- Supported formats: `turtle` (default), `ntriples`, `rdfxml`, `jsonld`.
-- `--output` writes to a file; omit to print to STDOUT.
-- `--location` accepts a file path or URL and is only needed to disambiguate when multiple sources exist for the same IRI.
+Supported formats: `turtle` (default), `ntriples`, `rdfxml`, `jsonld`.
 
 #### Other commands
 
-- `ontoenv dump` — show ontologies, imports, sizes, and metadata
-- `ontoenv dep-graph` — export a GraphViz import dependency graph (PDF) if GraphViz is available
-- `ontoenv status` — human-friendly status; add `--json` for machine‑readable
-- `ontoenv update` — refresh discovered ontologies
-- `ontoenv list ontologies` — ontology names in the environment; add `--json` for JSON array
-- `ontoenv list missing` — missing imports (i.e. not found in environment); add `--json` for JSON array
-- `ontoenv why <IRI> [<IRI> ...]` — show who imports the given ontology as paths; add `--json` to emit a single JSON document mapping each IRI to path arrays
+| Command | Description |
+|---|---|
+| `ontoenv status [--json]` | Human-friendly environment status |
+| `ontoenv dump` | Show ontologies, imports, sizes, and metadata |
+| `ontoenv list ontologies [--json]` | List ontology names in the environment |
+| `ontoenv list missing [--json]` | List imports not found in the environment |
+| `ontoenv dep-graph` | Export a Graphviz import dependency graph (PDF); requires Graphviz |
+| `ontoenv why <IRI>... [--json]` | Show which ontologies import the given IRI, as path(s) |
+
+---
 
 ## Python API (`ontoenv`)
 
-##### Installation
+### Installation
 
-`pip install ontoenv` (requires Python 3.9+; prebuilt wheels ship for common platforms. Building from source needs a Rust toolchain.)
+```bash
+pip install ontoenv   # Python 3.11+; prebuilt wheels for common platforms
+```
 
-### Basic usage
+Building from source requires a Rust toolchain (MSRV 1.70).
 
-Example: create a temporary environment, discover ontologies, and compute a closure.
+### Basic Usage
 
 ```python
 import tempfile
@@ -185,101 +202,121 @@ from pathlib import Path
 from ontoenv import OntoEnv
 from rdflib import Graph
 
-# create a temporary directory to store our ontology files
 with tempfile.TemporaryDirectory() as temp_dir:
     root = Path(temp_dir)
-    # create a dummy ontology file for ontology A
-    ontology_a_content = """
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix : <http://example.com/ontology_a#> .
-<http://example.com/ontology_a> a owl:Ontology .
-"""
-    (root / "ontology_a.ttl").write_text(ontology_a_content)
 
-    # create a dummy ontology file for ontology B which imports A
-    ontology_b_content = """
+    (root / "ontology_a.ttl").write_text("""
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix : <http://example.com/ontology_b#> .
+<http://example.com/ontology_a> a owl:Ontology .
+""")
+    (root / "ontology_b.ttl").write_text("""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
 <http://example.com/ontology_b> a owl:Ontology ;
     owl:imports <http://example.com/ontology_a> .
-"""
-    (root / "ontology_b.ttl").write_text(ontology_b_content)
+""")
 
-    # make the environment. We use temporary=True so it doesn't create a .ontoenv dir
     env = OntoEnv(search_directories=[str(root)], strict=False, offline=True, temporary=True)
 
-    # list the ontologies found
     print("Ontologies found:", env.get_ontology_names())
 
-    # compute closure for ontology B and insert it into a graph
     g = Graph()
     env.get_closure("http://example.com/ontology_b", destination_graph=g)
-    # The closure should contain triples from both A and B.
-    # Each ontology has 1 triple, so the union should have 2.
-    print(f"Closure of ontology_b has {len(g)} triples")
-    assert len(g) == 2
-
-    # get just the graph for ontology A
-    g_a = env.get_graph("http://example.com/ontology_a")
-    print(f"Graph of ontology_a has {len(g_a)} triples")
-    assert len(g_a) == 1
+    print(f"Closure of ontology_b has {len(g)} triples")  # → 2
 ```
 
-### Key methods
+### Constructor
 
-- Constructor: `OntoEnv(path=None, recreate=False, create_or_use_cached=False, read_only=False, search_directories=None, require_ontology_names=False, strict=False, offline=False, use_cached_ontologies=False, resolution_policy="default", root=".", includes=None, excludes=None, temporary=False, remote_cache_ttl_secs=None)`
-  - Leave `search_directories=None` to skip automatic discovery; pass paths (e.g., `["."]`) to search immediately.
-  - `offline`: don’t fetch remote ontologies
-  - `temporary`: in‑memory only (no `.ontoenv/`)
-  - `includes` / `excludes`: gitignore-style globs (supports `**`); bare directories like `lib/tests` implicitly match everything under them.
-  - `include_ontologies` / `exclude_ontologies`: regex filters applied to ontology IRIs; excludes run after includes.
-- `update(all=False)`: refresh discovered ontologies
-- `add(location, fetch_imports=True) -> str`: add graph from file path, URL, or in-memory `rdflib.Graph`; returns graph IRI
-- `add_no_imports(location) -> str`: same input types as `add`, but skips import traversal
-- `get_graph(name) -> rdflib.Graph`: get just one ontology graph
-- `get_closure(name, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1) -> (Graph, list[str])`
-- `import_dependencies(graph, fetch_missing=False) -> list[str]`: inline all imports into an rdflib graph, remove its `owl:imports`, rewrite `sh:prefixes` onto the graph's root, and return the sorted IRIs that were imported
-- `get_dependencies(graph, graph_name=None, fetch_missing=False) -> (Graph, list[str])`: compute the import closure of a graph and return it as a **new** graph (original never modified); without `graph_name` each closure ontology keeps its own `owl:Ontology` declaration; with `graph_name` all declarations are collapsed onto that single IRI
-- `list_closure(name, recursion_depth=-1) -> list[str]`: list IRIs in the closure
-- `get_importers(name) -> list[str]`: ontologies that import `name`
-- `to_rdflib_dataset() -> rdflib.Dataset`: in‑memory Dataset with one named graph per ontology
-- `store_path() -> Optional[str]`: path to `.ontoenv/` (persistent envs) or `None` (temporary)
-- `close()`: persist (if applicable) and release resources
+```python
+OntoEnv(
+    path=None,
+    recreate=False,
+    create_or_use_cached=False,
+    read_only=False,
+    search_directories=None,   # pass ["."] to scan immediately; None skips discovery
+    require_ontology_names=False,
+    strict=False,
+    offline=False,
+    use_cached_ontologies=False,
+    resolution_policy="default",
+    root=".",
+    includes=None,             # gitignore-style globs; bare dirs match everything under them
+    excludes=None,
+    include_ontologies=None,   # regex filters on ontology IRIs; excludes run after includes
+    exclude_ontologies=None,
+    temporary=False,           # in-memory only, no .ontoenv/
+    remote_cache_ttl_secs=None,  # max age before re-fetching a remote ontology (default: 86400)
+)
+```
 
-### Behavior
+**Environment modes:**
+- `temporary=True` — in-memory only, no `.ontoenv/`
+- `recreate=True` — explicitly create (or overwrite) at `path`
+- `create_or_use_cached=True` — bootstrap a new environment if none is found, otherwise reuse existing
+- Default — walk up from `path` (or `root`) to find an existing `.ontoenv/`; raise `FileNotFoundError` if not found
 
-- Strict Git‑like:
-  - Temporary environment: `OntoEnv(temporary=True)` creates an in‑memory environment (no `.ontoenv/`).
-  - Create/overwrite on disk: `OntoEnv(path=..., recreate=True)` explicitly creates a new environment at `path` (or overwrites if it exists).
-  - Create or reuse cached: `OntoEnv(create_or_use_cached=True, ...)` retains the previous auto-initializing behavior—if no environment is found it bootstraps one using the supplied configuration.
-  - Discover and load: Otherwise, the constructor walks up from `path` (or `root=.` if `path` is None) to find an existing `.ontoenv/`. If found, it loads it; if not, it raises `FileNotFoundError` with a hint to use `recreate=True`, `temporary=True`, or `create_or_use_cached=True`.
-  - Flags such as `offline`, `strict`, `search_directories`, `includes`, `excludes` apply to created environments; loading respects the saved configuration. `search_directories` defaults to an empty list, so pass paths (e.g., `["."]`) when you want discovery at init-time.
+### Dependency Resolution Methods
 
-#### Dependency resolution methods at a glance
+| Method | Root identified by | Mutates input? | Returns |
+|---|---|---|---|
+| `get_closure(name, ...)` | IRI string | No | `(Graph, list[str])` |
+| `import_graph(destination_graph, name, ...)` | IRI string | Yes (required) | `None` |
+| `import_dependencies(graph, ...)` | `owl:imports` in caller's graph | Yes | `list[str]` |
+| `get_dependencies(graph, ...)` | `owl:imports` in caller's graph | No | `(Graph, list[str])` |
+| `list_closure(name, ...)` | IRI string | — | `list[str]` (IRIs only) |
 
-| Method | Input | Mutates input? | Root ontology in result | Returns |
-|---|---|---|---|---|
-| `get_closure(name, ...)` | IRI string | No | `name` | `(Graph, list[str])` |
-| `import_dependencies(graph, ...)` | rdflib Graph | **Yes** — inlines into it | Graph’s existing root | `list[str]` |
-| `get_dependencies(graph, ...)` | rdflib Graph | No | Each ontology keeps its own, or collapsed to `graph_name` | `(Graph, list[str])` |
+**`get_closure(uri, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`**
+Compute the full closure by IRI. `sh:prefixes` blocks are consolidated onto `uri` and `owl:imports` removed by default. Returns `(merged_graph, closure_iris)`. Use when you have an IRI and want a self-contained graph for reasoning, exchange, or export.
 
-- **`get_closure(name, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`** — address an ontology by IRI and get its full closure as a new graph. `sh:prefixes` blocks are consolidated onto `name` and `owl:imports` are removed by default. Returns the graph plus the ordered list of closure IRIs. Use when you have an IRI and want a self-contained graph for reasoning, exchange, or export.
+**`import_dependencies(graph, fetch_missing=False)`**
+Mutates the provided graph in-place. Reads its `owl:imports` statements, resolves each one transitively, merges all closure triples into the same graph, removes `owl:imports`, and rewrites `sh:prefixes` onto the graph's root. Returns `list[str]` of imported IRIs.
 
-- **`import_dependencies(graph, fetch_missing=False)`** — mutates the provided graph in-place. Reads the graph’s `owl:imports` statements, resolves each one transitively through the environment, merges all closure triples into the same graph, removes the `owl:imports` statements, and rewrites `sh:prefixes` onto the graph’s root. The graph ends up fully self-contained under its original ontology name. Returns the list of imported IRIs. Use when you have an in-memory graph and want to populate it with its declared imports.
+**`get_dependencies(graph, graph_name=None, fetch_missing=False)`**
+Same closure as `import_dependencies` but never modifies the original graph. Returns a new graph. Without `graph_name`, each ontology retains its own `owl:Ontology` declaration. With `graph_name`, all declarations are collapsed onto that single IRI and `sh:prefixes` are rewritten onto it. Returns `(deps_graph, list[str])`.
 
-- **`get_dependencies(graph, graph_name=None, fetch_missing=False)`** — computes the same import closure as `import_dependencies` but **never touches the original graph**. The closure triples are returned in a brand-new graph. If `graph_name` is omitted, each ontology in the closure retains its own `owl:Ontology` declaration — the result is a proper union of the closure graphs with no collapsed root, so it is safe to combine with other graphs without name clashes. `sh:prefixes` are left distributed across their original ontologies. If `graph_name` is provided, all `owl:Ontology` declarations are stripped and replaced with a single one for that IRI, and `sh:prefixes` are rewritten onto it. Returns `(deps_graph, list_of_iris)`.
+### Other Methods
+
+| Method | Description |
+|---|---|
+| `update(all=False)` | Refresh discovered ontologies |
+| `add(location, fetch_imports=True) -> str` | Add ontology by file path, URL, or `rdflib.Graph`; returns IRI |
+| `add_no_imports(location) -> str` | Same as `add`, but skips import traversal |
+| `get_graph(name) -> Graph` | Retrieve a single ontology (no closure expansion) |
+| `get_ontology(name)` | Inspect metadata: imports list, version, namespace map, last-updated |
+| `get_importers(name) -> list[str]` | Reverse dependency lookup |
+| `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings |
+| `missing_imports(uri=None) -> list[str]` | List unresolvable `owl:imports` IRIs (see below) |
+| `to_rdflib_dataset() -> rdflib.Dataset` | Export full environment as a named-graph Dataset |
+| `store_path() -> str \| None` | Path to `.ontoenv/`, or `None` for temporary environments |
+| `close()` | Persist (if applicable) and release resources |
+
+**`missing_imports(uri=None) -> list[str]`**
+Returns a list of `owl:imports` IRIs that could not be resolved in the environment.
+
+- `uri=None` — scans every ontology in the environment and returns the de-duplicated union of all unresolvable imports.
+- `uri="http://..."` — walks the full transitive `owl:imports` closure of the given ontology and returns every import IRI that cannot be found, including those declared by transitively-imported ontologies.
+
+```python
+# All missing imports across the whole environment
+missing = env.missing_imports()
+
+# Missing imports reachable from a specific ontology
+missing = env.missing_imports("http://example.org/ont/MyOntology")
+```
+
+---
 
 ## Rust Library
 
-[Docs](https://docs.rs/crate/ontoenv)
+[![docs.rs](https://docs.rs/ontoenv/badge.svg)](https://docs.rs/ontoenv/latest/ontoenv/)
 
-### Usage
+```toml
+[dependencies]
+ontoenv = "0.5"
+```
 
-Here is a basic example of how to use the `ontoenv` Rust library. This example will:
-1. Create a temporary directory.
-2. Write two simple ontologies to files in that directory, where one imports the other.
-3. Configure and initialize `ontoenv` to use this directory.
-4. Compute the dependency closure of one ontology to demonstrate that `ontoenv` correctly resolves and includes the imported ontology.
+Requires Rust 1.70+.
+
+### Basic Usage
 
 ```rust
 use ontoenv::config::Config;
@@ -292,107 +329,105 @@ use std::io::Write;
 use std::collections::HashSet;
 
 # fn main() -> anyhow::Result<()> {
-// Set up a temporary directory for the example
 let test_dir = PathBuf::from("target/doc_test_temp_readme");
-if test_dir.exists() {
-    fs::remove_dir_all(&test_dir)?;
-}
+if test_dir.exists() { fs::remove_dir_all(&test_dir)?; }
 fs::create_dir_all(&test_dir)?;
 let root = test_dir.canonicalize()?;
 
-// Create a dummy ontology file for ontology A
-let ontology_a_path = root.join("ontology_a.ttl");
-let mut file_a = fs::File::create(&ontology_a_path)?;
+let mut file_a = fs::File::create(root.join("ontology_a.ttl"))?;
 writeln!(file_a, r#"
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix : <http://example.com/ontology_a#> .
 <http://example.com/ontology_a> a owl:Ontology .
 "#)?;
 
-// Create a dummy ontology file for ontology B which imports A
-let ontology_b_path = root.join("ontology_b.ttl");
-let mut file_b = fs::File::create(&ontology_b_path)?;
+let mut file_b = fs::File::create(root.join("ontology_b.ttl"))?;
 writeln!(file_b, r#"
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix : <http://example.com/ontology_b#> .
 <http://example.com/ontology_b> a owl:Ontology ;
     owl:imports <http://example.com/ontology_a> .
 "#)?;
 
-// Configure ontoenv
 let config = Config::builder()
     .root(root.clone())
     .locations(vec![root.clone()])
-    .temporary(true) // Use a temporary environment
+    .temporary(true)
     .build()?;
 
-// Initialize the environment
 let mut env = OntoEnv::init(config, false)?;
 env.update()?;
 
-// Check that our ontologies were loaded
-let ontologies = env.ontologies();
-assert_eq!(ontologies.len(), 2);
-
-// Get the dependency closure for ontology B
 let ont_b_name = NamedNode::new("http://example.com/ontology_b")?;
 let ont_b_id = env.resolve(ResolveTarget::Graph(ont_b_name)).unwrap();
 let closure_ids = env.get_closure(&ont_b_id, -1)?;
-
-// The closure should contain both ontology A and B
 assert_eq!(closure_ids.len(), 2);
-let closure_names: HashSet<String> = closure_ids.iter().map(|id| id.to_uri_string()).collect();
-println!("Closure contains: {:?}", closure_names);
-assert!(closure_names.contains("http://example.com/ontology_a"));
-assert!(closure_names.contains("http://example.com/ontology_b"));
 
-
-// Clean up
 fs::remove_dir_all(&test_dir)?;
 # Ok(())
 # }
 ```
 
-### Core Rust API (selected)
+### Core API
 
-- `OntoEnv::init(config, overwrite) -> OntoEnv`
-- `OntoEnv::load_from_directory(root, read_only) -> OntoEnv`
-- `OntoEnv::update_all(all: bool)`
-- `OntoEnv::add(location, Overwrite, RefreshStrategy) -> GraphIdentifier`
-- `OntoEnv::add_no_imports(location, Overwrite, RefreshStrategy) -> GraphIdentifier`
-- `OntoEnv::add_from_bytes(location, bytes, format, Overwrite, RefreshStrategy) -> GraphIdentifier`
-- `OntoEnv::add_from_bytes_no_imports(location, bytes, format, Overwrite, RefreshStrategy) -> GraphIdentifier`
-- `OntoEnv::add_from_bytes_with_import_depth(..., max_import_depth) -> GraphIdentifier`
-- `OntoEnv::get_graph(id) -> Graph`
-- `OntoEnv::get_union_graph(ids)` and `get_closure(id, recursion_depth)`
-- `OntoEnv::save_to_directory()`, `flush()` (persists to `.ontoenv/store.r5tu`)
+| Method | Description |
+|---|---|
+| `OntoEnv::init(config, overwrite)` | Create (or overwrite) an environment |
+| `OntoEnv::load_from_directory(root, read_only)` | Load an existing environment |
+| `find_ontoenv_root()` / `find_ontoenv_root_from(path)` | Locate the nearest `.ontoenv/` by walking up |
+| `env.update_all(all)` | Refresh discovered ontologies |
+| `env.add(location, Overwrite, RefreshStrategy)` | Add by file/URL |
+| `env.add_no_imports(location, Overwrite, RefreshStrategy)` | Add without import traversal |
+| `env.add_from_bytes(location, bytes, format, Overwrite, RefreshStrategy)` | Add from in-memory RDF bytes |
+| `env.get_graph(id)` | Retrieve a single ontology |
+| `env.get_union_graph(ids)` | Merge multiple ontology graphs |
+| `env.get_closure(id, recursion_depth)` | Compute transitive imports closure |
+| `env.save_to_directory()` / `env.flush()` | Persist to `.ontoenv/store.r5tu` |
 
-Persistent storage details
-- On-disk: RDF5D file `.ontoenv/store.r5tu` (single writer, shared readers, atomic writes)
-- Runtime: in-memory Oxigraph store for fast queries
+### Option Enums
 
-### Behavior
+| Enum | Variants | Meaning |
+|---|---|---|
+| `Overwrite` | `Allow`, `Preserve` | Replace existing graphs or keep original |
+| `RefreshStrategy` | `Force`, `UseCache` | Bypass or reuse cached ontologies |
+| `CacheMode` | `Enabled`, `Disabled` | Mirrored in Python as `use_cached_ontologies` |
 
-- Discovery helpers:
-  - `find_ontoenv_root()` and `find_ontoenv_root_from(path)`: walk up parent directories to locate the root that contains `.ontoenv/`.
-  - Load: `OntoEnv::load_from_directory(root, read_only)` loads an existing environment.
-- Creation:
-  - `OntoEnv::init(config, overwrite)` explicitly creates (or overwrites) an environment on disk.
-  - `OntoEnv::add(..., Overwrite::Allow, RefreshStrategy::UseCache)` is the common way to add an ontology, while `RefreshStrategy::Force` skips cache reuse.
-  - `OntoEnv::add_from_bytes(...)` and `add_from_bytes_no_imports(...)` ingest a root ontology directly from in-memory RDF bytes (no temp files) while keeping the same import/dependency semantics as file/URL adds.
-  - For byte-backed adds, use `OntologyLocation::InMemory { identifier }` as stable metadata identity for the root source. Imports are still resolved from each `owl:imports` IRI (typically `http(s)` or `file`), not from the in-memory identifier.
-  - Enable `use_cached_ontologies` in `Config` (or pass `use_cached_ontologies=True` to Python) to start with an empty environment that only fetches data when explicitly asked; keep it disabled (default) to run an implicit discovery during `init`.
-- Recommended pattern:
-  - Try discovery (`find_ontoenv_root()`), then `load_from_directory`; if not found, prompt/init explicitly.
-  - Use `config.temporary = true` (via `Config::builder`) and `OntoEnv::init` for in‑memory use cases.
+`bool` values still convert via `Into` for backward compatibility.
 
-### Option enums
+---
 
-The Rust API now exposes expressive enums instead of opaque booleans:
+## Building From Source
 
-- `Overwrite::{Allow, Preserve}` — replace existing graphs or keep the original.
-- `RefreshStrategy::{Force, UseCache}` — bypass or reuse cached ontologies.
-- `CacheMode::{Enabled, Disabled}` — persisted in `Config` and mirrored in Python as the `use_cached_ontologies` boolean. Enabled mode skips all implicit discovery and only reuses existing graphs when explicitly requested; disabled mode performs automatic discovery during `init`.
-- `remote_cache_ttl_secs` — maximum age (seconds) before a cached *remote* ontology (URL) is re-fetched; defaults to 86,400 (24h). Exposed via CLI `--remote-cache-ttl-secs` and Python `remote_cache_ttl_secs`.
+**Prerequisites:** Rust 1.70+, Python 3.11+ (for Python bindings)
 
-From older code that passed `true`/`false`, use `Overwrite::Allow`/`Preserve` and `RefreshStrategy::Force`/`UseCache`. `bool` values still convert via `Into`, so existing code can migrate incrementally.
+### Rust workspace
+
+```bash
+cargo build --workspace --release   # all crates (lib/, cli/, rdf5d/)
+cargo test --workspace               # all Rust tests
+./test                               # Rust + Python test suites
+```
+
+### Python package (`python/`)
+
+```bash
+cd python
+uv run --group dev maturin develop              # editable dev install
+uv run python -m unittest discover -s tests     # run Python tests
+uv run --group dev maturin build --release      # wheels → python/target/wheels/
+```
+
+### Compatibility shim (`pyontoenv-shim/`)
+
+```bash
+cd pyontoenv-shim
+uv build --wheel
+uv run python -m unittest discover -s tests
+uv run python scripts/test_pyontoenv.py    # end-to-end install sanity check
+```
+
+This exists because I have both `ontoenv` and `pyontoenv` on PyPI — a mistake from when I restarted this project and forgot I already had the other package name.
+
+### Version bumping
+
+```bash
+./version <new-version>   # syncs all Cargo.toml files and Python pyproject.toml
+```

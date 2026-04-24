@@ -15,19 +15,21 @@ use std::io::BufReader;
 
 use log::{debug, info};
 
+fn ext_to_rdf_format(ext: &str) -> Option<RdfFormat> {
+    match ext {
+        "ttl" | "n3" => Some(RdfFormat::Turtle),
+        "xml" => Some(RdfFormat::RdfXml),
+        "nt" => Some(RdfFormat::NTriples),
+        _ => None,
+    }
+}
+
 pub fn get_file_contents(path: &Path) -> Result<(Vec<u8>, Option<RdfFormat>)> {
-    // Read raw bytes and infer format from extension to avoid double parsing.
     let b = std::fs::read(path)?;
     let format = path
         .extension()
         .and_then(|ext| ext.to_str())
-        .and_then(|ext| match ext {
-            "ttl" => Some(RdfFormat::Turtle),
-            "xml" => Some(RdfFormat::RdfXml),
-            "n3" => Some(RdfFormat::Turtle),
-            "nt" => Some(RdfFormat::NTriples),
-            _ => None,
-        });
+        .and_then(ext_to_rdf_format);
     Ok((b, format))
 }
 
@@ -59,19 +61,14 @@ pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
 }
 
 pub fn read_file(file: &Path) -> Result<OxigraphGraph> {
-    // Prefer streaming parse to keep memory usage bounded for large files.
     debug!("Reading file: {}", file.to_str().unwrap());
     let filename = file;
     let file = std::fs::File::open(file)?;
     let content: BufReader<_> = BufReader::new(file);
-    let content_type = filename.extension().and_then(|ext| ext.to_str());
-    let content_type = content_type.and_then(|ext| match ext {
-        "ttl" => Some(RdfFormat::Turtle),
-        "xml" => Some(RdfFormat::RdfXml),
-        "n3" => Some(RdfFormat::Turtle),
-        "nt" => Some(RdfFormat::NTriples),
-        _ => None,
-    });
+    let content_type = filename
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(ext_to_rdf_format);
     let parser = RdfParser::from_format(content_type.unwrap_or(RdfFormat::Turtle));
     let mut graph = OxigraphGraph::new();
     let parser = parser.for_reader(content);

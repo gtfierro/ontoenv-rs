@@ -103,6 +103,7 @@ pub mod io;
 pub mod ontology;
 pub mod options;
 pub mod policy;
+pub mod progress;
 #[macro_use]
 pub mod util;
 pub mod transform;

@@ -79,6 +79,11 @@ fn discovery_from_subdirectory() {
         "init failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Initialized environment with"),
+        "init summary missing: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let nested = root.join("nested");
     fs::create_dir_all(&nested).unwrap();
     let out = Command::new(&exe)
@@ -108,6 +113,11 @@ fn ontoenv_dir_override() {
         out.status.success(),
         "init failed: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Initialized environment with"),
+        "init summary missing: {}",
+        String::from_utf8_lossy(&out.stdout)
     );
     let elsewhere = tmp_dir("elsewhere");
     let out = Command::new(&exe)
@@ -147,6 +157,11 @@ fn update_from_nested_subdir_uses_root_locations() {
         "init failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Initialized environment with"),
+        "init summary missing: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
 
     // Modify the file to ensure update detects a change.
     write_ttl(
@@ -171,9 +186,36 @@ fn update_from_nested_subdir_uses_root_locations() {
     );
     let update_stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        update_stdout.contains("http://example.org/ont/A"),
-        "update output missing ontology: {}",
+        update_stdout.contains("Updated ") && update_stdout.contains("ontolog"),
+        "update summary output unexpected: {}",
         update_stdout
+    );
+
+    write_ttl(
+        &ont_path,
+        "http://example.org/ont/A",
+        "<http://example.org/ont/A> <http://example.org/p2> <http://example.org/o2> .",
+    );
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+
+    let out = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("--verbose")
+        .arg("update")
+        .output()
+        .expect("run verbose update");
+    assert!(
+        out.status.success(),
+        "verbose update failed from nested dir: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let verbose_stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        verbose_stdout.contains("Updated ")
+            && verbose_stdout.contains("ontolog")
+            && verbose_stdout.contains("http://example.org/ont/A"),
+        "verbose update output missing expected detail: {}",
+        verbose_stdout
     );
 
     let out = Command::new(&exe)
