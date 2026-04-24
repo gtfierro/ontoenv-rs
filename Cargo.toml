@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.4"
 authors = ["Gabe Fierro <gtfierro@mines.edu>"]
 license = "BSD-3-Clause"
 edition = "2021"
@@ -22,7 +22,7 @@ readme = "README.md"
 anyhow = "1.0.79"
 regex = "1.10.3"
 walkdir = "2.4.0"
-reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.13", features = ["blocking"] }
 json-ld = "0.21.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -34,17 +34,17 @@ chrono = { version = "0.4.33", features = ["serde"] }
 petgraph = { version = "0.8", features = ["serde-1"] }
 clap = { version = "4.4.18", features = ["derive"] }
 derive_builder = "0.20"
-oxigraph = "0.5"
+oxigraph = { version = "0.5", default-features = false }
 memmap2 = "0.9"
 zstd = "0.13"
 rand = "0.9"
 blake3 = "1.5"
 criterion = { version = "0.5", features = ["html_reports"] }
 
-rdf5d = { version = "0.5.1", path = "rdf5d", features = ["oxigraph", "zstd"] }
+rdf5d = { version = "0.5.4", path = "rdf5d", features = ["oxigraph", "zstd"] }
 
-ontoenv = { version = "0.5.1", path = "lib" }
-ontoenv-cli = { version = "0.5.1", path = "cli" }
+ontoenv = { version = "0.5.4", path = "lib" }
+ontoenv-cli = { version = "0.5.4", path = "cli" }
 
 [profile.profiling]
 inherits = "release"

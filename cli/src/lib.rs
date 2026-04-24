@@ -9,10 +9,18 @@ use ontoenv::util::write_dataset_to_file;
 use ontoenv::ToUriString;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat};
 use oxigraph::model::NamedNode;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env::current_dir;
 use std::ffi::OsString;
 use std::path::PathBuf;
+
+fn plural<'a>(n: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if n == 1 {
+        singular
+    } else {
+        plural
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "ontoenv")]
@@ -21,10 +29,10 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    /// Verbose mode - sets the RUST_LOG level to info, defaults to warning level
+    /// Verbose mode - sets the RUST_LOG level to info, defaults to error level
     #[clap(long, short, action, default_value = "false", global = true)]
     verbose: bool,
-    /// Debug mode - sets the RUST_LOG level to debug, defaults to warning level
+    /// Debug mode - sets the RUST_LOG level to debug, defaults to error level
     #[clap(long, action, default_value = "false", global = true)]
     debug: bool,
     /// Resolution policy for determining which ontology to use when there are multiple with the same name
@@ -444,16 +452,18 @@ where
 
 fn execute(cmd: Cli) -> Result<()> {
     // The RUST_LOG env var is set by `init_logging` if ONTOENV_LOG is present.
-    // CLI flags for verbosity take precedence. If nothing is set, we default to "warn".
+    // CLI flags for verbosity take precedence. If nothing is set, we default to "error".
     if cmd.debug {
         std::env::set_var("RUST_LOG", "debug");
     } else if cmd.verbose {
         std::env::set_var("RUST_LOG", "info");
     } else if std::env::var("RUST_LOG").is_err() {
-        // If no CLI flags and no env var is set, default to "warn".
-        std::env::set_var("RUST_LOG", "warn");
+        // If no CLI flags and no env var is set, default to "error".
+        std::env::set_var("RUST_LOG", "error");
     }
     let _ = env_logger::try_init();
+
+    ontoenv::progress::set_progress_output_enabled(true);
 
     let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
 
@@ -489,9 +499,11 @@ fn execute(cmd: Cli) -> Result<()> {
 
     let config: Config = builder.build()?;
 
-    if cmd.verbose || cmd.debug {
+    if cmd.debug {
         config.print();
     }
+
+    let detailed_human_output = cmd.verbose || cmd.debug;
 
     if let Commands::Reset { force } = &cmd.command {
         if let Some(root) = ontoenv::api::find_ontoenv_root() {
@@ -582,9 +594,18 @@ fn execute(cmd: Cli) -> Result<()> {
                 return Ok(());
             }
 
-            // The call to `init` will create and update the environment.
-            // `update` will also save it to the directory.
-            let _ = OntoEnv::init(config, overwrite)?;
+            let env = OntoEnv::init(config, overwrite)?;
+            let total_records = env.ontologies().len();
+            let unique_ontologies = env
+                .ontologies()
+                .keys()
+                .map(|id| id.name().as_str())
+                .collect::<HashSet<_>>()
+                .len();
+            println!(
+                "Initialized environment with {} unique ontologies ({} records).",
+                unique_ontologies, total_records
+            );
         }
         Commands::Get {
             ontology,
@@ -691,14 +712,24 @@ fn execute(cmd: Cli) -> Result<()> {
                 let arr: Vec<String> = updated.iter().map(|id| id.to_uri_string()).collect();
                 println!("{}", serde_json::to_string_pretty(&arr)?);
             } else if !quiet {
-                for id in updated {
-                    if let Some(ont) = env.ontologies().get(&id) {
-                        let name = ont.name().to_string();
-                        let loc = ont
-                            .location()
-                            .map(|l| l.to_string())
-                            .unwrap_or_else(|| "N/A".to_string());
-                        println!("{} @ {}", name, loc);
+                if updated.is_empty() {
+                    println!("No ontologies updated.");
+                } else {
+                    let label = plural(updated.len(), "ontology", "ontologies");
+                    if detailed_human_output {
+                        println!("Updated {} {}:", updated.len(), label);
+                        for id in updated {
+                            if let Some(ont) = env.ontologies().get(&id) {
+                                let name = ont.name().to_string();
+                                let loc = ont
+                                    .location()
+                                    .map(|l| l.to_string())
+                                    .unwrap_or_else(|| "N/A".to_string());
+                                println!("{} @ {}", name, loc);
+                            }
+                        }
+                    } else {
+                        println!("Updated {} {}.", updated.len(), label);
                     }
                 }
             }

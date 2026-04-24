@@ -19,7 +19,7 @@ jobs:
   binary_linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: ./.github/actions/setup-rust
@@ -40,11 +40,11 @@ jobs:
           PKG_CONFIG_LIBDIR: $SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig
           PKG_CONFIG_SYSROOT_DIR: $SYSROOT
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ontoenv_x86_64_linux_gnu_${{ github.run_attempt }}
           path: target/release/ontoenv
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ontoenv_aarch64_linux_gnu_${{ github.run_attempt }}
           path: target/aarch64-unknown-linux-gnu/release/ontoenv
@@ -62,7 +62,7 @@ jobs:
       SDKROOT: '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
       MACOSX_DEPLOYMENT_TARGET: '10.14'
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: ./.github/actions/setup-rust
@@ -73,11 +73,11 @@ jobs:
         working-directory: ./cli
       - run: cargo build --release --target aarch64-apple-darwin
         working-directory: ./cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ontoenv_x86_64_apple_${{ github.run_attempt }}
           path: target/release/ontoenv
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ontoenv_aarch64_apple_${{ github.run_attempt }}
           path: target/aarch64-apple-darwin/release/ontoenv
@@ -95,7 +95,7 @@ jobs:
   binary_windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
@@ -105,7 +105,7 @@ jobs:
         shell: bash
       - run: cargo build --release
         working-directory: ./cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ontoenv_x86_64_windows_msvc_${{ github.run_attempt }}
           path: target/release/ontoenv.exe
@@ -119,7 +119,7 @@ jobs:
   python_sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: ./.github/actions/setup-rust
@@ -135,7 +135,7 @@ jobs:
       - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin sdist -m python/Cargo.toml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: pyontoenv_dist_${{ github.run_attempt }}
           path: target/wheels/*.tar.gz
@@ -144,7 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: actions/setup-python@v5
@@ -164,7 +164,7 @@ jobs:
       - run: pip install build
       - run: python -m build
         working-directory: ./pyontoenv-shim
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: pyontoenv_alias_${{ github.run_attempt }}
           path: pyontoenv-shim/dist/*
@@ -176,7 +176,7 @@ jobs:
       matrix:
         arch: [ x86_64, aarch64 ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
@@ -202,7 +202,7 @@ jobs:
               --features "abi3 cli" \
               --compatibility manylinux2014 \
               --zig
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: pyontoenv_${{ matrix.arch }}_linux_gnu_${{ github.run_attempt }}
           path: target/wheels/*.whl
@@ -215,7 +215,7 @@ jobs:
       SDKROOT: '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
       MACOSX_DEPLOYMENT_TARGET: '10.14'
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: ./.github/actions/setup-rust
@@ -244,7 +244,7 @@ jobs:
       - run: maturin build --release --target aarch64-apple-darwin --features "abi3 cli"
         working-directory: ./python
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_matrix == 'true')
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: pyontoenv_macos_${{ github.run_attempt }}
           path: target/wheels/*.whl
@@ -253,7 +253,7 @@ jobs:
   wheel_windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - uses: ./.github/actions/setup-rust
@@ -271,7 +271,7 @@ jobs:
       - run: pip install --no-index --find-links=target/wheels/ ontoenv
       - run: rm -r target/wheels
       - run: maturin build --release -m python/Cargo.toml --features "abi3 cli"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: pyontoenv_windows_${{ github.run_attempt }}
           path: target/wheels/*.whl
@@ -309,7 +309,7 @@ jobs:
     environment: publish
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: true
       - name: Publish ontoenv crate
@@ -333,7 +333,7 @@ jobs:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: true
       - run: |
