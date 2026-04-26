@@ -111,9 +111,23 @@ pub mod transform;
 use crate::ontology::GraphIdentifier;
 use chrono::prelude::*;
 use oxigraph::model::NamedNode;
-use pretty_bytes::converter::convert as pretty_bytes;
 use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
+
+fn pretty_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.2} {}", UNITS[unit])
+    }
+}
 
 // Small helper trait to normalize identifiers into URI strings across the
 // library without leaking concrete graph/node types into public APIs.
@@ -254,7 +268,7 @@ impl std::fmt::Display for EnvironmentStatus {
             ontoenv_path,
             self.num_ontologies,
             last_updated,
-            pretty_bytes(self.store_size as f64),
+            pretty_bytes(self.store_size),
         )?;
 
         if !self.missing_imports.is_empty() {

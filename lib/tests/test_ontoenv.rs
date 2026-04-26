@@ -14,7 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
-use tempdir::TempDir;
+use tempfile::{Builder, TempDir};
 
 // the tests directory contains a number of test files that are used to test the OntoEnv.
 // Each has a unique name and they all exist in a flat folder.
@@ -85,6 +85,10 @@ fn copy_file(src_path: &PathBuf, dst_path: &PathBuf) -> Result<(), std::io::Erro
     Ok(())
 }
 
+fn new_tempdir(prefix: &str) -> Result<TempDir> {
+    Ok(Builder::new().prefix(prefix).tempdir()?)
+}
+
 fn cached_env(dir: &TempDir) -> Result<OntoEnv> {
     let config = Config::builder()
         .root(dir.path().into())
@@ -125,7 +129,7 @@ fn default_config_with_subdir(dir: &TempDir, path: &str) -> Config {
 
 #[test]
 fn init_respects_cache_mode_for_implicit_updates() -> Result<()> {
-    let dir = TempDir::new("ontoenv-cache-mode")?;
+    let dir = new_tempdir("ontoenv-cache-mode")?;
     let a_path = dir.path().join("A.ttl");
     std::fs::write(
         &a_path,
@@ -165,14 +169,13 @@ fn init_respects_cache_mode_for_implicit_updates() -> Result<()> {
     Ok(())
 }
 
-// we don't care about errors when cleaning up the TempDir so
-// we just drop the TempDir (looking at this doc:
-// https://docs.rs/tempdir/latest/tempdir/struct.TempDir.html#method.close)
-fn teardown(_dir: TempDir) {}
+fn teardown(dir: TempDir) {
+    let _ = dir.close();
+}
 
 #[test]
 fn ontology_regex_filters_exclude() -> Result<()> {
-    let dir = TempDir::new("ontoenv-regex-filter")?;
+    let dir = new_tempdir("ontoenv-regex-filter")?;
     let a_path = dir.path().join("A.ttl");
     let b_path = dir.path().join("B.ttl");
 
@@ -219,7 +222,7 @@ fn ontology_regex_filters_exclude() -> Result<()> {
 fn import_graph_merges_closure_and_removes_imports() -> Result<()> {
     use ontoenv::consts::{IMPORTS, ONTOLOGY, PREFIXES, TYPE};
     use oxigraph::model::Triple;
-    let dir = TempDir::new("ontoenv-import-merge")?;
+    let dir = new_tempdir("ontoenv-import-merge")?;
 
     // A imports B, B imports A (cycle)
     let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -317,7 +320,7 @@ ex:b ex:p ex:o .
 fn import_graph_handles_cycles() -> Result<()> {
     use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 
-    let dir = TempDir::new("ontoenv-import-cycle")?;
+    let dir = new_tempdir("ontoenv-import-cycle")?;
 
     let a_path = dir.path().join("A.ttl");
     let b_path = dir.path().join("B.ttl");
@@ -406,7 +409,7 @@ fn union_graph_orders_root_for_sh_prefixes() -> Result<()> {
     use ontoenv::consts::PREFIXES;
     use oxigraph::model::TermRef;
 
-    let dir = TempDir::new("ontoenv-prefix-root-order")?;
+    let dir = new_tempdir("ontoenv-prefix-root-order")?;
 
     let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
@@ -458,7 +461,7 @@ fn union_graph_rewrites_sh_prefixes_from_deep_dependency() -> Result<()> {
     use ontoenv::consts::PREFIXES;
     use oxigraph::model::TermRef;
 
-    let dir = TempDir::new("ontoenv-prefix-root-deep")?;
+    let dir = new_tempdir("ontoenv-prefix-root-deep")?;
 
     let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
@@ -524,7 +527,7 @@ exc:shape sh:prefixes <http://ex.org/C> .
 
 #[test]
 fn union_graph_errors_on_conflicting_sh_prefix() -> Result<()> {
-    let dir = TempDir::new("ontoenv-prefix-conflict")?;
+    let dir = new_tempdir("ontoenv-prefix-conflict")?;
 
     let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
@@ -572,7 +575,7 @@ fn union_graph_errors_on_conflicting_sh_prefix() -> Result<()> {
 
 #[test]
 fn import_graph_respects_recursion_depth() -> Result<()> {
-    let dir = TempDir::new("ontoenv-import-depth")?;
+    let dir = new_tempdir("ontoenv-import-depth")?;
 
     let a_path = dir.path().join("A.ttl");
     let b_path = dir.path().join("B.ttl");
@@ -661,7 +664,7 @@ mod unix_permission_tests {
 
     #[test]
     fn test_find_files_skips_permission_denied_when_not_strict() -> Result<()> {
-        let dir = TempDir::new("ontoenv-permissions")?;
+        let dir = new_tempdir("ontoenv-permissions")?;
         setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl" });
 
         let restricted_dir = dir.path().join("restricted");
@@ -714,7 +717,7 @@ mod windows_permission_tests {
 
     #[test]
     fn test_find_files_skips_sharing_violation_when_not_strict() -> Result<()> {
-        let dir = TempDir::new("ontoenv-permissions")?;
+        let dir = new_tempdir("ontoenv-permissions")?;
         setup!(&dir, {
             "fixtures/ont1.ttl" => "ont1.ttl",
             "fixtures/ont2.ttl" => "locked.ttl"
@@ -748,7 +751,7 @@ mod windows_permission_tests {
 
 #[test]
 fn test_ontoenv_scans() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
                    "fixtures/ont2.ttl" => "ont2.ttl",
                    "fixtures/ont3.ttl" => "ont3.ttl",
@@ -764,7 +767,7 @@ fn test_ontoenv_scans() -> Result<()> {
 
 #[test]
 fn test_ontoenv_scans_default() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
                    "fixtures/ont2.ttl" => "ont2.ttl",
                    "fixtures/ont3.ttl" => "ont3.ttl",
@@ -783,7 +786,7 @@ fn test_ontoenv_scans_default() -> Result<()> {
 
 #[test]
 fn test_ontoenv_num_triples() -> Result<()> {
-    let dir = TempDir::new("fileendings")?;
+    let dir = new_tempdir("fileendings")?;
     setup!(&dir, {"fixtures/fileendings/model" => "model", 
                   "fixtures/fileendings/model.n3" => "model.n3",
                   "fixtures/fileendings/model.nt" => "model.nt",
@@ -806,7 +809,7 @@ fn test_ontoenv_num_triples() -> Result<()> {
 
 #[test]
 fn test_ontoenv_update() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
                    "fixtures/ont2.ttl" => "ont2.ttl",
                    "fixtures/ont3.ttl" => "ont3.ttl",
@@ -844,7 +847,7 @@ fn test_ontoenv_update() -> Result<()> {
 
 #[test]
 fn test_ontoenv_retrieval_by_name() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
                    "fixtures/ont2.ttl" => "ont2.ttl",
                    "fixtures/ont3.ttl" => "ont3.ttl",
@@ -874,7 +877,7 @@ fn test_ontoenv_retrieval_by_name() -> Result<()> {
 
 #[test]
 fn test_ontoenv_retrieval_by_location() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
                    "fixtures/ont2.ttl" => "ont2.ttl",
                    "fixtures/ont3.ttl" => "ont3.ttl",
@@ -904,7 +907,7 @@ fn test_ontoenv_retrieval_by_location() -> Result<()> {
 
 #[test]
 fn test_ontoenv_load() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, { "fixtures/ont1.ttl" => "ont1.ttl", 
                    "fixtures/ont2.ttl" => "ont2.ttl",
                    "fixtures/ont3.ttl" => "ont3.ttl",
@@ -927,7 +930,7 @@ fn test_ontoenv_load() -> Result<()> {
 
 #[test]
 fn test_ontoenv_add() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, {"fixtures/updates/v1/ont1.ttl" => "v1/ont1.ttl",
                   "fixtures/updates/v1/ont2.ttl" => "v1/ont2.ttl",
                   "fixtures/updates/v1/ont3.ttl" => "v1/ont3.ttl",
@@ -954,7 +957,7 @@ fn test_ontoenv_add() -> Result<()> {
 
 #[test]
 fn test_add_from_bytes_resolves_imports_and_dependency_graph_edges() -> Result<()> {
-    let dir = TempDir::new("ontoenv_add_from_bytes_imports")?;
+    let dir = new_tempdir("ontoenv_add_from_bytes_imports")?;
     let dep_path = dir.path().join("dep.ttl");
     let dep_iri = url::Url::from_file_path(&dep_path).unwrap().to_string();
     let root_iri = "http://example.com/root-bytes";
@@ -1024,7 +1027,7 @@ fn test_add_from_bytes_resolves_imports_and_dependency_graph_edges() -> Result<(
 
 #[test]
 fn test_add_from_bytes_matches_file_add_closure() -> Result<()> {
-    let dir = TempDir::new("ontoenv_add_from_bytes_parity")?;
+    let dir = new_tempdir("ontoenv_add_from_bytes_parity")?;
     let dep_path = dir.path().join("dep.ttl");
     let root_path = dir.path().join("root.ttl");
     let dep_iri = url::Url::from_file_path(&dep_path).unwrap().to_string();
@@ -1114,7 +1117,7 @@ fn test_add_from_bytes_matches_file_add_closure() -> Result<()> {
 
 #[test]
 fn test_add_from_bytes_use_cache_reloads_when_bytes_change() -> Result<()> {
-    let dir = TempDir::new("ontoenv_add_from_bytes_cache_refresh")?;
+    let dir = new_tempdir("ontoenv_add_from_bytes_cache_refresh")?;
     let mut env = cached_env(&dir)?;
     let location = OntologyLocation::InMemory {
         identifier: "urn:ontoenv:cache-refresh-root".to_string(),
@@ -1172,7 +1175,7 @@ fn test_add_from_bytes_use_cache_reloads_when_bytes_change() -> Result<()> {
 
 #[test]
 fn test_add_from_bytes_strict_errors_on_missing_import() -> Result<()> {
-    let dir = TempDir::new("ontoenv_add_from_bytes_strict_missing")?;
+    let dir = new_tempdir("ontoenv_add_from_bytes_strict_missing")?;
     let missing_path = dir.path().join("missing.ttl");
     let missing_iri = url::Url::from_file_path(&missing_path).unwrap().to_string();
     let root_bytes = format!(
@@ -1218,7 +1221,7 @@ fn test_add_from_bytes_strict_errors_on_missing_import() -> Result<()> {
 
 #[test]
 fn test_add_from_bytes_non_strict_skips_missing_import() -> Result<()> {
-    let dir = TempDir::new("ontoenv_add_from_bytes_non_strict_missing")?;
+    let dir = new_tempdir("ontoenv_add_from_bytes_non_strict_missing")?;
     let missing_path = dir.path().join("missing.ttl");
     let missing_iri = url::Url::from_file_path(&missing_path).unwrap().to_string();
     let root_bytes = format!(
@@ -1262,7 +1265,7 @@ fn test_add_from_bytes_non_strict_skips_missing_import() -> Result<()> {
 
 #[test]
 fn test_ontoenv_detect_updates() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, {"fixtures/updates/v1/ont1.ttl" => "v1/ont1.ttl",
                   "fixtures/updates/v1/ont2.ttl" => "v1/ont2.ttl",
                   "fixtures/updates/v1/ont3.ttl" => "v1/ont3.ttl",
@@ -1289,7 +1292,7 @@ fn test_ontoenv_detect_updates() -> Result<()> {
 
 #[test]
 fn test_check_for_updates() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     let cfg1 = default_config_with_subdir(&dir, "v1");
     setup!(&dir, {"fixtures/updates/v1/ont1.ttl" => "v1/ont1.ttl",
                   "fixtures/updates/v1/ont2.ttl" => "v1/ont2.ttl",
@@ -1315,7 +1318,7 @@ fn test_check_for_updates() -> Result<()> {
 
 #[test]
 fn test_ontoenv_dependency_closure() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, {"fixtures/brick-stuff/Brick-1.3.ttl" => "Brick-1.3.ttl",
                   "fixtures/brick-stuff/support/SCHEMA-FACADE_QUDT-v2.1.ttl" => "support/SCHEMA-FACADE_QUDT-v2.1.ttl",
                   "fixtures/brick-stuff/support/SCHEMA_QUDT_NoOWL-v2.1.ttl" => "support/SCHEMA_QUDT_NoOWL-v2.1.ttl",
@@ -1352,7 +1355,7 @@ fn test_ontoenv_dependency_closure() -> Result<()> {
 
 #[test]
 fn test_ontoenv_dag_structure() -> Result<()> {
-    let dir = TempDir::new("ontoenv")?;
+    let dir = new_tempdir("ontoenv")?;
     setup!(&dir, {"fixtures/rdftest/ontology1.ttl" => "ontology1.ttl",
                   "fixtures/rdftest/ontology2.ttl" => "ontology2.ttl",
                   "fixtures/rdftest/ontology3.ttl" => "ontology3.ttl",
@@ -1436,7 +1439,7 @@ fn test_ontoenv_dag_structure() -> Result<()> {
 
 #[test]
 fn test_init_with_config_new_dir() -> Result<()> {
-    let dir = TempDir::new("ontoenv_init_new")?;
+    let dir = new_tempdir("ontoenv_init_new")?;
     let env_path = dir.path().join("new_env");
     // Ensure the directory does not exist initially
     assert!(!env_path.exists());
@@ -1462,7 +1465,7 @@ fn test_init_with_config_new_dir() -> Result<()> {
 
 #[test]
 fn test_init_with_config_existing_empty_dir() -> Result<()> {
-    let dir = TempDir::new("ontoenv_init_empty")?;
+    let dir = new_tempdir("ontoenv_init_empty")?;
     let env_path = dir.path().join("empty_env");
     std::fs::create_dir(&env_path)?;
     assert!(env_path.is_dir());
@@ -1489,7 +1492,7 @@ fn test_init_with_config_existing_empty_dir() -> Result<()> {
 
 #[test]
 fn test_init_load_from_existing_dir() -> Result<()> {
-    let dir = TempDir::new("ontoenv_load_existing")?;
+    let dir = new_tempdir("ontoenv_load_existing")?;
     let env_path = dir.path().join("existing_env");
     std::fs::create_dir(&env_path)?;
 
@@ -1518,7 +1521,7 @@ fn test_init_load_from_existing_dir() -> Result<()> {
 
 #[test]
 fn test_lazy_flush_preserves_unloaded_graphs() -> Result<()> {
-    let dir = TempDir::new("ontoenv_lazy_flush")?;
+    let dir = new_tempdir("ontoenv_lazy_flush")?;
     setup!(&dir, {"fixtures/rdftest/ontology1.ttl" => "ontology1.ttl",
                   "fixtures/rdftest/ontology2.ttl" => "ontology2.ttl"});
 
@@ -1563,7 +1566,7 @@ fn test_lazy_flush_preserves_unloaded_graphs() -> Result<()> {
 
 #[test]
 fn test_init_recreate_existing_dir() -> Result<()> {
-    let dir = TempDir::new("ontoenv_recreate")?;
+    let dir = new_tempdir("ontoenv_recreate")?;
     let env_path = dir.path().join("recreate_env");
     std::fs::create_dir(&env_path)?;
 
@@ -1599,7 +1602,7 @@ fn test_init_recreate_existing_dir() -> Result<()> {
 
 #[test]
 fn test_init_read_only() -> Result<()> {
-    let dir = TempDir::new("ontoenv_readonly")?;
+    let dir = new_tempdir("ontoenv_readonly")?;
     let env_path = dir.path().join("readonly_env");
     std::fs::create_dir(&env_path)?;
 
@@ -1646,7 +1649,7 @@ fn test_init_read_only() -> Result<()> {
 
 #[test]
 fn test_init_path_no_env_error() -> Result<()> {
-    let dir = TempDir::new("ontoenv_path_no_env")?;
+    let dir = new_tempdir("ontoenv_path_no_env")?;
     let env_path = dir.path().join("no_env_here");
     std::fs::create_dir(&env_path)?; // Create the directory, but not .ontoenv inside it
     assert!(env_path.is_dir());
@@ -1670,7 +1673,7 @@ fn test_init_path_no_env_error() -> Result<()> {
 
 #[test]
 fn test_init_temporary() -> Result<()> {
-    let dir = TempDir::new("ontoenv_temporary")?;
+    let dir = new_tempdir("ontoenv_temporary")?;
     let env_path = dir.path().join("temp_env_root");
     // Temporary envs shouldn't persist to disk relative to root
 
@@ -1716,7 +1719,7 @@ fn test_init_temporary() -> Result<()> {
 
 #[test]
 fn test_cached_add_skips_unchanged_file() -> Result<()> {
-    let dir = TempDir::new("ontoenv_cached_skip")?;
+    let dir = new_tempdir("ontoenv_cached_skip")?;
     let ttl_path = dir.path().join("cached.ttl");
     fs::write(
         &ttl_path,
@@ -1761,7 +1764,7 @@ fn test_cached_add_skips_unchanged_file() -> Result<()> {
 
 #[test]
 fn test_cached_add_reloads_on_file_change() -> Result<()> {
-    let dir = TempDir::new("ontoenv_cached_reload")?;
+    let dir = new_tempdir("ontoenv_cached_reload")?;
     let ttl_path = dir.path().join("cached_reload.ttl");
     fs::write(
         &ttl_path,
@@ -1809,7 +1812,7 @@ fn test_cached_add_reloads_on_file_change() -> Result<()> {
 
 #[test]
 fn test_cached_add_force_refreshes() -> Result<()> {
-    let dir = TempDir::new("ontoenv_cached_force")?;
+    let dir = new_tempdir("ontoenv_cached_force")?;
     let ttl_path = dir.path().join("cached_force.ttl");
     fs::write(
         &ttl_path,
