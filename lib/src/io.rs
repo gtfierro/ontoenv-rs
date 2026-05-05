@@ -38,8 +38,18 @@ struct R5GraphInfo {
 
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
     // Try multiple parsers to maximize compatibility with unknown RDF inputs.
-    // Try preferred first, then fall back to other formats.
-    let mut candidates = vec![RdfFormat::Turtle, RdfFormat::RdfXml, RdfFormat::NTriples];
+    // Try preferred first, then fall back to all other formats.
+    use oxigraph::io::JsonLdProfileSet;
+    let mut candidates = vec![
+        RdfFormat::Turtle,
+        RdfFormat::RdfXml,
+        RdfFormat::NTriples,
+        RdfFormat::NQuads,
+        RdfFormat::TriG,
+        RdfFormat::JsonLd {
+            profile: JsonLdProfileSet::default(),
+        },
+    ];
     if let Some(p) = preferred {
         candidates.retain(|f| *f != p);
         candidates.insert(0, p);
