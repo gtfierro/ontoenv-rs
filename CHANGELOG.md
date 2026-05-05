@@ -31,7 +31,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 ## [0.5.4] — 2026-04-07
 
 ### Changed
-- `rocksdb` is now an optional feature flag across all crates (no longer compiled by default)
+- RocksDB is no longer compiled by default. OntoEnv uses an in-memory Oxigraph store backed by the custom RDF5D on-disk format, so the heavyweight RocksDB C++ dependency was unnecessary. It is now opt-in via `--features rocksdb` across all crates (`ontoenv`, `ontoenv-cli`, and the Python bindings). This significantly reduces compile times and binary size for the common case. `Store::flush()` is gated behind the same feature flag since that method only exists when RocksDB is compiled in.
 
 ---
 
