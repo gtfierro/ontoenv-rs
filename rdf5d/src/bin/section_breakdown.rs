@@ -182,11 +182,7 @@ fn parse_pair_index(bytes: &[u8], sec_off: usize, sec_len: u64) -> SectionReport
     let n_pairs = read_u64(bytes, sec_off);
     let pairs_off = read_u64(bytes, sec_off + 8) as usize;
     let payload_len = sec_len.saturating_sub((pairs_off - sec_off) as u64);
-    let entry_size = if n_pairs == 0 {
-        0
-    } else {
-        payload_len / n_pairs
-    };
+    let entry_size = payload_len.checked_div(n_pairs).unwrap_or(0);
     SectionReport {
         kind: SectionKind::IdxPair2Gid,
         bytes: sec_len,

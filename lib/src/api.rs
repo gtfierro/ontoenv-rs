@@ -1000,6 +1000,7 @@ impl OntoEnv {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_from_bytes_with_options(
         &mut self,
         location: OntologyLocation,
@@ -1124,6 +1125,7 @@ impl OntoEnv {
         self.add_with_seed_inner(seed, refresh, update_dependencies, max_import_depth)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_from_bytes_with_options_inner(
         &mut self,
         location: OntologyLocation,

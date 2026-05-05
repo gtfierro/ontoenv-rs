@@ -415,7 +415,7 @@ impl PersistentGraphIO {
                 ));
             }
             // Bulk load per-graph to reduce overhead and keep ordering deterministic.
-            loader.load_quads(quads_buf.into_iter())?;
+            loader.load_quads(quads_buf)?;
         }
         loader.commit()?;
         Ok(())
@@ -454,7 +454,7 @@ impl PersistentGraphIO {
             ));
         }
         // Commit as a single batch for better performance.
-        loader.load_quads(quads_buf.into_iter())?;
+        loader.load_quads(quads_buf)?;
         loader.commit()?;
         loaded.insert(graphname_str);
         Ok(())

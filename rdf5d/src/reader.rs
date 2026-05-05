@@ -1287,14 +1287,12 @@ impl R5tuFile {
             return Err(R5Error::Corrupt("pairs offset OOB".into()));
         }
         let payload_len = sec.len as usize - (pairs_off - sec.off as usize);
-        let entry_size = if n_pairs == 0 {
-            16usize
-        } else {
-            let stride = payload_len / n_pairs;
-            if payload_len != stride * n_pairs || (stride != 12 && stride != 16) {
+        let entry_size = match payload_len.checked_div(n_pairs) {
+            None => 16usize,
+            Some(stride) if payload_len != stride * n_pairs || (stride != 12 && stride != 16) => {
                 return Err(R5Error::Corrupt("unsupported pair entry size".into()));
             }
-            stride
+            Some(stride) => stride,
         };
         if pairs_off + n_pairs * entry_size > data.len() {
             return Err(R5Error::Corrupt("pairs OOB".into()));
