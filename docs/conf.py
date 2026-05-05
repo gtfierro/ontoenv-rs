@@ -43,6 +43,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
     "sphinxcontrib.mermaid",
+    "myst_parser",
 ]
 
 autosummary_generate = True
