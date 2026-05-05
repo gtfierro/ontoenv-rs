@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
-## [0.5.5] — 2026-05-05
+## [0.5.4]
 
 ### Added
 - Progress reporting for `update` command; output suppressed when stderr is not a TTY
@@ -12,6 +12,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 - GitHub badge in README; rdf5d architecture documentation
 
 ### Changed
+- RocksDB is no longer compiled by default. OntoEnv uses an in-memory Oxigraph store backed by the custom RDF5D on-disk format, so the heavyweight RocksDB C++ dependency was unnecessary. It is now opt-in via `--features rocksdb` across all crates (`ontoenv`, `ontoenv-cli`, and the Python bindings). This significantly reduces compile times and binary size for the common case. `Store::flush()` is gated behind the same feature flag since that method only exists when RocksDB is compiled in.
 - Upgraded reqwest 0.12 → 0.13
 - Internal `lib/src` helpers extracted and dead code removed
 - Removed deprecated `tempdir` dependency
@@ -21,13 +22,6 @@ All notable changes to this project are documented here. Releases follow [Semant
 - `ext_to_rdf_format` now maps `.jsonld`, `.json`, `.rdf`, `.owl`, and `.nq` extensions for local file loading
 - Format fallback in `load_staging_store_from_bytes` now cycles through all supported formats (NQuads, TriG, JSON-LD) instead of only Turtle/RDF-XML/N-Triples
 - All `cargo clippy -D warnings` errors resolved across the workspace
-
----
-
-## [0.5.4] — 2026-04-07
-
-### Changed
-- RocksDB is no longer compiled by default. OntoEnv uses an in-memory Oxigraph store backed by the custom RDF5D on-disk format, so the heavyweight RocksDB C++ dependency was unnecessary. It is now opt-in via `--features rocksdb` across all crates (`ontoenv`, `ontoenv-cli`, and the Python bindings). This significantly reduces compile times and binary size for the common case. `Store::flush()` is gated behind the same feature flag since that method only exists when RocksDB is compiled in.
 
 ---
 
