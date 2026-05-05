@@ -16,10 +16,15 @@ use std::io::BufReader;
 use log::{debug, info};
 
 fn ext_to_rdf_format(ext: &str) -> Option<RdfFormat> {
+    use oxigraph::io::JsonLdProfileSet;
     match ext {
         "ttl" | "n3" => Some(RdfFormat::Turtle),
-        "xml" => Some(RdfFormat::RdfXml),
+        "xml" | "rdf" | "owl" => Some(RdfFormat::RdfXml),
         "nt" => Some(RdfFormat::NTriples),
+        "nq" => Some(RdfFormat::NQuads),
+        "jsonld" | "json" => Some(RdfFormat::JsonLd {
+            profile: JsonLdProfileSet::default(),
+        }),
         _ => None,
     }
 }

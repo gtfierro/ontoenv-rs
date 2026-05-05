@@ -73,9 +73,7 @@ fn detect_format(ct: &str) -> Option<RdfFormat> {
     match ct.as_str() {
         "text/turtle" | "application/x-turtle" => Some(RdfFormat::Turtle),
         "application/rdf+xml" => Some(RdfFormat::RdfXml),
-        "application/n-triples" | "application/ntriples" | "text/plain" => {
-            Some(RdfFormat::NTriples)
-        }
+        "application/n-triples" | "application/ntriples" => Some(RdfFormat::NTriples),
         _ => None,
     }
 }
