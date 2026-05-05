@@ -119,6 +119,11 @@ Explore the docs
        <strong>Rust API</strong>
        <span>Auto-generated crate docs on docs.rs.</span>
      </a>
+     <a class="oe-nav-card" href="changelog.html">
+       <span class="nav-icon">&#x1F4CB;</span>
+       <strong>Changelog</strong>
+       <span>Release history and what changed in each version.</span>
+     </a>
    </div>
 
 .. toctree::
@@ -129,6 +134,7 @@ Explore the docs
    python-api/index
    cli/index
    Rust API (docs.rs) <https://docs.rs/ontoenv>
+   changelog
 
 ----
 
