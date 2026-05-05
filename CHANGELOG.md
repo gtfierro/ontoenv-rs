@@ -4,12 +4,6 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
-## [Unreleased]
-
-No changes yet.
-
----
-
 ## [0.5.5] — 2026-05-05
 
 ### Added
