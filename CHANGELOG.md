@@ -6,19 +6,32 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+---
+
+## [0.5.5] — 2026-05-05
+
 ### Added
 - Progress reporting for `update` command; output suppressed when stderr is not a TTY
 - RDF5D: compact string/literal dictionaries, streaming spill policy, workload profiling, and optimized reader/metadata layout
+- GitHub badge in README; rdf5d architecture documentation
 
 ### Changed
-- `rocksdb` is now an optional feature flag across all crates (no longer compiled by default)
 - Upgraded reqwest 0.12 → 0.13
+- Internal `lib/src` helpers extracted and dead code removed
+- Removed deprecated `tempdir` dependency
 
 ### Fixed
 - `ontoenv add` now correctly handles JSON-LD files served with a `text/plain` content-type header (e.g. GitHub raw URLs); URL extension and content sniffing are used when content-type is generic
 - `ext_to_rdf_format` now maps `.jsonld`, `.json`, `.rdf`, `.owl`, and `.nq` extensions for local file loading
 - Format fallback in `load_staging_store_from_bytes` now cycles through all supported formats (NQuads, TriG, JSON-LD) instead of only Turtle/RDF-XML/N-Triples
 - All `cargo clippy -D warnings` errors resolved across the workspace
+
+---
+
+## [0.5.4] — 2026-04-07
+
+### Changed
+- `rocksdb` is now an optional feature flag across all crates (no longer compiled by default)
 
 ---
 
