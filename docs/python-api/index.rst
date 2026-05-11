@@ -1,14 +1,10 @@
 Python API Reference
 ====================
 
-.. raw:: html
-
-   <div class="oe-section-intro">
-     The <strong>ontoenv</strong> Python package exposes the full Rust core through
-     <a href="https://pyo3.rs">PyO3</a> bindings, with native
-     <a href="https://rdflib.readthedocs.io">rdflib</a> graph interop.
-     Pre-built wheels are published on PyPI — no Rust toolchain required.
-   </div>
+The **ontoenv** Python package exposes the full Rust core through
+`PyO3 <https://pyo3.rs>`_ bindings, with native
+`rdflib <https://rdflib.readthedocs.io>`_ graph interop.
+Pre-built wheels are published on PyPI — no Rust toolchain required.
 
 Install
 -------
@@ -20,51 +16,24 @@ Install
 Key methods
 -----------
 
-.. raw:: html
-
-   <div class="oe-method-grid">
-
-     <div class="oe-method-card">
-       <span class="method-sig">OntoEnv(search_directories, includes, offline, …)</span>
-       <p>Create or open an environment. Accepts <code>search_directories</code> (paths to crawl),
-          <code>offline</code> (skip network), <code>temporary</code> (keep everything in memory),
-          glob/regex filters, and a custom <code>graph_store</code>.</p>
-     </div>
-
-     <div class="oe-method-card">
-       <span class="method-sig">env.update(all=False)</span>
-       <p>Re-run discovery with the configured directories. Pass <code>all=True</code> to force
-          re-fetching of all remote ontologies regardless of cache age.</p>
-     </div>
-
-     <div class="oe-method-card">
-       <span class="method-sig">env.add(location, fetch_imports=True)</span>
-       <p>Register an ontology from a file path, URL, or an in-memory
-          <code>rdflib.Graph</code> that contains an <code>owl:Ontology</code> declaration.
-          Set <code>fetch_imports=False</code> to store only the root graph.</p>
-     </div>
-
-     <div class="oe-method-card">
-       <span class="method-sig">env.get_closure(name, destination_graph=None, recursion_depth=-1)</span>
-       <p>Return a merged <code>(Graph, int)</code> pair — the ontology named <code>name</code>
-          plus all its transitive imports, and the count of imported graphs.
-          Pass a <code>destination_graph</code> to merge into an existing graph in place.</p>
-     </div>
-
-     <div class="oe-method-card">
-       <span class="method-sig">env.get_graph(name)</span>
-       <p>Return the stored <code>rdflib.Graph</code> for a single ontology IRI — useful when
-          you only need one graph rather than a full closure.</p>
-     </div>
-
-     <div class="oe-method-card">
-       <span class="method-sig">env.import_dependencies(graph, fetch_missing=False)</span>
-       <p>Mutate an <code>rdflib.Graph</code> in place, inserting triples from all ontologies
-          declared in its <code>owl:imports</code> statements. Set <code>fetch_missing=True</code>
-          to download any imports not yet in the environment.</p>
-     </div>
-
-   </div>
+- ``OntoEnv(search_directories, includes, offline, …)`` — Create or open an environment.
+  Accepts ``search_directories`` (paths to crawl), ``offline`` (skip network),
+  ``temporary`` (keep everything in memory), glob/regex filters, and a custom
+  ``graph_store``.
+- ``env.update(all=False)`` — Re-run discovery with the configured directories. Pass
+  ``all=True`` to force re-fetching of all remote ontologies regardless of cache age.
+- ``env.add(location, fetch_imports=True)`` — Register an ontology from a file path, URL,
+  or an in-memory ``rdflib.Graph`` that contains an ``owl:Ontology`` declaration. Set
+  ``fetch_imports=False`` to store only the root graph.
+- ``env.get_closure(name, destination_graph=None, recursion_depth=-1)`` — Return a merged
+  ``(Graph, int)`` pair — the ontology named ``name`` plus all its transitive imports, and
+  the count of imported graphs. Pass a ``destination_graph`` to merge into an existing graph
+  in place.
+- ``env.get_graph(name)`` — Return the stored ``rdflib.Graph`` for a single ontology IRI —
+  useful when you only need one graph rather than a full closure.
+- ``env.import_dependencies(graph, fetch_missing=False)`` — Mutate an ``rdflib.Graph`` in
+  place, inserting triples from all ontologies declared in its ``owl:imports`` statements.
+  Set ``fetch_missing=True`` to download any imports not yet in the environment.
 
 Example
 -------
@@ -90,16 +59,10 @@ Example
    g, n_imports = env.get_closure("https://brickschema.org/schema/1.4/Brick")
    print(f"Merged {n_imports} imports — {len(g)} triples total")
 
-.. raw:: html
+.. note::
 
-   <div class="oe-tip">
-     <span class="oe-tip-icon">&#x1F4A1;</span>
-     <p>
-       <strong>Custom storage:</strong> Pass a <code>graph_store=</code> object to route all
-       graph reads and writes through your own backend. See
-       <a href="graph-store.html">Graph Store Interface</a> for the protocol.
-     </p>
-   </div>
+   **Custom storage:** Pass a ``graph_store=`` object to route all graph reads and writes
+   through your own backend. See `Graph Store Interface <graph-store.html>`_ for the protocol.
 
 .. toctree::
    :maxdepth: 1
