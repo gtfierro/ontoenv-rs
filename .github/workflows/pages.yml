@@ -70,7 +70,7 @@ jobs:
           UV_SYSTEM_RESOLVE: "0"
         run: |
           uv run --project . sphinx-build -M text . _build
-          find _build/text -name '*.txt' -print | sort | xargs -r cat > _build/llms.txt
+          find _build/text -name '*.txt' ! -name 'changelog.txt' -print | sort | xargs -r cat > _build/llms.txt
           cp _build/llms.txt _build/html/llms.txt
 
       - name: Upload artifact
