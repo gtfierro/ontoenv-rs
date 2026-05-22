@@ -42,10 +42,14 @@
 
 pub mod header;
 pub mod reader;
+#[cfg(feature = "sparql")]
+pub mod sparql;
 pub mod update;
 pub mod writer;
 
-pub use reader::{GraphRef, IntegrityMode, OpenOptions, R5tuFile};
+pub use reader::{DecodedTerm, GraphRef, IntegrityMode, OpenOptions, R5tuFile};
+#[cfg(feature = "sparql")]
+pub use sparql::SparqlDatasetView;
 pub use update::{replace_graph, replace_graph_with_options};
 pub use writer::{
     Quint, SpillPolicy, StreamingWriteStats, StreamingWriter, StreamingWriterOptions, Term,
