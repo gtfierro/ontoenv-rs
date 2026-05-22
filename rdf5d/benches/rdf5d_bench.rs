@@ -1,10 +1,30 @@
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rdf5d::{
     IntegrityMode, OpenOptions, Quint, R5tuFile, StreamingWriter, Term, WriterOptions,
     write_file_with_options,
 };
 use std::env;
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use std::path::Path;
 use tempfile::NamedTempFile;
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use oxigraph::io::{RdfFormat, RdfParser};
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use oxigraph::model::{
+    GraphName, Literal as OxLiteral, NamedNode as OxNamedNode, NamedOrBlankNode, Quad,
+    Term as OxTerm,
+};
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use oxigraph::sparql::{QueryResults as OxQueryResults, SparqlEvaluator};
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use oxigraph::store::Store;
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use spareval::QueryResults as R5QueryResults;
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use spargebra::SparqlParser;
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+use tempfile::TempDir;
 
 /// Generate a dataset of `n_triples` spread across `n_graphs` graphs.
 /// Produces a mix of IRIs, bnodes, and literals (with and without lang/dt).
@@ -524,6 +544,206 @@ fn bench_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn r5_term_to_ox(term: &Term) -> OxTerm {
+    match term {
+        Term::Iri(value) => OxNamedNode::new(value.clone()).unwrap().into(),
+        Term::BNode(value) => {
+            let label = value.strip_prefix("_:").unwrap_or(value);
+            oxigraph::model::BlankNode::new(label.to_string())
+                .unwrap()
+                .into()
+        }
+        Term::Literal { lex, dt, lang } => {
+            if let Some(dt) = dt {
+                OxLiteral::new_typed_literal(lex.clone(), OxNamedNode::new(dt.clone()).unwrap())
+                    .into()
+            } else if let Some(lang) = lang {
+                OxLiteral::new_language_tagged_literal(lex.clone(), lang.clone())
+                    .unwrap()
+                    .into()
+            } else {
+                OxLiteral::new_simple_literal(lex.clone()).into()
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn quint_to_quad(quint: &Quint) -> Quad {
+    let subject: NamedOrBlankNode = match &quint.s {
+        Term::Iri(value) => OxNamedNode::new(value.clone()).unwrap().into(),
+        Term::BNode(value) => {
+            let label = value.strip_prefix("_:").unwrap_or(value);
+            oxigraph::model::BlankNode::new(label.to_string())
+                .unwrap()
+                .into()
+        }
+        Term::Literal { .. } => panic!("literal subject is invalid"),
+    };
+    let predicate = match &quint.p {
+        Term::Iri(value) => OxNamedNode::new(value.clone()).unwrap(),
+        _ => panic!("non-IRI predicate is invalid"),
+    };
+    let object = r5_term_to_ox(&quint.o);
+    let graph = GraphName::NamedNode(OxNamedNode::new(quint.gname.clone()).unwrap());
+    Quad::new(subject, predicate, object, graph)
+}
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn build_rocksdb_store(quints: &[Quint]) -> (TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let mut loader = store.bulk_loader();
+    loader.load_quads(quints.iter().map(quint_to_quad)).unwrap();
+    loader.commit().unwrap();
+    (dir, store)
+}
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn ox_quad_to_quint(quad: Quad, id: &str, graph_name: &str) -> Quint {
+    fn ox_term_to_r5(term: OxTerm) -> Term {
+        match term {
+            OxTerm::NamedNode(node) => Term::Iri(node.into_string()),
+            OxTerm::BlankNode(node) => Term::BNode(node.as_str().to_string()),
+            OxTerm::Literal(literal) => {
+                if let Some(language) = literal.language() {
+                    Term::Literal {
+                        lex: literal.value().to_string(),
+                        dt: None,
+                        lang: Some(language.to_string()),
+                    }
+                } else {
+                    Term::Literal {
+                        lex: literal.value().to_string(),
+                        dt: Some(literal.datatype().as_str().to_string()),
+                        lang: None,
+                    }
+                }
+            }
+        }
+    }
+
+    Quint {
+        id: id.to_string(),
+        s: match quad.subject {
+            NamedOrBlankNode::NamedNode(node) => Term::Iri(node.into_string()),
+            NamedOrBlankNode::BlankNode(node) => Term::BNode(node.as_str().to_string()),
+        },
+        p: Term::Iri(quad.predicate.into_string()),
+        o: ox_term_to_r5(quad.object),
+        gname: graph_name.to_string(),
+    }
+}
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn load_brick_quints(path: &Path, id: &str, graph_name: &str) -> Vec<Quint> {
+    let store = Store::new().unwrap();
+    let parser = RdfParser::from_format(RdfFormat::Turtle)
+        .with_default_graph(GraphName::NamedNode(OxNamedNode::new(graph_name).unwrap()));
+    let mut loader = store.bulk_loader();
+    loader
+        .load_from_reader(parser, std::fs::File::open(path).unwrap())
+        .unwrap();
+    loader.commit().unwrap();
+    store
+        .iter()
+        .map(|quad| ox_quad_to_quint(quad.unwrap(), id, graph_name))
+        .collect()
+}
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn count_rdf5d_solutions(file: &R5tuFile, query: &spargebra::Query) -> usize {
+    match file.query(query).unwrap() {
+        R5QueryResults::Solutions(solutions) => solutions.count(),
+        R5QueryResults::Boolean(value) => usize::from(value),
+        R5QueryResults::Graph(triples) => triples.count(),
+    }
+}
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn count_oxigraph_solutions(store: &Store, query: &spargebra::Query) -> usize {
+    match SparqlEvaluator::new()
+        .for_query(query.clone())
+        .on_store(store)
+        .execute()
+        .unwrap()
+    {
+        OxQueryResults::Solutions(solutions) => solutions.count(),
+        OxQueryResults::Boolean(value) => usize::from(value),
+        OxQueryResults::Graph(triples) => triples.count(),
+    }
+}
+
+#[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
+fn bench_sparql_backends(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sparql_backends");
+    let brick_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("brick")
+        .join("Brick.ttl");
+    let graph_name = "urn:ontoenv:bench:brick";
+    let quints = load_brick_quints(&brick_path, "brick:Brick.ttl", graph_name);
+    let total = quints.len() as u64;
+    let file_handle = NamedTempFile::new().unwrap();
+    write_file_with_options(file_handle.path(), &quints, opts_plain()).unwrap();
+    let file = R5tuFile::open(file_handle.path()).unwrap();
+    let (_rocks_dir, store) = build_rocksdb_store(&quints);
+
+    let graph_query = SparqlParser::new()
+        .parse_query(&format!(
+            "SELECT ?s ?o WHERE {{
+               GRAPH <{graph_name}> {{
+                 ?s <http://www.w3.org/2000/01/rdf-schema#label> ?o
+               }}
+             }}"
+        ))
+        .unwrap();
+    let scan_query = SparqlParser::new()
+        .parse_query(
+            "SELECT ?g ?s ?o WHERE {
+               GRAPH ?g {
+                 ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o
+               }
+             }",
+        )
+        .unwrap();
+
+    group.throughput(Throughput::Elements(total));
+    group.bench_with_input(
+        BenchmarkId::from_parameter("rdf5d_graph_brick"),
+        &file,
+        |b, file| {
+            b.iter(|| black_box(count_rdf5d_solutions(file, &graph_query)));
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::from_parameter("rocksdb_graph_brick"),
+        &store,
+        |b, store| {
+            b.iter(|| black_box(count_oxigraph_solutions(store, &graph_query)));
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::from_parameter("rdf5d_scan_brick"),
+        &file,
+        |b, file| {
+            b.iter(|| black_box(count_rdf5d_solutions(file, &scan_query)));
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::from_parameter("rocksdb_scan_brick"),
+        &store,
+        |b, store| {
+            b.iter(|| black_box(count_oxigraph_solutions(store, &scan_query)));
+        },
+    );
+    group.finish();
+}
+
+#[cfg(not(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql")))]
+fn bench_sparql_backends(_: &mut Criterion) {}
+
 fn bench_workload_matrix(c: &mut Criterion) {
     let mut group = c.benchmark_group("workload_matrix");
     for case in workload_cases() {
@@ -601,5 +821,6 @@ criterion_group!(
     bench_enumerate_all,
     bench_roundtrip,
     bench_workload_matrix,
+    bench_sparql_backends,
 );
 criterion_main!(benches);

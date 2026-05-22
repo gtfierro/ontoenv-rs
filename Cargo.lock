@@ -2775,6 +2775,9 @@ dependencies = [
  "criterion",
  "memmap2",
  "oxigraph",
+ "oxrdf",
+ "spareval",
+ "spargebra",
  "tempfile",
  "zstd",
 ]

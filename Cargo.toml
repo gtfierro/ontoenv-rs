@@ -40,6 +40,9 @@ zstd = "0.13"
 rand = "0.9"
 blake3 = "1.5"
 criterion = { version = "0.5", features = ["html_reports"] }
+oxrdf = "0.3.3"
+spargebra = "0.4.6"
+spareval = "0.2.6"
 
 rdf5d = { version = "0.5.4", path = "rdf5d", features = ["oxigraph", "zstd"] }
 
