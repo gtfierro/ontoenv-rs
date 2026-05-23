@@ -2170,9 +2170,13 @@ dependencies = [
  "ontoenv",
  "ontoenv-cli",
  "oxigraph",
+ "oxrdf",
  "pyo3",
  "pyo3-build-config",
  "rand",
+ "rdf5d",
+ "spareval",
+ "spargebra",
 ]
 
 [[package]]
