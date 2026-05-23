@@ -10,20 +10,24 @@ use ::ontoenv::util::{get_file_contents, get_url_contents};
 use ::ontoenv::ToUriString;
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
+use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{
-    BlankNode, Graph as OxigraphGraph, GraphNameRef, Literal, NamedNode, NamedOrBlankNode,
-    NamedOrBlankNodeRef, Term, TermRef, Triple, TripleRef,
+    BlankNode, Graph as OxigraphGraph, GraphName, GraphNameRef, Literal, NamedNode,
+    NamedOrBlankNode, NamedOrBlankNodeRef, Quad, Term, TermRef, Triple, TripleRef,
 };
 use oxigraph::store::Store;
 #[cfg(not(feature = "cli"))]
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyString, PyStringMethods, PyTuple},
+    types::{IntoPyDict, PyDict, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
-use std::borrow::Borrow;
+use rdf5d::{DecodedTerm, R5tuFile, SparqlDatasetView};
+use spargebra::SparqlParser;
+use spareval::{QueryEvaluator, QueryResults as SpareQueryResults};
+use std::borrow::{Borrow, Cow};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -35,6 +39,10 @@ fn anyhow_to_pyerr(e: Error) -> PyErr {
 
 fn pyerr_to_anyhow(e: PyErr) -> Error {
     anyhow!(e.to_string())
+}
+
+fn r5error_to_pyerr(e: rdf5d::reader::R5Error) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
 }
 
 struct ResolvedLocation {
@@ -454,10 +462,12 @@ fn term_to_python<'a>(
 ) -> PyResult<Bound<'a, PyAny>> {
     let dtype: Option<String> = match &node {
         Term::Literal(lit) => {
-            let mut s = lit.datatype().to_string();
-            s.remove(0);
-            s.remove(s.len() - 1);
-            Some(s)
+            let dt = lit.datatype().as_str();
+            if dt == "http://www.w3.org/2001/XMLSchema#string" {
+                None
+            } else {
+                Some(dt.to_string())
+            }
         }
         _ => None,
     };
@@ -550,6 +560,55 @@ fn term_to_predicate(term: Term) -> Result<NamedNode> {
         Term::NamedNode(n) => Ok(n),
         _ => Err(anyhow!("Predicate must be a named node")),
     }
+}
+
+fn graph_name_to_python<'a>(
+    py: Python<'a>,
+    rdflib: &Bound<'a, PyModule>,
+    graph_name: GraphName,
+) -> PyResult<Bound<'a, PyAny>> {
+    match graph_name {
+        GraphName::NamedNode(node) => term_to_python(py, rdflib, Term::NamedNode(node)),
+        GraphName::BlankNode(node) => term_to_python(py, rdflib, Term::BlankNode(node)),
+        GraphName::DefaultGraph => Ok(py.None().into_bound(py)),
+    }
+}
+
+fn graph_name_from_term(term: Term) -> Result<GraphName> {
+    match term {
+        Term::NamedNode(node) => Ok(GraphName::NamedNode(node)),
+        Term::BlankNode(node) => Ok(GraphName::BlankNode(node)),
+        _ => Err(anyhow!("Graph names must be URIRefs or BNodes")),
+    }
+}
+
+fn context_identifier<'a>(context: &'a Bound<'a, PyAny>) -> PyResult<Bound<'a, PyAny>> {
+    if context.hasattr("identifier")? {
+        context.getattr("identifier")
+    } else {
+        Ok(context.clone())
+    }
+}
+
+fn graph_name_from_python_context(context: Option<&Bound<'_, PyAny>>) -> Result<GraphName> {
+    let Some(context) = context else {
+        return Ok(GraphName::DefaultGraph);
+    };
+    if context.is_none() {
+        return Ok(GraphName::DefaultGraph);
+    }
+    let identifier = context_identifier(context).map_err(pyerr_to_anyhow)?;
+    if identifier.is_none() {
+        return Ok(GraphName::DefaultGraph);
+    }
+    graph_name_from_term(term_from_python(&identifier)?)
+}
+
+fn is_rdflib_default_graph_name(graph_name: &GraphName) -> bool {
+    matches!(
+        graph_name,
+        GraphName::NamedNode(node) if node.as_str() == "urn:x-rdflib:default"
+    )
 }
 
 fn graph_from_rdflib(_py: Python<'_>, graph: &Bound<'_, PyAny>) -> Result<OxigraphGraph> {
@@ -1049,6 +1108,802 @@ impl PyOntology {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!("<Ontology: {}>", self.inner.name().to_uri_string()))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LogicalGraphInfo {
+    gids: Vec<u64>,
+    triple_count: usize,
+}
+
+#[derive(Debug)]
+struct Rdf5dSnapshot {
+    file: Arc<R5tuFile>,
+    logical_graphs: HashMap<String, LogicalGraphInfo>,
+}
+
+impl Rdf5dSnapshot {
+    fn open(path: &Path) -> Result<Self> {
+        let file = Arc::new(R5tuFile::open_mmap(path)?);
+        let mut grouped: HashMap<String, Vec<u64>> = HashMap::new();
+        for graph in file.enumerate_all()? {
+            grouped.entry(graph.graphname).or_default().push(graph.gid);
+        }
+
+        let mut logical_graphs = HashMap::with_capacity(grouped.len());
+        for (graph_name, gids) in grouped {
+            let triple_count = count_unique_triples_for_gids(&file, &gids)?;
+            logical_graphs.insert(graph_name, LogicalGraphInfo { gids, triple_count });
+        }
+
+        Ok(Self {
+            file,
+            logical_graphs,
+        })
+    }
+
+    fn named_graphs(&self) -> Result<Vec<NamedOrBlankNode>> {
+        let mut values = Vec::with_capacity(self.logical_graphs.len());
+        for graph_name in self.logical_graphs.keys() {
+            values.push(named_or_blank_node_from_graph_name(graph_name)?);
+        }
+        Ok(values)
+    }
+
+    fn logical_graph(&self, graph_name: &GraphName) -> Option<&LogicalGraphInfo> {
+        match graph_name {
+            GraphName::NamedNode(node) => self.logical_graphs.get(node.as_str()),
+            GraphName::BlankNode(node) => self.logical_graphs.get(node.as_str()),
+            GraphName::DefaultGraph => None,
+        }
+    }
+
+    fn graph_names_for_term_ids(
+        &self,
+        subject_id: u64,
+        predicate_id: u64,
+        object_id: u64,
+    ) -> Result<Vec<String>> {
+        let mut matches = Vec::new();
+        for (graph_name, info) in &self.logical_graphs {
+            let mut found = false;
+            for gid in &info.gids {
+                for (s_id, p_id, o_id) in self.file.triples_ids(*gid)? {
+                    if s_id == subject_id && p_id == predicate_id && o_id == object_id {
+                        found = true;
+                        break;
+                    }
+                }
+                if found {
+                    break;
+                }
+            }
+            if found {
+                matches.push(graph_name.clone());
+            }
+        }
+        Ok(matches)
+    }
+
+    fn find_term_id(&self, term: &Term) -> Result<Option<u64>> {
+        Ok(self.file.find_decoded_term(&term_to_decoded_term(term))?)
+    }
+}
+
+#[derive(Debug)]
+enum RdfLibStoreBackend {
+    EnvSnapshotMaterialized { dataset: Arc<OxDataset> },
+    EnvSnapshotRdf5d {
+        #[allow(dead_code)]
+        store_path: PathBuf,
+        snapshot: Arc<Rdf5dSnapshot>,
+    },
+}
+
+impl Default for RdfLibStoreBackend {
+    fn default() -> Self {
+        Self::EnvSnapshotMaterialized {
+            dataset: Arc::new(OxDataset::new()),
+        }
+    }
+}
+
+fn count_unique_triples_for_gids(file: &R5tuFile, gids: &[u64]) -> Result<usize> {
+    let mut triples = HashSet::new();
+    for gid in gids {
+        for triple_ids in file.triples_ids(*gid)? {
+            triples.insert(triple_ids);
+        }
+    }
+    Ok(triples.len())
+}
+
+fn named_or_blank_node_from_graph_name(graph_name: &str) -> Result<NamedOrBlankNode> {
+    let graph_name = graph_name_from_string(graph_name)?;
+    Ok(match graph_name {
+        GraphName::NamedNode(node) => NamedOrBlankNode::NamedNode(node),
+        GraphName::BlankNode(node) => NamedOrBlankNode::BlankNode(node),
+        GraphName::DefaultGraph => return Err(anyhow!("Default graph names are not supported")),
+    })
+}
+
+fn graph_name_from_string(graph_name: &str) -> Result<GraphName> {
+    Ok(GraphName::NamedNode(
+        NamedNode::new(graph_name).map_err(|e| anyhow!(e.to_string()))?,
+    ))
+}
+
+fn graph_name_to_python_from_str<'a>(
+    py: Python<'a>,
+    rdflib: &Bound<'a, PyModule>,
+    graph_name: &str,
+) -> PyResult<Bound<'a, PyAny>> {
+    graph_name_to_python(py, rdflib, graph_name_from_string(graph_name).map_err(anyhow_to_pyerr)?)
+}
+
+fn term_to_decoded_term(term: &Term) -> DecodedTerm<'static> {
+    match term {
+        Term::NamedNode(node) => DecodedTerm::Iri(Cow::Owned(node.as_str().to_string())),
+        Term::BlankNode(node) => DecodedTerm::BNode(Cow::Owned(node.as_str().to_string())),
+        Term::Literal(literal) => DecodedTerm::Literal {
+            lex: Cow::Owned(literal.value().to_string()),
+            dt: if literal.datatype().as_str() == "http://www.w3.org/2001/XMLSchema#string" {
+                None
+            } else {
+                Some(Cow::Owned(literal.datatype().as_str().to_string()))
+            },
+            lang: literal.language().map(|lang| Cow::Owned(lang.to_string())),
+        },
+    }
+}
+
+fn decoded_term_to_term(term: DecodedTerm<'_>) -> Result<Term> {
+    Ok(match term {
+        DecodedTerm::Iri(value) => Term::NamedNode(
+            NamedNode::new(value.into_owned()).map_err(|e| anyhow!(e.to_string()))?,
+        ),
+        DecodedTerm::BNode(value) => Term::BlankNode(
+            BlankNode::new(value.into_owned()).map_err(|e| anyhow!(e.to_string()))?,
+        ),
+        DecodedTerm::Literal { lex, dt, lang } => match (dt, lang) {
+            (Some(dt), None) => Term::Literal(Literal::new_typed_literal(
+                lex.into_owned(),
+                NamedNode::new(dt.into_owned()).map_err(|e| anyhow!(e.to_string()))?,
+            )),
+            (None, Some(lang)) => Term::Literal(
+                Literal::new_language_tagged_literal(lex.into_owned(), lang.into_owned())
+                    .map_err(|e| anyhow!(e.to_string()))?,
+            ),
+            (None, None) => Term::Literal(Literal::new_simple_literal(lex.into_owned())),
+            (Some(_), Some(_)) => return Err(anyhow!("Literal cannot have datatype and language")),
+        },
+    })
+}
+
+fn subject_to_term(subject: &NamedOrBlankNode) -> Term {
+    match subject {
+        NamedOrBlankNode::NamedNode(node) => Term::NamedNode(node.clone()),
+        NamedOrBlankNode::BlankNode(node) => Term::BlankNode(node.clone()),
+    }
+}
+
+fn graph_name_key(graph_name: &GraphName) -> Option<String> {
+    match graph_name {
+        GraphName::NamedNode(node) => Some(node.as_str().to_string()),
+        GraphName::BlankNode(node) => Some(node.as_str().to_string()),
+        GraphName::DefaultGraph => None,
+    }
+}
+
+fn dataset_named_graphs(dataset: &OxDataset) -> Vec<NamedOrBlankNode> {
+    dataset
+        .iter()
+        .filter_map(|quad| match quad.graph_name.into_owned() {
+            GraphName::NamedNode(node) => Some(NamedOrBlankNode::NamedNode(node)),
+            GraphName::BlankNode(node) => Some(NamedOrBlankNode::BlankNode(node)),
+            GraphName::DefaultGraph => None,
+        })
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn query_results_to_python(py: Python<'_>, results: SpareQueryResults<'_>) -> PyResult<Py<PyAny>> {
+    let rdflib = PyModule::import(py, "rdflib")?;
+    let query_mod = py.import("rdflib.query")?;
+    let result = query_mod.getattr("Result")?;
+    match results {
+        SpareQueryResults::Solutions(solutions) => {
+            let py_result = result.call1(("SELECT",))?;
+            let variables: Vec<String> = solutions
+                .variables()
+                .iter()
+                .map(|variable| variable.as_str().to_string())
+                .collect();
+            let vars = variables
+                .iter()
+                .map(|variable| rdflib.getattr("Variable")?.call1((variable,)))
+                .collect::<PyResult<Vec<_>>>()?;
+            py_result.setattr("vars", vars)?;
+
+            let rows = solutions
+                .map(|row| {
+                    let row = row.map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                    })?;
+                    let bindings = PyDict::new(py);
+                    for variable in &variables {
+                        if let Some(term) = row.get(variable.as_str()) {
+                            bindings.set_item(
+                                rdflib.getattr("Variable")?.call1((variable,))?,
+                                term_to_python(py, &rdflib, term.clone())?,
+                            )?;
+                        }
+                    }
+                    Ok(bindings.unbind())
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            py_result.setattr("bindings", rows)?;
+            Ok(py_result.unbind())
+        }
+        SpareQueryResults::Boolean(value) => {
+            let py_result = result.call1(("ASK",))?;
+            py_result.setattr("askAnswer", value)?;
+            Ok(py_result.unbind())
+        }
+        SpareQueryResults::Graph(triples) => {
+            let py_result = result.call1(("CONSTRUCT",))?;
+            let graph = rdflib.getattr("Graph")?.call0()?;
+            for triple in triples {
+                let triple = triple.map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                })?;
+                graph.call_method1(
+                    "add",
+                    ((
+                        term_to_python(py, &rdflib, triple.subject.into())?,
+                        term_to_python(py, &rdflib, triple.predicate.into())?,
+                        term_to_python(py, &rdflib, triple.object)?,
+                    ),),
+                )?;
+            }
+            py_result.setattr("graph", graph)?;
+            Ok(py_result.unbind())
+        }
+    }
+}
+
+macro_rules! apply_query_graph_selection {
+    ($prepared:expr, $query_graph:expr, $named_graphs:expr) => {{
+        if let Some(query_graph) = $query_graph {
+            let is_plain_str = query_graph
+                .get_type()
+                .name()
+                .map(|name| name == "str")
+                .unwrap_or(false);
+            if is_plain_str {
+                let value = query_graph.extract::<String>()?;
+                if value == "__UNION__" {
+                    $prepared.dataset_mut().set_default_graph(
+                        $named_graphs.iter().cloned().map(GraphName::from).collect(),
+                    );
+                    $prepared
+                        .dataset_mut()
+                        .set_available_named_graphs($named_graphs.to_vec());
+                }
+            } else {
+                let graph_name =
+                    graph_name_from_python_context(Some(query_graph)).map_err(anyhow_to_pyerr)?;
+                if matches!(graph_name, GraphName::BlankNode(_))
+                    || matches!(graph_name, GraphName::DefaultGraph)
+                    || is_rdflib_default_graph_name(&graph_name)
+                {
+                    $prepared
+                        .dataset_mut()
+                        .set_default_graph(vec![GraphName::DefaultGraph]);
+                    $prepared
+                        .dataset_mut()
+                        .set_available_named_graphs($named_graphs.to_vec());
+                } else {
+                    let default_graph = graph_name.clone();
+                    let allowed_graph = match graph_name {
+                        GraphName::NamedNode(node) => NamedOrBlankNode::NamedNode(node),
+                        GraphName::BlankNode(node) => NamedOrBlankNode::BlankNode(node),
+                        GraphName::DefaultGraph => unreachable!(),
+                    };
+                    $prepared
+                        .dataset_mut()
+                        .set_default_graph(vec![default_graph]);
+                    $prepared
+                        .dataset_mut()
+                        .set_available_named_graphs(vec![allowed_graph]);
+                }
+            }
+        }
+    }};
+}
+
+#[pyclass(name = "_RdfLibStoreBackend")]
+struct PyRdfLibStoreBackend {
+    backend: Arc<Mutex<RdfLibStoreBackend>>,
+}
+
+#[pymethods]
+impl PyRdfLibStoreBackend {
+    #[new]
+    fn new() -> Self {
+        Self {
+            backend: Arc::new(Mutex::new(RdfLibStoreBackend::default())),
+        }
+    }
+
+    fn bind_materialized_snapshot(
+        &self,
+        quads: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let iter = quads.try_iter()?;
+        let mut dataset = OxDataset::new();
+        for item in iter {
+            let item = item?;
+            let tuple = item.cast::<PyTuple>()?;
+            if tuple.len() != 4 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "materialized snapshot quads must be (subject, predicate, object, context) tuples",
+                ));
+            }
+            let subject = term_to_subject(
+                term_from_python(&tuple.get_item(0)?).map_err(anyhow_to_pyerr)?,
+            )
+            .map_err(anyhow_to_pyerr)?;
+            let predicate = term_to_predicate(
+                term_from_python(&tuple.get_item(1)?).map_err(anyhow_to_pyerr)?,
+            )
+            .map_err(anyhow_to_pyerr)?;
+            let object = term_from_python(&tuple.get_item(2)?).map_err(anyhow_to_pyerr)?;
+            let graph_name =
+                graph_name_from_python_context(Some(&tuple.get_item(3)?)).map_err(anyhow_to_pyerr)?;
+            dataset.insert(&Quad::new(subject, predicate, object, graph_name));
+        }
+        let mut backend = self.backend.lock().unwrap();
+        *backend = RdfLibStoreBackend::EnvSnapshotMaterialized {
+            dataset: Arc::new(dataset),
+        };
+        Ok(())
+    }
+
+    fn bind_rdf5d_snapshot(&self, store_path: &str) -> PyResult<()> {
+        let snapshot = Rdf5dSnapshot::open(Path::new(store_path)).map_err(anyhow_to_pyerr)?;
+        let mut backend = self.backend.lock().unwrap();
+        *backend = RdfLibStoreBackend::EnvSnapshotRdf5d {
+            store_path: PathBuf::from(store_path),
+            snapshot: Arc::new(snapshot),
+        };
+        Ok(())
+    }
+
+    fn backend_kind(&self) -> String {
+        let backend = self.backend.lock().unwrap();
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { .. } => "copy".to_string(),
+            RdfLibStoreBackend::EnvSnapshotRdf5d { .. } => "rdf5d".to_string(),
+        }
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn add(
+        &self,
+        subject: &Bound<'_, PyAny>,
+        predicate: &Bound<'_, PyAny>,
+        object: &Bound<'_, PyAny>,
+        context: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let subject = term_to_subject(term_from_python(subject).map_err(anyhow_to_pyerr)?)
+            .map_err(anyhow_to_pyerr)?;
+        let predicate =
+            term_to_predicate(term_from_python(predicate).map_err(anyhow_to_pyerr)?)
+                .map_err(anyhow_to_pyerr)?;
+        let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
+        let graph_name = graph_name_from_python_context(context).map_err(anyhow_to_pyerr)?;
+
+        let _ = (subject, predicate, object, graph_name);
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This OntoEnvStore is a read-only snapshot",
+        ))
+    }
+
+    fn remove(
+        &self,
+        subject: Option<&Bound<'_, PyAny>>,
+        predicate: Option<&Bound<'_, PyAny>>,
+        object: Option<&Bound<'_, PyAny>>,
+        context: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let subject = match subject {
+            Some(value) => Some(
+                term_to_subject(term_from_python(value).map_err(anyhow_to_pyerr)?)
+                    .map_err(anyhow_to_pyerr)?,
+            ),
+            None => None,
+        };
+        let predicate = match predicate {
+            Some(value) => Some(
+                term_to_predicate(term_from_python(value).map_err(anyhow_to_pyerr)?)
+                    .map_err(anyhow_to_pyerr)?,
+            ),
+            None => None,
+        };
+        let object = object
+            .map(|value| term_from_python(value).map_err(anyhow_to_pyerr))
+            .transpose()?;
+        let graph_name = match context {
+            Some(value) => {
+                Some(graph_name_from_python_context(Some(value)).map_err(anyhow_to_pyerr)?)
+            }
+            None => None,
+        };
+
+        let _ = (subject, predicate, object, graph_name);
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This OntoEnvStore is a read-only snapshot",
+        ))
+    }
+
+    fn triples(
+        &self,
+        py: Python<'_>,
+        subject: Option<&Bound<'_, PyAny>>,
+        predicate: Option<&Bound<'_, PyAny>>,
+        object: Option<&Bound<'_, PyAny>>,
+        context: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<(Py<PyAny>, Vec<Py<PyAny>>)>> {
+        let subject = match subject {
+            Some(value) => Some(
+                term_to_subject(term_from_python(value).map_err(anyhow_to_pyerr)?)
+                    .map_err(anyhow_to_pyerr)?,
+            ),
+            None => None,
+        };
+        let predicate = match predicate {
+            Some(value) => Some(
+                term_to_predicate(term_from_python(value).map_err(anyhow_to_pyerr)?)
+                    .map_err(anyhow_to_pyerr)?,
+            ),
+            None => None,
+        };
+        let object = object
+            .map(|value| term_from_python(value).map_err(anyhow_to_pyerr))
+            .transpose()?;
+        let graph_name = match context {
+            Some(value) => {
+                Some(graph_name_from_python_context(Some(value)).map_err(anyhow_to_pyerr)?)
+            }
+            None => None,
+        };
+
+        let backend = self.backend.lock().unwrap();
+        let rdflib = PyModule::import(py, "rdflib")?;
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                let mut by_triple: HashMap<Triple, Vec<GraphName>> = HashMap::new();
+                for quad in dataset.quads_for_pattern(
+                    subject.as_ref().map(NamedOrBlankNode::as_ref),
+                    predicate.as_ref().map(NamedNode::as_ref),
+                    object.as_ref().map(Term::as_ref),
+                    graph_name.as_ref().map(GraphName::as_ref),
+                ) {
+                    let triple = Triple::new(quad.subject, quad.predicate, quad.object);
+                    by_triple
+                        .entry(triple)
+                        .or_default()
+                        .push(quad.graph_name.into_owned());
+                }
+
+                let mut rows = Vec::with_capacity(by_triple.len());
+                for (triple, contexts) in by_triple {
+                    let triple_obj = PyTuple::new(
+                        py,
+                        [
+                            term_to_python(py, &rdflib, triple.subject.into())?,
+                            term_to_python(py, &rdflib, triple.predicate.into())?,
+                            term_to_python(py, &rdflib, triple.object)?,
+                        ],
+                    )?;
+                    let contexts = contexts
+                        .into_iter()
+                        .map(|graph_name| {
+                            graph_name_to_python(py, &rdflib, graph_name).map(Bound::unbind)
+                        })
+                        .collect::<PyResult<Vec<_>>>()?;
+                    rows.push((triple_obj.unbind().into_any(), contexts));
+                }
+                Ok(rows)
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                if matches!(graph_name, Some(GraphName::DefaultGraph)) {
+                    return Ok(Vec::new());
+                }
+                let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
+                let subject_id = subject
+                    .as_ref()
+                    .map(|value| snapshot.find_term_id(&subject_to_term(value)).map_err(anyhow_to_pyerr))
+                    .transpose()?
+                    .flatten();
+                let predicate_id = predicate
+                    .as_ref()
+                    .map(|value| {
+                        snapshot
+                            .find_term_id(&Term::NamedNode(value.clone()))
+                            .map_err(anyhow_to_pyerr)
+                    })
+                    .transpose()?
+                    .flatten();
+                let object_id = object
+                    .as_ref()
+                    .map(|value| snapshot.find_term_id(value).map_err(anyhow_to_pyerr))
+                    .transpose()?
+                    .flatten();
+                if (subject.is_some() && subject_id.is_none())
+                    || (predicate.is_some() && predicate_id.is_none())
+                    || (object.is_some() && object_id.is_none())
+                {
+                    return Ok(Vec::new());
+                }
+
+                if let Some(graph_name) = graph_name.as_ref() {
+                    let Some(info) = snapshot.logical_graph(graph_name) else {
+                        return Ok(Vec::new());
+                    };
+                    let Some(graph_name_key) = graph_name_key(graph_name) else {
+                        return Ok(Vec::new());
+                    };
+                    let mut seen = HashSet::new();
+                    for gid in &info.gids {
+                        for triple_ids in snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)? {
+                            if !seen.insert(triple_ids) {
+                                continue;
+                            }
+                            let (s_id, p_id, o_id) = triple_ids;
+                            if subject_id.is_some_and(|id| id != s_id)
+                                || predicate_id.is_some_and(|id| id != p_id)
+                                || object_id.is_some_and(|id| id != o_id)
+                            {
+                                continue;
+                            }
+                            grouped.insert((s_id, p_id, o_id), vec![graph_name_key.clone()]);
+                        }
+                    }
+                } else {
+                    for (graph_name, info) in &snapshot.logical_graphs {
+                        for gid in &info.gids {
+                            for (s_id, p_id, o_id) in snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)? {
+                                if subject_id.is_some_and(|id| id != s_id)
+                                    || predicate_id.is_some_and(|id| id != p_id)
+                                    || object_id.is_some_and(|id| id != o_id)
+                                {
+                                    continue;
+                                }
+                                let contexts = grouped.entry((s_id, p_id, o_id)).or_default();
+                                if !contexts.iter().any(|value| value == graph_name) {
+                                    contexts.push(graph_name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut rows = Vec::with_capacity(grouped.len());
+                for ((s_id, p_id, o_id), contexts) in grouped {
+                    let triple_obj = PyTuple::new(
+                        py,
+                        [
+                            term_to_python(
+                                py,
+                                &rdflib,
+                                decoded_term_to_term(snapshot.file.decoded_term(s_id).map_err(r5error_to_pyerr)?)
+                                    .map_err(anyhow_to_pyerr)?,
+                            )?,
+                            term_to_python(
+                                py,
+                                &rdflib,
+                                decoded_term_to_term(snapshot.file.decoded_term(p_id).map_err(r5error_to_pyerr)?)
+                                    .map_err(anyhow_to_pyerr)?,
+                            )?,
+                            term_to_python(
+                                py,
+                                &rdflib,
+                                decoded_term_to_term(snapshot.file.decoded_term(o_id).map_err(r5error_to_pyerr)?)
+                                    .map_err(anyhow_to_pyerr)?,
+                            )?,
+                        ],
+                    )?;
+                    let contexts = contexts
+                        .into_iter()
+                        .map(|graph_name| {
+                            graph_name_to_python_from_str(py, &rdflib, &graph_name)
+                                .map(Bound::unbind)
+                        })
+                        .collect::<PyResult<Vec<_>>>()?;
+                    rows.push((triple_obj.unbind().into_any(), contexts));
+                }
+                Ok(rows)
+            }
+        }
+    }
+
+    fn contexts(
+        &self,
+        py: Python<'_>,
+        subject: Option<&Bound<'_, PyAny>>,
+        predicate: Option<&Bound<'_, PyAny>>,
+        object: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let backend = self.backend.lock().unwrap();
+        let rdflib = PyModule::import(py, "rdflib")?;
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                let mut contexts = HashSet::new();
+                if let (Some(subject), Some(predicate), Some(object)) = (subject, predicate, object) {
+                    let subject = term_to_subject(term_from_python(subject).map_err(anyhow_to_pyerr)?)
+                        .map_err(anyhow_to_pyerr)?;
+                    let predicate =
+                        term_to_predicate(term_from_python(predicate).map_err(anyhow_to_pyerr)?)
+                            .map_err(anyhow_to_pyerr)?;
+                    let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
+                    for quad in dataset.quads_for_pattern(
+                        Some(subject.as_ref()),
+                        Some(predicate.as_ref()),
+                        Some(object.as_ref()),
+                        None,
+                    ) {
+                        contexts.insert(quad.graph_name.into_owned());
+                    }
+                } else {
+                    for quad in dataset.iter() {
+                        contexts.insert(quad.graph_name.into_owned());
+                    }
+                }
+                contexts
+                    .into_iter()
+                    .map(|graph_name| graph_name_to_python(py, &rdflib, graph_name).map(Bound::unbind))
+                    .collect()
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                if let (Some(subject), Some(predicate), Some(object)) = (subject, predicate, object) {
+                    let subject = term_to_subject(term_from_python(subject).map_err(anyhow_to_pyerr)?)
+                        .map_err(anyhow_to_pyerr)?;
+                    let predicate =
+                        term_to_predicate(term_from_python(predicate).map_err(anyhow_to_pyerr)?)
+                            .map_err(anyhow_to_pyerr)?;
+                    let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
+
+                    let Some(subject_id) = snapshot
+                        .find_term_id(&subject_to_term(&subject))
+                        .map_err(anyhow_to_pyerr)?
+                    else {
+                        return Ok(Vec::new());
+                    };
+                    let Some(predicate_id) = snapshot
+                        .find_term_id(&Term::NamedNode(predicate))
+                        .map_err(anyhow_to_pyerr)?
+                    else {
+                        return Ok(Vec::new());
+                    };
+                    let Some(object_id) = snapshot.find_term_id(&object).map_err(anyhow_to_pyerr)? else {
+                        return Ok(Vec::new());
+                    };
+                    let graph_names = snapshot
+                        .graph_names_for_term_ids(subject_id, predicate_id, object_id)
+                        .map_err(anyhow_to_pyerr)?;
+                    graph_names
+                        .into_iter()
+                        .map(|graph_name| {
+                            graph_name_to_python_from_str(py, &rdflib, &graph_name).map(Bound::unbind)
+                        })
+                        .collect()
+                } else {
+                    snapshot
+                        .logical_graphs
+                        .keys()
+                        .map(|graph_name| {
+                            graph_name_to_python_from_str(py, &rdflib, graph_name).map(Bound::unbind)
+                        })
+                        .collect()
+                }
+            }
+        }
+    }
+
+    fn len(&self, context: Option<&Bound<'_, PyAny>>) -> PyResult<usize> {
+        let graph_name = match context {
+            Some(value) => Some(graph_name_from_python_context(Some(value)).map_err(anyhow_to_pyerr)?),
+            None => None,
+        };
+        let backend = self.backend.lock().unwrap();
+        Ok(match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => match graph_name {
+                Some(graph_name) => dataset
+                    .quads_for_pattern(None, None, None, Some(graph_name.as_ref()))
+                    .count(),
+                None => dataset.iter().count(),
+            },
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => match graph_name {
+                Some(graph_name) => {
+                    if is_rdflib_default_graph_name(&graph_name)
+                        || matches!(graph_name, GraphName::DefaultGraph)
+                    {
+                        0
+                    } else {
+                        snapshot
+                            .logical_graph(&graph_name)
+                            .map(|info| info.triple_count)
+                            .unwrap_or(0)
+                    }
+                }
+                None => snapshot
+                    .logical_graphs
+                    .values()
+                    .map(|info| info.triple_count)
+                    .sum(),
+            },
+        })
+    }
+
+    fn query(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        init_bindings: Option<HashMap<String, Py<PyAny>>>,
+        query_graph: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let parsed = SparqlParser::new()
+            .parse_query(query)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let evaluator = QueryEvaluator::new();
+        let backend = self.backend.lock().unwrap();
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                let dataset = (**dataset).clone();
+                let named_graphs = dataset_named_graphs(&dataset);
+                let mut prepared = evaluator.prepare(&parsed);
+                apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                if let Some(init_bindings) = init_bindings {
+                    for (variable, term) in init_bindings {
+                        prepared = prepared.substitute_variable(
+                            OxVariable::new(variable)
+                                .map_err(|e| anyhow_to_pyerr(anyhow!(e.to_string())))?,
+                            term_from_python(term.bind(py)).map_err(anyhow_to_pyerr)?,
+                        );
+                    }
+                }
+                let results = prepared
+                    .execute(&dataset)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                query_results_to_python(py, results)
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                let named_graphs = snapshot.named_graphs().map_err(anyhow_to_pyerr)?;
+                let mut prepared = evaluator.prepare(&parsed);
+                apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                if let Some(init_bindings) = init_bindings {
+                    for (variable, term) in init_bindings {
+                        prepared = prepared.substitute_variable(
+                            OxVariable::new(variable)
+                                .map_err(|e| anyhow_to_pyerr(anyhow!(e.to_string())))?,
+                            term_from_python(term.bind(py)).map_err(anyhow_to_pyerr)?,
+                        );
+                    }
+                }
+                let view = SparqlDatasetView::new(snapshot.file.as_ref());
+                let results = prepared
+                    .execute(view)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                query_results_to_python(py, results)
+            }
+        }
     }
 }
 
@@ -2148,42 +3003,21 @@ impl OntoEnv {
         Ok(names)
     }
 
-    /// Convert the OntoEnv to an in-memory rdflib.Dataset populated with all named graphs
-    fn to_rdflib_dataset(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
-        let env = guard
-            .as_ref()
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let rdflib = py.import("rdflib")?;
-        let dataset_cls = rdflib.getattr("Dataset")?;
-        let ds = dataset_cls.call0()?;
-        let uriref = rdflib.getattr("URIRef")?;
-
-        for (_gid, ont) in env.ontologies().iter() {
-            let id_str = ont.id().name().as_str();
-            let id_py = uriref.call1((id_str,))?;
-            let kwargs = [("identifier", id_py.clone())].into_py_dict(py)?;
-            let ctx = ds.getattr("graph")?.call((), Some(&kwargs))?;
-
-            let graph = env.get_graph(ont.id()).map_err(anyhow_to_pyerr)?;
-            for t in graph.iter() {
-                let s: Term = t.subject.into();
-                let p: Term = t.predicate.into();
-                let o: Term = t.object.into();
-                let triple = PyTuple::new(
-                    py,
-                    &[
-                        term_to_python(py, &rdflib, s)?,
-                        term_to_python(py, &rdflib, p)?,
-                        term_to_python(py, &rdflib, o)?,
-                    ],
-                )?;
-                ctx.getattr("add")?.call1((triple,))?;
-            }
-        }
-
-        Ok(ds.into())
+    /// Convert the OntoEnv to an rdflib.Dataset using the configured store mode.
+    #[pyo3(signature = (mode = "auto"))]
+    fn to_rdflib_dataset(&self, py: Python, mode: &str) -> PyResult<Py<PyAny>> {
+        let rdflib_store = py.import("ontoenv.rdflib_store")?;
+        let dataset_from_env = rdflib_store.getattr("dataset_from_env")?;
+        let kwargs = PyDict::new(py);
+        let env_obj = Py::new(
+            py,
+            OntoEnv {
+                inner: self.inner.clone(),
+            },
+        )?;
+        kwargs.set_item("env", env_obj)?;
+        kwargs.set_item("mode", mode)?;
+        Ok(dataset_from_env.call((), Some(&kwargs))?.unbind())
     }
 
     // Config accessors
@@ -2344,6 +3178,7 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<OntoEnv>()?;
     m.add_class::<PyOntology>()?;
+    m.add_class::<PyRdfLibStoreBackend>()?;
     m.add_function(wrap_pyfunction!(run_cli, m)?)?;
     // add version attribute
     m.add("version", env!("CARGO_PKG_VERSION"))?;
