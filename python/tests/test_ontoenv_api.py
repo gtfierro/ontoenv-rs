@@ -864,14 +864,14 @@ ex:B a owl:Class .
             {b_iri, c_iri},
         )
 
-    def test_to_rdflib_dataset(self):
-        """Test env.to_rdflib_dataset()."""
+    def test_dataset_snapshot(self):
+        """Test env.dataset_snapshot()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
         self.env.update()  # need to run update to find all dependencies
         self.env.flush()
 
-        ds = self.env.to_rdflib_dataset()
+        ds = self.env.dataset_snapshot()
         # count graphs
         num_graphs = len(list(ds.graphs()))
         # there should be many graphs: brick + all imports

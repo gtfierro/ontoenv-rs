@@ -38,7 +38,7 @@ an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
 .. code-block:: python
 
    from rdflib import URIRef
-   from ontoenv import OntoEnv, dataset_from_env
+   from ontoenv import OntoEnv
 
    env = OntoEnv(
        path=".demo-env",
@@ -48,8 +48,9 @@ an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
    )
    brick_name = env.add("./brick/Brick.ttl")
    env.update()
+   env.flush()
 
-   dataset = dataset_from_env(env)
+   dataset = env.dataset_snapshot()
 
    for row in dataset.query(
        """
@@ -77,8 +78,15 @@ If you prefer rdflib's plugin lookup:
 
    graph = Graph(store="ontoenv")
 
-``dataset_from_env(env)`` binds the namespaces known to the environment and loads each
-ontology into a named graph keyed by its ontology IRI.
+``env.dataset_snapshot()`` returns a zero-copy ``rdflib.Dataset`` backed by the
+persistent ``.ontoenv/store.r5tu`` file. The Dataset is read-only; call it again
+(or ``refresh_dataset_from_env(dataset, env)``) after ``env.flush()`` to pick up
+changes.
+
+For temporary environments or environments using a custom ``graph_store=`` backend,
+use ``env.dataset_mutable()`` instead. It materializes the env's quads into an
+in-memory snapshot once. Both methods bind the namespaces known to the environment
+and key each named graph by its ontology IRI.
 
 What is supported
 -----------------

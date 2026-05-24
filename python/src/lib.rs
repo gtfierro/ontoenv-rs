@@ -2229,6 +2229,31 @@ struct OntoEnv {
     inner: Arc<Mutex<Option<OntoEnvRs>>>,
 }
 
+impl OntoEnv {
+    fn build_dataset(
+        &self,
+        py: Python<'_>,
+        mode: &str,
+        store: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let rdflib_store = py.import("ontoenv.rdflib_store")?;
+        let dataset_from_env = rdflib_store.getattr("dataset_from_env")?;
+        let kwargs = PyDict::new(py);
+        let env_obj = Py::new(
+            py,
+            OntoEnv {
+                inner: self.inner.clone(),
+            },
+        )?;
+        kwargs.set_item("env", env_obj)?;
+        kwargs.set_item("mode", mode)?;
+        if let Some(store) = store {
+            kwargs.set_item("store", store)?;
+        }
+        Ok(dataset_from_env.call((), Some(&kwargs))?.unbind())
+    }
+}
+
 #[pymethods]
 impl OntoEnv {
     #[new]
@@ -3320,21 +3345,44 @@ impl OntoEnv {
         Ok(names)
     }
 
-    /// Convert the OntoEnv to an rdflib.Dataset using the configured store mode.
-    #[pyo3(signature = (mode = "auto"))]
-    fn to_rdflib_dataset(&self, py: Python, mode: &str) -> PyResult<Py<PyAny>> {
-        let rdflib_store = py.import("ontoenv.rdflib_store")?;
-        let dataset_from_env = rdflib_store.getattr("dataset_from_env")?;
-        let kwargs = PyDict::new(py);
-        let env_obj = Py::new(
-            py,
-            OntoEnv {
-                inner: self.inner.clone(),
-            },
-        )?;
-        kwargs.set_item("env", env_obj)?;
-        kwargs.set_item("mode", mode)?;
-        Ok(dataset_from_env.call((), Some(&kwargs))?.unbind())
+    /// Return a zero-copy `rdflib.Dataset` snapshot backed by the
+    /// persistent `.ontoenv/store.r5tu` file.
+    ///
+    /// The Dataset is read-only and reflects the state of the store at the
+    /// time of the call. Call again (or `refresh_dataset_from_env`) after
+    /// `env.flush()` to pick up subsequent changes.
+    ///
+    /// Raises `ValueError` for temporary envs or envs using a custom
+    /// `graph_store=`. Use :meth:`dataset_mutable` for those.
+    ///
+    /// Args:
+    ///     store: Optional existing `OntoEnvStore` to rebind.
+    #[pyo3(signature = (store = None))]
+    fn dataset_snapshot(
+        &self,
+        py: Python,
+        store: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        self.build_dataset(py, "rdf5d", store)
+    }
+
+    /// Return an `rdflib.Dataset` whose contents are materialized into an
+    /// in-memory copy of the environment.
+    ///
+    /// Works for any environment kind (persistent, temporary, or
+    /// `graph_store=` backed). The copy is independent of the env after
+    /// construction; subsequent changes to the env are not reflected until
+    /// you call :func:`refresh_dataset_from_env`.
+    ///
+    /// Args:
+    ///     store: Optional existing `rdflib.Store` to bind the Dataset to.
+    #[pyo3(signature = (store = None))]
+    fn dataset_mutable(
+        &self,
+        py: Python,
+        store: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        self.build_dataset(py, "copy", store)
     }
 
     // Config accessors
