@@ -50,7 +50,7 @@ an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
    env.update()
    env.flush()
 
-   dataset = env.dataset_snapshot()
+   dataset = env.snapshot_as_dataset()
 
    for row in dataset.query(
        """
@@ -78,15 +78,20 @@ If you prefer rdflib's plugin lookup:
 
    graph = Graph(store="ontoenv")
 
-``env.dataset_snapshot()`` returns a zero-copy ``rdflib.Dataset`` backed by the
-persistent ``.ontoenv/store.r5tu`` file. The Dataset is read-only; call it again
-(or ``refresh_dataset_from_env(dataset, env)``) after ``env.flush()`` to pick up
-changes.
+``env.snapshot_as_dataset()`` returns a read-only ``rdflib.Dataset`` view of the env.
+It binds the namespaces known to the environment and keys each named graph by its
+ontology IRI. The Dataset reflects the env's state at the time of the call; call it
+again (or ``refresh_dataset_from_env(dataset, env)``) after ``env.flush()`` to pick
+up changes.
 
-For temporary environments or environments using a custom ``graph_store=`` backend,
-use ``env.dataset_mutable()`` instead. It materializes the env's quads into an
-in-memory snapshot once. Both methods bind the namespaces known to the environment
-and key each named graph by its ontology IRI.
+The ``backend`` parameter selects the storage strategy:
+
+- ``"auto"`` (default) — use ``"rdf5d"`` if ``.ontoenv/store.r5tu`` exists, otherwise
+  fall back to ``"copy"``.
+- ``"rdf5d"`` — zero-copy view backed directly by the on-disk snapshot file. Fastest.
+  Raises ``ValueError`` for temporary envs or envs using a custom ``graph_store=``.
+- ``"copy"`` — materialize the env's quads into an in-memory snapshot. Works for any
+  env kind.
 
 What is supported
 -----------------

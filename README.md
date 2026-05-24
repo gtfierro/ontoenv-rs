@@ -285,8 +285,7 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 | `get_importers(name) -> list[str]` | Reverse dependency lookup |
 | `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings |
 | `missing_imports(uri=None) -> list[str]` | List unresolvable `owl:imports` IRIs (see below) |
-| `dataset_snapshot() -> rdflib.Dataset` | Zero-copy, read-only Dataset backed by the persistent `store.r5tu` snapshot |
-| `dataset_mutable() -> rdflib.Dataset` | Independent in-memory Dataset (works for temporary / `graph_store=` envs) |
+| `snapshot_as_dataset(backend="auto") -> rdflib.Dataset` | Read-only Dataset view of the env (`"auto"`/`"rdf5d"`/`"copy"`) |
 | `store_path() -> str \| None` | Path to `.ontoenv/`, or `None` for temporary environments |
 | `close()` | Persist (if applicable) and release resources |
 

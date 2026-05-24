@@ -121,12 +121,11 @@ If you want to use ontoenv as an `rdflib` store directly, use `OntoEnvStore`. Th
 normal `rdflib.Graph` and `rdflib.Dataset` objects, but executes SPARQL through the Rust
 backend instead of rdflib's Python query engine.
 
-There are two ways to get a Dataset:
-
-- ``env.dataset_snapshot()`` — zero-copy, read-only view backed by the persistent
-  ``.ontoenv/store.r5tu`` snapshot. Fastest. Requires a persistent local env.
-- ``env.dataset_mutable()`` — materializes the env contents into an in-memory Dataset.
-  Works for temporary envs and envs using a custom ``graph_store=``.
+Use ``env.snapshot_as_dataset()`` to get a read-only ``rdflib.Dataset`` view of the env.
+The default ``backend="auto"`` picks the zero-copy ``rdf5d`` snapshot when a persistent
+``.ontoenv/store.r5tu`` exists and otherwise falls back to an in-memory copy. Pass
+``backend="rdf5d"`` to require the fast path (raises for temporary or ``graph_store=``
+envs) or ``backend="copy"`` to always materialize.
 
 ```python
 from rdflib import URIRef
@@ -137,7 +136,7 @@ brick_name = env.add("./brick/Brick.ttl")
 env.update()
 env.flush()
 
-dataset = env.dataset_snapshot()
+dataset = env.snapshot_as_dataset()
 
 for row in dataset.query(
     """

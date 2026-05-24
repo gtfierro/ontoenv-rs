@@ -3345,44 +3345,28 @@ impl OntoEnv {
         Ok(names)
     }
 
-    /// Return a zero-copy `rdflib.Dataset` snapshot backed by the
-    /// persistent `.ontoenv/store.r5tu` file.
+    /// Return a point-in-time `rdflib.Dataset` view of the environment.
     ///
-    /// The Dataset is read-only and reflects the state of the store at the
+    /// The Dataset is read-only and reflects the state of the env at the
     /// time of the call. Call again (or `refresh_dataset_from_env`) after
     /// `env.flush()` to pick up subsequent changes.
     ///
-    /// Raises `ValueError` for temporary envs or envs using a custom
-    /// `graph_store=`. Use :meth:`dataset_mutable` for those.
-    ///
     /// Args:
-    ///     store: Optional existing `OntoEnvStore` to rebind.
-    #[pyo3(signature = (store = None))]
-    fn dataset_snapshot(
-        &self,
-        py: Python,
-        store: Option<Py<PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        self.build_dataset(py, "rdf5d", store)
-    }
-
-    /// Return an `rdflib.Dataset` whose contents are materialized into an
-    /// in-memory copy of the environment.
-    ///
-    /// Works for any environment kind (persistent, temporary, or
-    /// `graph_store=` backed). The copy is independent of the env after
-    /// construction; subsequent changes to the env are not reflected until
-    /// you call :func:`refresh_dataset_from_env`.
-    ///
-    /// Args:
+    ///     backend: ``"auto"`` (default) picks ``"rdf5d"`` when a
+    ///         persistent ``.ontoenv/store.r5tu`` exists and ``"copy"``
+    ///         otherwise. ``"rdf5d"`` forces the zero-copy mmap-backed
+    ///         path and raises ``ValueError`` for temporary or
+    ///         ``graph_store=``-backed envs. ``"copy"`` always
+    ///         materializes the env into an in-memory snapshot.
     ///     store: Optional existing `rdflib.Store` to bind the Dataset to.
-    #[pyo3(signature = (store = None))]
-    fn dataset_mutable(
+    #[pyo3(signature = (backend = "auto", store = None))]
+    fn snapshot_as_dataset(
         &self,
         py: Python,
+        backend: &str,
         store: Option<Py<PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        self.build_dataset(py, "copy", store)
+        self.build_dataset(py, backend, store)
     }
 
     // Config accessors

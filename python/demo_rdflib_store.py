@@ -28,7 +28,7 @@ env.update()
 env.flush()
 
 # Build an rdflib.Dataset backed directly by .ontoenv/store.r5tu when possible.
-dataset = env.dataset_snapshot(mode="rdf5d")
+dataset = env.snapshot_as_dataset(backend="rdf5d")
 print("dataset backend", dataset.store._backend.backend_kind())
 
 print("graphs in dataset")
