@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ontoenv import OntoEnv, dataset_from_env, refresh_dataset_from_env, version
+from ontoenv import OntoEnv, refresh_dataset_from_env, version
 from rdflib import Literal, URIRef
 
 
@@ -28,7 +28,7 @@ env.update()
 env.flush()
 
 # Build an rdflib.Dataset backed directly by .ontoenv/store.r5tu when possible.
-dataset = dataset_from_env(env, mode="rdf5d")
+dataset = env.dataset_snapshot(mode="rdf5d")
 print("dataset backend", dataset.store._backend.backend_kind())
 
 print("graphs in dataset")
