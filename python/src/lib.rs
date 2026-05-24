@@ -24,14 +24,18 @@ use pyo3::{
     types::{IntoPyDict, PyDict, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
-use rdf5d::{DecodedTerm, R5tuFile, SparqlDatasetView};
+use rdf5d::{DecodedTerm, R5tuFile};
 use spargebra::SparqlParser;
-use spareval::{QueryEvaluator, QueryResults as SpareQueryResults};
+use spareval::{
+    InternalQuad as SpareInternalQuad, QueryEvaluator, QueryResults as SpareQueryResults,
+    QueryableDataset,
+};
 use std::borrow::{Borrow, Cow};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
+use std::iter::{empty, once};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -1111,36 +1115,63 @@ impl PyOntology {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct LogicalGraphInfo {
     gids: Vec<u64>,
-    triple_count: usize,
+    /// Exact, dedup-aware unique-triple count. Filled lazily on the first
+    /// `len()` call so that opening a snapshot stays O(graphs). For
+    /// single-gid logical graphs we initialize this from the GDIR
+    /// `n_triples` at open time, since no cross-gid dedup is needed.
+    triple_count: OnceLock<usize>,
 }
 
 #[derive(Debug)]
 struct Rdf5dSnapshot {
     file: Arc<R5tuFile>,
     logical_graphs: HashMap<String, LogicalGraphInfo>,
+    // Memoizes term -> term_id lookups so repeated SPARQL bindings of the
+    // same IRIs don't repeatedly linear-scan the term table via
+    // R5tuFile::find_decoded_term. A proper on-disk reverse index in rdf5d
+    // is the right long-term fix.
+    term_id_cache: Mutex<HashMap<DecodedTerm<'static>, Option<u64>>>,
 }
 
 impl Rdf5dSnapshot {
     fn open(path: &Path) -> Result<Self> {
         let file = Arc::new(R5tuFile::open_mmap(path)?);
-        let mut grouped: HashMap<String, Vec<u64>> = HashMap::new();
+        let mut grouped: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
         for graph in file.enumerate_all()? {
-            grouped.entry(graph.graphname).or_default().push(graph.gid);
+            grouped
+                .entry(graph.graphname)
+                .or_default()
+                .push((graph.gid, graph.n_triples));
         }
 
         let mut logical_graphs = HashMap::with_capacity(grouped.len());
-        for (graph_name, gids) in grouped {
-            let triple_count = count_unique_triples_for_gids(&file, &gids)?;
+        for (graph_name, entries) in grouped {
+            let triple_count = OnceLock::new();
+            if entries.len() == 1 {
+                // Single physical gid: no cross-gid dedup needed.
+                let _ = triple_count.set(entries[0].1 as usize);
+            }
+            let gids = entries.into_iter().map(|(gid, _)| gid).collect();
             logical_graphs.insert(graph_name, LogicalGraphInfo { gids, triple_count });
         }
 
         Ok(Self {
             file,
             logical_graphs,
+            term_id_cache: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn triple_count_for(&self, info: &LogicalGraphInfo) -> Result<usize> {
+        if let Some(count) = info.triple_count.get() {
+            return Ok(*count);
+        }
+        let count = count_unique_triples_for_gids(&self.file, &info.gids)?;
+        let _ = info.triple_count.set(count);
+        Ok(*info.triple_count.get().unwrap_or(&count))
     }
 
     fn named_graphs(&self) -> Result<Vec<NamedOrBlankNode>> {
@@ -1187,7 +1218,17 @@ impl Rdf5dSnapshot {
     }
 
     fn find_term_id(&self, term: &Term) -> Result<Option<u64>> {
-        Ok(self.file.find_decoded_term(&term_to_decoded_term(term))?)
+        let key = term_to_decoded_term(term);
+        {
+            let cache = self.term_id_cache.lock().unwrap();
+            if let Some(cached) = cache.get(&key) {
+                return Ok(*cached);
+            }
+        }
+        let result = self.file.find_decoded_term(&key)?;
+        let mut cache = self.term_id_cache.lock().unwrap();
+        cache.insert(key, result);
+        Ok(result)
     }
 }
 
@@ -1285,6 +1326,239 @@ fn subject_to_term(subject: &NamedOrBlankNode) -> Term {
     match subject {
         NamedOrBlankNode::NamedNode(node) => Term::NamedNode(node.clone()),
         NamedOrBlankNode::BlankNode(node) => Term::BlankNode(node.clone()),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LogicalSparqlDatasetView<'a> {
+    snapshot: &'a Rdf5dSnapshot,
+}
+
+impl<'a> LogicalSparqlDatasetView<'a> {
+    fn new(snapshot: &'a Rdf5dSnapshot) -> Self {
+        Self { snapshot }
+    }
+
+    fn graph_term(graph_name: &'a str) -> DecodedTerm<'a> {
+        DecodedTerm::Iri(Cow::Borrowed(graph_name))
+    }
+
+    fn quads_for_logical_graph(
+        snapshot: &'a Rdf5dSnapshot,
+        graph_name: &'a str,
+        info: &'a LogicalGraphInfo,
+        subject: Option<DecodedTerm<'a>>,
+        predicate: Option<DecodedTerm<'a>>,
+        object: Option<DecodedTerm<'a>>,
+    ) -> Box<dyn Iterator<Item = std::result::Result<SpareInternalQuad<DecodedTerm<'a>>, rdf5d::reader::R5Error>> + 'a>
+    {
+        let file = snapshot.file.as_ref();
+        let mut quads = Vec::new();
+        let mut seen = HashSet::new();
+        for gid in &info.gids {
+            let triples = match file.triples_ids(*gid) {
+                Ok(triples) => triples,
+                Err(error) => return Box::new(once(Err(error))),
+            };
+            for (s_id, p_id, o_id) in triples {
+                if !seen.insert((s_id, p_id, o_id)) {
+                    continue;
+                }
+
+                let subject_term = match file.decoded_term(s_id) {
+                    Ok(term) => term,
+                    Err(error) => return Box::new(once(Err(error))),
+                };
+                if subject
+                    .as_ref()
+                    .is_some_and(|expected| expected != &subject_term)
+                {
+                    continue;
+                }
+
+                let predicate_term = match file.decoded_term(p_id) {
+                    Ok(term) => term,
+                    Err(error) => return Box::new(once(Err(error))),
+                };
+                if predicate
+                    .as_ref()
+                    .is_some_and(|expected| expected != &predicate_term)
+                {
+                    continue;
+                }
+
+                let object_term = match file.decoded_term(o_id) {
+                    Ok(term) => term,
+                    Err(error) => return Box::new(once(Err(error))),
+                };
+                if object
+                    .as_ref()
+                    .is_some_and(|expected| expected != &object_term)
+                {
+                    continue;
+                }
+
+                quads.push(Ok(SpareInternalQuad {
+                    subject: subject_term,
+                    predicate: predicate_term,
+                    object: object_term,
+                    graph_name: Some(Self::graph_term(graph_name)),
+                }));
+            }
+        }
+        Box::new(quads.into_iter())
+    }
+
+    fn quads_for_all_logical_graphs(
+        snapshot: &'a Rdf5dSnapshot,
+        subject: Option<DecodedTerm<'a>>,
+        predicate: Option<DecodedTerm<'a>>,
+        object: Option<DecodedTerm<'a>>,
+    ) -> Box<dyn Iterator<Item = std::result::Result<SpareInternalQuad<DecodedTerm<'a>>, rdf5d::reader::R5Error>> + 'a>
+    {
+        Box::new(
+            snapshot
+                .logical_graphs
+                .iter()
+                .flat_map(move |(graph_name, info)| {
+                    Self::quads_for_logical_graph(
+                        snapshot,
+                        graph_name.as_str(),
+                        info,
+                        subject.clone(),
+                        predicate.clone(),
+                        object.clone(),
+                    )
+                }),
+        )
+    }
+}
+
+impl<'a> QueryableDataset<'a> for LogicalSparqlDatasetView<'a> {
+    type InternalTerm = DecodedTerm<'a>;
+    type Error = rdf5d::reader::R5Error;
+
+    #[allow(refining_impl_trait)]
+    fn internal_quads_for_pattern(
+        &self,
+        subject: Option<&Self::InternalTerm>,
+        predicate: Option<&Self::InternalTerm>,
+        object: Option<&Self::InternalTerm>,
+        graph_name: Option<Option<&Self::InternalTerm>>,
+    ) -> Box<dyn Iterator<Item = std::result::Result<SpareInternalQuad<Self::InternalTerm>, Self::Error>> + 'a>
+    {
+        let subject = subject.cloned();
+        let predicate = predicate.cloned();
+        let object = object.cloned();
+        let snapshot = self.snapshot;
+
+        match graph_name {
+            None | Some(None) => {
+                Self::quads_for_all_logical_graphs(snapshot, subject, predicate, object)
+            }
+            Some(Some(DecodedTerm::Iri(graph_name))) => {
+                let Some((graph_name, info)) = snapshot.logical_graphs.get_key_value(graph_name.as_ref()) else {
+                    return Box::new(empty());
+                };
+                Self::quads_for_logical_graph(
+                    snapshot,
+                    graph_name.as_ref(),
+                    info,
+                    subject,
+                    predicate,
+                    object,
+                )
+            }
+            Some(Some(_)) => Box::new(empty()),
+        }
+    }
+
+    #[allow(refining_impl_trait)]
+    fn internal_named_graphs(
+        &self,
+    ) -> Box<dyn Iterator<Item = std::result::Result<Self::InternalTerm, Self::Error>> + 'a> {
+        Box::new(
+            self.snapshot
+                .logical_graphs
+                .keys()
+                .map(|graph_name| Ok(Self::graph_term(graph_name.as_str()))),
+        )
+    }
+
+    fn contains_internal_graph_name(
+        &self,
+        graph_name: &Self::InternalTerm,
+    ) -> std::result::Result<bool, Self::Error> {
+        let DecodedTerm::Iri(graph_name) = graph_name else {
+            return Ok(false);
+        };
+        Ok(self
+            .snapshot
+            .logical_graphs
+            .contains_key(graph_name.as_ref()))
+    }
+
+    fn internalize_term(&self, term: Term) -> std::result::Result<Self::InternalTerm, Self::Error> {
+        Ok(match term {
+            Term::NamedNode(node) => DecodedTerm::Iri(Cow::Owned(node.into_string())),
+            Term::BlankNode(node) => DecodedTerm::BNode(Cow::Owned(node.as_str().to_string())),
+            Term::Literal(literal) => {
+                if let Some(language) = literal.language() {
+                    DecodedTerm::Literal {
+                        lex: Cow::Owned(literal.value().to_string()),
+                        dt: None,
+                        lang: Some(Cow::Owned(language.to_string())),
+                    }
+                } else {
+                    let datatype = literal.datatype();
+                    let datatype = if datatype.as_str()
+                        == "http://www.w3.org/2001/XMLSchema#string"
+                    {
+                        None
+                    } else {
+                        Some(Cow::Owned(datatype.as_str().to_string()))
+                    };
+                    DecodedTerm::Literal {
+                        lex: Cow::Owned(literal.value().to_string()),
+                        dt: datatype,
+                        lang: None,
+                    }
+                }
+            }
+        })
+    }
+
+    fn externalize_term(
+        &self,
+        term: Self::InternalTerm,
+    ) -> std::result::Result<Term, Self::Error> {
+        Ok(match term {
+            DecodedTerm::Iri(value) => NamedNode::new(value.into_owned())
+                .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid IRI term"))?
+                .into(),
+            DecodedTerm::BNode(value) => {
+                let label = value.strip_prefix("_:").unwrap_or(value.as_ref());
+                BlankNode::new(label.to_string())
+                    .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid blank node"))?
+                    .into()
+            }
+            DecodedTerm::Literal { lex, dt, lang } => {
+                if let Some(dt) = dt {
+                    Literal::new_typed_literal(
+                        lex.into_owned(),
+                        NamedNode::new(dt.into_owned())
+                            .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid datatype IRI"))?,
+                    )
+                    .into()
+                } else if let Some(lang) = lang {
+                    Literal::new_language_tagged_literal(lex.into_owned(), lang.into_owned())
+                        .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid language tag"))?
+                        .into()
+                } else {
+                    Literal::new_simple_literal(lex.into_owned()).into()
+                }
+            }
+        })
     }
 }
 
@@ -1465,6 +1739,47 @@ impl PyRdfLibStoreBackend {
                 graph_name_from_python_context(Some(&tuple.get_item(3)?)).map_err(anyhow_to_pyerr)?;
             dataset.insert(&Quad::new(subject, predicate, object, graph_name));
         }
+        let mut backend = self.backend.lock().unwrap();
+        *backend = RdfLibStoreBackend::EnvSnapshotMaterialized {
+            dataset: Arc::new(dataset),
+        };
+        Ok(())
+    }
+
+    /// Build a materialized snapshot directly from a Python `OntoEnv` without
+    /// staging through an rdflib `Dataset`. Each ontology graph is fetched as
+    /// an oxigraph `Graph` via the existing IO path and inserted as quads
+    /// into the snapshot's `OxDataset` in a single pass.
+    fn bind_env_snapshot(&self, env: &Bound<'_, PyAny>) -> PyResult<()> {
+        let py_env: PyRef<OntoEnv> = env.extract().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "bind_env_snapshot requires an ontoenv.OntoEnv instance",
+            )
+        })?;
+        let inner = py_env.inner.clone();
+        drop(py_env);
+        let guard = inner.lock().unwrap();
+        let env_rs = guard.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+        })?;
+
+        let mut dataset = OxDataset::new();
+        let ids: Vec<GraphIdentifier> = env_rs.ontologies().keys().cloned().collect();
+        for id in ids {
+            let graph_name = GraphName::NamedNode(NamedNode::from(id.name().into_owned()));
+            let graph = env_rs.get_graph(&id).map_err(anyhow_to_pyerr)?;
+            for triple in graph.iter() {
+                let quad = Quad::new(
+                    triple.subject.clone(),
+                    triple.predicate.clone(),
+                    triple.object.clone(),
+                    graph_name.clone(),
+                );
+                dataset.insert(&quad);
+            }
+        }
+        drop(guard);
+
         let mut backend = self.backend.lock().unwrap();
         *backend = RdfLibStoreBackend::EnvSnapshotMaterialized {
             dataset: Arc::new(dataset),
@@ -1837,17 +2152,19 @@ impl PyRdfLibStoreBackend {
                     {
                         0
                     } else {
-                        snapshot
-                            .logical_graph(&graph_name)
-                            .map(|info| info.triple_count)
-                            .unwrap_or(0)
+                        match snapshot.logical_graph(&graph_name) {
+                            Some(info) => snapshot.triple_count_for(info).map_err(anyhow_to_pyerr)?,
+                            None => 0,
+                        }
                     }
                 }
-                None => snapshot
-                    .logical_graphs
-                    .values()
-                    .map(|info| info.triple_count)
-                    .sum(),
+                None => {
+                    let mut total = 0usize;
+                    for info in snapshot.logical_graphs.values() {
+                        total += snapshot.triple_count_for(info).map_err(anyhow_to_pyerr)?;
+                    }
+                    total
+                }
             },
         })
     }
@@ -1897,7 +2214,7 @@ impl PyRdfLibStoreBackend {
                         );
                     }
                 }
-                let view = SparqlDatasetView::new(snapshot.file.as_ref());
+                let view = LogicalSparqlDatasetView::new(snapshot.as_ref());
                 let results = prepared
                     .execute(view)
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -3183,4 +3500,90 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // add version attribute
     m.add("version", env!("CARGO_PKG_VERSION"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LogicalSparqlDatasetView, Rdf5dSnapshot};
+    use rdf5d::{
+        write_file, Quint,
+        writer::Term as WriterTerm,
+    };
+    use spargebra::SparqlParser;
+    use spareval::{QueryEvaluator, QueryResults};
+
+    #[test]
+    fn logical_sparql_view_collapses_duplicate_graph_names() {
+        let path = std::env::temp_dir().join(format!(
+            "ontoenv_python_logical_view_{}.r5tu",
+            rand::random::<u64>()
+        ));
+        let quints = vec![
+            Quint {
+                id: "dataset:1".into(),
+                s: WriterTerm::Iri("http://example.org/alice".into()),
+                p: WriterTerm::Iri("http://example.org/name".into()),
+                o: WriterTerm::Literal {
+                    lex: "Alice".into(),
+                    dt: None,
+                    lang: None,
+                },
+                gname: "http://example.org/graph/shared".into(),
+            },
+            Quint {
+                id: "dataset:2".into(),
+                s: WriterTerm::Iri("http://example.org/alice".into()),
+                p: WriterTerm::Iri("http://example.org/name".into()),
+                o: WriterTerm::Literal {
+                    lex: "Alice".into(),
+                    dt: None,
+                    lang: None,
+                },
+                gname: "http://example.org/graph/shared".into(),
+            },
+            Quint {
+                id: "dataset:3".into(),
+                s: WriterTerm::Iri("http://example.org/bob".into()),
+                p: WriterTerm::Iri("http://example.org/name".into()),
+                o: WriterTerm::Literal {
+                    lex: "Bob".into(),
+                    dt: None,
+                    lang: None,
+                },
+                gname: "http://example.org/graph/shared".into(),
+            },
+        ];
+        write_file(&path, &quints).expect("write test fixture");
+
+        let snapshot = Rdf5dSnapshot::open(&path).expect("open snapshot");
+        let query = SparqlParser::new()
+            .parse_query(
+                "SELECT ?s WHERE {
+                    GRAPH <http://example.org/graph/shared> {
+                        ?s <http://example.org/name> ?o
+                    }
+                }",
+            )
+            .expect("parse query");
+        let evaluator = QueryEvaluator::new();
+        let prepared = evaluator.prepare(&query);
+        let results = prepared
+            .execute(LogicalSparqlDatasetView::new(&snapshot))
+            .expect("execute query");
+        let QueryResults::Solutions(solutions) = results else {
+            panic!("expected solution results");
+        };
+        let mut subjects = solutions
+            .map(|row| row.map(|solution| solution["s"].to_string()))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("collect results");
+        subjects.sort();
+
+        assert_eq!(
+            subjects,
+            vec!["<http://example.org/alice>", "<http://example.org/bob>"]
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
 }

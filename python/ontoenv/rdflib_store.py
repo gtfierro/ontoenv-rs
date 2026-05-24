@@ -57,15 +57,7 @@ def _require_snapshot_store_file(env: Any) -> Path:
 
 
 def _copy_env_into_store(env: Any, store: "OntoEnvStore") -> None:
-    dataset = Dataset()
-    quads: list[tuple[Identifier, Identifier, Identifier, Identifier]] = []
-    for ontology_name in env.get_ontology_names():
-        target_graph = dataset.graph(URIRef(ontology_name))
-        target_graph += env.get_graph(ontology_name)
-    for context in dataset.graphs():
-        for subject, predicate, obj in context:
-            quads.append((subject, predicate, obj, context.identifier))
-    store._backend.bind_materialized_snapshot(quads)
+    store._backend.bind_env_snapshot(env)
 
 
 def dataset_from_env(
