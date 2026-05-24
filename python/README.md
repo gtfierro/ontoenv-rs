@@ -115,6 +115,51 @@ env = OntoEnv(graph_store=store, temporary=True)
 
 `graph_store` is currently incompatible with `recreate` and `create_or_use_cached`.
 
+## RDFLib store with Rust SPARQL
+
+If you want to use ontoenv as an `rdflib` store directly, use `OntoEnvStore`. This gives you
+normal `rdflib.Graph` and `rdflib.Dataset` objects, but executes SPARQL through the Rust
+backend instead of rdflib's Python query engine.
+
+```python
+from rdflib import URIRef
+from ontoenv import OntoEnv, dataset_from_env
+
+env = OntoEnv(path=".demo-env", recreate=True, offline=True, search_directories=["./brick"])
+brick_name = env.add("./brick/Brick.ttl")
+env.update()
+
+dataset = dataset_from_env(env)
+
+for row in dataset.query(
+    """
+    SELECT ?entity ?label
+    WHERE {
+      GRAPH <https://brickschema.org/schema/1.4/Brick> {
+        ?entity <http://www.w3.org/2000/01/rdf-schema#label> ?label .
+      }
+    }
+    LIMIT 5
+    """
+):
+    print(row.entity, row.label)
+
+brick_graph = dataset.graph(URIRef(brick_name))
+print(len(brick_graph))
+env.close()
+```
+
+Importing `ontoenv` also registers the rdflib plugin name `"ontoenv"`, so this works too:
+
+```python
+from rdflib import Graph
+import ontoenv
+
+graph = Graph(store="ontoenv")
+```
+
+See `demo_rdflib_store.py` for a complete runnable example.
+
 ## CLI Entrypoint
 
 Installing `ontoenv` also provides the Rust-backed `ontoenv` command-line tool:
