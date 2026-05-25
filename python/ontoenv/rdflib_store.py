@@ -29,7 +29,9 @@ def _inject_prefixes(query: str, init_ns: Mapping[str, Any] | None) -> str:
 
 def _normalize_mode(mode: str) -> Mode:
     if mode not in {"auto", "rdf5d", "copy"}:
-        raise ValueError(f"Unsupported rdflib dataset mode: {mode}")
+        raise ValueError(
+            f"Unsupported snapshot backend: {mode!r} (expected 'auto', 'rdf5d', or 'copy')"
+        )
     return mode  # type: ignore[return-value]
 
 
@@ -50,8 +52,9 @@ def _require_snapshot_store_file(env: Any) -> Path:
     store_file = _snapshot_store_file(env)
     if store_file is None:
         raise ValueError(
-            "mode='rdf5d' requires a persistent local OntoEnv backed by .ontoenv/store.r5tu; "
-            "temporary environments and graph_store-backed environments must use mode='copy'"
+            "backend='rdf5d' requires a persistent local OntoEnv backed by "
+            ".ontoenv/store.r5tu; temporary environments and graph_store-backed "
+            "environments must use backend='copy'"
         )
     return store_file
 
@@ -79,7 +82,7 @@ def dataset_from_env(
         return dataset
 
     if normalized_mode == "rdf5d":
-        raise ValueError("mode='rdf5d' requires an OntoEnvStore instance")
+        raise ValueError("backend='rdf5d' requires an OntoEnvStore instance")
 
     dataset = Dataset(store=store)
     _bind_dataset_namespaces(dataset, env)

@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional, List, Union, Tuple, Dict
 from rdflib import Graph, Dataset
 from rdflib.query import Result
+from rdflib.store import Store
 
 # Exposed module metadata
 version: str
@@ -247,8 +248,20 @@ class OntoEnv:
         """
         ...
 
-    def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
-        """Return all named graphs as an ``rdflib.Dataset``."""
+    def snapshot_as_dataset(
+        self,
+        backend: str = "auto",
+        store: Optional[Store] = None,
+    ) -> Dataset:
+        """Return a point-in-time ``rdflib.Dataset`` view of the environment.
+
+        ``backend`` is one of ``"auto"`` (default), ``"rdf5d"``, or ``"copy"``.
+        ``"auto"`` picks ``"rdf5d"`` when a persistent ``.ontoenv/store.r5tu``
+        exists and ``"copy"`` otherwise. ``"rdf5d"`` forces the zero-copy
+        mmap-backed path and raises ``ValueError`` for temporary or
+        ``graph_store=``-backed envs. ``"copy"`` always materializes the env
+        into an in-memory snapshot.
+        """
         ...
 
     def dump(self, includes: Optional[str] = None) -> None:
