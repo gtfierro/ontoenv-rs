@@ -98,14 +98,14 @@ def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(tmp_path: Pa
         env.close()
 
 
-def test_mode_rdf5d_rejects_temporary_and_graph_store_envs(tmp_path: Path) -> None:
+def test_backend_rdf5d_rejects_temporary_and_graph_store_envs(tmp_path: Path) -> None:
     ttl = tmp_path / "demo.ttl"
     _write_ttl(ttl, "urn:example:demo", 'ex:ahu1 ex:hasLabel "AHU-1" .')
 
     temp_env = OntoEnv(temporary=True, offline=True)
     try:
         temp_env.add(str(ttl))
-        with pytest.raises(ValueError, match="mode='rdf5d'"):
+        with pytest.raises(ValueError, match="backend='rdf5d'"):
             temp_env.snapshot_as_dataset(backend="rdf5d")
     finally:
         temp_env.close()
@@ -113,7 +113,7 @@ def test_mode_rdf5d_rejects_temporary_and_graph_store_envs(tmp_path: Path) -> No
     store = DictGraphStore()
     external_env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
     try:
-        with pytest.raises(ValueError, match="mode='rdf5d'"):
+        with pytest.raises(ValueError, match="backend='rdf5d'"):
             external_env.snapshot_as_dataset(backend="rdf5d")
     finally:
         external_env.close()
