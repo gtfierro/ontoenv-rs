@@ -100,6 +100,33 @@ pub struct GraphRef {
     pub n_triples: u64,
 }
 
+/// A decoded RDF term borrowing string data from the underlying file when possible.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DecodedTerm<'a> {
+    Iri(Cow<'a, str>),
+    BNode(Cow<'a, str>),
+    Literal {
+        lex: Cow<'a, str>,
+        dt: Option<Cow<'a, str>>,
+        lang: Option<Cow<'a, str>>,
+    },
+}
+
+impl<'a> DecodedTerm<'a> {
+    /// Returns an owned copy of the term.
+    pub fn into_owned(self) -> DecodedTerm<'static> {
+        match self {
+            Self::Iri(value) => DecodedTerm::Iri(Cow::Owned(value.into_owned())),
+            Self::BNode(value) => DecodedTerm::BNode(Cow::Owned(value.into_owned())),
+            Self::Literal { lex, dt, lang } => DecodedTerm::Literal {
+                lex: Cow::Owned(lex.into_owned()),
+                dt: dt.map(|value| Cow::Owned(value.into_owned())),
+                lang: lang.map(|value| Cow::Owned(value.into_owned())),
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Backing {
     Owned(Vec<u8>),
@@ -242,6 +269,21 @@ impl R5tuFile {
     /// Resolve a term id to a displayable string (IRI, bnode, or literal).
     pub fn term_to_string(&self, term_id: u64) -> Result<String> {
         self.term_dict.term_to_string(self.bytes(), term_id)
+    }
+
+    /// Resolves a term id into a borrowed decoded term.
+    pub fn decoded_term(&self, term_id: u64) -> Result<DecodedTerm<'_>> {
+        self.term_dict.decoded_term(self.bytes(), term_id)
+    }
+
+    /// Performs a linear reverse lookup for a decoded term in the term dictionary.
+    pub fn find_decoded_term(&self, term: &DecodedTerm<'_>) -> Result<Option<u64>> {
+        for term_id in 0..self.term_dict.n_terms {
+            if self.term_dict.decoded_term(self.bytes(), term_id)?.eq(term) {
+                return Ok(Some(term_id));
+            }
+        }
+        Ok(None)
     }
 
     /// Internal helper: convert a term id into the writer's [`crate::writer::Term`].
@@ -805,6 +847,42 @@ impl TermDict {
         Ok((lex, dt, lang))
     }
 
+    fn decode_component_literal_borrowed<'a>(
+        &self,
+        data: &'a [u8],
+        payload: &[u8],
+    ) -> Result<(Cow<'a, str>, Option<Cow<'a, str>>, Option<Cow<'a, str>>)> {
+        let dicts = self
+            .literal_components
+            .ok_or_else(|| R5Error::Corrupt("missing literal component dicts".into()))?;
+        let (lex_id, off) =
+            read_uvarint(payload, 0).ok_or_else(|| R5Error::Corrupt("lex id".into()))?;
+        let (dt_id, off) =
+            read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("dt id".into()))?;
+        let (lang_id, _) =
+            read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("lang id".into()))?;
+        let lex = component_string_borrowed(data, dicts.lex, lex_id as u32)?;
+        let dt = if dt_id == 0 {
+            None
+        } else {
+            Some(component_string_borrowed(
+                data,
+                dicts.dt,
+                (dt_id - 1) as u32,
+            )?)
+        };
+        let lang = if lang_id == 0 {
+            None
+        } else {
+            Some(component_string_borrowed(
+                data,
+                dicts.lang,
+                (lang_id - 1) as u32,
+            )?)
+        };
+        Ok((lex, dt, lang))
+    }
+
     fn term_to_string(&self, data: &[u8], term_id: u64) -> Result<String> {
         if term_id >= self.n_terms {
             return Err(R5Error::Invalid("term id out of range"));
@@ -944,6 +1022,74 @@ impl TermDict {
         })
     }
 
+    fn decoded_term<'a>(&self, data: &'a [u8], term_id: u64) -> Result<DecodedTerm<'a>> {
+        if term_id >= self.n_terms {
+            return Err(R5Error::Invalid("term id out of range"));
+        }
+        let kinds_off = self.kinds_off as usize;
+        let data_off = self.data_off as usize;
+        let s = self.offset_at(data, term_id)? as usize;
+        let e = self.offset_at(data, term_id + 1)? as usize;
+        let payload = &data[data_off + s..data_off + e];
+        Ok(match data[kinds_off + term_id as usize] {
+            0 => DecodedTerm::Iri(Cow::Borrowed(
+                std::str::from_utf8(payload).map_err(|_| R5Error::Corrupt("utf8".into()))?,
+            )),
+            1 => DecodedTerm::BNode(Cow::Borrowed(
+                std::str::from_utf8(payload).map_err(|_| R5Error::Corrupt("utf8".into()))?,
+            )),
+            2 => {
+                let (lex_len, mut off) =
+                    read_uvarint(payload, 0).ok_or_else(|| R5Error::Corrupt("lit lex".into()))?;
+                let lex_end = off + lex_len as usize;
+                let lex = Cow::Borrowed(
+                    std::str::from_utf8(&payload[off..lex_end])
+                        .map_err(|_| R5Error::Corrupt("utf8".into()))?,
+                );
+                off = lex_end;
+                if off >= payload.len() {
+                    return Err(R5Error::Corrupt("lit bounds".into()));
+                }
+                let has_dt = payload[off];
+                off += 1;
+                let dt = if has_dt == 1 {
+                    let (len, start) = read_uvarint(payload, off)
+                        .ok_or_else(|| R5Error::Corrupt("dt len".into()))?;
+                    let end = start + len as usize;
+                    off = end;
+                    Some(Cow::Borrowed(
+                        std::str::from_utf8(&payload[start..end])
+                            .map_err(|_| R5Error::Corrupt("utf8".into()))?,
+                    ))
+                } else {
+                    None
+                };
+                if off >= payload.len() {
+                    return Err(R5Error::Corrupt("lit bounds2".into()));
+                }
+                let has_lang = payload[off];
+                off += 1;
+                let lang = if has_lang == 1 {
+                    let (len, start) = read_uvarint(payload, off)
+                        .ok_or_else(|| R5Error::Corrupt("lang len".into()))?;
+                    let end = start + len as usize;
+                    Some(Cow::Borrowed(
+                        std::str::from_utf8(&payload[start..end])
+                            .map_err(|_| R5Error::Corrupt("utf8".into()))?,
+                    ))
+                } else {
+                    None
+                };
+                DecodedTerm::Literal { lex, dt, lang }
+            }
+            3 => {
+                let (lex, dt, lang) = self.decode_component_literal_borrowed(data, payload)?;
+                DecodedTerm::Literal { lex, dt, lang }
+            }
+            _ => return Err(R5Error::Corrupt("unknown term kind".into())),
+        })
+    }
+
     fn offset_at(&self, data: &[u8], idx: u64) -> Result<u64> {
         if idx > self.n_terms {
             return Err(R5Error::Invalid("term id out of range"));
@@ -1027,6 +1173,32 @@ fn component_string(data: &[u8], dict: ComponentDictRef, id: u32) -> Result<Stri
     std::str::from_utf8(&data[blob_base + start..blob_base + end])
         .map(|s| s.to_string())
         .map_err(|_| R5Error::Corrupt("utf8".into()))
+}
+
+fn component_string_borrowed<'a>(
+    data: &'a [u8],
+    dict: ComponentDictRef,
+    id: u32,
+) -> Result<Cow<'a, str>> {
+    if id >= dict.n {
+        return Err(R5Error::Corrupt("component id out of range".into()));
+    }
+    let offs_base = dict.offs_off as usize;
+    let start = u32::from_le_bytes(
+        data[offs_base + id as usize * 4..offs_base + id as usize * 4 + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let end = u32::from_le_bytes(
+        data[offs_base + (id as usize + 1) * 4..offs_base + (id as usize + 1) * 4 + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let blob_base = dict.blob_off as usize;
+    Ok(Cow::Borrowed(
+        std::str::from_utf8(&data[blob_base + start..blob_base + end])
+            .map_err(|_| R5Error::Corrupt("utf8".into()))?,
+    ))
 }
 
 #[derive(Debug, Clone)]

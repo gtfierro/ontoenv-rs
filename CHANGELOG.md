@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
+## [0.6.0]
+
+### Added
+- `OntoEnv.snapshot_as_dataset(backend="auto", store=None)` — return a read-only `rdflib.Dataset` view of the environment. `backend="rdf5d"` is a zero-copy mmap-backed view over the persistent `.ontoenv/store.r5tu` snapshot; `backend="copy"` materializes an in-memory copy; `backend="auto"` picks rdf5d when the snapshot file exists and copy otherwise.
+- New `ontoenv.OntoEnvStore` rdflib `Store` (also registered as the rdflib plugin `"ontoenv"`) that serves SPARQL through the Rust backend, with `dataset_from_env` / `refresh_dataset_from_env` helpers in `ontoenv.rdflib_store`.
+- rdf5d: SPARQL backend (`rdf5d::SparqlDatasetView`) and a Brick benchmark comparing it to Oxigraph + RocksDB; rdf5d wins on the tested patterns (≈18% faster on bound-graph queries, ≈2× faster on full scans).
+
+### Changed
+- `Rdf5dSnapshot::open` is now O(graphs) rather than O(triples) — per-logical-graph unique-triple counts are computed lazily via `OnceLock`, with a single-gid fast path that trusts the GDIR `n_triples` directly. Reverse term lookup (`find_term_id`) memoizes against `R5tuFile::find_decoded_term` so repeated SPARQL bindings of the same IRI stop re-scanning the term table.
+- Copy-fallback Dataset construction (the `backend="copy"` / `backend="auto"` fallback path) builds the materialized `OxDataset` directly from the inner Rust `OntoEnv`, dropping the previous round-trip through an intermediate `rdflib.Dataset`.
+
+### Deprecated
+- `OntoEnv.to_rdflib_dataset(mode=...)` — use `OntoEnv.snapshot_as_dataset(backend=..., store=...)` instead. The old method still works (and forwards to the new one) but now emits `DeprecationWarning`. The new method renames the parameter (`mode` → `backend`) and accepts an optional `store=` to rebind an existing rdflib `Store`; error messages now reference `backend=` accordingly.
+
+---
+
 ## [0.5.4]
 
 ### Added

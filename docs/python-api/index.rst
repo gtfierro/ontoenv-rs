@@ -6,6 +6,12 @@ The **ontoenv** Python package exposes the full Rust core through
 `rdflib <https://rdflib.readthedocs.io>`_ graph interop.
 Pre-built wheels are published on PyPI — no Rust toolchain required.
 
+There are two distinct Python integration surfaces:
+
+- ``OntoEnv`` for ontology discovery, import resolution, and closure materialization.
+- ``OntoEnvStore`` for using ontoenv as an ``rdflib`` ``Store`` with Rust-backed SPARQL
+  execution.
+
 Install
 -------
 
@@ -62,10 +68,13 @@ Example
 .. note::
 
    **Custom storage:** Pass a ``graph_store=`` object to route all graph reads and writes
-   through your own backend. See `Graph Store Interface <graph-store.html>`_ for the protocol.
+   through your own backend. This is separate from the built-in ``rdflib`` store integration.
+   See `Graph Store Interface <graph-store.html>`_ for the protocol, or
+   `RDFLib Store <rdflib-store.html>`_ to query graphs directly through ``rdflib``.
 
 .. toctree::
    :maxdepth: 1
 
    ontoenv
+   rdflib-store
    graph-store

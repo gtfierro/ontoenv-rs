@@ -1,5 +1,6 @@
 /target
 .ontoenv
+.demo-env/
 docs/_build/
 docs/_doctrees/
 docs/.venv/

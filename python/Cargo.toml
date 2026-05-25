@@ -26,6 +26,10 @@ log.workspace = true
 rand.workspace = true
 blake3.workspace = true
 chrono.workspace = true
+oxrdf.workspace = true
+spargebra.workspace = true
+spareval.workspace = true
+rdf5d = { workspace = true, features = ["mmap", "sparql"] }
 
 [build-dependencies]
 pyo3-build-config = "0.27"
