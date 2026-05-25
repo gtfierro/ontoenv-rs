@@ -1,29 +1,21 @@
-from pathlib import Path
-
 from ontoenv import OntoEnv, refresh_dataset_from_env, version
 from rdflib import Literal, URIRef
-
-
-ROOT = Path(__file__).resolve().parents[1]
-BRICK_DIR = ROOT / "brick"
-BRICK_FILE = BRICK_DIR / "Brick.ttl"
-DEMO_ENV = ROOT / "python" / ".demo-env"
 
 
 print(version)
 
 print("Make env")
 env = OntoEnv(
-    path=DEMO_ENV,
+    path=".demo-env",
     recreate=True,
     strict=False,
     offline=True,
-    search_directories=[str(BRICK_DIR)],
+    search_directories=["../brick"],
 )
 print(env)
 
 print("add brick and persist rdf5d store")
-brick_name = env.add(str(BRICK_FILE))
+brick_name = env.add("../brick/Brick.ttl")
 env.update()
 env.flush()
 
@@ -40,9 +32,7 @@ for row in dataset.query(
     """
     SELECT ?entity ?label
     WHERE {
-      GRAPH <https://brickschema.org/schema/1.4/Brick> {
-        ?entity <http://www.w3.org/2000/01/rdf-schema#label> ?label .
-      }
+      ?entity <http://www.w3.org/2000/01/rdf-schema#label> ?label .
     }
     LIMIT 5
     """
@@ -54,56 +44,7 @@ brick_graph = dataset.graph(URIRef(brick_name))
 print(len(brick_graph))
 
 # Snapshot datasets stay stable until you explicitly refresh them.
-print("add one more ontology without refreshing snapshot")
-extra_ttl = DEMO_ENV / "demo-extra.ttl"
-extra_ttl.write_text(
-    "\n".join(
-        [
-            "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
-            "@prefix ex: <urn:demo:> .",
-            "<urn:demo:extra> a owl:Ontology .",
-            'ex:item ex:label "demo value" .',
-        ]
-    ),
-    encoding="utf-8",
-)
-env.add(str(extra_ttl))
-env.flush()
-
-rows = list(
-    dataset.query(
-        """
-        SELECT ?label
-        WHERE {
-          GRAPH <urn:demo:extra> {
-            <urn:demo:item> <urn:demo:label> ?label .
-          }
-        }
-        """
-    )
-)
-print("rows before refresh", rows)
-
-print("refresh snapshot")
+# Note that this is *separate* from updating the environment.
 refresh_dataset_from_env(dataset, env)
-rows = list(
-    dataset.query(
-        """
-        SELECT ?label
-        WHERE {
-          GRAPH <urn:demo:extra> {
-            <urn:demo:item> <urn:demo:label> ?label .
-          }
-        }
-        """
-    )
-)
-print("rows after refresh", [row.label for row in rows])
-
-print("snapshot is read-only")
-try:
-    brick_graph.add((URIRef("urn:demo:s"), URIRef("urn:demo:p"), Literal("x")))
-except Exception as err:
-    print(type(err).__name__, err)
 
 env.close()
