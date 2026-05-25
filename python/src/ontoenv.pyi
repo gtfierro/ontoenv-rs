@@ -264,6 +264,13 @@ class OntoEnv:
         """
         ...
 
+    def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
+        """Deprecated alias for :meth:`snapshot_as_dataset`.
+
+        Emits ``DeprecationWarning``. Calls ``snapshot_as_dataset(backend=mode)``.
+        """
+        ...
+
     def dump(self, includes: Optional[str] = None) -> None:
         """Print a Turtle serialisation of the environment to stdout."""
         ...
