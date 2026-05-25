@@ -1,0 +1,5 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <urn:example:> .
+
+<urn:example:demo> a owl:Ontology .
+ex:ahu1 ex:hasLabel "AHU-1" .

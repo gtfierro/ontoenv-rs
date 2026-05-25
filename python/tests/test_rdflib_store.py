@@ -8,6 +8,12 @@ from rdflib import Dataset, Graph, Literal, URIRef
 from ontoenv import OntoEnv, OntoEnvStore, refresh_dataset_from_env
 
 
+FIXTURES = Path(__file__).parent / "fixtures" / "rdflib_store"
+DEMO_TTL = FIXTURES / "demo.ttl"
+FIRST_TTL = FIXTURES / "first.ttl"
+SECOND_TTL = FIXTURES / "second.ttl"
+
+
 class DictGraphStore:
     def __init__(self) -> None:
         self.graphs: dict[str, Graph] = {}
@@ -24,18 +30,22 @@ class DictGraphStore:
         return list(self.graphs.keys())
 
 
-def _write_ttl(path: Path, ontology_iri: str, triples: str = "") -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
-                "@prefix ex: <urn:example:> .",
-                f"<{ontology_iri}> a owl:Ontology .",
-                triples,
-            ]
-        ),
-        encoding="utf-8",
-    )
+@pytest.fixture
+def persistent_env(tmp_path: Path):
+    env = OntoEnv(path=tmp_path, recreate=True, offline=True)
+    try:
+        yield env
+    finally:
+        env.close()
+
+
+@pytest.fixture
+def temporary_env():
+    env = OntoEnv(temporary=True, offline=True)
+    try:
+        yield env
+    finally:
+        env.close()
 
 
 def test_standalone_store_is_empty_read_only() -> None:
@@ -50,65 +60,44 @@ def test_standalone_store_is_empty_read_only() -> None:
     assert len(list(store.contexts())) == 0
 
 
-def test_dataset_from_env_auto_uses_rdf5d_for_persistent_env(tmp_path: Path) -> None:
-    ttl = tmp_path / "demo.ttl"
-    ontology_name = "urn:example:demo"
-    _write_ttl(ttl, ontology_name, 'ex:ahu1 ex:hasLabel "AHU-1" .')
+def test_dataset_from_env_auto_uses_rdf5d_for_persistent_env(persistent_env: OntoEnv) -> None:
+    persistent_env.add(str(DEMO_TTL))
+    persistent_env.flush()
 
-    env = OntoEnv(path=tmp_path, recreate=True, offline=True)
-    try:
-        env.add(str(ttl))
-        env.flush()
+    dataset = persistent_env.snapshot_as_dataset()
+    assert dataset.store._backend.backend_kind() == "rdf5d"
 
-        dataset = env.snapshot_as_dataset()
-        assert dataset.store._backend.backend_kind() == "rdf5d"
-
-        rows = list(
-            dataset.query(
-                "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"
-            )
+    rows = list(
+        dataset.query(
+            "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"
         )
-        assert [row.label for row in rows] == [Literal("AHU-1")]
-        assert len(dataset.graph(URIRef(ontology_name))) == 2
+    )
+    assert [row.label for row in rows] == [Literal("AHU-1")]
+    assert len(dataset.graph(URIRef("urn:example:demo"))) == 2
 
-        with pytest.raises(ValueError, match="read-only snapshot"):
-            dataset.graph(URIRef(ontology_name)).add(
-                (URIRef("urn:example:ahu2"), URIRef("urn:example:hasLabel"), Literal("AHU-2"))
-            )
-    finally:
-        env.close()
-
-
-def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(tmp_path: Path) -> None:
-    ttl = tmp_path / "demo.ttl"
-    _write_ttl(ttl, "urn:example:demo", 'ex:ahu1 ex:hasLabel "AHU-1" .')
-
-    env = OntoEnv(temporary=True, offline=True)
-    try:
-        env.add(str(ttl))
-        dataset = env.snapshot_as_dataset()
-        assert dataset.store._backend.backend_kind() == "copy"
-        rows = list(
-            dataset.query(
-                "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"
-            )
+    with pytest.raises(ValueError, match="read-only snapshot"):
+        dataset.graph(URIRef("urn:example:demo")).add(
+            (URIRef("urn:example:ahu2"), URIRef("urn:example:hasLabel"), Literal("AHU-2"))
         )
-        assert [row.label for row in rows] == [Literal("AHU-1")]
-    finally:
-        env.close()
 
 
-def test_backend_rdf5d_rejects_temporary_and_graph_store_envs(tmp_path: Path) -> None:
-    ttl = tmp_path / "demo.ttl"
-    _write_ttl(ttl, "urn:example:demo", 'ex:ahu1 ex:hasLabel "AHU-1" .')
+def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(temporary_env: OntoEnv) -> None:
+    temporary_env.add(str(DEMO_TTL))
 
-    temp_env = OntoEnv(temporary=True, offline=True)
-    try:
-        temp_env.add(str(ttl))
-        with pytest.raises(ValueError, match="backend='rdf5d'"):
-            temp_env.snapshot_as_dataset(backend="rdf5d")
-    finally:
-        temp_env.close()
+    dataset = temporary_env.snapshot_as_dataset()
+    assert dataset.store._backend.backend_kind() == "copy"
+    rows = list(
+        dataset.query(
+            "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"
+        )
+    )
+    assert [row.label for row in rows] == [Literal("AHU-1")]
+
+
+def test_backend_rdf5d_rejects_temporary_and_graph_store_envs(temporary_env: OntoEnv) -> None:
+    temporary_env.add(str(DEMO_TTL))
+    with pytest.raises(ValueError, match="backend='rdf5d'"):
+        temporary_env.snapshot_as_dataset(backend="rdf5d")
 
     store = DictGraphStore()
     external_env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
@@ -119,63 +108,47 @@ def test_backend_rdf5d_rejects_temporary_and_graph_store_envs(tmp_path: Path) ->
         external_env.close()
 
 
-def test_refresh_dataset_from_env_is_explicit(tmp_path: Path) -> None:
-    first = tmp_path / "first.ttl"
-    second = tmp_path / "second.ttl"
-    _write_ttl(first, "urn:example:first", 'ex:first ex:hasLabel "First" .')
-    _write_ttl(second, "urn:example:second", 'ex:second ex:hasLabel "Second" .')
+def test_refresh_dataset_from_env_is_explicit(persistent_env: OntoEnv) -> None:
+    persistent_env.add(str(FIRST_TTL))
+    persistent_env.flush()
 
-    env = OntoEnv(path=tmp_path, recreate=True, offline=True)
-    try:
-        env.add(str(first))
-        env.flush()
-
-        dataset = env.snapshot_as_dataset()
-        assert dataset.store._backend.backend_kind() == "rdf5d"
-        assert list(
-            dataset.query(
-                "SELECT ?label WHERE { GRAPH <urn:example:second> { <urn:example:second> <urn:example:hasLabel> ?label } }"
-            )
-        ) == []
-
-        env.add(str(second))
-        env.flush()
-
-        assert list(
-            dataset.query(
-                "SELECT ?label WHERE { GRAPH <urn:example:second> { <urn:example:second> <urn:example:hasLabel> ?label } }"
-            )
-        ) == []
-
-        refresh_dataset_from_env(dataset, env)
-        rows = list(
-            dataset.query(
-                "SELECT ?label WHERE { GRAPH <urn:example:second> { <urn:example:second> <urn:example:hasLabel> ?label } }"
-            )
+    dataset = persistent_env.snapshot_as_dataset()
+    assert dataset.store._backend.backend_kind() == "rdf5d"
+    assert list(
+        dataset.query(
+            "SELECT ?label WHERE { GRAPH <urn:example:second> { <urn:example:second> <urn:example:hasLabel> ?label } }"
         )
-        assert [row.label for row in rows] == [Literal("Second")]
-    finally:
-        env.close()
+    ) == []
 
+    persistent_env.add(str(SECOND_TTL))
+    persistent_env.flush()
 
-def test_dataset_from_env_with_other_store_forces_copy(tmp_path: Path) -> None:
-    ttl = tmp_path / "demo.ttl"
-    _write_ttl(ttl, "urn:example:demo", 'ex:ahu1 ex:hasLabel "AHU-1" .')
-
-    env = OntoEnv(path=tmp_path, recreate=True, offline=True)
-    try:
-        env.add(str(ttl))
-        env.flush()
-
-        with pytest.raises(ValueError, match="requires an OntoEnvStore"):
-            env.snapshot_as_dataset(backend="rdf5d", store=Graph().store)
-
-        dataset = env.snapshot_as_dataset(store=Graph().store)
-        rows = list(
-            dataset.query(
-                "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"
-            )
+    assert list(
+        dataset.query(
+            "SELECT ?label WHERE { GRAPH <urn:example:second> { <urn:example:second> <urn:example:hasLabel> ?label } }"
         )
-        assert [row.label for row in rows] == [Literal("AHU-1")]
-    finally:
-        env.close()
+    ) == []
+
+    refresh_dataset_from_env(dataset, persistent_env)
+    rows = list(
+        dataset.query(
+            "SELECT ?label WHERE { GRAPH <urn:example:second> { <urn:example:second> <urn:example:hasLabel> ?label } }"
+        )
+    )
+    assert [row.label for row in rows] == [Literal("Second")]
+
+
+def test_dataset_from_env_with_other_store_forces_copy(persistent_env: OntoEnv) -> None:
+    persistent_env.add(str(DEMO_TTL))
+    persistent_env.flush()
+
+    with pytest.raises(ValueError, match="requires an OntoEnvStore"):
+        persistent_env.snapshot_as_dataset(backend="rdf5d", store=Graph().store)
+
+    dataset = persistent_env.snapshot_as_dataset(store=Graph().store)
+    rows = list(
+        dataset.query(
+            "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"
+        )
+    )
+    assert [row.label for row in rows] == [Literal("AHU-1")]
