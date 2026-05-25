@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
-## [0.6.0]
+## [0.5.5]
 
 ### Added
 - `OntoEnv.snapshot_as_dataset(backend="auto", store=None)` — return a read-only `rdflib.Dataset` view of the environment. `backend="rdf5d"` is a zero-copy mmap-backed view over the persistent `.ontoenv/store.r5tu` snapshot; `backend="copy"` materializes an in-memory copy; `backend="auto"` picks rdf5d when the snapshot file exists and copy otherwise.
