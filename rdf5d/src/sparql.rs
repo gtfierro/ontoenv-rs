@@ -11,12 +11,25 @@ use spargebra::Query;
 use crate::reader::{DecodedTerm, R5Error, R5tuFile};
 
 /// A read-only SPARQL dataset view over an [`R5tuFile`].
+///
+/// Implements `spareval::QueryableDataset` directly against the on-disk
+/// `.r5tu` representation: triple IDs are streamed out of `triples_ids`,
+/// terms are resolved through `decoded_term`, and `find_decoded_term` is used
+/// for reverse lookup of bound terms. No materialized in-memory copy of the
+/// store is required.
+///
+/// Each physical graph (gid) is exposed as a distinct named graph using its
+/// `graphname`; if two physical graphs share a name the SPARQL view will
+/// surface their triples twice. Callers that want by-name (logical-graph)
+/// deduplication should layer their own view on top.
 #[derive(Clone, Copy, Debug)]
 pub struct SparqlDatasetView<'a> {
     file: &'a R5tuFile,
 }
 
 impl<'a> SparqlDatasetView<'a> {
+    /// Construct a SPARQL view over an opened `.r5tu` file. The view borrows
+    /// the file and is therefore as cheap to create as an immutable reference.
     pub fn new(file: &'a R5tuFile) -> Self {
         Self { file }
     }

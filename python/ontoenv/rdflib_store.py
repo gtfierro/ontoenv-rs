@@ -1,3 +1,23 @@
+"""rdflib ``Store`` implementation backed by an OntoEnv snapshot.
+
+This module exposes :class:`OntoEnvStore` — a read-only rdflib ``Store`` that
+serves SPARQL queries through the Rust backend — and the high-level helpers
+:func:`dataset_from_env` and :func:`refresh_dataset_from_env`. End users
+typically don't import from here directly; they call ``env.snapshot_as_dataset()``
+on an :class:`ontoenv.OntoEnv`, which delegates to :func:`dataset_from_env`.
+
+Two backend strategies are available:
+
+- ``rdf5d`` — zero-copy view backed by the persistent ``.ontoenv/store.r5tu``
+  snapshot file. Fastest open and lowest memory. Requires a persistent local
+  env; not available for temporary envs or envs using a custom ``graph_store=``.
+- ``copy`` — materialize the env's quads into an in-memory ``OxDataset`` once.
+  Works for every env kind. Snapshot is independent of the env after the copy.
+
+The ``auto`` mode picks ``rdf5d`` when a persistent snapshot file exists and
+falls back to ``copy`` otherwise.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Generator, Iterable, Mapping
@@ -68,6 +88,24 @@ def dataset_from_env(
     store: Store | None = None,
     mode: Mode = "auto",
 ) -> Dataset:
+    """Return an ``rdflib.Dataset`` backed by an OntoEnv snapshot.
+
+    Prefer ``env.snapshot_as_dataset(backend=..., store=...)`` in user code;
+    this function is the underlying implementation.
+
+    Args:
+        env: An :class:`ontoenv.OntoEnv` instance.
+        store: Optional existing rdflib ``Store`` to bind the Dataset to. If
+            ``None``, a fresh :class:`OntoEnvStore` is created. If an
+            :class:`OntoEnvStore` is passed, it is refreshed against ``env``
+            using ``mode``. If any other ``Store`` is passed, ``mode='rdf5d'``
+            is rejected and the env is copied into the store via rdflib.
+        mode: ``"auto"``, ``"rdf5d"``, or ``"copy"``. See the module docstring.
+
+    Returns:
+        A read-only :class:`rdflib.Dataset` whose named graphs are keyed by
+        ontology IRI, with namespaces bound from the env.
+    """
     normalized_mode = _normalize_mode(mode)
     if store is None:
         store = OntoEnvStore.from_env(env, mode=normalized_mode)
@@ -93,6 +131,15 @@ def dataset_from_env(
 
 
 def refresh_dataset_from_env(dataset: Dataset, env: Any) -> None:
+    """Re-snapshot ``env`` into an existing OntoEnvStore-backed ``dataset``.
+
+    Snapshots are point-in-time; subsequent ``env.add()`` / ``env.flush()``
+    calls aren't reflected in the Dataset until you call this. The originally
+    chosen backend (``rdf5d`` vs ``copy``) is preserved.
+
+    Raises:
+        TypeError: if ``dataset.store`` is not an :class:`OntoEnvStore`.
+    """
     if not isinstance(dataset.store, OntoEnvStore):
         raise TypeError("refresh_dataset_from_env() requires a dataset backed by OntoEnvStore")
     dataset.store.refresh_from_env(env)
@@ -100,6 +147,19 @@ def refresh_dataset_from_env(dataset: Dataset, env: Any) -> None:
 
 
 class OntoEnvStore(Store):
+    """A read-only rdflib ``Store`` backed by an OntoEnv snapshot.
+
+    SPARQL queries are executed by the Rust backend rather than rdflib's
+    Python query engine. Writes (``add``, ``addN``, ``remove``) raise
+    ``ValueError`` — snapshots are immutable; mutate the underlying
+    :class:`ontoenv.OntoEnv` and call :func:`refresh_dataset_from_env` instead.
+
+    Construct via :meth:`from_env` or, more commonly, via
+    ``env.snapshot_as_dataset()``. Creating an ``OntoEnvStore()`` directly
+    yields an empty store, which is mostly useful as the rdflib plugin
+    ``Graph(store='ontoenv')``.
+    """
+
     context_aware = True
     graph_aware = True
     formula_aware = False
@@ -119,6 +179,7 @@ class OntoEnvStore(Store):
 
     @classmethod
     def from_env(cls, env: Any, mode: Mode = "auto") -> "OntoEnvStore":
+        """Build a new ``OntoEnvStore`` and bind it to a snapshot of ``env``."""
         store = cls()
         store.refresh_from_env(env, mode=mode)
         return store
@@ -136,6 +197,12 @@ class OntoEnvStore(Store):
         self._env_mode = None
 
     def refresh_from_env(self, env: Any, mode: Mode | None = None) -> None:
+        """Rebind this store to a fresh snapshot of ``env``.
+
+        If ``mode`` is omitted, the previously chosen backend is reused (or
+        ``"auto"`` on first call). Namespace bindings are cleared and
+        re-populated from ``env.get_namespaces()``.
+        """
         normalized_mode = _normalize_mode(mode or self._env_mode or "auto")
         if normalized_mode == "rdf5d":
             store_file = _require_snapshot_store_file(env)
