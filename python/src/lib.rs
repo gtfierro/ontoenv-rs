@@ -1232,6 +1232,12 @@ impl Rdf5dSnapshot {
     }
 }
 
+/// The storage strategy currently bound to an `OntoEnvStore`.
+///
+/// `EnvSnapshotMaterialized` holds an in-memory `OxDataset` copy of the env's
+/// quads (the `copy` backend). `EnvSnapshotRdf5d` holds an mmap-backed view of
+/// a `.ontoenv/store.r5tu` file (the `rdf5d` backend). Rebinding the store
+/// (via `refresh_from_env`) swaps the variant.
 #[derive(Debug)]
 enum RdfLibStoreBackend {
     EnvSnapshotMaterialized { dataset: Arc<OxDataset> },
@@ -1329,6 +1335,12 @@ fn subject_to_term(subject: &NamedOrBlankNode) -> Term {
     }
 }
 
+/// `spareval::QueryableDataset` adapter that exposes an `Rdf5dSnapshot` as
+/// a SPARQL-queryable dataset organized by logical (by-name) graph.
+///
+/// Differs from `rdf5d::SparqlDatasetView` in that it deduplicates triples
+/// across the physical gids that share a single graph name, so SPARQL sees
+/// each logical graph as a single named graph.
 #[derive(Clone, Copy, Debug)]
 struct LogicalSparqlDatasetView<'a> {
     snapshot: &'a Rdf5dSnapshot,
@@ -1712,6 +1724,12 @@ impl PyRdfLibStoreBackend {
         }
     }
 
+    /// Bind this store to an in-memory snapshot built from a Python-supplied
+    /// iterable of `(subject, predicate, object, context)` rdflib tuples.
+    ///
+    /// Slower than `bind_env_snapshot` because every term crosses the Python
+    /// boundary; retained as a public entry point for callers that already
+    /// have quads in Python and don't have a backing `OntoEnv`.
     fn bind_materialized_snapshot(
         &self,
         quads: &Bound<'_, PyAny>,
@@ -1787,6 +1805,8 @@ impl PyRdfLibStoreBackend {
         Ok(())
     }
 
+    /// Bind this store to an mmap-backed, zero-copy `Rdf5dSnapshot` opened
+    /// from `store_path` (typically `.ontoenv/store.r5tu`).
     fn bind_rdf5d_snapshot(&self, store_path: &str) -> PyResult<()> {
         let snapshot = Rdf5dSnapshot::open(Path::new(store_path)).map_err(anyhow_to_pyerr)?;
         let mut backend = self.backend.lock().unwrap();
@@ -2230,6 +2250,9 @@ struct OntoEnv {
 }
 
 impl OntoEnv {
+    /// Internal helper that delegates Dataset construction to the Python-side
+    /// `ontoenv.rdflib_store.dataset_from_env` factory. Used by
+    /// `snapshot_as_dataset`; not exposed to Python.
     fn build_dataset(
         &self,
         py: Python<'_>,
