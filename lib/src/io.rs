@@ -11,7 +11,9 @@ use chrono::prelude::*;
 use fs2::FileExt;
 use log::{error, info};
 use oxigraph::io::{RdfFormat, RdfParser};
-use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad};
+use oxigraph::model::{
+    Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad, QuadRef,
+};
 use oxigraph::store::Store;
 use rdf5d::{
     reader::R5tuFile,
@@ -185,6 +187,14 @@ pub trait GraphIO: Send + Sync {
         overwrite: Overwrite,
     ) -> Result<Ontology>;
 
+    /// Hook for backends that lazy-load graphs from on-disk storage into the
+    /// in-memory store on first access. Default is a no-op. Persistent backends
+    /// override this so that callers iterating `store()` directly (e.g.
+    /// `union_graph`) still see the graph's quads.
+    fn ensure_loaded(&self, _id: &GraphIdentifier) -> Result<()> {
+        Ok(())
+    }
+
     /// Returns the graph with the given identifier
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let mut graph = Graph::new();
@@ -217,20 +227,36 @@ pub trait GraphIO: Send + Sync {
 
     /// Returns the union of the graphs with the given identifiers
     fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
-        let mut graph = Dataset::new();
+        // Stream quads from the store directly into the Dataset. The previous
+        // implementation materialized an intermediate Graph per id, which paid
+        // for an extra hashmap insert per triple and an N-graph allocation.
+        let mut dataset = Dataset::new();
         for id in ids {
-            let graphname = id.graphname().unwrap();
-            let g = self.get_graph(id).unwrap();
-            for t in g.iter() {
-                graph.insert(&Quad::new(
-                    t.subject,
-                    t.predicate,
-                    t.object,
-                    graphname.clone(),
+            let graphname = match id.graphname() {
+                Ok(gn) => gn,
+                Err(_) => continue,
+            };
+            // For persistent backends, ensure the named graph is in the in-memory store.
+            if self.ensure_loaded(id).is_err() {
+                continue;
+            }
+            for quad in self
+                .store()
+                .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+            {
+                let q = match quad {
+                    Ok(q) => q,
+                    Err(_) => continue,
+                };
+                dataset.insert(QuadRef::new(
+                    q.subject.as_ref(),
+                    q.predicate.as_ref(),
+                    q.object.as_ref(),
+                    graphname.as_ref(),
                 ));
             }
         }
-        graph
+        dataset
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -642,6 +668,10 @@ impl GraphIO for PersistentGraphIO {
         drop(loaded);
         self.on_store_mutated()?;
         Ok(())
+    }
+
+    fn ensure_loaded(&self, id: &GraphIdentifier) -> Result<()> {
+        self.ensure_graph_loaded(id.name().as_str())
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {

@@ -129,6 +129,12 @@ impl Environment {
 
     /// Returns a cloned `Ontology` for the provided identifier using the default resolution policy.
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Option<Ontology> {
+        // Fast path: an exact GraphIdentifier hit needs no policy resolution.
+        // This avoids allocating a Vec<&Ontology> of every entry on every lookup,
+        // which is hot during dependency graph construction.
+        if let Some(ontology) = self.ontologies.get(id) {
+            return Some(ontology.clone());
+        }
         self.get_ontology_with_policy(id.into(), &*self.default_policy)
     }
 
