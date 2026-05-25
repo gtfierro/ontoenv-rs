@@ -226,28 +226,20 @@ pub trait GraphIO: Send + Sync {
     }
 
     /// Returns the union of the graphs with the given identifiers
-    fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
+    fn union_graph(&self, ids: &[GraphIdentifier]) -> Result<Dataset> {
         // Stream quads from the store directly into the Dataset. The previous
         // implementation materialized an intermediate Graph per id, which paid
         // for an extra hashmap insert per triple and an N-graph allocation.
         let mut dataset = Dataset::new();
         for id in ids {
-            let graphname = match id.graphname() {
-                Ok(gn) => gn,
-                Err(_) => continue,
-            };
+            let graphname = id.graphname()?;
             // For persistent backends, ensure the named graph is in the in-memory store.
-            if self.ensure_loaded(id).is_err() {
-                continue;
-            }
+            self.ensure_loaded(id)?;
             for quad in self
                 .store()
                 .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
             {
-                let q = match quad {
-                    Ok(q) => q,
-                    Err(_) => continue,
-                };
+                let q = quad.map_err(|e| anyhow!("union_graph store error: {}", e))?;
                 dataset.insert(QuadRef::new(
                     q.subject.as_ref(),
                     q.predicate.as_ref(),
@@ -256,7 +248,7 @@ pub trait GraphIO: Send + Sync {
                 ));
             }
         }
-        dataset
+        Ok(dataset)
     }
 
     fn flush(&mut self) -> Result<()> {

@@ -286,6 +286,44 @@ enum FetchOutcome {
     Loaded(Box<Ontology>),
 }
 
+/// Snapshot of the four mutable fields of [`OntoEnv`] that together form the
+/// in-memory ontology environment state. Used by [`OntoEnv::with_env_transaction`]
+/// to give callers atomic begin/commit/rollback semantics around operations
+/// that can fail partway through (e.g. dependency-graph construction that
+/// hits a strict-mode unresolved import after several successful adds).
+///
+/// Not transactional with respect to `self.io` writes (rdf5d/oxigraph store
+/// mutations). A rollback may leave the IO store with orphan named graphs;
+/// see the note above [`OntoEnv::add_ids_to_dependency_graph`].
+pub(crate) struct EnvTransaction {
+    env: Environment,
+    dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
+    dependency_graph_index: HashMap<GraphIdentifier, NodeIndex>,
+    failed_resolutions: HashSet<NamedNode>,
+}
+
+impl EnvTransaction {
+    /// Snapshot the mutable in-memory state of `target` so it can be restored
+    /// later via [`Self::restore`].
+    pub(crate) fn snapshot(target: &OntoEnv) -> Self {
+        Self {
+            env: target.env.clone(),
+            dependency_graph: target.dependency_graph.clone(),
+            dependency_graph_index: target.dependency_graph_index.clone(),
+            failed_resolutions: target.failed_resolutions.clone(),
+        }
+    }
+
+    /// Move the snapshotted state back into `target`, discarding any in-flight
+    /// mutations made since [`Self::snapshot`] was called.
+    pub(crate) fn restore(self, target: &mut OntoEnv) {
+        target.env = self.env;
+        target.dependency_graph = self.dependency_graph;
+        target.dependency_graph_index = self.dependency_graph_index;
+        target.failed_resolutions = self.failed_resolutions;
+    }
+}
+
 pub struct OntoEnv {
     env: Environment,
     io: Box<dyn GraphIO>,
@@ -1812,7 +1850,44 @@ impl OntoEnv {
         Ok(files.into_iter().collect())
     }
 
+    /// Runs `f` against `self` inside a state snapshot. On `Ok`, the snapshot
+    /// is discarded (commit). On `Err`, the snapshotted state is restored
+    /// before the error propagates (rollback).
+    ///
+    /// NOTE: only covers the in-memory fields captured by [`EnvTransaction`].
+    /// `self.io` writes are *not* rolled back; callers that mutate the IO
+    /// store inside the closure must accept that orphan graphs may remain on
+    /// rollback. Today this is acceptable: subsequent runs are idempotent and
+    /// the orphans are pruned at next refresh.
+    pub(crate) fn with_env_transaction<F, R>(&mut self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut OntoEnv) -> Result<R>,
+    {
+        let snapshot = EnvTransaction::snapshot(self);
+        match f(self) {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                snapshot.restore(self);
+                Err(e)
+            }
+        }
+    }
+
     fn add_ids_to_dependency_graph(&mut self, ids: Vec<GraphIdentifier>) -> Result<()> {
+        // Wrap the multi-step env + dep-graph rebuild in a transaction so a
+        // mid-traversal error (typically `self.io.add(...)` failing in strict
+        // mode after earlier successful imports) doesn't leave `self.env`,
+        // `self.dependency_graph`, `self.dependency_graph_index`, and
+        // `self.failed_resolutions` desynced from each other.
+        //
+        // NOTE: rdf5d/oxigraph store writes inside `self.io.add` are *not*
+        // covered by this rollback. If we roll back env after a successful
+        // io.add, the named graph remains in the store as an orphan. This is
+        // a known limitation; existing refresh/prune paths reconcile.
+        self.with_env_transaction(|s| s.add_ids_to_dependency_graph_inner(ids))
+    }
+
+    fn add_ids_to_dependency_graph_inner(&mut self, ids: Vec<GraphIdentifier>) -> Result<()> {
         // Walk the imports closure to ensure all reachable ontologies are loaded.
         // traverse the owl:imports closure and build the dependency graph
         let mut stack: VecDeque<GraphIdentifier> = ids.into();
@@ -1825,8 +1900,10 @@ impl OntoEnv {
             }
             seen.insert(graphid.clone());
             // get the ontology metadata record for this graph. If we don't have
-            // it and we're in strict mode, return an error. Otherwise just skip it
-            let ontology = match self.env.get_ontology(&graphid) {
+            // it and we're in strict mode, return an error. Otherwise just skip it.
+            // Use the direct id lookup; we want THIS exact graph, not whatever the
+            // configured ResolutionPolicy would map this name to.
+            let ontology = match self.env.get_ontology_by_id(&graphid) {
                 Some(ontology) => ontology,
                 None => {
                     let msg = format!("Could not find ontology: {graphid:?}");
@@ -1979,10 +2056,13 @@ impl OntoEnv {
         }
 
         let Some(&root_idx) = self.dependency_graph_index.get(id) else {
-            // No dep graph entry (e.g. graph never traversed). Fall back to a
-            // trivial single-node closure.
-            info!("Dependency closure for {:?}: 1 (no graph entry)", id);
-            return Ok(vec![id.clone()]);
+            // No dep graph entry. With env mutations now transactional in
+            // `add_ids_to_dependency_graph`, the only way to reach this branch
+            // is the intentional `add(..., update_dependencies=false)` public
+            // API path. Fall back to the legacy name-resolution traversal so
+            // the closure is still correct, at the cost of per-step linear
+            // lookups.
+            return self.get_closure_via_name_resolution(id, recursion_depth);
         };
 
         let mut result: Vec<GraphIdentifier> = Vec::new();
@@ -2030,6 +2110,59 @@ impl OntoEnv {
         Ok(result)
     }
 
+    /// Fallback closure traversal that resolves imports by name on each step
+    /// instead of walking `dependency_graph`. Used by [`get_closure`] when the
+    /// requested id isn't represented in `dependency_graph_index` (e.g. an
+    /// ontology was added without updating the dependency graph). Slower than
+    /// the indexed BFS path because it does a name lookup per import, but does
+    /// not require `dependency_graph_index` to be populated.
+    fn get_closure_via_name_resolution(
+        &self,
+        id: &GraphIdentifier,
+        recursion_depth: i32,
+    ) -> Result<Vec<GraphIdentifier>> {
+        let mut closure: HashSet<GraphIdentifier> = HashSet::new();
+        let mut order: Vec<GraphIdentifier> = Vec::new();
+        let mut stack: VecDeque<(GraphIdentifier, i32)> = VecDeque::new();
+        stack.push_back((id.clone(), 0));
+        while let Some((graph, depth)) = stack.pop_front() {
+            if !closure.insert(graph.clone()) {
+                continue;
+            }
+            order.push(graph.clone());
+
+            if recursion_depth >= 0 && depth >= recursion_depth {
+                continue;
+            }
+
+            let ontology = self
+                .ontologies()
+                .get(&graph)
+                .ok_or_else(|| anyhow!("Ontology {} not found", graph.to_uri_string()))?;
+            for import in &ontology.imports {
+                let import = match self.env.get_ontology_by_name(import.into()) {
+                    Some(imp) => imp.id().clone(),
+                    None => {
+                        if self.config.strict {
+                            return Err(anyhow!("Import not found: {}", import));
+                        }
+                        warn!("Import not found: {import}");
+                        continue;
+                    }
+                };
+                if !closure.contains(&import) {
+                    stack.push_back((import, depth + 1));
+                }
+            }
+        }
+        info!(
+            "Dependency closure for {:?} (fallback): {:?}",
+            id,
+            order.len()
+        );
+        Ok(order)
+    }
+
     pub fn get_union_graph<'a, I>(
         &self,
         graph_ids: I,
@@ -2049,7 +2182,7 @@ impl OntoEnv {
         }
 
         // Merge all named graphs into a single dataset in IO order.
-        let mut dataset = self.io.union_graph(&graph_ids);
+        let mut dataset = self.io.union_graph(&graph_ids)?;
         let root_ontology = NamedOrBlankNodeRef::NamedNode(root);
 
         // Merge namespace maps so downstream tools can re-materialize prefixes.
@@ -2688,6 +2821,108 @@ mod tests {
         assert!(
             second_ts > first_ts,
             "update --all should force refresh even when cache is enabled"
+        );
+    }
+
+    /// Build a temporary, offline OntoEnv with one ontology already registered,
+    /// so transaction tests have non-trivial pre-state to roll back to.
+    fn build_env_with_ontology() -> (OntoEnv, tempfile::TempDir, GraphIdentifier) {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let ttl_path = root.join("A.ttl");
+        std::fs::write(
+            &ttl_path,
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <http://example.com/tx-A> a owl:Ontology .",
+        )
+        .unwrap();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(true)
+            .locations(vec![ttl_path.clone()])
+            .build()
+            .unwrap();
+        let mut env = OntoEnv::init(config, true).unwrap();
+        env.update_all(false).unwrap();
+        let id = env
+            .env
+            .ontologies()
+            .keys()
+            .next()
+            .expect("seeded ontology should be registered")
+            .clone();
+        (env, tmp, id)
+    }
+
+    #[test]
+    fn env_transaction_restore_undoes_direct_mutations() {
+        let (mut env, _tmp, _id) = build_env_with_ontology();
+        let pre_onts = env.env.ontologies().len();
+        let pre_dep_nodes = env.dependency_graph.node_count();
+        let pre_index = env.dependency_graph_index.len();
+        let pre_failed = env.failed_resolutions.len();
+
+        let snapshot = EnvTransaction::snapshot(&env);
+
+        // Mutate every field the snapshot covers.
+        env.env = Environment::new();
+        env.dependency_graph = DiGraph::new();
+        env.dependency_graph_index.clear();
+        env.failed_resolutions
+            .insert(NamedNode::new_unchecked("http://example.com/tx-fake"));
+        assert_eq!(env.env.ontologies().len(), 0);
+
+        snapshot.restore(&mut env);
+
+        assert_eq!(env.env.ontologies().len(), pre_onts);
+        assert_eq!(env.dependency_graph.node_count(), pre_dep_nodes);
+        assert_eq!(env.dependency_graph_index.len(), pre_index);
+        assert_eq!(env.failed_resolutions.len(), pre_failed);
+    }
+
+    #[test]
+    fn with_env_transaction_rolls_back_on_err() {
+        let (mut env, _tmp, _id) = build_env_with_ontology();
+        let pre_onts = env.env.ontologies().len();
+        let pre_dep_nodes = env.dependency_graph.node_count();
+        let pre_index = env.dependency_graph_index.len();
+
+        let result: Result<()> = env.with_env_transaction(|s| {
+            s.env = Environment::new();
+            s.dependency_graph = DiGraph::new();
+            s.dependency_graph_index.clear();
+            s.failed_resolutions
+                .insert(NamedNode::new_unchecked("http://example.com/tx-fail"));
+            Err(anyhow!("simulated mid-operation failure"))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(env.env.ontologies().len(), pre_onts);
+        assert_eq!(env.dependency_graph.node_count(), pre_dep_nodes);
+        assert_eq!(env.dependency_graph_index.len(), pre_index);
+        assert!(
+            !env
+                .failed_resolutions
+                .contains(&NamedNode::new_unchecked("http://example.com/tx-fail")),
+            "failed_resolutions mutation should have rolled back"
+        );
+    }
+
+    #[test]
+    fn with_env_transaction_commits_on_ok() {
+        let (mut env, _tmp, _id) = build_env_with_ontology();
+        let marker = NamedNode::new_unchecked("http://example.com/tx-commit");
+
+        let result: Result<()> = env.with_env_transaction(|s| {
+            s.failed_resolutions.insert(marker.clone());
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert!(
+            env.failed_resolutions.contains(&marker),
+            "Ok-return should commit mutations"
         );
     }
 }
