@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Optional, List, Union, Tuple, Dict
 from rdflib import Graph, Dataset
+from rdflib.query import Result
+from rdflib.store import Store
 
 # Exposed module metadata
 version: str
@@ -246,8 +248,27 @@ class OntoEnv:
         """
         ...
 
-    def to_rdflib_dataset(self) -> Dataset:
-        """Return all named graphs as an ``rdflib.Dataset``."""
+    def snapshot_as_dataset(
+        self,
+        backend: str = "auto",
+        store: Optional[Store] = None,
+    ) -> Dataset:
+        """Return a point-in-time ``rdflib.Dataset`` view of the environment.
+
+        ``backend`` is one of ``"auto"`` (default), ``"rdf5d"``, or ``"copy"``.
+        ``"auto"`` picks ``"rdf5d"`` when a persistent ``.ontoenv/store.r5tu``
+        exists and ``"copy"`` otherwise. ``"rdf5d"`` forces the zero-copy
+        mmap-backed path and raises ``ValueError`` for temporary or
+        ``graph_store=``-backed envs. ``"copy"`` always materializes the env
+        into an in-memory snapshot.
+        """
+        ...
+
+    def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
+        """Deprecated alias for :meth:`snapshot_as_dataset`.
+
+        Emits ``DeprecationWarning``. Calls ``snapshot_as_dataset(backend=mode)``.
+        """
         ...
 
     def dump(self, includes: Optional[str] = None) -> None:
@@ -274,3 +295,25 @@ class OntoEnv:
 
     def flush(self) -> None: ...
     def close(self) -> None: ...
+
+
+class OntoEnvStore:
+    """rdflib Store implementation backed by OntoEnv's native query engine."""
+
+    def __init__(self, configuration: Optional[str] = None, identifier: Optional[object] = None) -> None: ...
+    @classmethod
+    def from_env(cls, env: OntoEnv, mode: str = "auto") -> OntoEnvStore: ...
+    def open(self, configuration: Optional[str], create: bool = False) -> int: ...
+    def close(self, commit_pending_transaction: bool = False) -> None: ...
+    def destroy(self, configuration: str) -> None: ...
+    def refresh_from_env(self, env: OntoEnv, mode: Optional[str] = None) -> None: ...
+    def add(self, triple: Tuple[object, object, object], context: object, quoted: bool = False) -> None: ...
+    def addN(self, quads: List[Tuple[object, object, object, object]]) -> None: ...
+    def remove(self, triple_pattern: Tuple[Optional[object], Optional[object], Optional[object]], context: Optional[object] = None) -> None: ...
+    def triples(self, triple_pattern: Tuple[Optional[object], Optional[object], Optional[object]], context: Optional[object] = None) -> object: ...
+    def contexts(self, triple: Optional[Tuple[object, object, object]] = None) -> object: ...
+    def query(self, query: object, initNs: Dict[str, object], initBindings: Dict[str, object], queryGraph: str, **kwargs: object) -> Result: ...
+
+
+def dataset_from_env(env: OntoEnv, store: Optional[object] = None, mode: str = "auto") -> Dataset: ...
+def refresh_dataset_from_env(dataset: Dataset, env: OntoEnv) -> None: ...
