@@ -290,6 +290,10 @@ pub struct OntoEnv {
     env: Environment,
     io: Box<dyn GraphIO>,
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
+    /// Maps GraphIdentifier to its NodeIndex in `dependency_graph`. Kept in sync
+    /// with the graph so that traversals (closure, importers, paths) avoid a
+    /// linear scan of `node_indices()` per lookup.
+    dependency_graph_index: HashMap<GraphIdentifier, NodeIndex>,
     config: Config,
     failed_resolutions: HashSet<NamedNode>,
     batch_state: BatchState,
@@ -323,6 +327,7 @@ impl OntoEnv {
             io,
             config,
             dependency_graph: DiGraph::new(),
+            dependency_graph_index: HashMap::new(),
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
         }
@@ -533,6 +538,7 @@ impl OntoEnv {
     pub fn refresh_from_graph_io(&mut self) -> Result<()> {
         self.env = Environment::new();
         self.dependency_graph = DiGraph::new();
+        self.dependency_graph_index.clear();
         self.init_from_graph_io()
     }
 
@@ -721,11 +727,16 @@ impl OntoEnv {
             io = new_io;
         }
 
+        let dependency_graph_index = dependency_graph
+            .node_indices()
+            .map(|i| (dependency_graph[i].clone(), i))
+            .collect();
         let mut ontoenv = OntoEnv {
             env,
             io,
             config,
             dependency_graph,
+            dependency_graph_index,
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
         };
@@ -877,6 +888,7 @@ impl OntoEnv {
             env,
             io,
             dependency_graph: DiGraph::new(),
+            dependency_graph_index: HashMap::new(),
             config,
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
@@ -1923,12 +1935,14 @@ impl OntoEnv {
             }
         }
         self.dependency_graph = graph;
+        self.dependency_graph_index = indexes;
         Ok(())
     }
 
     fn rebuild_dependency_graph(&mut self) -> Result<()> {
         let ids: Vec<GraphIdentifier> = self.env.ontologies().keys().cloned().collect();
         self.dependency_graph = DiGraph::new();
+        self.dependency_graph_index.clear();
         if ids.is_empty() {
             return Ok(());
         }
@@ -1957,51 +1971,63 @@ impl OntoEnv {
         id: &GraphIdentifier,
         recursion_depth: i32,
     ) -> Result<Vec<GraphIdentifier>> {
-        // Traverse imports with optional depth limit to build a dependency closure.
-        let mut closure: HashSet<GraphIdentifier> = HashSet::new();
-        let mut stack: VecDeque<(GraphIdentifier, i32)> = VecDeque::new();
+        // Walk the pre-built dependency graph via BFS. This avoids per-step
+        // import name resolution (which would otherwise fall through the alias
+        // map into a linear scan of every ontology in the environment).
+        if !self.ontologies().contains_key(id) {
+            return Err(anyhow!("Ontology {} not found", id.to_uri_string()));
+        }
 
-        // TODO: how to handle a graph which is not in the environment?
+        let Some(&root_idx) = self.dependency_graph_index.get(id) else {
+            // No dep graph entry (e.g. graph never traversed). Fall back to a
+            // trivial single-node closure.
+            info!("Dependency closure for {:?}: 1 (no graph entry)", id);
+            return Ok(vec![id.clone()]);
+        };
 
-        stack.push_back((id.clone(), 0));
-        while let Some((graph, depth)) = stack.pop_front() {
-            if !closure.insert(graph.clone()) {
-                continue;
-            }
+        let mut result: Vec<GraphIdentifier> = Vec::new();
+        result.push(id.clone());
+        let mut visited: HashSet<NodeIndex> = HashSet::with_capacity(8);
+        visited.insert(root_idx);
+        let mut queue: VecDeque<(NodeIndex, i32)> = VecDeque::new();
+        queue.push_back((root_idx, 0));
 
+        while let Some((idx, depth)) = queue.pop_front() {
             if recursion_depth >= 0 && depth >= recursion_depth {
                 continue;
             }
-
-            let ontology = self
-                .ontologies()
-                .get(&graph)
-                .ok_or_else(|| anyhow!("Ontology {} not found", graph.to_uri_string()))?;
-            for import in &ontology.imports {
-                // get graph identifier for import
-                let import = match self.env.get_ontology_by_name(import.into()) {
-                    Some(imp) => imp.id().clone(),
-                    None => {
-                        if self.config.strict {
-                            return Err(anyhow::anyhow!("Import not found: {}", import));
-                        }
-                        warn!("Import not found: {import}");
-                        continue;
-                    }
-                };
-                if !closure.contains(&import) {
-                    stack.push_back((import, depth + 1));
+            for edge in self
+                .dependency_graph
+                .edges_directed(idx, petgraph::Direction::Outgoing)
+            {
+                let target = edge.target();
+                if visited.insert(target) {
+                    let dep_id = &self.dependency_graph[target];
+                    result.push(dep_id.clone());
+                    queue.push_back((target, depth + 1));
                 }
             }
         }
-        // remove the original graph from the closure
-        let mut closure: Vec<GraphIdentifier> = closure.into_iter().collect();
-        if let Some(pos) = closure.iter().position(|x| x == id) {
-            let root = closure.remove(pos);
-            closure.insert(0, root);
+
+        // In strict mode, surface unresolved imports as an error to match prior
+        // semantics. The dependency graph only contains edges for resolved
+        // imports, so check raw ontology metadata for the visited set.
+        if self.config.strict {
+            for graph_id in &result {
+                let ontology = self
+                    .ontologies()
+                    .get(graph_id)
+                    .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
+                for import in &ontology.imports {
+                    if self.env.get_ontology_by_name(import.into()).is_none() {
+                        return Err(anyhow!("Import not found: {}", import));
+                    }
+                }
+            }
         }
-        info!("Dependency closure for {:?}: {:?}", id, closure.len());
-        Ok(closure)
+
+        info!("Dependency closure for {:?}: {:?}", id, result.len());
+        Ok(result)
     }
 
     pub fn get_union_graph<'a, I>(
@@ -2027,9 +2053,15 @@ impl OntoEnv {
         let root_ontology = NamedOrBlankNodeRef::NamedNode(root);
 
         // Merge namespace maps so downstream tools can re-materialize prefixes.
+        // Borrow ontologies directly from the environment to avoid cloning each
+        // Ontology and running the resolution policy per closure entry.
         let mut namespace_map = HashMap::new();
         for graph_id in &graph_ids {
-            let ontology = self.get_ontology(graph_id)?;
+            let ontology = self
+                .env
+                .ontologies()
+                .get(graph_id)
+                .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
             namespace_map.extend(
                 ontology
                     .namespace_map()
@@ -2118,13 +2150,21 @@ impl OntoEnv {
             let closure = self.get_closure(id, -1)?;
             let mut namespace_map = HashMap::new();
             for graph_id in &closure {
-                let ontology = self.get_ontology(graph_id)?;
-                namespace_map.extend(self.collect_ontology_prefixes(&ontology));
+                let ontology = self
+                    .env
+                    .ontologies()
+                    .get(graph_id)
+                    .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
+                namespace_map.extend(self.collect_ontology_prefixes(ontology));
             }
             Ok(namespace_map)
         } else {
-            let ontology = self.get_ontology(id)?;
-            Ok(self.collect_ontology_prefixes(&ontology))
+            let ontology = self
+                .env
+                .ontologies()
+                .get(id)
+                .ok_or_else(|| anyhow!("Ontology {} not found", id.to_uri_string()))?;
+            Ok(self.collect_ontology_prefixes(ontology))
         }
     }
 
@@ -2166,12 +2206,10 @@ impl OntoEnv {
         transform::remove_ontology_declarations(&mut union.dataset, root_nb);
 
         // Flatten dataset into a single graph, ignoring named graph labels.
+        // No need to filter owl:imports here: `remove_owl_imports` above already
+        // stripped every owl:imports triple from the dataset.
         let mut graph = Graph::new();
         for quad in union.dataset.iter() {
-            // Drop owl:imports on non-root subjects to prevent retaining inner edges in cycles.
-            if quad.predicate == IMPORTS && quad.subject != root_nb {
-                continue;
-            }
             graph.insert(TripleRef::new(quad.subject, quad.predicate, quad.object));
         }
         // Re-attach imports of the imported ontology and its dependencies onto the root; skip self-imports and dedup.
