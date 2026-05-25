@@ -15,8 +15,8 @@ All notable changes to this project are documented here. Releases follow [Semant
 - `Rdf5dSnapshot::open` is now O(graphs) rather than O(triples) — per-logical-graph unique-triple counts are computed lazily via `OnceLock`, with a single-gid fast path that trusts the GDIR `n_triples` directly. Reverse term lookup (`find_term_id`) memoizes against `R5tuFile::find_decoded_term` so repeated SPARQL bindings of the same IRI stop re-scanning the term table.
 - Copy-fallback Dataset construction (the `backend="copy"` / `backend="auto"` fallback path) builds the materialized `OxDataset` directly from the inner Rust `OntoEnv`, dropping the previous round-trip through an intermediate `rdflib.Dataset`.
 
-### Removed (breaking)
-- `OntoEnv.to_rdflib_dataset(mode=...)` — replaced by `OntoEnv.snapshot_as_dataset(backend=..., store=...)`. The new method has the same default behavior but renames the parameter (`mode` → `backend`) and accepts an optional `store=` to rebind an existing rdflib `Store`. Error messages now reference `backend=` accordingly.
+### Deprecated
+- `OntoEnv.to_rdflib_dataset(mode=...)` — use `OntoEnv.snapshot_as_dataset(backend=..., store=...)` instead. The old method still works (and forwards to the new one) but now emits `DeprecationWarning`. The new method renames the parameter (`mode` → `backend`) and accepts an optional `store=` to rebind an existing rdflib `Store`; error messages now reference `backend=` accordingly.
 
 ---
 

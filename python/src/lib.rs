@@ -3392,6 +3392,23 @@ impl OntoEnv {
         self.build_dataset(py, backend, store)
     }
 
+    /// Deprecated alias for :meth:`snapshot_as_dataset`. Emits
+    /// ``DeprecationWarning`` and delegates with ``backend=mode``.
+    #[pyo3(signature = (mode = "auto"))]
+    fn to_rdflib_dataset(&self, py: Python, mode: &str) -> PyResult<Py<PyAny>> {
+        let warnings = py.import("warnings")?;
+        warnings.call_method1(
+            "warn",
+            (
+                "OntoEnv.to_rdflib_dataset() is deprecated; use \
+                 OntoEnv.snapshot_as_dataset(backend=...) instead",
+                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                2u32,
+            ),
+        )?;
+        self.build_dataset(py, mode, None)
+    }
+
     // Config accessors
     fn is_offline(&self) -> PyResult<bool> {
         let inner = self.inner.clone();
