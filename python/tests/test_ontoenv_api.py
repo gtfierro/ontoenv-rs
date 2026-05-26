@@ -261,6 +261,18 @@ class TestOntoEnvAPI(unittest.TestCase):
         materialized.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
         self.assertIn((URIRef("urn:test"), RDF.type, OWL.Ontology), materialized)
 
+    def test_get_graph_visible_without_explicit_flush(self):
+        """After add() without an explicit flush(), get_graph still sees the new ontology.
+
+        Earlier the cached Dataset was rebuilt against the stale on-disk rdf5d
+        snapshot under backend='auto'; the cache rebuild now flushes first.
+        """
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        name = self.env.add(str(self.brick_file_path))
+        # No env.flush() here — the cache miss should trigger one for us.
+        g = self.env.get_graph(name)
+        self.assertGreater(len(g), 0)
+
     def test_get_graph_unknown_uri_raises(self):
         """get_graph on an unknown URI raises ValueError, not an empty Graph."""
         self.env = OntoEnv(path=self.test_dir, recreate=True)
