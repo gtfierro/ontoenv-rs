@@ -2351,6 +2351,20 @@ impl OntoEnv {
             cache.generation
         };
 
+        // Flush before rebuilding so that the rdf5d snapshot file picked up
+        // by backend="auto" reflects any in-memory mutations since the last
+        // flush. flush() is a no-op when the env isn't dirty (see io.rs's
+        // dirty-flag short-circuit), so this is cheap on read-mostly
+        // workloads and avoids silently returning empty graphs for
+        // unflushed-add cases.
+        {
+            let inner = self.inner.clone();
+            let mut guard = inner.lock().unwrap();
+            if let Some(env) = guard.as_mut() {
+                env.flush().map_err(anyhow_to_pyerr)?;
+            }
+        }
+
         // Build outside the cache lock: dataset construction re-enters Python.
         let dataset = self.build_dataset(py, "auto", None)?;
 
