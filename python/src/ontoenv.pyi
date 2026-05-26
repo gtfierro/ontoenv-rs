@@ -308,6 +308,10 @@ class OntoEnv:
     # Pythonic sugar                                                       #
     # ------------------------------------------------------------------ #
 
+    def __bool__(self) -> bool:
+        """Always ``True`` — use ``env is None`` to detect absence."""
+        ...
+
     def __len__(self) -> int:
         """Number of ontologies in the environment."""
         ...

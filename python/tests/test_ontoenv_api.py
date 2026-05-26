@@ -261,6 +261,21 @@ class TestOntoEnvAPI(unittest.TestCase):
         materialized.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
         self.assertIn((URIRef("urn:test"), RDF.type, OWL.Ontology), materialized)
 
+    def test_get_graph_caches_dataset_across_calls(self):
+        """Repeated get_graph calls reuse the same underlying Dataset/Store."""
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        name = self.env.add(str(self.brick_file_path))
+
+        first = self.env.get_graph(name)
+        second = self.env.get_graph(name)
+        self.assertIs(first.store, second.store)
+
+        # A mutating call invalidates the cache, so the next view is built
+        # against a fresh store.
+        self.env.flush()
+        after_flush = self.env.get_graph(name)
+        self.assertIsNot(after_flush.store, first.store)
+
     def test_dunder_sugar(self):
         """len(env), uri in env, env[uri], iter(env), and context manager."""
         with OntoEnv(path=self.test_dir, recreate=True) as env:
