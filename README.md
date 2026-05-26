@@ -289,6 +289,11 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 | `snapshot_as_dataset(backend="auto") -> rdflib.Dataset` | Read-only Dataset view of the env (`"auto"`/`"rdf5d"`/`"copy"`) |
 | `store_path() -> str \| None` | Path to `.ontoenv/`, or `None` for temporary environments |
 | `close()` | Persist (if applicable) and release resources |
+| `len(env)` | Number of ontologies in the environment |
+| `uri in env` | True if `uri` resolves to a known ontology |
+| `env[uri]` | Shorthand for `get_graph(uri)` |
+| `iter(env)` | Iterate over ontology URIs |
+| `with OntoEnv(...) as env:` | Context manager — calls `close()` on exit |
 
 **`missing_imports(uri=None) -> list[str]`**
 Returns a list of `owl:imports` IRIs that could not be resolved in the environment.

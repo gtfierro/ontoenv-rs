@@ -12,6 +12,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ### Added
 - `OntoEnv.copy_graph(uri) -> rdflib.Graph` — materialize a mutable in-memory copy of a single ontology.
+- Pythonic container/context-manager protocols on `OntoEnv`: `len(env)`, `uri in env`, `env[uri]` (shorthand for `get_graph`), `for name in env` (iterates ontology URIs), and `with OntoEnv(...) as env:` (calls `close()` on exit).
 - `Environment::get_ontology_by_id(&GraphIdentifier) -> Option<&Ontology>` — direct lookup that skips the configured `ResolutionPolicy`.
 - `GraphIO::ensure_loaded(&GraphIdentifier) -> Result<()>` trait hook for persistent backends to lazily load named graphs into the in-memory store. Default impl is a no-op.
 

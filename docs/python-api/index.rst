@@ -45,6 +45,26 @@ Key methods
   place, inserting triples from all ontologies declared in its ``owl:imports`` statements.
   Set ``fetch_missing=True`` to download any imports not yet in the environment.
 
+Pythonic sugar
+~~~~~~~~~~~~~~
+
+``OntoEnv`` supports the standard container and context-manager protocols:
+
+- ``len(env)`` — number of ontologies in the environment.
+- ``uri in env`` — ``True`` if *uri* resolves to a known ontology (canonical name, alias, or source URL).
+- ``env[uri]`` — shorthand for ``env.get_graph(uri)``.
+- ``for name in env: ...`` — iterate over the URIs of every ontology in the environment.
+- ``with OntoEnv(...) as env: ...`` — automatically persist (where applicable) and release resources on exit.
+
+.. code-block:: python
+
+   with OntoEnv(path="./.ontoenv") as env:
+       env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
+
+       print(f"{len(env)} ontologies")
+       for name in env:
+           print(name, len(env[name]))
+
 Example
 -------
 

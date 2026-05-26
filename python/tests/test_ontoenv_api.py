@@ -261,6 +261,26 @@ class TestOntoEnvAPI(unittest.TestCase):
         materialized.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
         self.assertIn((URIRef("urn:test"), RDF.type, OWL.Ontology), materialized)
 
+    def test_dunder_sugar(self):
+        """len(env), uri in env, env[uri], iter(env), and context manager."""
+        with OntoEnv(path=self.test_dir, recreate=True) as env:
+            name = env.add(str(self.brick_file_path))
+
+            self.assertGreater(len(env), 0)
+            self.assertIn(name, env)
+            self.assertNotIn("urn:does-not-exist", env)
+            self.assertFalse("not a uri" in env)
+
+            self.assertIn(name, list(iter(env)))
+
+            graph_via_getitem = env[name]
+            self.assertIsInstance(graph_via_getitem, Graph)
+            self.assertGreater(len(graph_via_getitem), 0)
+
+        # context manager exit calls close(); subsequent calls raise
+        with self.assertRaises(ValueError):
+            len(env)
+
     def test_get_closure(self):
         """Test env.get_closure()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
