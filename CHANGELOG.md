@@ -9,7 +9,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 ### Changed (breaking)
 - `OntoEnv.get_graph(uri)` now returns a **read-only store-backed `rdflib.Graph` view** instead of a mutable in-memory copy. Mutating the returned graph raises `ValueError`. Use the new `OntoEnv.copy_graph(uri)` for the previous behavior (mutable in-memory `rdflib.Graph` copy).
 - `OntoEnv.snapshot_as_dataset(backend=..., store=...)` renamed to `OntoEnv.as_dataset(backend=..., store=...)`. `to_rdflib_dataset` still works (deprecated) and now forwards to `as_dataset`.
-- `GraphIO::union_graph` returns `Result<Dataset>` instead of `Dataset`; errors from `ensure_loaded` and store iteration now propagate instead of being silently dropped.
+- `GraphIO::union_graph` now returns `(Dataset, Vec<FailedImport>)` — always best-effort: per-id errors (bad graphname, ensure_loaded failure, mid-graph store iteration error) are recorded in the failures list and the offending id is skipped, but the rest of the union is still assembled. The previous behavior silently dropped failures with no signal. `OntoEnv::get_union_graph` consumes the failures list: in **strict** mode any failure becomes an error; in **non-strict** mode the partial union is returned with `UnionGraph.failed_imports` populated so the caller knows what's missing.
 
 ### Added
 - `OntoEnv.copy_graph(uri) -> rdflib.Graph` — materialize a mutable in-memory copy of a single ontology.

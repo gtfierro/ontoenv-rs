@@ -5,6 +5,7 @@ use crate::errors::OfflineRetrievalError;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::options::Overwrite;
 use crate::util::get_file_contents;
+use crate::FailedImport;
 use anyhow::{anyhow, Error, Result};
 use blake3;
 use chrono::prelude::*;
@@ -225,30 +226,58 @@ pub trait GraphIO: Send + Sync {
         Ok(())
     }
 
-    /// Returns the union of the graphs with the given identifiers
-    fn union_graph(&self, ids: &[GraphIdentifier]) -> Result<Dataset> {
+    /// Returns the best-effort union of the graphs with the given identifiers,
+    /// along with a list of ids that could not be read.
+    ///
+    /// A failure on any single id (bad graphname, ensure_loaded error, or a
+    /// store iteration error mid-graph) is recorded in the returned
+    /// `Vec<FailedImport>` and that id is skipped; the rest of the union is
+    /// still assembled. Callers that need strict all-or-nothing semantics
+    /// should check the failures list and error themselves.
+    fn union_graph(&self, ids: &[GraphIdentifier]) -> (Dataset, Vec<FailedImport>) {
         // Stream quads from the store directly into the Dataset. The previous
         // implementation materialized an intermediate Graph per id, which paid
         // for an extra hashmap insert per triple and an N-graph allocation.
         let mut dataset = Dataset::new();
+        let mut failures: Vec<FailedImport> = Vec::new();
         for id in ids {
-            let graphname = id.graphname()?;
+            let graphname = match id.graphname() {
+                Ok(gn) => gn,
+                Err(e) => {
+                    failures.push(FailedImport::new(id.clone(), e.to_string()));
+                    continue;
+                }
+            };
             // For persistent backends, ensure the named graph is in the in-memory store.
-            self.ensure_loaded(id)?;
+            if let Err(e) = self.ensure_loaded(id) {
+                failures.push(FailedImport::new(id.clone(), e.to_string()));
+                continue;
+            }
+            let mut graph_failure: Option<Error> = None;
             for quad in self
                 .store()
                 .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
             {
-                let q = quad.map_err(|e| anyhow!("union_graph store error: {}", e))?;
-                dataset.insert(QuadRef::new(
-                    q.subject.as_ref(),
-                    q.predicate.as_ref(),
-                    q.object.as_ref(),
-                    graphname.as_ref(),
-                ));
+                match quad {
+                    Ok(q) => {
+                        dataset.insert(QuadRef::new(
+                            q.subject.as_ref(),
+                            q.predicate.as_ref(),
+                            q.object.as_ref(),
+                            graphname.as_ref(),
+                        ));
+                    }
+                    Err(e) => {
+                        graph_failure = Some(anyhow!("union_graph store error: {}", e));
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = graph_failure {
+                failures.push(FailedImport::new(id.clone(), e.to_string()));
             }
         }
-        Ok(dataset)
+        (dataset, failures)
     }
 
     fn flush(&mut self) -> Result<()> {
