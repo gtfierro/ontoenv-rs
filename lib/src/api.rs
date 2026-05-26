@@ -2185,8 +2185,27 @@ impl OntoEnv {
             return Err(anyhow!("No graphs found"));
         }
 
-        // Merge all named graphs into a single dataset in IO order.
-        let mut dataset = self.io.union_graph(&graph_ids)?;
+        // One bulk call into the store. `union_graph` is always best-effort:
+        // it records per-id failures in `failures` and assembles the rest.
+        // Strict mode promotes any failure to an error here; non-strict mode
+        // returns the partial union with `failed_imports` populated so the
+        // caller knows what's missing.
+        let (mut dataset, failures) = self.io.union_graph(&graph_ids);
+        if self.config.strict && !failures.is_empty() {
+            return Err(anyhow!(
+                "union_graph: {} graph(s) failed to load: {}",
+                failures.len(),
+                failures
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+        for f in &failures {
+            warn!("Skipping graph in union: {f}");
+        }
+        let failed_imports = (!failures.is_empty()).then_some(failures);
         let root_ontology = NamedOrBlankNodeRef::NamedNode(root);
 
         // Merge namespace maps so downstream tools can re-materialize prefixes.
@@ -2222,7 +2241,7 @@ impl OntoEnv {
         Ok(UnionGraph {
             dataset,
             graph_ids,
-            failed_imports: None, // TODO: Populate this correctly
+            failed_imports,
             namespace_map,
         })
     }
