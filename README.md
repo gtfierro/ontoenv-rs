@@ -282,6 +282,8 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 | `add_no_imports(location) -> str` | Same as `add`, but skips import traversal |
 | `get_graph(name) -> Graph` | Read-only store-backed view of a single ontology (no closure expansion). Mutation raises `ValueError` |
 | `copy_graph(name) -> Graph` | Mutable in-memory copy of a single ontology |
+| `get_closure_view(name, recursion_depth=-1) -> (Graph, list[str])` | Read-only merged view over the imports closure (no materialization) |
+| `iter_triples(name)` / `iter_closure_triples(name, recursion_depth=-1)` | Streaming triple iterators that skip the rdflib `Graph` wrapper |
 | `get_ontology(name)` | Inspect metadata: imports list, version, namespace map, last-updated |
 | `get_importers(name) -> list[str]` | Reverse dependency lookup |
 | `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings |

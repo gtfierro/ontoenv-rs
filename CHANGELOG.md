@@ -12,7 +12,11 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ### Added
 - `OntoEnv.copy_graph(uri) -> rdflib.Graph` — materialize a mutable in-memory copy of a single ontology.
-- Pythonic container/context-manager protocols on `OntoEnv`: `len(env)`, `uri in env`, `env[uri]` (shorthand for `get_graph`), `for name in env` (iterates ontology URIs), and `with OntoEnv(...) as env:` (calls `close()` on exit).
+- Pythonic container/context-manager protocols on `OntoEnv`: `len(env)`, `uri in env`, `env[uri]` (shorthand for `get_graph`), `for name in env` (iterates ontology URIs), and `with OntoEnv(...) as env:` (calls `close()` on exit). `bool(env)` is always `True` — use `env is None` to detect absence.
+- `OntoEnv.get_closure_view(uri, recursion_depth=-1) -> (Graph, list[str])` — read-only merged view across the imports closure. Triple-pattern lookups dispatch to each underlying named graph and de-duplicate; no materialization. Same return shape as `get_closure` so callers can swap freely.
+- `OntoEnv.iter_triples(uri) -> Iterator[(s, p, o)]` and `OntoEnv.iter_closure_triples(uri, recursion_depth=-1) -> Iterator[(s, p, o)]` — streaming triples as rdflib terms, skipping the rdflib `Graph` wrapper. Closure iteration is not de-duplicated.
+- `ontoenv.ClosureGraphView` — read-only `rdflib.Graph` subclass returned by `get_closure_view`; exposed for `isinstance` checks.
+- Internal `OntoEnv.get_graph(uri)` Dataset cache: subsequent `get_graph` calls reuse the underlying store; mutating methods (`add`, `add_no_imports`, `update`, `flush`) invalidate it.
 - `Environment::get_ontology_by_id(&GraphIdentifier) -> Option<&Ontology>` — direct lookup that skips the configured `ResolutionPolicy`.
 - `GraphIO::ensure_loaded(&GraphIdentifier) -> Result<()>` trait hook for persistent backends to lazily load named graphs into the in-memory store. Default impl is a no-op.
 

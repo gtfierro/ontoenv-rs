@@ -2262,6 +2262,46 @@ struct OntoEnv {
     cache: Arc<Mutex<DatasetCache>>,
 }
 
+/// Streaming iterator over ``(subject, predicate, object)`` tuples of
+/// ``rdflib`` terms. Returned by [`OntoEnv::iter_triples`] and
+/// [`OntoEnv::iter_closure_triples`].
+///
+/// Triples are materialized eagerly from the env at construction time; the
+/// iterator yields lazily after that, so callers don't pay rdflib ``Graph``
+/// overhead per triple. Closure iteration does *not* de-duplicate across
+/// named graphs — wrap in ``set()`` if you need set semantics.
+#[pyclass]
+struct TripleIter {
+    triples: std::vec::IntoIter<Triple>,
+}
+
+#[pymethods]
+impl TripleIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyTuple>>> {
+        let Some(t) = self.triples.next() else {
+            return Ok(None);
+        };
+        let rdflib = py.import("rdflib")?;
+        let tuple = PyTuple::new(
+            py,
+            &[
+                term_to_python(py, &rdflib, t.subject.into())?,
+                term_to_python(py, &rdflib, t.predicate.into())?,
+                term_to_python(py, &rdflib, t.object)?,
+            ],
+        )?;
+        Ok(Some(tuple.unbind()))
+    }
+
+    fn __len__(&self) -> usize {
+        self.triples.len()
+    }
+}
+
 impl OntoEnv {
     /// Internal helper that delegates Dataset construction to the Python-side
     /// `ontoenv.rdflib_store.dataset_from_env` factory. Used by
@@ -3347,6 +3387,116 @@ impl OntoEnv {
             .bind(py)
             .call_method1("graph", (uri_ref,))?
             .unbind())
+    }
+
+    /// Return a read-only merged view over the transitive ``owl:imports``
+    /// closure of *uri*, plus the list of ontology IRIs that contribute to
+    /// the view (root first, in BFS order).
+    ///
+    /// The returned ``Graph`` is a :py:class:`ontoenv.ClosureGraphView` —
+    /// triple-pattern lookups dispatch to each underlying named graph and
+    /// de-duplicate, so it behaves like a merged graph without materializing
+    /// one. Mutation raises ``ValueError``; use :py:meth:`get_closure` for a
+    /// mutable in-memory merge.
+    #[pyo3(signature = (uri, recursion_depth = -1))]
+    fn get_closure_view(
+        &self,
+        py: Python<'_>,
+        uri: &str,
+        recursion_depth: i32,
+    ) -> PyResult<(Py<PyAny>, Vec<String>)> {
+        let names = {
+            let iri = NamedNode::new(uri)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let inner = self.inner.clone();
+            let guard = inner.lock().unwrap();
+            let env = guard.as_ref().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+            })?;
+            let graphid = env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "No graph with URI: {uri}"
+                ))
+            })?;
+            let closure = env
+                .get_closure(&graphid, recursion_depth)
+                .map_err(anyhow_to_pyerr)?;
+            closure
+                .into_iter()
+                .map(|id| id.to_uri_string())
+                .collect::<Vec<_>>()
+        };
+
+        let dataset = self.cached_view_dataset(py)?;
+        let rdflib_store = py.import("ontoenv.rdflib_store")?;
+        let view = rdflib_store
+            .getattr("ClosureGraphView")?
+            .call1((dataset, names.clone()))?
+            .unbind();
+        Ok((view, names))
+    }
+
+    /// Stream ``(s, p, o)`` triples for one named graph as rdflib terms,
+    /// skipping the rdflib ``Graph`` wrapper entirely.
+    ///
+    /// Triples are read from the env once at call time; the iterator yields
+    /// lazily after that. Use this when you only need to scan and don't want
+    /// to pay for hash-set insertion into an rdflib graph.
+    fn iter_triples(&self, py: Python<'_>, uri: &str) -> PyResult<Py<TripleIter>> {
+        let iri = NamedNode::new(uri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        let graphid = env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("No graph with URI: {uri}"))
+        })?;
+        let graph = env.get_graph(&graphid).map_err(anyhow_to_pyerr)?;
+        let triples: Vec<Triple> = graph.iter().map(|t| t.into_owned()).collect();
+        Py::new(
+            py,
+            TripleIter {
+                triples: triples.into_iter(),
+            },
+        )
+    }
+
+    /// Stream ``(s, p, o)`` triples across the transitive ``owl:imports``
+    /// closure of *uri*. Triples are *not* de-duplicated across named
+    /// graphs; wrap in ``set()`` if you need set semantics.
+    #[pyo3(signature = (uri, recursion_depth = -1))]
+    fn iter_closure_triples(
+        &self,
+        py: Python<'_>,
+        uri: &str,
+        recursion_depth: i32,
+    ) -> PyResult<Py<TripleIter>> {
+        let iri = NamedNode::new(uri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        let graphid = env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("No graph with URI: {uri}"))
+        })?;
+        let closure = env
+            .get_closure(&graphid, recursion_depth)
+            .map_err(anyhow_to_pyerr)?;
+        let mut triples: Vec<Triple> = Vec::new();
+        for id in &closure {
+            let graph = env.get_graph(id).map_err(anyhow_to_pyerr)?;
+            triples.extend(graph.iter().map(|t| t.into_owned()));
+        }
+        Py::new(
+            py,
+            TripleIter {
+                triples: triples.into_iter(),
+            },
+        )
     }
 
     /// Copy the named graph into a mutable in-memory ``rdflib.Graph``.

@@ -137,6 +137,39 @@ class OntoEnv:
         """Copy the named graph for *uri* into a mutable in-memory ``rdflib.Graph``."""
         ...
 
+    def get_closure_view(
+        self,
+        uri: str,
+        recursion_depth: int = -1,
+    ) -> Tuple[Graph, List[str]]:
+        """Return a read-only merged view over the imports closure of *uri*.
+
+        Behaves like a merged ``rdflib.Graph`` but routes triple-pattern
+        lookups across the underlying named graphs without materializing
+        a copy. Returns ``(view, closure_names)``; ``view`` is a
+        :py:class:`ontoenv.ClosureGraphView`.
+        """
+        ...
+
+    def iter_triples(self, uri: str) -> Iterator[Tuple[object, object, object]]:
+        """Stream ``(s, p, o)`` triples for one named graph as rdflib terms.
+
+        Skips the rdflib ``Graph`` wrapper; use when you only need to scan.
+        """
+        ...
+
+    def iter_closure_triples(
+        self,
+        uri: str,
+        recursion_depth: int = -1,
+    ) -> Iterator[Tuple[object, object, object]]:
+        """Stream ``(s, p, o)`` triples across the imports closure of *uri*.
+
+        Triples are not de-duplicated across named graphs; wrap in
+        ``set()`` if you need set semantics.
+        """
+        ...
+
     def get_ontology(self, uri: str) -> Ontology:
         """Return the metadata object for the ontology identified by *uri*."""
         ...

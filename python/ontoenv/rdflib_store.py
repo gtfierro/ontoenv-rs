@@ -24,7 +24,7 @@ from collections.abc import Generator, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from rdflib import Dataset, URIRef, plugin
+from rdflib import Dataset, Graph, URIRef, plugin
 from rdflib.query import Result
 from rdflib.store import NO_STORE, VALID_STORE, Store
 from rdflib.term import Identifier
@@ -338,6 +338,46 @@ class OntoEnvStore(Store):
 
     def rollback(self) -> None:
         return None
+
+
+class ClosureGraphView(Graph):
+    """Read-only merged view across a fixed set of named graphs in a Dataset.
+
+    Returned by :py:meth:`ontoenv.OntoEnv.get_closure_view`. Triple lookups
+    are dispatched to each underlying named graph and de-duplicated; the
+    underlying store is shared with the dataset, so mutation through this
+    view raises ``ValueError`` from the store layer.
+
+    Construct via ``env.get_closure_view(...)`` rather than directly.
+    """
+
+    def __init__(self, dataset: Dataset, identifiers: Iterable[str]) -> None:
+        ids = tuple(identifiers)
+        if not ids:
+            raise ValueError("ClosureGraphView requires at least one identifier")
+        super().__init__(store=dataset.store, identifier=URIRef(ids[0]))
+        self._dataset = dataset
+        self._identifiers = tuple(URIRef(i) for i in ids)
+
+    def triples(self, triple: Any) -> Generator[Any, None, None]:
+        seen: set[Any] = set()
+        for ident in self._identifiers:
+            for t in self._dataset.graph(ident).triples(triple):
+                if t in seen:
+                    continue
+                seen.add(t)
+                yield t
+
+    def __contains__(self, triple: Any) -> bool:
+        return any(triple in self._dataset.graph(ident) for ident in self._identifiers)
+
+    def __iter__(self) -> Generator[Any, None, None]:
+        return self.triples((None, None, None))
+
+    def __len__(self) -> int:
+        # Count unique triples across all named graphs. The Dataset store has
+        # no cheaper way to answer this without dedup.
+        return sum(1 for _ in self.triples((None, None, None)))
 
 
 try:

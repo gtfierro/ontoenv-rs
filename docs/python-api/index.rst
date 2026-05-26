@@ -41,6 +41,14 @@ Key methods
 - ``env.copy_graph(name)`` — Materialize a mutable in-memory ``rdflib.Graph`` copy of the
   named ontology. Use this when you need to add or remove triples locally without
   affecting the env.
+- ``env.get_closure_view(name, recursion_depth=-1)`` — Return a tuple
+  ``(view, closure_names)`` where ``view`` is a read-only merged
+  :py:class:`ontoenv.ClosureGraphView` over every ontology in the imports closure of
+  *name*. Same shape as :py:meth:`get_closure` but does not materialize a copy.
+- ``env.iter_triples(name)`` / ``env.iter_closure_triples(name, recursion_depth=-1)`` —
+  Streaming iterators of ``(s, p, o)`` rdflib-term tuples for a single ontology or its
+  imports closure. Skip the ``rdflib.Graph`` wrapper entirely; closure iteration does
+  *not* de-duplicate across named graphs.
 - ``env.import_dependencies(graph, fetch_missing=False)`` — Mutate an ``rdflib.Graph`` in
   place, inserting triples from all ontologies declared in its ``owl:imports`` statements.
   Set ``fetch_missing=True`` to download any imports not yet in the environment.
