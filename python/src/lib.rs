@@ -2244,9 +2244,22 @@ impl PyRdfLibStoreBackend {
     }
 }
 
+/// Internal cache for the lazily-built Dataset used by [`OntoEnv::get_graph`].
+///
+/// Building a Dataset (mmap snapshot or full materialized copy) is the
+/// expensive part of `get_graph`. We build it once on first use and reuse it
+/// across subsequent calls; any state-mutating method bumps `generation`,
+/// which invalidates the cached entry on the next access.
+#[derive(Default)]
+struct DatasetCache {
+    generation: u64,
+    cached: Option<(u64, Py<PyAny>)>,
+}
+
 #[pyclass]
 struct OntoEnv {
     inner: Arc<Mutex<Option<OntoEnvRs>>>,
+    cache: Arc<Mutex<DatasetCache>>,
 }
 
 impl OntoEnv {
@@ -2266,6 +2279,7 @@ impl OntoEnv {
             py,
             OntoEnv {
                 inner: self.inner.clone(),
+                cache: self.cache.clone(),
             },
         )?;
         kwargs.set_item("env", env_obj)?;
@@ -2274,6 +2288,38 @@ impl OntoEnv {
             kwargs.set_item("store", store)?;
         }
         Ok(dataset_from_env.call((), Some(&kwargs))?.unbind())
+    }
+
+    /// Mark the cached Dataset (if any) as stale. Subsequent reads via
+    /// [`Self::cached_view_dataset`] will rebuild before returning.
+    fn bump_generation(&self) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.generation = cache.generation.wrapping_add(1);
+    }
+
+    /// Return the cached Dataset used by [`OntoEnv::get_graph`], rebuilding
+    /// it if a mutation has happened since the last access. The returned
+    /// `Py<PyAny>` is a fresh reference the caller can pass to Python.
+    fn cached_view_dataset(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let current_gen = {
+            let cache = self.cache.lock().unwrap();
+            if let Some((cached_gen, ds)) = &cache.cached {
+                if *cached_gen == cache.generation {
+                    return Ok(ds.clone_ref(py));
+                }
+            }
+            cache.generation
+        };
+
+        // Build outside the cache lock: dataset construction re-enters Python.
+        let dataset = self.build_dataset(py, "auto", None)?;
+
+        let mut cache = self.cache.lock().unwrap();
+        // Only install if no newer generation snuck in while we were building.
+        if cache.generation == current_gen {
+            cache.cached = Some((current_gen, dataset.clone_ref(py)));
+        }
+        Ok(dataset)
     }
 }
 
@@ -2372,7 +2418,10 @@ impl OntoEnv {
             }
             .map_err(anyhow_to_pyerr)?;
             let inner = Arc::new(Mutex::new(Some(env)));
-            return Ok(OntoEnv { inner });
+            return Ok(OntoEnv {
+                inner,
+                cache: Arc::new(Mutex::new(DatasetCache::default())),
+            });
         }
 
         let root_for_lookup = cfg.root.clone();
@@ -2407,6 +2456,7 @@ impl OntoEnv {
 
         Ok(OntoEnv {
             inner: inner.clone(),
+            cache: Arc::new(Mutex::new(DatasetCache::default())),
         })
     }
 
@@ -2416,7 +2466,10 @@ impl OntoEnv {
         let mut guard = inner.lock().unwrap();
         if let Some(env) = guard.as_mut() {
             env.update_all(all).map_err(anyhow_to_pyerr)?;
-            env.save_to_directory().map_err(anyhow_to_pyerr)
+            env.save_to_directory().map_err(anyhow_to_pyerr)?;
+            drop(guard);
+            self.bump_generation();
+            Ok(())
         } else {
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -3137,14 +3190,17 @@ impl OntoEnv {
         let resolved = ontology_location_from_py(location)?;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
-        add_resolved_to_env(
+        let result = add_resolved_to_env(
             env,
             location,
             resolved,
             overwrite_flag,
             refresh,
             fetch_imports,
-        )
+        );
+        drop(guard);
+        self.bump_generation();
+        result
     }
 
     /// Add a new ontology to the OntoEnv without exploring owl:imports.
@@ -3163,7 +3219,11 @@ impl OntoEnv {
         let resolved = ontology_location_from_py(location)?;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
-        add_resolved_to_env(env, location, resolved, overwrite_flag, refresh, false)
+        let result =
+            add_resolved_to_env(env, location, resolved, overwrite_flag, refresh, false);
+        drop(guard);
+        self.bump_generation();
+        result
     }
 
     /// Get the names of all ontologies that import the given ontology
@@ -3281,7 +3341,7 @@ impl OntoEnv {
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let uri_string = pystring_to_string(uri)?;
         let rdflib = py.import("rdflib")?;
-        let dataset = self.build_dataset(py, "auto", None)?;
+        let dataset = self.cached_view_dataset(py)?;
         let uri_ref = rdflib.getattr("URIRef")?.call1((uri_string,))?;
         Ok(dataset
             .bind(py)
@@ -3553,12 +3613,14 @@ impl OntoEnv {
                 env.flush().map_err(anyhow_to_pyerr)?;
             }
             *guard = None;
+            // Release any cached Dataset so its store doesn't outlive the env.
+            self.cache.lock().unwrap().cached = None;
             Ok(())
         })
     }
 
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
-        py.detach(|| {
+        let result = py.detach(|| {
             let inner = self.inner.clone();
             let mut guard = inner.lock().unwrap();
             if let Some(env) = guard.as_mut() {
@@ -3568,12 +3630,26 @@ impl OntoEnv {
                     "OntoEnv is closed",
                 ))
             }
-        })
+        });
+        if result.is_ok() {
+            // The on-disk snapshot has been rewritten; any rdf5d-mmap-backed
+            // cached Dataset is now pointing at stale bytes.
+            self.bump_generation();
+        }
+        result
     }
 
     // ------------------------------------------------------------------ #
     // Pythonic sugar                                                       #
     // ------------------------------------------------------------------ #
+
+    /// An ``OntoEnv`` reference is always truthy. We define ``__bool__``
+    /// explicitly so that ``if env:`` checks identity, not size, and so that
+    /// ``__len__`` is free to raise on a closed env without breaking
+    /// pre-existing ``if env:`` patterns.
+    fn __bool__(&self) -> bool {
+        true
+    }
 
     /// ``len(env)`` — number of ontologies in the environment.
     fn __len__(&self) -> PyResult<usize> {
