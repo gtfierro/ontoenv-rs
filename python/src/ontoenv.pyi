@@ -289,7 +289,7 @@ class OntoEnv:
         """
         ...
 
-    def snapshot_as_dataset(
+    def as_dataset(
         self,
         backend: str = "auto",
         store: Optional[Store] = None,
@@ -305,10 +305,18 @@ class OntoEnv:
         """
         ...
 
-    def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
-        """Deprecated alias for :meth:`snapshot_as_dataset`.
+    def refresh_dataset(self, dataset: Dataset) -> None:
+        """Re-snapshot ``self`` into an existing ``OntoEnvStore``-backed Dataset.
 
-        Emits ``DeprecationWarning``. Calls ``snapshot_as_dataset(backend=mode)``.
+        Raises ``TypeError`` if ``dataset.store`` is not an
+        :class:`ontoenv.OntoEnvStore`.
+        """
+        ...
+
+    def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
+        """Deprecated alias for :meth:`as_dataset`.
+
+        Emits ``DeprecationWarning``. Calls ``as_dataset(backend=mode)``.
         """
         ...
 
@@ -388,5 +396,3 @@ class OntoEnvStore:
     def query(self, query: object, initNs: Dict[str, object], initBindings: Dict[str, object], queryGraph: str, **kwargs: object) -> Result: ...
 
 
-def dataset_from_env(env: OntoEnv, store: Optional[object] = None, mode: str = "auto") -> Dataset: ...
-def refresh_dataset_from_env(dataset: Dataset, env: OntoEnv) -> None: ...

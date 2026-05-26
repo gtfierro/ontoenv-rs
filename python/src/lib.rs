@@ -2305,7 +2305,7 @@ impl TripleIter {
 impl OntoEnv {
     /// Internal helper that delegates Dataset construction to the Python-side
     /// `ontoenv.rdflib_store.dataset_from_env` factory. Used by
-    /// `snapshot_as_dataset`; not exposed to Python.
+    /// `as_dataset` and the cached `get_graph` path; not exposed to Python.
     fn build_dataset(
         &self,
         py: Python<'_>,
@@ -3595,7 +3595,7 @@ impl OntoEnv {
     /// Return a point-in-time `rdflib.Dataset` view of the environment.
     ///
     /// The Dataset is read-only and reflects the state of the env at the
-    /// time of the call. Call again (or `refresh_dataset_from_env`) after
+    /// time of the call. Call again (or `refresh_dataset`) after
     /// `env.flush()` to pick up subsequent changes.
     ///
     /// Args:
@@ -3607,7 +3607,7 @@ impl OntoEnv {
     ///         materializes the env into an in-memory snapshot.
     ///     store: Optional existing `rdflib.Store` to bind the Dataset to.
     #[pyo3(signature = (backend = "auto", store = None))]
-    fn snapshot_as_dataset(
+    fn as_dataset(
         &self,
         py: Python,
         backend: &str,
@@ -3616,8 +3616,28 @@ impl OntoEnv {
         self.build_dataset(py, backend, store)
     }
 
-    /// Deprecated alias for :meth:`snapshot_as_dataset`. Emits
-    /// ``DeprecationWarning`` and delegates with ``backend=mode``.
+    /// Re-snapshot the env into an existing `OntoEnvStore`-backed
+    /// ``rdflib.Dataset``. The originally chosen backend (``rdf5d`` vs
+    /// ``copy``) is preserved.
+    ///
+    /// Raises ``TypeError`` if ``dataset.store`` is not an
+    /// :class:`ontoenv.OntoEnvStore`.
+    fn refresh_dataset(&self, py: Python<'_>, dataset: Py<PyAny>) -> PyResult<()> {
+        let rdflib_store = py.import("ontoenv.rdflib_store")?;
+        let refresh = rdflib_store.getattr("refresh_dataset_from_env")?;
+        let env_obj = Py::new(
+            py,
+            OntoEnv {
+                inner: self.inner.clone(),
+                cache: self.cache.clone(),
+            },
+        )?;
+        refresh.call1((dataset, env_obj))?;
+        Ok(())
+    }
+
+    /// Deprecated alias for :meth:`as_dataset`. Emits ``DeprecationWarning``
+    /// and delegates with ``backend=mode``.
     #[pyo3(signature = (mode = "auto"))]
     fn to_rdflib_dataset(&self, py: Python, mode: &str) -> PyResult<Py<PyAny>> {
         let warnings = py.import("warnings")?;
@@ -3625,7 +3645,7 @@ impl OntoEnv {
             "warn",
             (
                 "OntoEnv.to_rdflib_dataset() is deprecated; use \
-                 OntoEnv.snapshot_as_dataset(backend=...) instead",
+                 OntoEnv.as_dataset(backend=...) instead",
                 py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
                 2u32,
             ),

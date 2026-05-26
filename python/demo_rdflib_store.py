@@ -1,4 +1,4 @@
-from ontoenv import OntoEnv, refresh_dataset_from_env, version
+from ontoenv import OntoEnv, version
 from rdflib import Literal, URIRef
 
 
@@ -20,7 +20,7 @@ env.update()
 env.flush()
 
 # Build an rdflib.Dataset backed directly by .ontoenv/store.r5tu when possible.
-dataset = env.snapshot_as_dataset(backend="rdf5d")
+dataset = env.as_dataset(backend="rdf5d")
 print("dataset backend", dataset.store._backend.backend_kind())
 
 print("graphs in dataset")
@@ -45,6 +45,6 @@ print(len(brick_graph))
 
 # Snapshot datasets stay stable until you explicitly refresh them.
 # Note that this is *separate* from updating the environment.
-refresh_dataset_from_env(dataset, env)
+env.refresh_dataset(dataset)
 
 env.close()

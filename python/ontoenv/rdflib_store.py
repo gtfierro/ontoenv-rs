@@ -3,7 +3,7 @@
 This module exposes :class:`OntoEnvStore` — a read-only rdflib ``Store`` that
 serves SPARQL queries through the Rust backend — and the high-level helpers
 :func:`dataset_from_env` and :func:`refresh_dataset_from_env`. End users
-typically don't import from here directly; they call ``env.snapshot_as_dataset()``
+typically don't import from here directly; they call ``env.as_dataset()``
 on an :class:`ontoenv.OntoEnv`, which delegates to :func:`dataset_from_env`.
 
 Two backend strategies are available:
@@ -90,7 +90,7 @@ def dataset_from_env(
 ) -> Dataset:
     """Return an ``rdflib.Dataset`` backed by an OntoEnv snapshot.
 
-    Prefer ``env.snapshot_as_dataset(backend=..., store=...)`` in user code;
+    Prefer ``env.as_dataset(backend=..., store=...)`` in user code;
     this function is the underlying implementation.
 
     Args:
@@ -155,7 +155,7 @@ class OntoEnvStore(Store):
     :class:`ontoenv.OntoEnv` and call :func:`refresh_dataset_from_env` instead.
 
     Construct via :meth:`from_env` or, more commonly, via
-    ``env.snapshot_as_dataset()``. Creating an ``OntoEnvStore()`` directly
+    ``env.as_dataset()``. Creating an ``OntoEnvStore()`` directly
     yields an empty store, which is mostly useful as the rdflib plugin
     ``Graph(store='ontoenv')``.
     """

@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ### Changed (breaking)
 - `OntoEnv.get_graph(uri)` now returns a **read-only store-backed `rdflib.Graph` view** instead of a mutable in-memory copy. Mutating the returned graph raises `ValueError`. Use the new `OntoEnv.copy_graph(uri)` for the previous behavior (mutable in-memory `rdflib.Graph` copy).
+- `OntoEnv.snapshot_as_dataset(backend=..., store=...)` renamed to `OntoEnv.as_dataset(backend=..., store=...)`. `to_rdflib_dataset` still works (deprecated) and now forwards to `as_dataset`.
 - `GraphIO::union_graph` returns `Result<Dataset>` instead of `Dataset`; errors from `ensure_loaded` and store iteration now propagate instead of being silently dropped.
 
 ### Added
@@ -17,11 +18,13 @@ All notable changes to this project are documented here. Releases follow [Semant
 - `OntoEnv.iter_triples(uri) -> Iterator[(s, p, o)]` and `OntoEnv.iter_closure_triples(uri, recursion_depth=-1) -> Iterator[(s, p, o)]` — streaming triples as rdflib terms, skipping the rdflib `Graph` wrapper. Closure iteration is not de-duplicated.
 - `ontoenv.ClosureGraphView` — read-only `rdflib.Graph` subclass returned by `get_closure_view`; exposed for `isinstance` checks.
 - Internal `OntoEnv.get_graph(uri)` Dataset cache: subsequent `get_graph` calls reuse the underlying store; mutating methods (`add`, `add_no_imports`, `update`, `flush`) invalidate it.
+- `OntoEnv.refresh_dataset(dataset)` method — re-snapshot the env into an existing `OntoEnvStore`-backed Dataset. Replaces the top-level `refresh_dataset_from_env(dataset, env)` helper.
 - `Environment::get_ontology_by_id(&GraphIdentifier) -> Option<&Ontology>` — direct lookup that skips the configured `ResolutionPolicy`.
 - `GraphIO::ensure_loaded(&GraphIdentifier) -> Result<()>` trait hook for persistent backends to lazily load named graphs into the in-memory store. Default impl is a no-op.
 
 ### Removed
-- Top-level helpers `ontoenv.graph_view_from_env` and `ontoenv.closure_graph_views_from_env` — `env.get_graph(uri)` covers the single-graph case directly. A closure-view method (`env.get_closure_view`) will land in a follow-up.
+- Top-level helpers `ontoenv.graph_view_from_env` and `ontoenv.closure_graph_views_from_env` — `env.get_graph(uri)` and `env.get_closure_view(uri)` cover those cases directly.
+- Top-level re-exports `ontoenv.dataset_from_env` and `ontoenv.refresh_dataset_from_env` — use `env.as_dataset(...)` and `env.refresh_dataset(...)` instead. The functions still exist in `ontoenv.rdflib_store` as the underlying implementation.
 
 ### Fixed
 - `add_ids_to_dependency_graph` is now transactional with respect to the in-memory env state: a mid-traversal failure (e.g. a strict-mode unresolved import) no longer leaves `env`, `dependency_graph`, `dependency_graph_index`, and `failed_resolutions` desynced from each other.
@@ -38,7 +41,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 ## [0.5.5]
 
 ### Added
-- `OntoEnv.snapshot_as_dataset(backend="auto", store=None)` — return a read-only `rdflib.Dataset` view of the environment. `backend="rdf5d"` is a zero-copy mmap-backed view over the persistent `.ontoenv/store.r5tu` snapshot; `backend="copy"` materializes an in-memory copy; `backend="auto"` picks rdf5d when the snapshot file exists and copy otherwise.
+- `OntoEnv.as_dataset(backend="auto", store=None)` — return a read-only `rdflib.Dataset` view of the environment. `backend="rdf5d"` is a zero-copy mmap-backed view over the persistent `.ontoenv/store.r5tu` snapshot; `backend="copy"` materializes an in-memory copy; `backend="auto"` picks rdf5d when the snapshot file exists and copy otherwise.
 - New `ontoenv.OntoEnvStore` rdflib `Store` (also registered as the rdflib plugin `"ontoenv"`) that serves SPARQL through the Rust backend, with `dataset_from_env` / `refresh_dataset_from_env` helpers in `ontoenv.rdflib_store`.
 - rdf5d: SPARQL backend (`rdf5d::SparqlDatasetView`) and a Brick benchmark comparing it to Oxigraph + RocksDB; rdf5d wins on the tested patterns (≈18% faster on bound-graph queries, ≈2× faster on full scans).
 
@@ -47,7 +50,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 - Copy-fallback Dataset construction (the `backend="copy"` / `backend="auto"` fallback path) builds the materialized `OxDataset` directly from the inner Rust `OntoEnv`, dropping the previous round-trip through an intermediate `rdflib.Dataset`.
 
 ### Deprecated
-- `OntoEnv.to_rdflib_dataset(mode=...)` — use `OntoEnv.snapshot_as_dataset(backend=..., store=...)` instead. The old method still works (and forwards to the new one) but now emits `DeprecationWarning`. The new method renames the parameter (`mode` → `backend`) and accepts an optional `store=` to rebind an existing rdflib `Store`; error messages now reference `backend=` accordingly.
+- `OntoEnv.to_rdflib_dataset(mode=...)` — use `OntoEnv.as_dataset(backend=..., store=...)` instead. The old method still works (and forwards to the new one) but now emits `DeprecationWarning`. The new method renames the parameter (`mode` → `backend`) and accepts an optional `store=` to rebind an existing rdflib `Store`; error messages now reference `backend=` accordingly.
 
 ---
 

@@ -8,7 +8,6 @@ from rdflib import Dataset, Graph, Literal, URIRef
 from ontoenv import (
     OntoEnv,
     OntoEnvStore,
-    refresh_dataset_from_env,
 )
 
 
@@ -68,7 +67,7 @@ def test_dataset_from_env_auto_uses_rdf5d_for_persistent_env(persistent_env: Ont
     persistent_env.add(str(DEMO_TTL))
     persistent_env.flush()
 
-    dataset = persistent_env.snapshot_as_dataset()
+    dataset = persistent_env.as_dataset()
     assert dataset.store._backend.backend_kind() == "rdf5d"
 
     rows = list(
@@ -88,7 +87,7 @@ def test_dataset_from_env_auto_uses_rdf5d_for_persistent_env(persistent_env: Ont
 def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(temporary_env: OntoEnv) -> None:
     temporary_env.add(str(DEMO_TTL))
 
-    dataset = temporary_env.snapshot_as_dataset()
+    dataset = temporary_env.as_dataset()
     assert dataset.store._backend.backend_kind() == "copy"
     rows = list(
         dataset.query(
@@ -101,22 +100,22 @@ def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(temporary_en
 def test_backend_rdf5d_rejects_temporary_and_graph_store_envs(temporary_env: OntoEnv) -> None:
     temporary_env.add(str(DEMO_TTL))
     with pytest.raises(ValueError, match="backend='rdf5d'"):
-        temporary_env.snapshot_as_dataset(backend="rdf5d")
+        temporary_env.as_dataset(backend="rdf5d")
 
     store = DictGraphStore()
     external_env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
     try:
         with pytest.raises(ValueError, match="backend='rdf5d'"):
-            external_env.snapshot_as_dataset(backend="rdf5d")
+            external_env.as_dataset(backend="rdf5d")
     finally:
         external_env.close()
 
 
-def test_refresh_dataset_from_env_is_explicit(persistent_env: OntoEnv) -> None:
+def test_refresh_dataset_is_explicit(persistent_env: OntoEnv) -> None:
     persistent_env.add(str(FIRST_TTL))
     persistent_env.flush()
 
-    dataset = persistent_env.snapshot_as_dataset()
+    dataset = persistent_env.as_dataset()
     assert dataset.store._backend.backend_kind() == "rdf5d"
     assert list(
         dataset.query(
@@ -133,7 +132,7 @@ def test_refresh_dataset_from_env_is_explicit(persistent_env: OntoEnv) -> None:
         )
     ) == []
 
-    refresh_dataset_from_env(dataset, persistent_env)
+    persistent_env.refresh_dataset(dataset)
     rows = list(
         dataset.query(
             "SELECT ?label WHERE { GRAPH <urn:example:second> { <urn:example:second> <urn:example:hasLabel> ?label } }"
@@ -147,9 +146,9 @@ def test_dataset_from_env_with_other_store_forces_copy(persistent_env: OntoEnv) 
     persistent_env.flush()
 
     with pytest.raises(ValueError, match="requires an OntoEnvStore"):
-        persistent_env.snapshot_as_dataset(backend="rdf5d", store=Graph().store)
+        persistent_env.as_dataset(backend="rdf5d", store=Graph().store)
 
-    dataset = persistent_env.snapshot_as_dataset(store=Graph().store)
+    dataset = persistent_env.as_dataset(store=Graph().store)
     rows = list(
         dataset.query(
             "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"

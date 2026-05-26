@@ -50,7 +50,7 @@ an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
    env.update()
    env.flush()
 
-   dataset = env.snapshot_as_dataset()
+   dataset = env.as_dataset()
 
    for row in dataset.query(
        """
@@ -78,10 +78,10 @@ If you prefer rdflib's plugin lookup:
 
    graph = Graph(store="ontoenv")
 
-``env.snapshot_as_dataset()`` returns a read-only ``rdflib.Dataset`` view of the env.
+``env.as_dataset()`` returns a read-only ``rdflib.Dataset`` view of the env.
 It binds the namespaces known to the environment and keys each named graph by its
 ontology IRI. The Dataset reflects the env's state at the time of the call; call it
-again (or ``refresh_dataset_from_env(dataset, env)``) after ``env.flush()`` to pick
+again (or ``env.refresh_dataset(dataset)``) after ``env.flush()`` to pick
 up changes.
 
 The ``backend`` parameter selects the storage strategy:
