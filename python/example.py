@@ -39,6 +39,6 @@ brick.serialize("test.ttl", format="turtle")
 print("qudtqk deps", env2.get_importers("http://qudt.org/2.1/vocab/quantitykind"))
 
 # get an rdflib.Dataset (https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.html#rdflib.Dataset)
-ds = env2.snapshot_as_dataset()
+ds = env2.as_dataset()
 for graph in list(ds.graphs()):
     print(f"Graph {graph.identifier} has {len(graph)} triples")

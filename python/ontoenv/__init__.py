@@ -6,8 +6,6 @@ from ontoenv import _native as _ext  # type: ignore[attr-defined]
 from ontoenv.rdflib_store import (
     ClosureGraphView,
     OntoEnvStore,
-    dataset_from_env,
-    refresh_dataset_from_env,
 )
 
 __doc__ = getattr(_ext, "__doc__", None)  # type: ignore[assignment]
@@ -18,8 +16,6 @@ __all__ = [
     "OntoEnv",
     "Ontology",
     "OntoEnvStore",
-    "dataset_from_env",
-    "refresh_dataset_from_env",
     "run_cli",
     "version",
 ]
