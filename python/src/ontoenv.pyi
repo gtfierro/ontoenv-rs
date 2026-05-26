@@ -126,7 +126,15 @@ class OntoEnv:
     # ------------------------------------------------------------------ #
 
     def get_graph(self, uri: str) -> Graph:
-        """Return the named graph for *uri* as an ``rdflib.Graph``."""
+        """Return a read-only store-backed view of the named graph for *uri*.
+
+        Mutating the returned graph raises ``ValueError``; use
+        :py:meth:`copy_graph` for a mutable in-memory copy.
+        """
+        ...
+
+    def copy_graph(self, uri: str) -> Graph:
+        """Copy the named graph for *uri* into a mutable in-memory ``rdflib.Graph``."""
         ...
 
     def get_ontology(self, uri: str) -> Ontology:

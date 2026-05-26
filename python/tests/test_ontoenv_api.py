@@ -253,6 +253,13 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIsInstance(g, Graph)
         self.assertGreater(len(g), 0)
         self.assertIn((URIRef(self.brick_name), RDF.type, OWL.Ontology), g)
+        with self.assertRaises(ValueError):
+            g.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
+
+        materialized = self.env.copy_graph(name)
+        self.assertIsInstance(materialized, Graph)
+        materialized.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
+        self.assertIn((URIRef("urn:test"), RDF.type, OWL.Ontology), materialized)
 
     def test_get_closure(self):
         """Test env.get_closure()."""

@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from rdflib import Dataset, Graph, Literal, URIRef
 
-from ontoenv import OntoEnv, OntoEnvStore, refresh_dataset_from_env
+from ontoenv import (
+    OntoEnv,
+    OntoEnvStore,
+    refresh_dataset_from_env,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "rdflib_store"

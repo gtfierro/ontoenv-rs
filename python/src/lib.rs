@@ -3275,8 +3275,22 @@ impl OntoEnv {
         Ok(PyOntology { inner: ont })
     }
 
-    /// Get the graph with the given URI as an rdflib.Graph
+    /// Get a read-only store-backed view of the named graph as an
+    /// ``rdflib.Graph``. Mutation raises ``ValueError``; use
+    /// :py:meth:`copy_graph` for a mutable in-memory copy.
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
+        let uri_string = pystring_to_string(uri)?;
+        let rdflib = py.import("rdflib")?;
+        let dataset = self.build_dataset(py, "auto", None)?;
+        let uri_ref = rdflib.getattr("URIRef")?.call1((uri_string,))?;
+        Ok(dataset
+            .bind(py)
+            .call_method1("graph", (uri_ref,))?
+            .unbind())
+    }
+
+    /// Copy the named graph into a mutable in-memory ``rdflib.Graph``.
+    fn copy_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let rdflib = py.import("rdflib")?;
         let iri = NamedNode::new(pystring_to_string(uri)?)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
