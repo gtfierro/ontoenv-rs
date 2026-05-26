@@ -29,9 +29,12 @@ print(f"Added ontology {brick_name}")
 # URL when resolving imports or querying.
 
 # get the graph of the ontology we just added
-# env.get_graph returns an rdflib.Graph
+# env.get_graph returns a read-only store-backed rdflib.Graph
 brick_graph = env.get_graph(brick_name)
 print(f"Brick graph has {len(brick_graph)} triples")
+
+# if you need a mutable in-memory graph, copy it explicitly
+mutable_brick_graph = env.copy_graph(brick_name)
 
 # get the full closure of the ontology, including all of its imports
 # returns a tuple (rdflib.Graph, list[str])

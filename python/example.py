@@ -26,7 +26,7 @@ env2 = OntoEnv(create_or_use_cached=True)
 print(env2.store_path())
 
 print("get brick again from URL")
-brick = env2.get_graph("https://brickschema.org/schema/1.4/Brick")
+brick = env2.copy_graph("https://brickschema.org/schema/1.4/Brick")
 print(len(brick))
 print(brick)
 print(type(brick))
