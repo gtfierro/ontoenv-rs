@@ -238,7 +238,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         base_name = self.env.add(str(base_path))
 
         destination = Graph()
-        closure_graph, closure_names = self.env.get_closure(base_name, destination_graph=destination)
+        closure_graph, closure_names = self.env.copy_closure(base_name, graph=destination)
 
         self.assertIs(destination, closure_graph)
         self.assertGreater(len(closure_graph), 0)
@@ -279,8 +279,8 @@ class TestOntoEnvAPI(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.env.get_graph("http://example.com/does-not-exist")
 
-    def test_get_closure_view(self):
-        """get_closure_view returns a read-only merged view + name list."""
+    def test_get_closure(self):
+        """get_closure returns a read-only merged view + name list."""
         from ontoenv import ClosureGraphView
 
         self.env = OntoEnv(
@@ -288,7 +288,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         )
         name = self.env.add(str(self.brick_file_path))
 
-        view, names = self.env.get_closure_view(name, recursion_depth=0)
+        view, names = self.env.get_closure(name, recursion_depth=0)
 
         self.assertIsInstance(view, ClosureGraphView)
         self.assertEqual(names[0], name)
@@ -296,7 +296,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIn((URIRef(name), RDF.type, OWL.Ontology), view)
 
         # Same shape as get_closure for trivial swap-ability.
-        closure_g, closure_names = self.env.get_closure(name, recursion_depth=0)
+        closure_g, closure_names = self.env.copy_closure(name, recursion_depth=0)
         self.assertEqual(set(names), set(closure_names))
 
         # Read-only.
@@ -329,11 +329,11 @@ class TestOntoEnvAPI(unittest.TestCase):
         second = self.env.get_graph(name)
         self.assertIs(first.store, second.store)
 
-        # A mutating call invalidates the cache, so the next view is built
-        # against a fresh store.
+        # flush rebinds the cached store in place so existing Graph views and
+        # subsequent get_graph calls share the same refreshed store.
         self.env.flush()
         after_flush = self.env.get_graph(name)
-        self.assertIsNot(after_flush.store, first.store)
+        self.assertIs(after_flush.store, first.store)
 
     def test_dunder_sugar(self):
         """len(env), uri in env, env[uri], iter(env), and context manager."""
@@ -355,16 +355,16 @@ class TestOntoEnvAPI(unittest.TestCase):
         with self.assertRaises(ValueError):
             len(env)
 
-    def test_get_closure(self):
-        """Test env.get_closure()."""
+    def test_copy_closure(self):
+        """Test env.copy_closure()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
         name = self.env.add(str(self.brick_file_path))
         g = self.env.get_graph(name)
-        closure_g, imported_graphs = self.env.get_closure(name, recursion_depth=0)
+        closure_g, imported_graphs = self.env.copy_closure(name, recursion_depth=0)
         self.assertIsInstance(closure_g, Graph)
         self.assertEqual(len(imported_graphs), 1)
 
-        closure_g, imported_graphs = self.env.get_closure(name)
+        closure_g, imported_graphs = self.env.copy_closure(name)
         self.assertIsInstance(closure_g, Graph)
         self.assertGreater(len(imported_graphs), 1)
         self.assertGreater(len(closure_g), len(g))
@@ -965,14 +965,14 @@ ex:B a owl:Class .
             {b_iri, c_iri},
         )
 
-    def test_as_dataset(self):
-        """Test env.as_dataset()."""
+    def test_get_dataset(self):
+        """Test env.get_dataset()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
         self.env.update()  # need to run update to find all dependencies
         self.env.flush()
 
-        ds = self.env.as_dataset()
+        ds = self.env.get_dataset()
         # count graphs
         num_graphs = len(list(ds.graphs()))
         # there should be many graphs: brick + all imports
@@ -1184,7 +1184,7 @@ ex:B a owl:Class .
         self.env.add(str(b_path))
 
         with self.assertRaises(ValueError) as ctx:
-            self.env.get_closure("http://ex.org/A", rewrite_sh_prefixes=True)
+            self.env.copy_closure("http://ex.org/A", rewrite_sh_prefixes=True)
         self.assertIn('Conflicting sh:prefix "ex"', str(ctx.exception))
 
 
