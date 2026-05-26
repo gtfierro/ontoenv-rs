@@ -3570,6 +3570,64 @@ impl OntoEnv {
             }
         })
     }
+
+    // ------------------------------------------------------------------ #
+    // Pythonic sugar                                                       #
+    // ------------------------------------------------------------------ #
+
+    /// ``len(env)`` — number of ontologies in the environment.
+    fn __len__(&self) -> PyResult<usize> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        Ok(env.ontologies().len())
+    }
+
+    /// ``uri in env`` — true if the environment has an ontology resolvable
+    /// from the given URI (canonical name, alias, or source URL).
+    fn __contains__(&self, uri: &str) -> PyResult<bool> {
+        let Ok(iri) = NamedNode::new(uri) else {
+            return Ok(false);
+        };
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        Ok(env.resolve(ResolveTarget::Graph(iri)).is_some())
+    }
+
+    /// ``env[uri]`` — shorthand for :py:meth:`get_graph`.
+    fn __getitem__(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
+        self.get_graph(py, uri)
+    }
+
+    /// ``for name in env`` — iterate over the URIs of every ontology in the
+    /// environment. The order is unspecified.
+    fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let names = self.get_ontology_names()?;
+        Ok(names.into_pyobject(py)?.call_method0("__iter__")?.unbind())
+    }
+
+    /// ``with OntoEnv(...) as env:`` — return ``self`` so the bound name is
+    /// the env itself.
+    fn __enter__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    /// On context-manager exit, persist and release resources by calling
+    /// :py:meth:`close`. Exceptions propagate.
+    fn __exit__(
+        &mut self,
+        py: Python<'_>,
+        _exc_type: &Bound<'_, PyAny>,
+        _exc_value: &Bound<'_, PyAny>,
+        _traceback: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        self.close(py)
+    }
 }
 
 #[pymodule]

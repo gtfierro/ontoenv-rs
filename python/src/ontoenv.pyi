@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, List, Union, Tuple, Dict
+from typing import Iterator, Optional, List, Union, Tuple, Dict
 from rdflib import Graph, Dataset
 from rdflib.query import Result
 from rdflib.store import Store
@@ -303,6 +303,34 @@ class OntoEnv:
 
     def flush(self) -> None: ...
     def close(self) -> None: ...
+
+    # ------------------------------------------------------------------ #
+    # Pythonic sugar                                                       #
+    # ------------------------------------------------------------------ #
+
+    def __len__(self) -> int:
+        """Number of ontologies in the environment."""
+        ...
+
+    def __contains__(self, uri: str) -> bool:
+        """``uri in env`` — True if *uri* resolves to a known ontology."""
+        ...
+
+    def __getitem__(self, uri: str) -> Graph:
+        """``env[uri]`` — shorthand for :py:meth:`get_graph`."""
+        ...
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over the URIs of every ontology in the environment."""
+        ...
+
+    def __enter__(self) -> "OntoEnv": ...
+    def __exit__(
+        self,
+        exc_type: object,
+        exc_value: object,
+        traceback: object,
+    ) -> None: ...
 
 
 class OntoEnvStore:
