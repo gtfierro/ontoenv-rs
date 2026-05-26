@@ -35,8 +35,12 @@ Key methods
   ``(Graph, int)`` pair — the ontology named ``name`` plus all its transitive imports, and
   the count of imported graphs. Pass a ``destination_graph`` to merge into an existing graph
   in place.
-- ``env.get_graph(name)`` — Return the stored ``rdflib.Graph`` for a single ontology IRI —
-  useful when you only need one graph rather than a full closure.
+- ``env.get_graph(name)`` — Return a read-only store-backed ``rdflib.Graph`` view for a
+  single ontology IRI. Cheap; useful when you only need one graph and don't intend to
+  mutate it. Mutation raises ``ValueError``.
+- ``env.copy_graph(name)`` — Materialize a mutable in-memory ``rdflib.Graph`` copy of the
+  named ontology. Use this when you need to add or remove triples locally without
+  affecting the env.
 - ``env.import_dependencies(graph, fetch_missing=False)`` — Mutate an ``rdflib.Graph`` in
   place, inserting triples from all ontologies declared in its ``owl:imports`` statements.
   Set ``fetch_missing=True`` to download any imports not yet in the environment.

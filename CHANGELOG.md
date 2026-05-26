@@ -4,6 +4,32 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
+## [Unreleased]
+
+### Changed (breaking)
+- `OntoEnv.get_graph(uri)` now returns a **read-only store-backed `rdflib.Graph` view** instead of a mutable in-memory copy. Mutating the returned graph raises `ValueError`. Use the new `OntoEnv.copy_graph(uri)` for the previous behavior (mutable in-memory `rdflib.Graph` copy).
+- `GraphIO::union_graph` returns `Result<Dataset>` instead of `Dataset`; errors from `ensure_loaded` and store iteration now propagate instead of being silently dropped.
+
+### Added
+- `OntoEnv.copy_graph(uri) -> rdflib.Graph` — materialize a mutable in-memory copy of a single ontology.
+- `Environment::get_ontology_by_id(&GraphIdentifier) -> Option<&Ontology>` — direct lookup that skips the configured `ResolutionPolicy`.
+- `GraphIO::ensure_loaded(&GraphIdentifier) -> Result<()>` trait hook for persistent backends to lazily load named graphs into the in-memory store. Default impl is a no-op.
+
+### Removed
+- Top-level helpers `ontoenv.graph_view_from_env` and `ontoenv.closure_graph_views_from_env` — `env.get_graph(uri)` covers the single-graph case directly. A closure-view method (`env.get_closure_view`) will land in a follow-up.
+
+### Fixed
+- `add_ids_to_dependency_graph` is now transactional with respect to the in-memory env state: a mid-traversal failure (e.g. a strict-mode unresolved import) no longer leaves `env`, `dependency_graph`, `dependency_graph_index`, and `failed_resolutions` desynced from each other.
+- Dependency-graph construction now resolves imports by `GraphIdentifier` instead of going through `ResolutionPolicy`, so the graph reflects the exact ontology being added rather than whatever the policy maps the name to.
+
+### Performance
+- `get_closure` BFS-walks the pre-built `dependency_graph` via `NodeIndex` instead of resolving each import by name on every step. A new `dependency_graph_index` map is kept in sync with the graph.
+- `Environment::get_ontology` short-circuits exact-id hits and skips the per-call `Vec<&Ontology>` policy fallback.
+- `GraphIO::union_graph` streams quads from the store directly into the target `Dataset`, dropping the intermediate per-id `Graph` allocation.
+- `get_union_graph` and `get_namespaces` borrow ontologies from `env.ontologies()` instead of cloning each one through `get_ontology`.
+
+---
+
 ## [0.5.5]
 
 ### Added
