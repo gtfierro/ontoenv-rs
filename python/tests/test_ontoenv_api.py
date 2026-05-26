@@ -261,6 +261,47 @@ class TestOntoEnvAPI(unittest.TestCase):
         materialized.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
         self.assertIn((URIRef("urn:test"), RDF.type, OWL.Ontology), materialized)
 
+    def test_get_closure_view(self):
+        """get_closure_view returns a read-only merged view + name list."""
+        from ontoenv import ClosureGraphView
+
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+
+        view, names = self.env.get_closure_view(name, recursion_depth=0)
+
+        self.assertIsInstance(view, ClosureGraphView)
+        self.assertEqual(names[0], name)
+        self.assertGreater(len(view), 0)
+        self.assertIn((URIRef(name), RDF.type, OWL.Ontology), view)
+
+        # Same shape as get_closure for trivial swap-ability.
+        closure_g, closure_names = self.env.get_closure(name, recursion_depth=0)
+        self.assertEqual(set(names), set(closure_names))
+
+        # Read-only.
+        with self.assertRaises(ValueError):
+            view.add((URIRef("urn:x"), RDF.type, OWL.Ontology))
+
+    def test_iter_triples_and_iter_closure_triples(self):
+        """Streaming iterators yield rdflib-term tuples without an rdflib.Graph."""
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+
+        single = list(self.env.iter_triples(name))
+        self.assertGreater(len(single), 0)
+        s, p, o = single[0]
+        self.assertTrue(hasattr(s, "n3"))  # rdflib Identifier
+
+        # Closure stream should include at least as many triples as the
+        # single-graph stream (root is always in the closure).
+        closure = list(self.env.iter_closure_triples(name, recursion_depth=0))
+        self.assertGreaterEqual(len(closure), len(single))
+
     def test_get_graph_caches_dataset_across_calls(self):
         """Repeated get_graph calls reuse the same underlying Dataset/Store."""
         self.env = OntoEnv(path=self.test_dir, recreate=True)
