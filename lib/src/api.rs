@@ -2090,8 +2090,12 @@ impl OntoEnv {
         }
 
         // In strict mode, surface unresolved imports as an error to match prior
-        // semantics. The dependency graph only contains edges for resolved
-        // imports, so check raw ontology metadata for the visited set.
+        // semantics. Use `failed_resolutions` rather than re-resolving by
+        // name: the former records exactly the imports we couldn't resolve
+        // during `add_ids_to_dependency_graph` (which uses id-level lookups),
+        // so it stays consistent with the dependency-graph edges. Re-resolving
+        // via `get_ontology_by_name` would route through `ResolutionPolicy`
+        // and could disagree with the graph the BFS just walked.
         if self.config.strict {
             for graph_id in &result {
                 let ontology = self
@@ -2099,7 +2103,7 @@ impl OntoEnv {
                     .get(graph_id)
                     .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
                 for import in &ontology.imports {
-                    if self.env.get_ontology_by_name(import.into()).is_none() {
+                    if self.failed_resolutions.contains(import) {
                         return Err(anyhow!("Import not found: {}", import));
                     }
                 }
