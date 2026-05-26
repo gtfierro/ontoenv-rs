@@ -3,7 +3,7 @@
 This module exposes :class:`OntoEnvStore` — a read-only rdflib ``Store`` that
 serves SPARQL queries through the Rust backend — and the high-level helpers
 :func:`dataset_from_env` and :func:`refresh_dataset_from_env`. End users
-typically don't import from here directly; they call ``env.as_dataset()``
+typically don't import from here directly; they call ``env.get_dataset()``
 on an :class:`ontoenv.OntoEnv`, which delegates to :func:`dataset_from_env`.
 
 Two backend strategies are available:
@@ -90,7 +90,7 @@ def dataset_from_env(
 ) -> Dataset:
     """Return an ``rdflib.Dataset`` backed by an OntoEnv snapshot.
 
-    Prefer ``env.as_dataset(backend=..., store=...)`` in user code;
+    Prefer ``env.get_dataset()`` or ``env.copy_dataset()`` in user code;
     this function is the underlying implementation.
 
     Args:
@@ -109,15 +109,11 @@ def dataset_from_env(
     normalized_mode = _normalize_mode(mode)
     if store is None:
         store = OntoEnvStore.from_env(env, mode=normalized_mode)
-        dataset = Dataset(store=store)
-        _bind_dataset_namespaces(dataset, env)
-        return dataset
+        return Dataset(store=store)
 
     if isinstance(store, OntoEnvStore):
         store.refresh_from_env(env, mode=normalized_mode)
-        dataset = Dataset(store=store)
-        _bind_dataset_namespaces(dataset, env)
-        return dataset
+        return Dataset(store=store)
 
     if normalized_mode == "rdf5d":
         raise ValueError("backend='rdf5d' requires an OntoEnvStore instance")
@@ -155,7 +151,7 @@ class OntoEnvStore(Store):
     :class:`ontoenv.OntoEnv` and call :func:`refresh_dataset_from_env` instead.
 
     Construct via :meth:`from_env` or, more commonly, via
-    ``env.as_dataset()``. Creating an ``OntoEnvStore()`` directly
+    ``env.get_dataset()``. Creating an ``OntoEnvStore()`` directly
     yields an empty store, which is mostly useful as the rdflib plugin
     ``Graph(store='ontoenv')``.
     """
@@ -343,12 +339,12 @@ class OntoEnvStore(Store):
 class ClosureGraphView(Graph):
     """Read-only merged view across a fixed set of named graphs in a Dataset.
 
-    Returned by :py:meth:`ontoenv.OntoEnv.get_closure_view`. Triple lookups
+    Returned by :py:meth:`ontoenv.OntoEnv.get_closure`. Triple lookups
     are dispatched to each underlying named graph and de-duplicated; the
     underlying store is shared with the dataset, so mutation through this
     view raises ``ValueError`` from the store layer.
 
-    Construct via ``env.get_closure_view(...)`` rather than directly.
+    Construct via ``env.get_closure(...)`` rather than directly.
     """
 
     def __init__(self, dataset: Dataset, identifiers: Iterable[str]) -> None:
