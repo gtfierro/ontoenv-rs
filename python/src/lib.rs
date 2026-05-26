@@ -2504,17 +2504,21 @@ impl OntoEnv {
     fn update(&self, all: bool) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_mut() {
-            env.update_all(all).map_err(anyhow_to_pyerr)?;
-            env.save_to_directory().map_err(anyhow_to_pyerr)?;
-            drop(guard);
-            self.bump_generation();
-            Ok(())
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
-            ))
-        }
+            ));
+        };
+        // update_all and save_to_directory both touch env state. Even on
+        // failure we may have partially mutated it (e.g. removed missing
+        // ontologies before erroring), so invalidate the cache regardless.
+        let result = env
+            .update_all(all)
+            .and_then(|_| env.save_to_directory())
+            .map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
     }
 
     /// Re-reads all graphs from the attached graph store and rebuilds the environment's
@@ -2525,7 +2529,10 @@ impl OntoEnv {
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        env.refresh_from_graph_io().map_err(anyhow_to_pyerr)
+        let result = env.refresh_from_graph_io().map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
     }
 
     // fn is_read_only(&self) -> PyResult<bool> {
@@ -3380,9 +3387,29 @@ impl OntoEnv {
     /// :py:meth:`copy_graph` for a mutable in-memory copy.
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let uri_string = pystring_to_string(uri)?;
+        // Resolve up front so an unknown URI raises ValueError rather than
+        // silently returning an empty Dataset.graph(URIRef(uri)) view. The
+        // dataset is keyed by canonical GraphIdentifier; use the resolved id
+        // for the lookup so aliases/source URLs route to the right named graph.
+        let resolved_uri = {
+            let iri = NamedNode::new(uri_string.clone())
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let inner = self.inner.clone();
+            let guard = inner.lock().unwrap();
+            let env = guard.as_ref().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+            })?;
+            env.resolve(ResolveTarget::Graph(iri))
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "No graph with URI: {uri_string}"
+                    ))
+                })?
+                .to_uri_string()
+        };
         let rdflib = py.import("rdflib")?;
         let dataset = self.cached_view_dataset(py)?;
-        let uri_ref = rdflib.getattr("URIRef")?.call1((uri_string,))?;
+        let uri_ref = rdflib.getattr("URIRef")?.call1((resolved_uri,))?;
         Ok(dataset
             .bind(py)
             .call_method1("graph", (uri_ref,))?
@@ -3669,14 +3696,16 @@ impl OntoEnv {
     fn set_offline(&mut self, offline: bool) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_mut() {
-            env.set_offline(offline);
-            env.save_to_directory().map_err(anyhow_to_pyerr)
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
-            ))
-        }
+            ));
+        };
+        env.set_offline(offline);
+        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
     }
 
     fn is_strict(&self) -> PyResult<bool> {
@@ -3694,14 +3723,16 @@ impl OntoEnv {
     fn set_strict(&mut self, strict: bool) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_mut() {
-            env.set_strict(strict);
-            env.save_to_directory().map_err(anyhow_to_pyerr)
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
-            ))
-        }
+            ));
+        };
+        env.set_strict(strict);
+        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
     }
 
     fn requires_ontology_names(&self) -> PyResult<bool> {
@@ -3719,14 +3750,16 @@ impl OntoEnv {
     fn set_require_ontology_names(&mut self, require: bool) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_mut() {
-            env.set_require_ontology_names(require);
-            env.save_to_directory().map_err(anyhow_to_pyerr)
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
-            ))
-        }
+            ));
+        };
+        env.set_require_ontology_names(require);
+        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
     }
 
     fn resolution_policy(&self) -> PyResult<String> {
@@ -3744,15 +3777,18 @@ impl OntoEnv {
     fn set_resolution_policy(&mut self, policy: String) -> PyResult<()> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
-        if let Some(env) = guard.as_mut() {
-            env.set_resolution_policy(policy);
-            env.save_to_directory().map_err(anyhow_to_pyerr)
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
-            ))
-        }
+            ));
+        };
+        env.set_resolution_policy(policy);
+        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
     }
+
 
     pub fn store_path(&self) -> PyResult<Option<String>> {
         let inner = self.inner.clone();

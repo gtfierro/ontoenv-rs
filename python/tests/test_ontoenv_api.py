@@ -261,6 +261,12 @@ class TestOntoEnvAPI(unittest.TestCase):
         materialized.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
         self.assertIn((URIRef("urn:test"), RDF.type, OWL.Ontology), materialized)
 
+    def test_get_graph_unknown_uri_raises(self):
+        """get_graph on an unknown URI raises ValueError, not an empty Graph."""
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        with self.assertRaises(ValueError):
+            self.env.get_graph("http://example.com/does-not-exist")
+
     def test_get_closure_view(self):
         """get_closure_view returns a read-only merged view + name list."""
         from ontoenv import ClosureGraphView
