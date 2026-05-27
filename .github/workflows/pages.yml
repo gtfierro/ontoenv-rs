@@ -4,10 +4,12 @@ name: Deploy docs to Pages
 on:
   push:
     branches: ["main"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -19,7 +21,7 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.docs-url.outputs.url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -73,11 +75,87 @@ jobs:
           find _build/text -name '*.txt' ! -name 'changelog.txt' -print | sort | xargs -r cat > _build/llms.txt
           cp _build/llms.txt _build/html/llms.txt
 
+      - name: Stage Pages site
+        env:
+          IS_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          site_dir="$GITHUB_WORKSPACE/docs/_build/pages"
+          history_dir="$RUNNER_TEMP/pages-history"
+          repo_host="${GITHUB_SERVER_URL#https://}"
+          repo_url="https://x-access-token:${GITHUB_TOKEN}@${repo_host}/${GITHUB_REPOSITORY}.git"
+          rm -rf "$site_dir" "$history_dir"
+          mkdir -p "$site_dir"
+
+          if git ls-remote --exit-code --heads "$repo_url" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "$repo_url" "$history_dir"
+            rsync -a --exclude='.git' "$history_dir/" "$site_dir/"
+          fi
+
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            if [[ -z "$RELEASE_TAG" ]]; then
+              echo "Pre-release docs require github.event.release.tag_name" >&2
+              exit 1
+            fi
+            version_dir="$site_dir/versions/$RELEASE_TAG"
+            rm -rf "$version_dir"
+            mkdir -p "$version_dir"
+            rsync -a --delete docs/_build/html/ "$version_dir/"
+            if [[ ! -f "$site_dir/index.html" ]]; then
+              rsync -a --delete --exclude='versions/' docs/_build/html/ "$site_dir/"
+            fi
+          else
+            rsync -a --delete \
+              --exclude='versions/' \
+              --exclude='.git/' \
+              docs/_build/html/ "$site_dir/"
+          fi
+
+          touch "$site_dir/.nojekyll"
+
+      - name: Persist Pages history
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          repo_host="${GITHUB_SERVER_URL#https://}"
+          repo_url="https://x-access-token:${GITHUB_TOKEN}@${repo_host}/${GITHUB_REPOSITORY}.git"
+
+          cd docs/_build/pages
+          git init
+          git checkout -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git commit -m "Update docs site for ${GITHUB_REF_NAME}"; then
+            git push --force "$repo_url" gh-pages
+          fi
+          rm -rf .git
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/_build/html
+          path: docs/_build/pages
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Report docs URL
+        id: docs-url
+        env:
+          IS_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          page_url="${{ steps.deployment.outputs.page_url }}"
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            docs_url="${page_url%/}/versions/$RELEASE_TAG/"
+          else
+            docs_url="$page_url"
+          fi
+          echo "url=$docs_url" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Docs URL::$docs_url"
