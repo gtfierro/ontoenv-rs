@@ -32,8 +32,8 @@ Do not confuse this with ``OntoEnv(graph_store=...)``:
 Environment-backed usage
 ------------------------
 
-The usual workflow is to build an ``OntoEnv`` environment first, then materialize it into
-an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
+The usual workflow is to build an ``OntoEnv`` environment first, then open a read-only
+``OntoEnvStore``-backed dataset for SPARQL and graph access.
 
 .. code-block:: python
 
@@ -50,7 +50,7 @@ an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
    env.update()
    env.flush()
 
-   dataset = env.as_dataset()
+   dataset = env.get_dataset()
 
    for row in dataset.query(
        """
@@ -78,13 +78,14 @@ If you prefer rdflib's plugin lookup:
 
    graph = Graph(store="ontoenv")
 
-``env.as_dataset()`` returns a read-only ``rdflib.Dataset`` view of the env.
+``env.get_dataset()`` returns a read-only ``rdflib.Dataset`` view of the env.
 It binds the namespaces known to the environment and keys each named graph by its
 ontology IRI. The Dataset reflects the env's state at the time of the call; call it
 again (or ``env.refresh_dataset(dataset)``) after ``env.flush()`` to pick
 up changes.
 
-The ``backend`` parameter selects the storage strategy:
+Use ``env.copy_dataset()`` when you need a mutable in-memory copy of the environment.
+The deprecated ``env.as_dataset(backend=...)`` alias can still select a storage strategy:
 
 - ``"auto"`` (default) — use ``"rdf5d"`` if ``.ontoenv/store.r5tu`` exists, otherwise
   fall back to ``"copy"``.

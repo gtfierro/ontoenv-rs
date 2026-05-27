@@ -133,11 +133,15 @@ class OntoEnv:
         """
         ...
 
-    def copy_graph(self, uri: str) -> Graph:
-        """Copy the named graph for *uri* into a mutable in-memory ``rdflib.Graph``."""
+    def copy_graph(self, uri: str, graph: Optional[Graph] = None) -> Graph:
+        """Copy the named graph for *uri* into a mutable ``rdflib.Graph``.
+
+        If *graph* is provided, triples are added to it and the same graph is
+        returned. Otherwise a new in-memory graph is returned.
+        """
         ...
 
-    def get_closure_view(
+    def get_closure(
         self,
         uri: str,
         recursion_depth: int = -1,
@@ -147,7 +151,19 @@ class OntoEnv:
         Behaves like a merged ``rdflib.Graph`` but routes triple-pattern
         lookups across the underlying named graphs without materializing
         a copy. Returns ``(view, closure_names)``; ``view`` is a
-        :py:class:`ontoenv.ClosureGraphView`.
+        :py:class:`ontoenv.ClosureGraphView`. Use :py:meth:`copy_closure` for
+        a mutable in-memory merge.
+        """
+        ...
+
+    def get_closure_view(
+        self,
+        uri: str,
+        recursion_depth: int = -1,
+    ) -> Tuple[Graph, List[str]]:
+        """Deprecated alias for :py:meth:`get_closure`.
+
+        Emits ``DeprecationWarning``.
         """
         ...
 
@@ -202,19 +218,19 @@ class OntoEnv:
         """
         ...
 
-    def get_closure(
+    def copy_closure(
         self,
         uri: str,
-        destination_graph: Optional[Graph] = None,
+        graph: Optional[Graph] = None,
         rewrite_sh_prefixes: bool = True,
         remove_owl_imports: bool = True,
         recursion_depth: int = -1,
     ) -> Tuple[Graph, List[str]]:
-        """Merge the import closure of *uri* into a single graph.
+        """Copy the import closure of *uri* into a mutable graph.
 
-        Returns a ``(graph, closure_iris)`` tuple.  If *destination_graph*
-        is provided the triples are added to it; otherwise a new
-        ``rdflib.Graph`` is returned.
+        Returns a ``(graph, closure_iris)`` tuple. If *graph* is provided the
+        triples are added to it and the same graph is returned; otherwise a
+        new ``rdflib.Graph`` is returned.
         """
         ...
 
@@ -289,19 +305,45 @@ class OntoEnv:
         """
         ...
 
+    def get_dataset(self) -> Dataset:
+        """Return a read-only store-backed ``rdflib.Dataset`` view.
+
+        Mutation raises ``ValueError``. The returned dataset is cached and
+        refreshed automatically after environment mutations.
+        """
+        ...
+
+    def copy_dataset(self, dataset: Optional[Dataset] = None) -> Dataset:
+        """Copy the environment into a mutable ``rdflib.Dataset``.
+
+        If *dataset* is provided, quads are added to it and the same dataset is
+        returned. Otherwise a new in-memory dataset is returned.
+        """
+        ...
+
+    def snapshot_as_dataset(
+        self,
+        backend: str = "auto",
+        store: Optional[Store] = None,
+    ) -> Dataset:
+        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
+
+        Emits ``DeprecationWarning``. ``backend="copy"`` without *store*
+        returns :meth:`copy_dataset`; otherwise this returns a read-only
+        Dataset view using the requested backend.
+        """
+        ...
+
     def as_dataset(
         self,
         backend: str = "auto",
         store: Optional[Store] = None,
     ) -> Dataset:
-        """Return a point-in-time ``rdflib.Dataset`` view of the environment.
+        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
 
-        ``backend`` is one of ``"auto"`` (default), ``"rdf5d"``, or ``"copy"``.
-        ``"auto"`` picks ``"rdf5d"`` when a persistent ``.ontoenv/store.r5tu``
-        exists and ``"copy"`` otherwise. ``"rdf5d"`` forces the zero-copy
-        mmap-backed path and raises ``ValueError`` for temporary or
-        ``graph_store=``-backed envs. ``"copy"`` always materializes the env
-        into an in-memory snapshot.
+        Emits ``DeprecationWarning``. ``backend="copy"`` without *store*
+        returns :meth:`copy_dataset`; otherwise this returns a read-only
+        Dataset view using the requested backend.
         """
         ...
 
@@ -314,9 +356,11 @@ class OntoEnv:
         ...
 
     def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
-        """Deprecated alias for :meth:`as_dataset`.
+        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
 
-        Emits ``DeprecationWarning``. Calls ``as_dataset(backend=mode)``.
+        Emits ``DeprecationWarning``. ``mode="copy"`` returns
+        :meth:`copy_dataset`; otherwise this returns a read-only Dataset view
+        using the requested mode.
         """
         ...
 
@@ -394,5 +438,4 @@ class OntoEnvStore:
     def triples(self, triple_pattern: Tuple[Optional[object], Optional[object], Optional[object]], context: Optional[object] = None) -> object: ...
     def contexts(self, triple: Optional[Tuple[object, object, object]] = None) -> object: ...
     def query(self, query: object, initNs: Dict[str, object], initBindings: Dict[str, object], queryGraph: str, **kwargs: object) -> Result: ...
-
 

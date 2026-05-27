@@ -36,10 +36,13 @@ print(f"Brick graph has {len(brick_graph)} triples")
 # if you need a mutable in-memory graph, copy it explicitly
 mutable_brick_graph = env.copy_graph(brick_name)
 
-# get the full closure of the ontology, including all of its imports
+# get a read-only view of the full closure of the ontology, including all of its imports
 # returns a tuple (rdflib.Graph, list[str])
 brick_closure_graph, _ = env.get_closure(brick_name)
 print(f"Brick closure has {len(brick_closure_graph)} triples")
+
+# if you need a mutable materialized closure, copy it explicitly
+mutable_brick_closure_graph, _ = env.copy_closure(brick_name)
 
 # you can also add ontologies from a URL
 rec_name = env.add("https://w3id.org/rec/rec.ttl")
@@ -124,11 +127,10 @@ If you want to use ontoenv as an `rdflib` store directly, use `OntoEnvStore`. Th
 normal `rdflib.Graph` and `rdflib.Dataset` objects, but executes SPARQL through the Rust
 backend instead of rdflib's Python query engine.
 
-Use ``env.as_dataset()`` to get a read-only ``rdflib.Dataset`` view of the env.
-The default ``backend="auto"`` picks the zero-copy ``rdf5d`` snapshot when a persistent
-``.ontoenv/store.r5tu`` exists and otherwise falls back to an in-memory copy. Pass
-``backend="rdf5d"`` to require the fast path (raises for temporary or ``graph_store=``
-envs) or ``backend="copy"`` to always materialize.
+Use ``env.get_dataset()`` to get a read-only ``rdflib.Dataset`` view of the env.
+It uses the zero-copy ``rdf5d`` snapshot when a persistent ``.ontoenv/store.r5tu``
+exists and otherwise falls back to an in-memory view. Use ``env.copy_dataset()`` when
+you need a mutable in-memory dataset.
 
 ```python
 from rdflib import URIRef
@@ -139,7 +141,7 @@ brick_name = env.add("./brick/Brick.ttl")
 env.update()
 env.flush()
 
-dataset = env.as_dataset()
+dataset = env.get_dataset()
 
 for row in dataset.query(
     """

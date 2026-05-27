@@ -8,7 +8,7 @@ Pre-built wheels are published on PyPI — no Rust toolchain required.
 
 There are two distinct Python integration surfaces:
 
-- ``OntoEnv`` for ontology discovery, import resolution, and closure materialization.
+- ``OntoEnv`` for ontology discovery, import resolution, read-only views, and closure copies.
 - ``OntoEnvStore`` for using ontoenv as an ``rdflib`` ``Store`` with Rust-backed SPARQL
   execution.
 
@@ -31,20 +31,21 @@ Key methods
 - ``env.add(location, fetch_imports=True)`` — Register an ontology from a file path, URL,
   or an in-memory ``rdflib.Graph`` that contains an ``owl:Ontology`` declaration. Set
   ``fetch_imports=False`` to store only the root graph.
-- ``env.get_closure(name, destination_graph=None, recursion_depth=-1)`` — Return a merged
-  ``(Graph, int)`` pair — the ontology named ``name`` plus all its transitive imports, and
-  the count of imported graphs. Pass a ``destination_graph`` to merge into an existing graph
-  in place.
+- ``env.get_closure(name, recursion_depth=-1)`` — Return ``(view, closure_names)`` where
+  ``view`` is a read-only merged graph view over the ontology named ``name`` plus all its
+  transitive imports.
+- ``env.copy_closure(name, graph=None, recursion_depth=-1)`` — Copy the ontology named
+  ``name`` plus all its transitive imports into a mutable ``rdflib.Graph``. Pass ``graph``
+  to merge into an existing graph in place.
 - ``env.get_graph(name)`` — Return a read-only store-backed ``rdflib.Graph`` view for a
   single ontology IRI. Cheap; useful when you only need one graph and don't intend to
   mutate it. Mutation raises ``ValueError``.
-- ``env.copy_graph(name)`` — Materialize a mutable in-memory ``rdflib.Graph`` copy of the
-  named ontology. Use this when you need to add or remove triples locally without
-  affecting the env.
-- ``env.get_closure_view(name, recursion_depth=-1)`` — Return a tuple
-  ``(view, closure_names)`` where ``view`` is a read-only merged
-  :py:class:`ontoenv.ClosureGraphView` over every ontology in the imports closure of
-  *name*. Same shape as :py:meth:`get_closure` but does not materialize a copy.
+- ``env.copy_graph(name, graph=None)`` — Materialize a mutable in-memory
+  ``rdflib.Graph`` copy of the named ontology. Use this when you need to add or remove
+  triples locally without affecting the env.
+- ``env.get_dataset()`` — Return a read-only ``rdflib.Dataset`` view of the environment.
+- ``env.copy_dataset(dataset=None)`` — Copy the environment into a mutable
+  ``rdflib.Dataset``.
 - ``env.iter_triples(name)`` / ``env.iter_closure_triples(name, recursion_depth=-1)`` —
   Streaming iterators of ``(s, p, o)`` rdflib-term tuples for a single ontology or its
   imports closure. Skip the ``rdflib.Graph`` wrapper entirely; closure iteration does
@@ -93,9 +94,12 @@ Example
    # Retrieve just the Brick graph (no imports merged)
    brick = env.get_graph("https://brickschema.org/schema/1.4/Brick")
 
-   # Retrieve Brick with all transitive imports merged
-   g, n_imports = env.get_closure("https://brickschema.org/schema/1.4/Brick")
-   print(f"Merged {n_imports} imports — {len(g)} triples total")
+   # Query Brick with all transitive imports through a read-only merged view
+   g, closure_names = env.get_closure("https://brickschema.org/schema/1.4/Brick")
+   print(f"Read {len(closure_names)} graphs — {len(g)} triples total")
+
+   # Copy the same closure when you need a mutable materialized graph
+   mutable_g, closure_names = env.copy_closure("https://brickschema.org/schema/1.4/Brick")
 
 .. note::
 

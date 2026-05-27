@@ -1,18 +1,18 @@
-use ::ontoenv::api::{find_ontoenv_root_from, OntoEnv as OntoEnvRs, ResolveTarget};
-use ::ontoenv::config;
-use ::ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
-use ::ontoenv::errors::OfflineRetrievalError;
-use ::ontoenv::io::{GraphIO, StoreStats};
-use ::ontoenv::ontology::{GraphIdentifier, Ontology as OntologyRs, OntologyLocation};
-use ::ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
-use ::ontoenv::transform;
-use ::ontoenv::util::{get_file_contents, get_url_contents};
-use ::ontoenv::ToUriString;
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
+use ontoenv::api::{find_ontoenv_root_from, OntoEnv as OntoEnvRs, ResolveTarget};
+use ontoenv::config;
+use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
+use ontoenv::errors::OfflineRetrievalError;
+use ontoenv::io::{GraphIO, StoreStats};
+use ontoenv::ontology::{GraphIdentifier, Ontology as OntologyRs, OntologyLocation};
+use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
+use ontoenv::transform;
+use ontoenv::util::{get_file_contents, get_url_contents};
+use ontoenv::ToUriString;
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{
-    BlankNode, Graph as OxigraphGraph, GraphName, GraphNameRef, Literal, NamedNode,
+    BlankNode, Graph as OxigraphGraph, GraphName, GraphNameRef, Literal, NamedNode, NamedNodeRef,
     NamedOrBlankNode, NamedOrBlankNodeRef, Quad, Term, TermRef, Triple, TripleRef,
 };
 use oxigraph::store::Store;
@@ -21,7 +21,7 @@ use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyDict, PyString, PyStringMethods, PyTuple},
+    types::{IntoPyDict, PyDict, PyList, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
 use rdf5d::{DecodedTerm, R5tuFile};
@@ -654,6 +654,63 @@ fn graph_to_rdflib<'a>(py: Python<'a>, graph: &OxigraphGraph) -> PyResult<Bound<
         res.getattr("add")?.call1((tuple,))?;
     }
     Ok(res)
+}
+
+fn push_python_triple<'a>(
+    py: Python<'a>,
+    rdflib: &Bound<'a, PyModule>,
+    batch: &Bound<'a, PyList>,
+    triple: TripleRef<'_>,
+) -> PyResult<()> {
+    let t = PyTuple::new(
+        py,
+        &[
+            term_to_python(py, rdflib, triple.subject.into())?,
+            term_to_python(py, rdflib, triple.predicate.into())?,
+            term_to_python(py, rdflib, triple.object.into())?,
+        ],
+    )?;
+    batch.append(t)?;
+    Ok(())
+}
+
+fn build_transformed_dependency_graph(
+    env: &OntoEnvRs,
+    graph_ids: &[GraphIdentifier],
+    root: NamedOrBlankNodeRef<'_>,
+) -> Result<OxigraphGraph> {
+    let mut merged = OxigraphGraph::new();
+    let mut failures: Vec<String> = Vec::new();
+
+    for graph_id in graph_ids {
+        match env.get_graph(graph_id) {
+            Ok(graph) => {
+                for triple in graph.iter() {
+                    merged.insert(triple);
+                }
+            }
+            Err(err) => {
+                failures.push(format!("{}: {}", graph_id.to_uri_string(), err));
+            }
+        }
+    }
+
+    if env.is_strict() && !failures.is_empty() {
+        return Err(anyhow!(
+            "dependency import: {} graph(s) failed to load: {}",
+            failures.len(),
+            failures.join("; ")
+        ));
+    }
+
+    for failure in failures {
+        eprintln!("Skipping graph in dependency import: {failure}");
+    }
+
+    let to_remove: Vec<NamedNodeRef<'_>> = graph_ids.iter().map(|id| id.name()).collect();
+    transform::remove_owl_imports_graph(&mut merged, Some(&to_remove));
+    transform::remove_ontology_declarations_graph(&mut merged, root);
+    Ok(merged)
 }
 
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
@@ -2413,10 +2470,7 @@ impl OntoEnv {
             .getattr("_backend")?
             .call_method1("bind_rdf5d_snapshot", (store_path.as_ref(),))?;
         store.setattr("_env_mode", "rdf5d")?;
-        Ok(rdflib
-            .getattr("Dataset")?
-            .call1((store,))?
-            .unbind())
+        Ok(rdflib.getattr("Dataset")?.call1((store,))?.unbind())
     }
 
     /// Mark the cached Dataset (if any) as stale. Subsequent reads via
@@ -3166,27 +3220,27 @@ impl OntoEnv {
             return Ok(Vec::new());
         }
 
-        // Use the first ontology's name as the explicit root for sh:prefixes rewrite.
-        // Always pass rewrite_sh_prefixes=false to get_union_graph; we rewrite in Python
-        // after merging so the rdflib graph's own triples are included.
-        let rust_root = all_ontologies[0].name();
-        let union = env
-            .get_union_graph(&all_ontologies, rust_root, Some(false), Some(true))
+        // Use the first ontology's name as the explicit root for ontology
+        // declaration cleanup. sh:prefixes are still rewritten in Python after
+        // merging so the caller's original graph participates in conflict
+        // detection and declaration movement.
+        let rust_root = NamedOrBlankNodeRef::NamedNode(all_ontologies[0].name());
+        let union_graph = build_transformed_dependency_graph(env, &all_ontologies, rust_root)
             .map_err(anyhow_to_pyerr)?;
 
-        for triple in union.dataset.into_iter() {
-            let s: Term = triple.subject.into();
-            let p: Term = triple.predicate.into();
-            let o: Term = triple.object.into();
-            let t = PyTuple::new(
-                py,
-                &[
-                    term_to_python(py, &rdflib, s)?,
-                    term_to_python(py, &rdflib, p)?,
-                    term_to_python(py, &rdflib, o)?,
-                ],
-            )?;
-            graph.getattr("add")?.call1((t,))?;
+        let add_triples_to_graph = py
+            .import("ontoenv.rdflib_store")?
+            .getattr("add_triples_to_graph")?;
+        let mut batch = PyList::empty(py);
+        for triple in union_graph.iter() {
+            push_python_triple(py, &rdflib, &batch, triple)?;
+            if batch.len() >= 4096 {
+                add_triples_to_graph.call1((graph, &batch))?;
+                batch = PyList::empty(py);
+            }
+        }
+        if !batch.is_empty() {
+            add_triples_to_graph.call1((graph, &batch))?;
         }
 
         // Remove all owl:imports from the original graph (they are now materialized).
@@ -3630,6 +3684,26 @@ impl OntoEnv {
         Ok((view, names))
     }
 
+    /// Deprecated alias for :meth:`get_closure`.
+    #[pyo3(signature = (uri, recursion_depth = -1))]
+    fn get_closure_view(
+        &self,
+        py: Python<'_>,
+        uri: &str,
+        recursion_depth: i32,
+    ) -> PyResult<(Py<PyAny>, Vec<String>)> {
+        let warnings = py.import("warnings")?;
+        warnings.call_method1(
+            "warn",
+            (
+                "OntoEnv.get_closure_view() is deprecated; use OntoEnv.get_closure()",
+                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                2u32,
+            ),
+        )?;
+        self.get_closure(py, uri, recursion_depth)
+    }
+
     /// Stream ``(s, p, o)`` triples for one named graph as rdflib terms,
     /// skipping the rdflib ``Graph`` wrapper entirely.
     ///
@@ -3884,6 +3958,21 @@ impl OntoEnv {
         } else {
             self.build_dataset(py, backend, store)
         }
+    }
+
+    /// Refresh an existing read-only Dataset view from the current env.
+    fn refresh_dataset(&self, py: Python<'_>, dataset: Py<PyAny>) -> PyResult<()> {
+        let rdflib_store = py.import("ontoenv.rdflib_store")?;
+        let refresh = rdflib_store.getattr("refresh_dataset_from_env")?;
+        let env_obj = Py::new(
+            py,
+            OntoEnv {
+                inner: self.inner.clone(),
+                cache: self.cache.clone(),
+            },
+        )?;
+        refresh.call1((dataset, env_obj))?;
+        Ok(())
     }
 
     /// Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
