@@ -19,8 +19,9 @@ brick_name = env.add("../brick/Brick.ttl")
 env.update()
 env.flush()
 
-# Build an rdflib.Dataset backed directly by .ontoenv/store.r5tu when possible.
-dataset = env.as_dataset(backend="rdf5d")
+# Build a read-only rdflib.Dataset view backed directly by .ontoenv/store.r5tu
+# when possible.
+dataset = env.get_dataset()
 print("dataset backend", dataset.store._backend.backend_kind())
 
 print("graphs in dataset")

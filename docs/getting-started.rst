@@ -157,9 +157,12 @@ The Python API exposes the same configuration surface as the CLI:
 
    env.update(all=True)
 
-   # Retrieve a merged graph of an ontology and all its transitive imports
+   # Retrieve a read-only view of an ontology and all its transitive imports
    g, imported = env.get_closure("https://example.com/myOntology")
-   print(f"Merged {imported} imports, {len(g)} triples total")
+   print(f"Read {len(imported)} graphs, {len(g)} triples total")
+
+   # Use copy_closure when you need a mutable materialized graph
+   mutable_g, imported = env.copy_closure("https://example.com/myOntology")
 
 Pass ``use_cached_ontologies=True`` to start with an empty container that only fills when you
 explicitly call ``add`` or ``update``.

@@ -60,6 +60,17 @@ def _bind_dataset_namespaces(dataset: Dataset, env: Any) -> None:
         dataset.bind(prefix, URIRef(namespace), override=True)
 
 
+def add_triples_to_graph(graph: Graph, triples: Iterable[tuple[Any, Any, Any]]) -> None:
+    """Add a batch of triples to ``graph``.
+
+    Rust callers use this to avoid one Python function call per triple while
+    materializing large closure copies.
+    """
+    add = graph.add
+    for triple in triples:
+        add(triple)
+
+
 def _snapshot_store_file(env: Any) -> Path | None:
     store_dir = env.store_path()
     if not store_dir:

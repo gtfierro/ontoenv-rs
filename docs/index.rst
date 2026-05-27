@@ -53,8 +53,8 @@ Quick start
        includes=["*.ttl"],
    )
 
-   # Get a merged rdflib graph of an ontology and all its imports
-   g = env.get_closure("https://example.com/myOntology")
+   # Copy an ontology and all its imports into a mutable rdflib graph
+   g, closure_names = env.copy_closure("https://example.com/myOntology")
 
 Explore the docs
 ----------------

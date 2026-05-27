@@ -37,12 +37,10 @@ Or from Python:
 
 ```python
 from ontoenv import OntoEnv
-from rdflib import Graph
 
 env = OntoEnv(search_directories=["./ontologies"], strict=False, temporary=True)
 
-g = Graph()
-env.get_closure("http://example.org/ont/MyOntology", destination_graph=g)
+g, closure_names = env.copy_closure("http://example.org/ont/MyOntology")
 print(f"Closure has {len(g)} triples")
 ```
 
@@ -200,7 +198,6 @@ Building from source requires a Rust toolchain (MSRV 1.70).
 import tempfile
 from pathlib import Path
 from ontoenv import OntoEnv
-from rdflib import Graph
 
 with tempfile.TemporaryDirectory() as temp_dir:
     root = Path(temp_dir)
@@ -219,8 +216,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
     print("Ontologies found:", env.get_ontology_names())
 
-    g = Graph()
-    env.get_closure("http://example.com/ontology_b", destination_graph=g)
+    g, closure_names = env.copy_closure("http://example.com/ontology_b")
     print(f"Closure of ontology_b has {len(g)} triples")  # → 2
 ```
 
@@ -258,14 +254,18 @@ OntoEnv(
 
 | Method | Root identified by | Mutates input? | Returns |
 |---|---|---|---|
-| `get_closure(name, ...)` | IRI string | No | `(Graph, list[str])` |
+| `get_closure(name, ...)` | IRI string | No | `(Graph, list[str])` read-only view |
+| `copy_closure(name, ...)` | IRI string | No | `(Graph, list[str])` mutable copy |
 | `import_graph(destination_graph, name, ...)` | IRI string | Yes (required) | `None` |
 | `import_dependencies(graph, ...)` | `owl:imports` in caller's graph | Yes | `list[str]` |
 | `get_dependencies(graph, ...)` | `owl:imports` in caller's graph | No | `(Graph, list[str])` |
 | `list_closure(name, ...)` | IRI string | — | `list[str]` (IRIs only) |
 
-**`get_closure(uri, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`**
-Compute the full closure by IRI. `sh:prefixes` blocks are consolidated onto `uri` and `owl:imports` removed by default. Returns `(merged_graph, closure_iris)`. Use when you have an IRI and want a self-contained graph for reasoning, exchange, or export.
+**`get_closure(uri, recursion_depth=-1)`**
+Return a read-only merged view over the full closure by IRI. Use when you want to inspect or query closure triples without materializing a copy.
+
+**`copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`**
+Copy the full closure by IRI into a mutable graph. `sh:prefixes` blocks are consolidated onto `uri` and `owl:imports` removed by default. Returns `(merged_graph, closure_iris)`. Use when you want a self-contained graph for reasoning, exchange, or export.
 
 **`import_dependencies(graph, fetch_missing=False)`**
 Mutates the provided graph in-place. Reads its `owl:imports` statements, resolves each one transitively, merges all closure triples into the same graph, removes `owl:imports`, and rewrites `sh:prefixes` onto the graph's root. Returns `list[str]` of imported IRIs.
@@ -281,14 +281,16 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 | `add(location, fetch_imports=True) -> str` | Add ontology by file path, URL, or `rdflib.Graph`; returns IRI |
 | `add_no_imports(location) -> str` | Same as `add`, but skips import traversal |
 | `get_graph(name) -> Graph` | Read-only store-backed view of a single ontology (no closure expansion). Mutation raises `ValueError` |
-| `copy_graph(name) -> Graph` | Mutable in-memory copy of a single ontology |
-| `get_closure_view(name, recursion_depth=-1) -> (Graph, list[str])` | Read-only merged view over the imports closure (no materialization) |
+| `copy_graph(name, graph=None) -> Graph` | Mutable in-memory copy of a single ontology |
+| `get_closure(name, recursion_depth=-1) -> (Graph, list[str])` | Read-only merged view over the imports closure (no materialization) |
+| `copy_closure(name, graph=None, ...) -> (Graph, list[str])` | Mutable in-memory copy of the imports closure |
 | `iter_triples(name)` / `iter_closure_triples(name, recursion_depth=-1)` | Streaming triple iterators that skip the rdflib `Graph` wrapper |
 | `get_ontology(name)` | Inspect metadata: imports list, version, namespace map, last-updated |
 | `get_importers(name) -> list[str]` | Reverse dependency lookup |
 | `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings |
 | `missing_imports(uri=None) -> list[str]` | List unresolvable `owl:imports` IRIs (see below) |
-| `as_dataset(backend="auto") -> rdflib.Dataset` | Read-only Dataset view of the env (`"auto"`/`"rdf5d"`/`"copy"`) |
+| `get_dataset() -> rdflib.Dataset` | Read-only Dataset view of the env |
+| `copy_dataset(dataset=None) -> rdflib.Dataset` | Mutable in-memory copy of the env |
 | `store_path() -> str \| None` | Path to `.ontoenv/`, or `None` for temporary environments |
 | `close()` | Persist (if applicable) and release resources |
 | `len(env)` | Number of ontologies in the environment |
