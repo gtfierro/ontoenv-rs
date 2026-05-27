@@ -68,7 +68,7 @@ def main() -> None:
             python = venv_dir / "bin" / "python"
             pip = venv_dir / "bin" / "pip"
 
-        run([str(pip), "install", "--no-deps", str(ontoenv_wheel), str(shim_wheel)])
+        run([str(pip), "install", str(ontoenv_wheel), str(shim_wheel)])
         run(
             [
                 str(python),
