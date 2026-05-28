@@ -29,7 +29,7 @@ chrono.workspace = true
 oxrdf.workspace = true
 spargebra.workspace = true
 spareval.workspace = true
-rdf5d = { workspace = true, features = ["mmap", "sparql"] }
+rdf5d = { workspace = true, features = ["mmap", "sparql", "idx"] }
 
 [build-dependencies]
 pyo3-build-config = "0.27"

@@ -248,6 +248,8 @@ enum Commands {
     /// Manage ontoenv configuration.
     #[command(subcommand)]
     Config(ConfigCommands),
+    /// (Re)build the PSO/POS sidecar index next to the .r5tu store.
+    Index,
 }
 
 impl std::fmt::Display for Commands {
@@ -268,6 +270,7 @@ impl std::fmt::Display for Commands {
             Commands::Reset { .. } => "Reset",
             Commands::Namespaces { .. } => "Namespaces",
             Commands::Config { .. } => "Config",
+            Commands::Index => "Index",
         };
         f.write_str(name)
     }
@@ -948,6 +951,11 @@ fn execute(cmd: Cli) -> Result<()> {
         }
         Commands::Reset { .. } => {
             // This command is handled before the environment is loaded.
+        }
+        Commands::Index => {
+            let env = require_ontoenv(env)?;
+            env.build_index()?;
+            println!("PSO/POS sidecar index built.");
         }
     }
 

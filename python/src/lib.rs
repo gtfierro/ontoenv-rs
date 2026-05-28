@@ -463,55 +463,91 @@ impl From<Result<Bound<'_, PyAny>, pyo3::PyErr>> for MyTerm {
     }
 }
 
+/// Cached handles to the rdflib term constructors. Built once per outer
+/// call (per `triples()` invocation, per iterator) and reused for every
+/// term — avoids `py.import("rdflib")` + three `getattr` lookups per
+/// term, which dominate the per-triple Python construction cost.
+struct RdflibCtors {
+    uri_ref: Py<PyAny>,
+    literal: Py<PyAny>,
+    bnode: Py<PyAny>,
+}
+
+impl RdflibCtors {
+    fn new(py: Python<'_>) -> PyResult<Self> {
+        let rdflib = py.import("rdflib")?;
+        Ok(Self {
+            uri_ref: rdflib.getattr("URIRef")?.unbind(),
+            literal: rdflib.getattr("Literal")?.unbind(),
+            bnode: rdflib.getattr("BNode")?.unbind(),
+        })
+    }
+}
+
 fn term_to_python<'a>(
-    py: Python,
+    py: Python<'a>,
     rdflib: &Bound<'a, PyModule>,
     node: Term,
 ) -> PyResult<Bound<'a, PyAny>> {
-    let dtype: Option<String> = match &node {
-        Term::Literal(lit) => {
-            let dt = lit.datatype().as_str();
-            if dt == "http://www.w3.org/2001/XMLSchema#string" {
-                None
-            } else {
-                Some(dt.to_string())
-            }
-        }
-        _ => None,
-    };
-    let lang: Option<&str> = match &node {
-        Term::Literal(lit) => lit.language(),
-        _ => None,
-    };
+    let _ = rdflib;
+    let ctors = RdflibCtors::new(py)?;
+    term_to_python_with(py, &ctors, node)
+}
 
-    let res: Bound<'_, PyAny> = match &node {
+fn term_to_python_with<'a>(
+    py: Python<'a>,
+    ctors: &RdflibCtors,
+    node: Term,
+) -> PyResult<Bound<'a, PyAny>> {
+    match node {
         Term::NamedNode(uri) => {
-            let mut uri = uri.to_string();
-            uri.remove(0);
-            uri.remove(uri.len() - 1);
-            rdflib.getattr("URIRef")?.call1((uri,))?
+            let s = uri.into_string();
+            ctors.uri_ref.bind(py).call1((s,))
         }
         Term::Literal(literal) => {
+            let lang = literal.language().map(|s| s.to_string());
+            let dtype = {
+                let dt = literal.datatype().as_str();
+                if dt == "http://www.w3.org/2001/XMLSchema#string" {
+                    None
+                } else {
+                    Some(dt.to_string())
+                }
+            };
+            let value = literal.value().to_string();
+            let lit = ctors.literal.bind(py);
             match (dtype, lang) {
-                // prioritize 'lang' -> it implies String
-                (_, Some(lang)) => {
-                    rdflib
-                        .getattr("Literal")?
-                        .call1((literal.value(), lang, py.None()))?
-                }
-                (Some(dtype), None) => {
-                    rdflib
-                        .getattr("Literal")?
-                        .call1((literal.value(), py.None(), dtype))?
-                }
-                (None, None) => rdflib.getattr("Literal")?.call1((literal.value(),))?,
+                (_, Some(lang)) => lit.call1((value, lang, py.None())),
+                (Some(dtype), None) => lit.call1((value, py.None(), dtype)),
+                (None, None) => lit.call1((value,)),
             }
         }
-        Term::BlankNode(id) => rdflib
-            .getattr("BNode")?
-            .call1((id.clone().into_string(),))?,
-    };
-    Ok(res)
+        Term::BlankNode(id) => ctors.bnode.bind(py).call1((id.into_string(),)),
+    }
+}
+
+/// Convert a `DecodedTerm` straight to an rdflib Python object, skipping
+/// the intermediate oxrdf `Term` allocation chain in `decoded_term_to_term`.
+fn decoded_term_to_python_with<'a>(
+    py: Python<'a>,
+    ctors: &RdflibCtors,
+    term: DecodedTerm<'_>,
+) -> PyResult<Bound<'a, PyAny>> {
+    match term {
+        DecodedTerm::Iri(value) => ctors.uri_ref.bind(py).call1((value.as_ref(),)),
+        DecodedTerm::BNode(value) => ctors.bnode.bind(py).call1((value.as_ref(),)),
+        DecodedTerm::Literal { lex, dt, lang } => {
+            let lit = ctors.literal.bind(py);
+            match (dt, lang) {
+                (_, Some(lang)) => lit.call1((lex.as_ref(), lang.as_ref(), py.None())),
+                (Some(dt), None) if dt.as_ref() == "http://www.w3.org/2001/XMLSchema#string" => {
+                    lit.call1((lex.as_ref(),))
+                }
+                (Some(dt), None) => lit.call1((lex.as_ref(), py.None(), dt.as_ref())),
+                (None, None) => lit.call1((lex.as_ref(),)),
+            }
+        }
+    }
 }
 
 fn term_from_python(node: &Bound<'_, PyAny>) -> Result<Term> {
@@ -578,6 +614,18 @@ fn graph_name_to_python<'a>(
     match graph_name {
         GraphName::NamedNode(node) => term_to_python(py, rdflib, Term::NamedNode(node)),
         GraphName::BlankNode(node) => term_to_python(py, rdflib, Term::BlankNode(node)),
+        GraphName::DefaultGraph => Ok(py.None().into_bound(py)),
+    }
+}
+
+fn graph_name_to_python_with<'a>(
+    py: Python<'a>,
+    ctors: &RdflibCtors,
+    graph_name: GraphName,
+) -> PyResult<Bound<'a, PyAny>> {
+    match graph_name {
+        GraphName::NamedNode(node) => term_to_python_with(py, ctors, Term::NamedNode(node)),
+        GraphName::BlankNode(node) => term_to_python_with(py, ctors, Term::BlankNode(node)),
         GraphName::DefaultGraph => Ok(py.None().into_bound(py)),
     }
 }
@@ -1195,11 +1243,48 @@ struct Rdf5dSnapshot {
     // R5tuFile::find_decoded_term. A proper on-disk reverse index in rdf5d
     // is the right long-term fix.
     term_id_cache: Mutex<HashMap<DecodedTerm<'static>, Option<u64>>>,
+    // PSO/POS sidecar. None when the sidecar is missing or stale.
+    idx: Option<Arc<rdf5d::sidecar::IdxFile>>,
 }
 
 impl Rdf5dSnapshot {
     fn open(path: &Path) -> Result<Self> {
         let file = Arc::new(R5tuFile::open_mmap(path)?);
+        // Attempt to load the PSO/POS sidecar. Treat any error (missing,
+        // stale, version mismatch) as a soft failure — we just fall back to
+        // the slow path.
+        let idx_path = {
+            let mut s = path.as_os_str().to_owned();
+            s.push(".idx");
+            std::path::PathBuf::from(s)
+        };
+        let idx: Option<Arc<rdf5d::sidecar::IdxFile>> = if idx_path.exists() {
+            match rdf5d::sidecar::IdxFile::open(&idx_path) {
+                Ok(idx_file) => {
+                    let r5_crc = rdf5d::sidecar::gdir_crc(&file).unwrap_or(0);
+                    match idx_file.validate_against(path, r5_crc) {
+                        Ok(true) => Some(Arc::new(idx_file)),
+                        Ok(false) => {
+                            log::warn!(
+                                "PSO/POS sidecar {:?} is stale; ignoring",
+                                idx_path
+                            );
+                            None
+                        }
+                        Err(e) => {
+                            log::warn!("PSO/POS sidecar validate failed: {}; ignoring", e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("could not open PSO/POS sidecar {:?}: {}", idx_path, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut grouped: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
         for graph in file.enumerate_all()? {
             grouped
@@ -1223,7 +1308,63 @@ impl Rdf5dSnapshot {
             file,
             logical_graphs,
             term_id_cache: Mutex::new(HashMap::new()),
+            idx,
         })
+    }
+
+    /// Helper: when a sidecar is present and the predicate is bound, use the
+    /// PSO posting (or POS when both P and O are bound) to iterate matching
+    /// triples for the given set of gids. `gid_filter` is a list of physical
+    /// gids to include. `subject_id` and `object_id` further restrict by ID.
+    /// Returns Some(triples) on success, None when the sidecar is missing or
+    /// the predicate has no postings.
+    fn scan_indexed(
+        &self,
+        predicate_id: u64,
+        subject_id: Option<u64>,
+        object_id: Option<u64>,
+        gid_filter: &[u64],
+    ) -> Option<Vec<(u64, u64, u64, u64)>> {
+        let idx = self.idx.as_ref()?;
+        // Prefer POS when object is bound (skips gid-S scans).
+        if let Some(o_id) = object_id {
+            let post = idx.lookup_pos(predicate_id)?;
+            let mut out = Vec::new();
+            for &gid in gid_filter {
+                let Some(block) = post.block_for_gid(gid) else {
+                    continue;
+                };
+                for (o, s) in post.iter_block(block) {
+                    if o != o_id {
+                        continue;
+                    }
+                    if let Some(sid) = subject_id {
+                        if s != sid {
+                            continue;
+                        }
+                    }
+                    out.push((gid, s, predicate_id, o));
+                }
+            }
+            return Some(out);
+        }
+        // PSO path
+        let post = idx.lookup_pso(predicate_id)?;
+        let mut out = Vec::new();
+        for &gid in gid_filter {
+            let Some(block) = post.block_for_gid(gid) else {
+                continue;
+            };
+            for (s, o) in post.iter_block(block) {
+                if let Some(sid) = subject_id {
+                    if s != sid {
+                        continue;
+                    }
+                }
+                out.push((gid, s, predicate_id, o));
+            }
+        }
+        Some(out)
     }
 
     fn triple_count_for(&self, info: &LogicalGraphInfo) -> Result<usize> {
@@ -1280,6 +1421,17 @@ impl Rdf5dSnapshot {
 
     fn find_term_id(&self, term: &Term) -> Result<Option<u64>> {
         let key = term_to_decoded_term(term);
+        self.find_decoded_term_id_owned(key)
+    }
+
+    fn find_decoded_term_id(&self, term: &DecodedTerm<'_>) -> Result<Option<u64>> {
+        // Called once per bound pattern term per SPARQL iterator
+        // construction — the clone is paid at most a handful of times per
+        // query, not per scanned triple.
+        self.find_decoded_term_id_owned(term.clone().into_owned())
+    }
+
+    fn find_decoded_term_id_owned(&self, key: DecodedTerm<'static>) -> Result<Option<u64>> {
         {
             let cache = self.term_id_cache.lock().unwrap();
             if let Some(cached) = cache.get(&key) {
@@ -1356,6 +1508,18 @@ fn graph_name_to_python_from_str<'a>(
     )
 }
 
+fn graph_name_to_python_from_str_with<'a>(
+    py: Python<'a>,
+    ctors: &RdflibCtors,
+    graph_name: &str,
+) -> PyResult<Bound<'a, PyAny>> {
+    graph_name_to_python_with(
+        py,
+        ctors,
+        graph_name_from_string(graph_name).map_err(anyhow_to_pyerr)?,
+    )
+}
+
 fn term_to_decoded_term(term: &Term) -> DecodedTerm<'static> {
     match term {
         Term::NamedNode(node) => DecodedTerm::Iri(Cow::Owned(node.as_str().to_string())),
@@ -1372,6 +1536,7 @@ fn term_to_decoded_term(term: &Term) -> DecodedTerm<'static> {
     }
 }
 
+#[allow(dead_code)]
 fn decoded_term_to_term(term: DecodedTerm<'_>) -> Result<Term> {
     Ok(match term {
         DecodedTerm::Iri(value) => {
@@ -1437,15 +1602,92 @@ impl<'a> LogicalSparqlDatasetView<'a> {
                 >,
             > + 'a,
     > {
+        // Resolve each bound pattern term to its term ID once, then compare
+        // IDs in the inner loop. Avoids decoding s/p/o for every scanned
+        // triple just to discard it on a predicate filter mismatch.
+        //
+        // Returns Ok(Some(Some(id))) when the term is bound and present,
+        // Ok(Some(None)) when the term is bound but absent (entire iterator
+        // is empty), and Ok(None) when the term is unbound.
+        let resolve = |bound: &Option<DecodedTerm<'a>>| -> std::result::Result<
+            Option<Option<u64>>,
+            rdf5d::reader::R5Error,
+        > {
+            match bound {
+                None => Ok(None),
+                Some(term) => snapshot
+                    .find_decoded_term_id(term)
+                    .map(Some)
+                    .map_err(|e| rdf5d::reader::R5Error::Corrupt(e.to_string())),
+            }
+        };
+        let (subject_id, predicate_id, object_id) = {
+            let s = match resolve(&subject) {
+                Ok(v) => v,
+                Err(e) => return Box::new(once(Err(e))),
+            };
+            let p = match resolve(&predicate) {
+                Ok(v) => v,
+                Err(e) => return Box::new(once(Err(e))),
+            };
+            let o = match resolve(&object) {
+                Ok(v) => v,
+                Err(e) => return Box::new(once(Err(e))),
+            };
+            // Any bound-but-absent term means zero matches.
+            if matches!(s, Some(None)) || matches!(p, Some(None)) || matches!(o, Some(None)) {
+                return Box::new(empty());
+            }
+            (s.flatten(), p.flatten(), o.flatten())
+        };
+
         let file = snapshot.file.as_ref();
         let mut quads = Vec::new();
         let mut seen = HashSet::new();
+
+        // Fast path: predicate bound and a sidecar is available.
+        if let Some(p_id) = predicate_id {
+            if let Some(hits) = snapshot.scan_indexed(p_id, subject_id, object_id, &info.gids)
+            {
+                for (_gid, s_id, p_id, o_id) in hits {
+                    if !seen.insert((s_id, p_id, o_id)) {
+                        continue;
+                    }
+                    let subject_term = match file.decoded_term(s_id) {
+                        Ok(term) => term,
+                        Err(error) => return Box::new(once(Err(error))),
+                    };
+                    let predicate_term = match file.decoded_term(p_id) {
+                        Ok(term) => term,
+                        Err(error) => return Box::new(once(Err(error))),
+                    };
+                    let object_term = match file.decoded_term(o_id) {
+                        Ok(term) => term,
+                        Err(error) => return Box::new(once(Err(error))),
+                    };
+                    quads.push(Ok(SpareInternalQuad {
+                        subject: subject_term,
+                        predicate: predicate_term,
+                        object: object_term,
+                        graph_name: Some(Self::graph_term(graph_name)),
+                    }));
+                }
+                return Box::new(quads.into_iter());
+            }
+        }
+
         for gid in &info.gids {
             let triples = match file.triples_ids(*gid) {
                 Ok(triples) => triples,
                 Err(error) => return Box::new(once(Err(error))),
             };
             for (s_id, p_id, o_id) in triples {
+                if subject_id.is_some_and(|id| id != s_id)
+                    || predicate_id.is_some_and(|id| id != p_id)
+                    || object_id.is_some_and(|id| id != o_id)
+                {
+                    continue;
+                }
                 if !seen.insert((s_id, p_id, o_id)) {
                     continue;
                 }
@@ -1454,34 +1696,14 @@ impl<'a> LogicalSparqlDatasetView<'a> {
                     Ok(term) => term,
                     Err(error) => return Box::new(once(Err(error))),
                 };
-                if subject
-                    .as_ref()
-                    .is_some_and(|expected| expected != &subject_term)
-                {
-                    continue;
-                }
-
                 let predicate_term = match file.decoded_term(p_id) {
                     Ok(term) => term,
                     Err(error) => return Box::new(once(Err(error))),
                 };
-                if predicate
-                    .as_ref()
-                    .is_some_and(|expected| expected != &predicate_term)
-                {
-                    continue;
-                }
-
                 let object_term = match file.decoded_term(o_id) {
                     Ok(term) => term,
                     Err(error) => return Box::new(once(Err(error))),
                 };
-                if object
-                    .as_ref()
-                    .is_some_and(|expected| expected != &object_term)
-                {
-                    continue;
-                }
 
                 quads.push(Ok(SpareInternalQuad {
                     subject: subject_term,
@@ -1966,7 +2188,7 @@ impl PyRdfLibStoreBackend {
         predicate: Option<&Bound<'_, PyAny>>,
         object: Option<&Bound<'_, PyAny>>,
         context: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Vec<(Py<PyAny>, Vec<Py<PyAny>>)>> {
+    ) -> PyResult<Py<PyAny>> {
         let subject = match subject {
             Some(value) => Some(
                 term_to_subject(term_from_python(value).map_err(anyhow_to_pyerr)?)
@@ -1992,7 +2214,7 @@ impl PyRdfLibStoreBackend {
         };
 
         let backend = self.backend.lock().unwrap();
-        let rdflib = PyModule::import(py, "rdflib")?;
+        let ctors = RdflibCtors::new(py)?;
         match &*backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut by_triple: HashMap<Triple, Vec<GraphName>> = HashMap::new();
@@ -2009,29 +2231,29 @@ impl PyRdfLibStoreBackend {
                         .push(quad.graph_name.into_owned());
                 }
 
-                let mut rows = Vec::with_capacity(by_triple.len());
+                let py_list = PyList::empty(py);
                 for (triple, contexts) in by_triple {
                     let triple_obj = PyTuple::new(
                         py,
                         [
-                            term_to_python(py, &rdflib, triple.subject.into())?,
-                            term_to_python(py, &rdflib, triple.predicate.into())?,
-                            term_to_python(py, &rdflib, triple.object)?,
+                            term_to_python_with(py, &ctors, triple.subject.into())?,
+                            term_to_python_with(py, &ctors, triple.predicate.into())?,
+                            term_to_python_with(py, &ctors, triple.object)?,
                         ],
                     )?;
-                    let contexts = contexts
-                        .into_iter()
-                        .map(|graph_name| {
-                            graph_name_to_python(py, &rdflib, graph_name).map(Bound::unbind)
-                        })
-                        .collect::<PyResult<Vec<_>>>()?;
-                    rows.push((triple_obj.unbind().into_any(), contexts));
+                    let ctx_list = PyList::empty(py);
+                    for graph_name in contexts {
+                        let v = graph_name_to_python_with(py, &ctors, graph_name)?;
+                        ctx_list.append(v)?;
+                    }
+                    let row = PyTuple::new(py, [triple_obj.into_any(), ctx_list.into_any()])?;
+                    py_list.append(row)?;
                 }
-                Ok(rows)
+                Ok(py_list.into_any().unbind())
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
                 if matches!(graph_name, Some(GraphName::DefaultGraph)) {
-                    return Ok(Vec::new());
+                    return Ok(PyList::empty(py).into_any().unbind());
                 }
                 let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
                 let subject_id = subject
@@ -2057,100 +2279,133 @@ impl PyRdfLibStoreBackend {
                     .map(|value| snapshot.find_term_id(value).map_err(anyhow_to_pyerr))
                     .transpose()?
                     .flatten();
+                let empty_iter = |py: Python<'_>| -> PyResult<Py<PyAny>> {
+                    Py::new(
+                        py,
+                        StoreTriplesIter {
+                            snapshot: snapshot.clone(),
+                            grouped: HashMap::new().into_iter(),
+                            ctors: RdflibCtors::new(py)?,
+                            term_cache: HashMap::new(),
+                            graph_cache: HashMap::new(),
+                            remaining: 0,
+                        },
+                    )
+                    .map(|p| p.into_any())
+                };
+
                 if (subject.is_some() && subject_id.is_none())
                     || (predicate.is_some() && predicate_id.is_none())
                     || (object.is_some() && object_id.is_none())
                 {
-                    return Ok(Vec::new());
+                    return empty_iter(py);
                 }
 
                 if let Some(graph_name) = graph_name.as_ref() {
                     let Some(info) = snapshot.logical_graph(graph_name) else {
-                        return Ok(Vec::new());
+                        return empty_iter(py);
                     };
                     let Some(graph_name_key) = graph_name_key(graph_name) else {
-                        return Ok(Vec::new());
+                        return empty_iter(py);
                     };
                     let mut seen = HashSet::new();
-                    for gid in &info.gids {
-                        for triple_ids in
-                            snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
+                    // Fast path via sidecar PSO/POS when predicate is bound.
+                    let mut used_idx = false;
+                    if let Some(p_id) = predicate_id {
+                        if let Some(hits) =
+                            snapshot.scan_indexed(p_id, subject_id, object_id, &info.gids)
                         {
-                            if !seen.insert(triple_ids) {
-                                continue;
+                            used_idx = true;
+                            for (_gid, s_id, p_id, o_id) in hits {
+                                if !seen.insert((s_id, p_id, o_id)) {
+                                    continue;
+                                }
+                                grouped
+                                    .insert((s_id, p_id, o_id), vec![graph_name_key.clone()]);
                             }
-                            let (s_id, p_id, o_id) = triple_ids;
-                            if subject_id.is_some_and(|id| id != s_id)
-                                || predicate_id.is_some_and(|id| id != p_id)
-                                || object_id.is_some_and(|id| id != o_id)
-                            {
-                                continue;
-                            }
-                            grouped.insert((s_id, p_id, o_id), vec![graph_name_key.clone()]);
                         }
                     }
-                } else {
-                    for (graph_name, info) in &snapshot.logical_graphs {
+                    if !used_idx {
                         for gid in &info.gids {
-                            for (s_id, p_id, o_id) in
+                            for triple_ids in
                                 snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
                             {
+                                let (s_id, p_id, o_id) = triple_ids;
                                 if subject_id.is_some_and(|id| id != s_id)
                                     || predicate_id.is_some_and(|id| id != p_id)
                                     || object_id.is_some_and(|id| id != o_id)
                                 {
                                     continue;
                                 }
+                                if !seen.insert(triple_ids) {
+                                    continue;
+                                }
+                                grouped
+                                    .insert((s_id, p_id, o_id), vec![graph_name_key.clone()]);
+                            }
+                        }
+                    }
+                } else {
+                    // Fast path: sidecar PSO when predicate is bound across all gids.
+                    let mut used_idx = false;
+                    if let Some(p_id) = predicate_id {
+                        // Build a gid -> graph_name lookup once.
+                        let mut gid_to_graphs: HashMap<u64, Vec<&String>> = HashMap::new();
+                        for (gname, info) in &snapshot.logical_graphs {
+                            for gid in &info.gids {
+                                gid_to_graphs.entry(*gid).or_default().push(gname);
+                            }
+                        }
+                        let all_gids: Vec<u64> = gid_to_graphs.keys().copied().collect();
+                        if let Some(hits) = snapshot
+                            .scan_indexed(p_id, subject_id, object_id, &all_gids)
+                        {
+                            used_idx = true;
+                            for (gid, s_id, p_id, o_id) in hits {
+                                let Some(gnames) = gid_to_graphs.get(&gid) else {
+                                    continue;
+                                };
                                 let contexts = grouped.entry((s_id, p_id, o_id)).or_default();
-                                if !contexts.iter().any(|value| value == graph_name) {
-                                    contexts.push(graph_name.clone());
+                                for gname in gnames {
+                                    if !contexts.contains(*gname) {
+                                        contexts.push((*gname).clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !used_idx {
+                        for (graph_name, info) in &snapshot.logical_graphs {
+                            for gid in &info.gids {
+                                for (s_id, p_id, o_id) in
+                                    snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
+                                {
+                                    if subject_id.is_some_and(|id| id != s_id)
+                                        || predicate_id.is_some_and(|id| id != p_id)
+                                        || object_id.is_some_and(|id| id != o_id)
+                                    {
+                                        continue;
+                                    }
+                                    let contexts = grouped.entry((s_id, p_id, o_id)).or_default();
+                                    if !contexts.iter().any(|value| value == graph_name) {
+                                        contexts.push(graph_name.clone());
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                let mut rows = Vec::with_capacity(grouped.len());
-                for ((s_id, p_id, o_id), contexts) in grouped {
-                    let triple_obj = PyTuple::new(
-                        py,
-                        [
-                            term_to_python(
-                                py,
-                                &rdflib,
-                                decoded_term_to_term(
-                                    snapshot.file.decoded_term(s_id).map_err(r5error_to_pyerr)?,
-                                )
-                                .map_err(anyhow_to_pyerr)?,
-                            )?,
-                            term_to_python(
-                                py,
-                                &rdflib,
-                                decoded_term_to_term(
-                                    snapshot.file.decoded_term(p_id).map_err(r5error_to_pyerr)?,
-                                )
-                                .map_err(anyhow_to_pyerr)?,
-                            )?,
-                            term_to_python(
-                                py,
-                                &rdflib,
-                                decoded_term_to_term(
-                                    snapshot.file.decoded_term(o_id).map_err(r5error_to_pyerr)?,
-                                )
-                                .map_err(anyhow_to_pyerr)?,
-                            )?,
-                        ],
-                    )?;
-                    let contexts = contexts
-                        .into_iter()
-                        .map(|graph_name| {
-                            graph_name_to_python_from_str(py, &rdflib, &graph_name)
-                                .map(Bound::unbind)
-                        })
-                        .collect::<PyResult<Vec<_>>>()?;
-                    rows.push((triple_obj.unbind().into_any(), contexts));
-                }
-                Ok(rows)
+                let total = grouped.len();
+                let iter = StoreTriplesIter {
+                    snapshot: snapshot.clone(),
+                    grouped: grouped.into_iter(),
+                    ctors,
+                    term_cache: HashMap::new(),
+                    graph_cache: HashMap::new(),
+                    remaining: total,
+                };
+                Ok(Py::new(py, iter)?.into_any())
             }
         }
     }
@@ -2289,6 +2544,307 @@ impl PyRdfLibStoreBackend {
         })
     }
 
+    /// Scan a fixed list of named graphs (the imports closure of an
+    /// ontology) and yield deduplicated ``(triple, contexts)`` rows.
+    ///
+    /// Dedup is done at the rdf5d term-ID level — much cheaper than
+    /// hashing rdflib term tuples in Python, which is what
+    /// ``ClosureGraphView.triples`` used to do before pushing this merge
+    /// into Rust.
+    fn triples_in_graphs(
+        &self,
+        py: Python<'_>,
+        subject: Option<&Bound<'_, PyAny>>,
+        predicate: Option<&Bound<'_, PyAny>>,
+        object: Option<&Bound<'_, PyAny>>,
+        graph_names: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let subject = match subject {
+            Some(value) => Some(
+                term_to_subject(term_from_python(value).map_err(anyhow_to_pyerr)?)
+                    .map_err(anyhow_to_pyerr)?,
+            ),
+            None => None,
+        };
+        let predicate = match predicate {
+            Some(value) => Some(
+                term_to_predicate(term_from_python(value).map_err(anyhow_to_pyerr)?)
+                    .map_err(anyhow_to_pyerr)?,
+            ),
+            None => None,
+        };
+        let object = object
+            .map(|value| term_from_python(value).map_err(anyhow_to_pyerr))
+            .transpose()?;
+
+        let backend = self.backend.lock().unwrap();
+        let ctors = RdflibCtors::new(py)?;
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                let mut by_triple: HashMap<Triple, Vec<GraphName>> = HashMap::new();
+                for name in &graph_names {
+                    let gn = match NamedNode::new(name) {
+                        Ok(n) => GraphName::NamedNode(n),
+                        Err(_) => continue,
+                    };
+                    for quad in dataset.quads_for_pattern(
+                        subject.as_ref().map(NamedOrBlankNode::as_ref),
+                        predicate.as_ref().map(NamedNode::as_ref),
+                        object.as_ref().map(Term::as_ref),
+                        Some(gn.as_ref()),
+                    ) {
+                        let triple =
+                            Triple::new(quad.subject, quad.predicate, quad.object);
+                        by_triple
+                            .entry(triple)
+                            .or_default()
+                            .push(quad.graph_name.into_owned());
+                    }
+                }
+                let py_list = PyList::empty(py);
+                for (triple, contexts) in by_triple {
+                    let triple_obj = PyTuple::new(
+                        py,
+                        [
+                            term_to_python_with(py, &ctors, triple.subject.into())?,
+                            term_to_python_with(py, &ctors, triple.predicate.into())?,
+                            term_to_python_with(py, &ctors, triple.object)?,
+                        ],
+                    )?;
+                    let ctx_list = PyList::empty(py);
+                    for graph_name in contexts {
+                        let v = graph_name_to_python_with(py, &ctors, graph_name)?;
+                        ctx_list.append(v)?;
+                    }
+                    let row = PyTuple::new(py, [triple_obj.into_any(), ctx_list.into_any()])?;
+                    py_list.append(row)?;
+                }
+                Ok(py_list.into_any().unbind())
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                let empty_iter = |py: Python<'_>| -> PyResult<Py<PyAny>> {
+                    Py::new(
+                        py,
+                        StoreTriplesIter {
+                            snapshot: snapshot.clone(),
+                            grouped: HashMap::new().into_iter(),
+                            ctors: RdflibCtors::new(py)?,
+                            term_cache: HashMap::new(),
+                            graph_cache: HashMap::new(),
+                            remaining: 0,
+                        },
+                    )
+                    .map(|p| p.into_any())
+                };
+
+                // Resolve bound terms to IDs once. Any bound-but-absent term
+                // means the result is empty.
+                let resolve = |t: &Term| -> PyResult<Option<u64>> {
+                    snapshot.find_term_id(t).map_err(anyhow_to_pyerr)
+                };
+                let subject_id = match subject.as_ref() {
+                    Some(v) => match resolve(&subject_to_term(v))? {
+                        Some(id) => Some(id),
+                        None => return empty_iter(py),
+                    },
+                    None => None,
+                };
+                let predicate_id = match predicate.as_ref() {
+                    Some(v) => match resolve(&Term::NamedNode(v.clone()))? {
+                        Some(id) => Some(id),
+                        None => return empty_iter(py),
+                    },
+                    None => None,
+                };
+                let object_id = match object.as_ref() {
+                    Some(v) => match resolve(v)? {
+                        Some(id) => Some(id),
+                        None => return empty_iter(py),
+                    },
+                    None => None,
+                };
+
+                let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
+                // Fast path via sidecar PSO/POS when predicate is bound. We
+                // gather all gids across the requested graph names and let
+                // the sidecar do the per-predicate filtering.
+                let mut used_idx = false;
+                if let Some(p_id) = predicate_id {
+                    let mut all_gids: Vec<u64> = Vec::new();
+                    let mut gid_to_name: HashMap<u64, &String> = HashMap::new();
+                    for name in &graph_names {
+                        if let Some(info) = snapshot.logical_graphs.get(name) {
+                            for gid in &info.gids {
+                                gid_to_name.entry(*gid).or_insert(name);
+                                all_gids.push(*gid);
+                            }
+                        }
+                    }
+                    if !all_gids.is_empty() {
+                        if let Some(hits) =
+                            snapshot.scan_indexed(p_id, subject_id, object_id, &all_gids)
+                        {
+                            used_idx = true;
+                            for (gid, s_id, p_id, o_id) in hits {
+                                let Some(name) = gid_to_name.get(&gid) else {
+                                    continue;
+                                };
+                                let contexts =
+                                    grouped.entry((s_id, p_id, o_id)).or_default();
+                                if !contexts.contains(name) {
+                                    contexts.push((*name).clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                if !used_idx {
+                    for name in &graph_names {
+                        let Some(info) = snapshot.logical_graphs.get(name) else {
+                            continue;
+                        };
+                        for gid in &info.gids {
+                            for (s_id, p_id, o_id) in
+                                snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
+                            {
+                                if subject_id.is_some_and(|id| id != s_id)
+                                    || predicate_id.is_some_and(|id| id != p_id)
+                                    || object_id.is_some_and(|id| id != o_id)
+                                {
+                                    continue;
+                                }
+                                let contexts =
+                                    grouped.entry((s_id, p_id, o_id)).or_default();
+                                if !contexts.iter().any(|c| c == name) {
+                                    contexts.push(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                let total = grouped.len();
+                let iter = StoreTriplesIter {
+                    snapshot: snapshot.clone(),
+                    grouped: grouped.into_iter(),
+                    ctors,
+                    term_cache: HashMap::new(),
+                    graph_cache: HashMap::new(),
+                    remaining: total,
+                };
+                Ok(Py::new(py, iter)?.into_any())
+            }
+        }
+    }
+
+    /// Count unique triples across a list of named graphs. Used by
+    /// ``ClosureGraphView.__len__``.
+    fn len_in_graphs(&self, graph_names: Vec<String>) -> PyResult<usize> {
+        let backend = self.backend.lock().unwrap();
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                let mut seen: HashSet<Triple> = HashSet::new();
+                for name in &graph_names {
+                    let gn = match NamedNode::new(name) {
+                        Ok(n) => GraphName::NamedNode(n),
+                        Err(_) => continue,
+                    };
+                    for quad in
+                        dataset.quads_for_pattern(None, None, None, Some(gn.as_ref()))
+                    {
+                        seen.insert(Triple::new(quad.subject, quad.predicate, quad.object));
+                    }
+                }
+                Ok(seen.len())
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                let mut gids: Vec<u64> = Vec::new();
+                for name in &graph_names {
+                    if let Some(info) = snapshot.logical_graphs.get(name) {
+                        gids.extend(info.gids.iter().copied());
+                    }
+                }
+                count_unique_triples_for_gids(&snapshot.file, &gids).map_err(anyhow_to_pyerr)
+            }
+        }
+    }
+
+    /// True if any of ``graph_names`` contains the bound triple.
+    fn contains_in_graphs(
+        &self,
+        subject: &Bound<'_, PyAny>,
+        predicate: &Bound<'_, PyAny>,
+        object: &Bound<'_, PyAny>,
+        graph_names: Vec<String>,
+    ) -> PyResult<bool> {
+        let subject =
+            term_to_subject(term_from_python(subject).map_err(anyhow_to_pyerr)?)
+                .map_err(anyhow_to_pyerr)?;
+        let predicate =
+            term_to_predicate(term_from_python(predicate).map_err(anyhow_to_pyerr)?)
+                .map_err(anyhow_to_pyerr)?;
+        let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
+
+        let backend = self.backend.lock().unwrap();
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                for name in &graph_names {
+                    let gn = match NamedNode::new(name) {
+                        Ok(n) => GraphName::NamedNode(n),
+                        Err(_) => continue,
+                    };
+                    if dataset
+                        .quads_for_pattern(
+                            Some(subject.as_ref()),
+                            Some(predicate.as_ref()),
+                            Some(object.as_ref()),
+                            Some(gn.as_ref()),
+                        )
+                        .next()
+                        .is_some()
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                let s_id = match snapshot
+                    .find_term_id(&subject_to_term(&subject))
+                    .map_err(anyhow_to_pyerr)?
+                {
+                    Some(id) => id,
+                    None => return Ok(false),
+                };
+                let p_id = match snapshot
+                    .find_term_id(&Term::NamedNode(predicate))
+                    .map_err(anyhow_to_pyerr)?
+                {
+                    Some(id) => id,
+                    None => return Ok(false),
+                };
+                let o_id = match snapshot.find_term_id(&object).map_err(anyhow_to_pyerr)? {
+                    Some(id) => id,
+                    None => return Ok(false),
+                };
+                for name in &graph_names {
+                    let Some(info) = snapshot.logical_graphs.get(name) else {
+                        continue;
+                    };
+                    for gid in &info.gids {
+                        for (s, p, o) in
+                            snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
+                        {
+                            if s == s_id && p == p_id && o == o_id {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
     fn query(
         &self,
         py: Python<'_>,
@@ -2388,9 +2944,96 @@ struct OntoEnv {
 /// iterator yields lazily after that, so callers don't pay rdflib ``Graph``
 /// overhead per triple. Closure iteration does *not* de-duplicate across
 /// named graphs — wrap in ``set()`` if you need set semantics.
+/// Streaming iterator returned by ``OntoEnvStore.triples()`` when the
+/// underlying backend is rdf5d. Each ``__next__`` yields one
+/// ``(triple_tuple, contexts_list)`` row, lazily decoding term IDs into
+/// rdflib term objects and caching the result so repeated terms (the
+/// common case) are constructed once per scan.
+#[pyclass]
+struct StoreTriplesIter {
+    snapshot: Arc<Rdf5dSnapshot>,
+    grouped: std::collections::hash_map::IntoIter<(u64, u64, u64), Vec<String>>,
+    ctors: RdflibCtors,
+    term_cache: HashMap<u64, Py<PyAny>>,
+    graph_cache: HashMap<String, Py<PyAny>>,
+    remaining: usize,
+}
+
+impl StoreTriplesIter {
+    fn to_py_term(&mut self, py: Python<'_>, id: u64) -> PyResult<Py<PyAny>> {
+        if let Some(cached) = self.term_cache.get(&id) {
+            return Ok(cached.clone_ref(py));
+        }
+        let decoded = self
+            .snapshot
+            .file
+            .decoded_term(id)
+            .map_err(r5error_to_pyerr)?;
+        let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
+        self.term_cache.insert(id, obj.clone_ref(py));
+        Ok(obj)
+    }
+
+    fn graph_to_py(&mut self, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
+        if let Some(cached) = self.graph_cache.get(name) {
+            return Ok(cached.clone_ref(py));
+        }
+        let obj = graph_name_to_python_from_str_with(py, &self.ctors, name)?.unbind();
+        self.graph_cache.insert(name.to_string(), obj.clone_ref(py));
+        Ok(obj)
+    }
+}
+
+#[pymethods]
+impl StoreTriplesIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyTuple>>> {
+        let Some(((s_id, p_id, o_id), contexts)) = self.grouped.next() else {
+            return Ok(None);
+        };
+        self.remaining = self.remaining.saturating_sub(1);
+        let s = self.to_py_term(py, s_id)?;
+        let p = self.to_py_term(py, p_id)?;
+        let o = self.to_py_term(py, o_id)?;
+        let triple_obj = PyTuple::new(py, [s, p, o])?;
+        let ctx_list = PyList::empty(py);
+        for name in &contexts {
+            let v = self.graph_to_py(py, name)?;
+            ctx_list.append(v)?;
+        }
+        let row = PyTuple::new(py, [triple_obj.into_any(), ctx_list.into_any()])?;
+        Ok(Some(row.unbind()))
+    }
+
+    fn __len__(&self) -> usize {
+        self.remaining
+    }
+}
+
 #[pyclass]
 struct TripleIter {
     triples: std::vec::IntoIter<Triple>,
+    ctors: OnceLock<RdflibCtors>,
+}
+
+impl TripleIter {
+    fn new(triples: Vec<Triple>) -> Self {
+        Self {
+            triples: triples.into_iter(),
+            ctors: OnceLock::new(),
+        }
+    }
+
+    fn ctors(&self, py: Python<'_>) -> PyResult<&RdflibCtors> {
+        if let Some(c) = self.ctors.get() {
+            return Ok(c);
+        }
+        let _ = self.ctors.set(RdflibCtors::new(py)?);
+        Ok(self.ctors.get().unwrap())
+    }
 }
 
 #[pymethods]
@@ -2403,13 +3046,13 @@ impl TripleIter {
         let Some(t) = self.triples.next() else {
             return Ok(None);
         };
-        let rdflib = py.import("rdflib")?;
+        let ctors = self.ctors(py)?;
         let tuple = PyTuple::new(
             py,
             &[
-                term_to_python(py, &rdflib, t.subject.into())?,
-                term_to_python(py, &rdflib, t.predicate.into())?,
-                term_to_python(py, &rdflib, t.object)?,
+                term_to_python_with(py, ctors, t.subject.into())?,
+                term_to_python_with(py, ctors, t.predicate.into())?,
+                term_to_python_with(py, ctors, t.object)?,
             ],
         )?;
         Ok(Some(tuple.unbind()))
@@ -3723,12 +4366,7 @@ impl OntoEnv {
         })?;
         let graph = env.get_graph(&graphid).map_err(anyhow_to_pyerr)?;
         let triples: Vec<Triple> = graph.iter().map(|t| t.into_owned()).collect();
-        Py::new(
-            py,
-            TripleIter {
-                triples: triples.into_iter(),
-            },
-        )
+        Py::new(py, TripleIter::new(triples))
     }
 
     /// Stream ``(s, p, o)`` triples across the transitive ``owl:imports``
@@ -3759,12 +4397,7 @@ impl OntoEnv {
             let graph = env.get_graph(id).map_err(anyhow_to_pyerr)?;
             triples.extend(graph.iter().map(|t| t.into_owned()));
         }
-        Py::new(
-            py,
-            TripleIter {
-                triples: triples.into_iter(),
-            },
-        )
+        Py::new(py, TripleIter::new(triples))
     }
 
     /// Copy the named graph into a mutable in-memory ``rdflib.Graph``.
