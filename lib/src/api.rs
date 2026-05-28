@@ -793,10 +793,29 @@ impl OntoEnv {
         self.io.flush()
     }
 
-    /// Rebuild the PSO/POS sidecar index next to the persistent `.r5tu` store.
-    /// No-op for non-persistent backends.
+    /// Build (or rebuild) the PSO/POS sidecar index that sits next to the
+    /// persistent `store.r5tu` snapshot.
+    ///
+    /// The sidecar accelerates triple-pattern queries with a bound predicate
+    /// (including unbound-graph queries across an imports closure). It is
+    /// regenerable: a missing or stale sidecar is detected at open time and
+    /// the reader falls back to a per-graph scan.
+    ///
+    /// No-op for non-persistent backends (temporary or external graph store).
     pub fn build_index(&self) -> Result<()> {
         self.io.build_index()
+    }
+
+    /// Toggle automatic PSO/POS sidecar rebuilds at flush time.
+    ///
+    /// Default behavior (`on = true`) rebuilds the sidecar at the end of
+    /// every flush that writes data to disk. Disabling skips the rebuild and
+    /// removes any existing sidecar so stale data is never read back; call
+    /// [`Self::build_index`] to rebuild manually.
+    ///
+    /// No-op for non-persistent backends.
+    pub fn set_auto_index(&mut self, on: bool) {
+        self.io.set_auto_index(on);
     }
 
     fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
@@ -986,6 +1005,75 @@ impl OntoEnv {
     ) -> Result<GraphIdentifier> {
         // Add a single ontology without traversing its imports.
         self.add_with_options(location, overwrite, refresh, false)
+    }
+
+    /// Add the ontology from the given location, rename its declared IRI to `rename`, then
+    /// traverse its `owl:imports`.  All occurrences of the original IRI inside the graph
+    /// (subject and object positions) are rewritten to `rename` before the graph is stored.
+    pub fn add_with_rename(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        rename: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        let old_id = self.add(location, overwrite, refresh)?;
+        self.apply_graph_rename(&old_id, rename)
+    }
+
+    /// Like [`Self::add_with_rename`] but does not traverse `owl:imports`.
+    pub fn add_no_imports_with_rename(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        rename: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        let old_id = self.add_no_imports(location, overwrite, refresh)?;
+        self.apply_graph_rename(&old_id, rename)
+    }
+
+    /// Rename the graph IRI of an already-loaded ontology.
+    ///
+    /// Reads the graph from the IO store, rewrites every occurrence of the old IRI to
+    /// `new_iri` (subject and object positions), writes it back under the new name,
+    /// removes the old named graph, and updates the in-memory environment and dependency
+    /// graph to reflect the change.
+    pub fn rename_graph_iri(
+        &mut self,
+        id: &GraphIdentifier,
+        new_iri: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        self.apply_graph_rename(id, new_iri)
+    }
+
+    fn apply_graph_rename(
+        &mut self,
+        old_id: &GraphIdentifier,
+        new_iri: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        if old_id.name() == new_iri.as_ref() {
+            return Ok(old_id.clone());
+        }
+
+        // Read graph, apply rename transform, write back under new name.
+        let mut graph = self.io.get_graph(old_id)?;
+        transform::rename_ontology_iri_graph(&mut graph, old_id.name(), new_iri.as_ref());
+        let new_id =
+            GraphIdentifier::new_with_location(new_iri.as_ref(), old_id.location().clone());
+        self.io.remove(old_id)?;
+        self.io.add_named_graph(new_id.clone(), graph)?;
+
+        // Update in-memory environment: remove old entry, re-insert under new IRI.
+        if let Some(mut ont) = self.env.remove_ontology(old_id)? {
+            ont.set_iri(new_iri);
+            self.env.add_ontology(ont)?;
+        }
+
+        // Rebuild so dependency graph edges reflect the new identifier.
+        self.rebuild_dependency_graph()?;
+        self.save_to_directory()?;
+        Ok(new_id)
     }
 
     /// Add an ontology from in-memory bytes and traverse its imports.

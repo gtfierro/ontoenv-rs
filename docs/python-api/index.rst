@@ -53,6 +53,10 @@ Key methods
 - ``env.import_dependencies(graph, fetch_missing=False)`` — Mutate an ``rdflib.Graph`` in
   place, inserting triples from all ontologies declared in its ``owl:imports`` statements.
   Set ``fetch_missing=True`` to download any imports not yet in the environment.
+- ``env.build_index()`` / ``env.set_auto_index(on)`` — Manage the PSO/POS sidecar index
+  (``store.r5tu.idx``) that accelerates triple-pattern queries with a bound predicate.
+  Built automatically on every flush by default; pass ``auto_index=False`` to the
+  constructor to disable. See `Benchmarks <benchmarks.html#pso-pos-sidecar-index>`_.
 
 Pythonic sugar
 ~~~~~~~~~~~~~~

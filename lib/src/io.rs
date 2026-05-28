@@ -39,7 +39,8 @@ struct R5GraphInfo {
     n_triples: u64,
 }
 
-/// Path to the sibling `.idx` sidecar for a given `.r5tu` file.
+/// Returns the path of the PSO/POS sidecar file that lives next to a given
+/// `.r5tu` snapshot. The sidecar path is always `<r5tu>.idx`.
 pub fn sidecar_path_for(r5tu: &Path) -> PathBuf {
     let mut s = r5tu.as_os_str().to_owned();
     s.push(".idx");
@@ -167,10 +168,19 @@ pub trait GraphIO: Send + Sync {
     fn store(&self) -> &Store;
 
     /// Build (or rebuild) any secondary indexes the backend maintains.
-    /// Default is a no-op; persistent backends rebuild the PSO/POS sidecar.
+    ///
+    /// The persistent backend rebuilds the PSO/POS sidecar
+    /// (`store.r5tu.idx`) here. Non-persistent backends have no secondary
+    /// indexes and return `Ok(())`.
     fn build_index(&self) -> Result<()> {
         Ok(())
     }
+
+    /// Toggle automatic sidecar index rebuilds at flush time. See
+    /// [`PersistentGraphIO::set_auto_index`] for details.
+    ///
+    /// Non-persistent backends ignore this call.
+    fn set_auto_index(&mut self, _on: bool) {}
 
     /// Returns the identifiers of all graphs currently held in the store.
     fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
@@ -200,6 +210,21 @@ pub trait GraphIO: Send + Sync {
         format: Option<RdfFormat>,
         overwrite: Overwrite,
     ) -> Result<Ontology>;
+
+    /// Write a pre-built graph into the store under the given identifier, replacing any
+    /// existing graph at that name.  Used by the rename machinery after a transform.
+    fn add_named_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
+        let graphname = id.graphname()?;
+        self.store().remove_named_graph(id.name())?;
+        let mut loader = self.store().bulk_loader();
+        loader.load_quads(
+            graph
+                .iter()
+                .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
+        )?;
+        loader.commit()?;
+        Ok(())
+    }
 
     /// Hook for backends that lazy-load graphs from on-disk storage into the
     /// in-memory store on first access. Default is a no-op. Persistent backends
@@ -455,18 +480,27 @@ impl PersistentGraphIO {
     }
 
     /// Controls whether the PSO/POS sidecar (`store.r5tu.idx`) is rebuilt
-    /// automatically every time the `.r5tu` file is flushed. Default is true.
+    /// automatically every time the `.r5tu` snapshot is flushed.
+    ///
+    /// When `true` (default), each call to [`Self::flush`] that writes a new
+    /// snapshot rebuilds the sidecar synchronously. When `false`, the sidecar
+    /// is not rebuilt and any existing sidecar is removed so that readers
+    /// cannot pick up a stale index. Call [`Self::build_index`] to rebuild it
+    /// on demand.
     pub fn set_auto_index(&mut self, on: bool) {
         self.auto_index = on;
     }
 
+    /// Returns whether automatic sidecar rebuilds at flush time are enabled.
     pub fn auto_index(&self) -> bool {
         self.auto_index
     }
 
     /// Build (or rebuild) the sidecar PSO/POS index for the current `.r5tu`.
-    /// Logs and continues on failure rather than propagating, since the
-    /// sidecar is an optimization.
+    ///
+    /// Reads the snapshot from disk, collects every triple, and writes a
+    /// fresh `store.r5tu.idx` atomically. Returns `Ok(())` and silently
+    /// succeeds when no snapshot exists yet.
     pub fn build_index(&self) -> Result<()> {
         if !self.store_path.exists() {
             return Ok(());
@@ -680,8 +714,35 @@ impl GraphIO for PersistentGraphIO {
         PersistentGraphIO::build_index(self)
     }
 
+    fn set_auto_index(&mut self, on: bool) {
+        PersistentGraphIO::set_auto_index(self, on);
+    }
+
     fn store(&self) -> &Store {
         &self.store
+    }
+
+    fn add_named_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
+        let graphname = id.graphname()?;
+        self.store.remove_named_graph(id.name())?;
+        let mut loader = self.store.bulk_loader();
+        loader.load_quads(
+            graph
+                .iter()
+                .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
+        )?;
+        loader.commit()?;
+        self.update_index_for_graph(&graphname)?;
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if let GraphName::NamedNode(nn) = graphname {
+            loaded.insert(nn.as_str().to_string());
+        }
+        drop(loaded);
+        self.on_store_mutated()?;
+        Ok(())
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
@@ -865,6 +926,10 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
 
     fn store(&self) -> &Store {
         &self.store
+    }
+
+    fn add_named_graph(&mut self, _id: GraphIdentifier, _graph: Graph) -> Result<()> {
+        Err(anyhow!("Cannot add to read-only store"))
     }
 
     fn add(&mut self, _location: OntologyLocation, _overwrite: Overwrite) -> Result<Ontology> {
