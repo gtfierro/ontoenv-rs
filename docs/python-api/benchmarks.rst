@@ -65,9 +65,9 @@ vary, but the *shape* of the comparison should be consistent.
      - 69 ms
      - 3.1 ms
    * - SPARQL ``rdfs:subClassOf*`` of ``brick:Equipment``
-     - 6.3 ms
+     - **0.6 ms**
      - 4.4 ms
-     - 4.5 ms
+     - 4.4 ms
      - 0.4 ms
    * - SPARQL ``SELECT ... rdfs:label ... LIMIT 1000``
      - **5.6 ms**
@@ -142,10 +142,10 @@ How to read the results
   snapshot's term-ID iterator with a u64-keyed cache for Python terms; it
   doesn't build intermediate ``oxrdf::Term`` objects per row. For large
   scans, ``get_*`` is now an equally good choice.
-- **Recursive property paths run inside ``spareval``.** ``subClassOf*`` at
-  5.6 ms vs. 4.2 ms for in-memory rdflib — comparable, and within reach of
-  in-memory because the per-step lookup is now sidecar-accelerated. Oxigraph
-  remains the fastest at 0.4 ms thanks to its native planner.
+- **Recursive property paths short-circuit through the sidecar.**
+  ``subClassOf*`` at 0.6 ms vs. 4.4 ms for in-memory rdflib (~7×
+  faster) and within ~1.5× of Oxigraph's 0.4 ms. See
+  :ref:`pclos-rewriting` below.
 - **Oxigraph is the fastest SPARQL backend on every query workload**, at the
   cost of a slower load and a slower full-iteration path. Use it when you
   load once and query many times.
@@ -195,6 +195,31 @@ The sidecar accelerates patterns where the predicate is bound, including
 unbound-graph queries across an imports closure. Patterns with only the
 subject or only the object bound still scan every graph in the relevant
 closure; full triple iteration is unaffected.
+
+.. _pclos-rewriting:
+
+Property-path closure rewriting
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The sidecar also precomputes the transitive closure of a configurable
+list of predicates (default ``rdfs:subClassOf``, ``rdfs:subPropertyOf``,
+``owl:sameAs``). At query time, the SPARQL evaluator intercepts
+``?x P+ ?y`` / ``?x P* ?y`` patterns whose predicate is in the list and
+substitutes a materialized ``VALUES`` block before handing the query to
+spareval. Supported path shapes: ``P+``, ``P*``, ``^P+``, ``^P*`` where
+``P`` is a single IRI.
+
+Bail-out cases (the path is left intact and spareval evaluates it
+itself, exactly as before):
+
+- Predicate is not in the configured closure-precompute list.
+- Path is a sequence, alternative, negated-property-set, or otherwise
+  not a direct ``P+``/``P*`` of a single IRI.
+- Both endpoints of the path are variables.
+
+The closure index roughly doubles the sidecar size (Brick: ~640 KB
+``IDX_PSO``/``IDX_POS`` + ~1.7 MB ``IDX_PCLOS``); rebuilds happen at
+``env.build_index()`` time alongside the rest of the sidecar.
 
 .. code-block:: python
 
