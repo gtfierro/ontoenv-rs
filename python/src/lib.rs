@@ -30,6 +30,8 @@ use spareval::{
     QueryableDataset,
 };
 use spargebra::SparqlParser;
+use spargebra::algebra::{GraphPattern, PropertyPathExpression};
+use spargebra::term::{GroundTerm, TermPattern, Variable};
 use std::borrow::{Borrow, Cow};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -2051,6 +2053,244 @@ struct PyRdfLibStoreBackend {
     backend: Arc<Mutex<RdfLibStoreBackend>>,
 }
 
+/// Rewrites `?x P+ ?y` / `?x P* ?y` graph patterns in a parsed SPARQL
+/// query, substituting precomputed `VALUES` blocks (or BGPs) for paths
+/// whose predicate is in the snapshot's `IDX_PCLOS` index.
+///
+/// Bail-out cases: predicate not in the closure index; both endpoints are
+/// variables and the materialized table would exceed `MAX_PCLOS_VALUES`
+/// rows; path is anything other than a direct `ZeroOrMore`/`OneOrMore` of
+/// a single `NamedNode`. In all bail-outs, the original pattern is left
+/// intact and spareval evaluates the property path itself.
+struct PClosRewriter<'a> {
+    snapshot: &'a Rdf5dSnapshot,
+}
+
+/// Cap on the size of a fully-materialized closure (both endpoints
+/// variable). Above this, we leave the path alone — spareval is likely a
+/// better choice than a huge `VALUES` block. Reserved for a future
+/// extension that supports the both-variables case.
+#[allow(dead_code)]
+const MAX_PCLOS_VALUES: usize = 200_000;
+
+impl<'a> PClosRewriter<'a> {
+    fn new(snapshot: &'a Rdf5dSnapshot) -> Self {
+        Self { snapshot }
+    }
+
+    /// Returns true when the snapshot has any PClos data to consult.
+    fn enabled(&self) -> bool {
+        self.snapshot.idx.as_ref().map(|i| i.has_pclos()).unwrap_or(false)
+    }
+
+    fn predicate_id(&self, iri: &str) -> Option<u64> {
+        let term = DecodedTerm::Iri(Cow::Borrowed(iri));
+        self.snapshot.find_decoded_term_id(&term).ok().flatten()
+    }
+
+    fn term_to_python_node(&self, term_id: u64) -> Option<spargebra::term::NamedNode> {
+        let decoded = self.snapshot.file.decoded_term(term_id).ok()?;
+        match decoded {
+            DecodedTerm::Iri(s) => spargebra::term::NamedNode::new(s.into_owned()).ok(),
+            _ => None,
+        }
+    }
+
+    fn rewrite_query(&self, q: &mut spargebra::Query) {
+        if !self.enabled() {
+            return;
+        }
+        match q {
+            spargebra::Query::Select { pattern, .. }
+            | spargebra::Query::Construct { pattern, .. }
+            | spargebra::Query::Describe { pattern, .. }
+            | spargebra::Query::Ask { pattern, .. } => {
+                self.rewrite_pattern(pattern);
+            }
+        }
+    }
+
+    fn rewrite_pattern(&self, pat: &mut GraphPattern) {
+        // Recurse first so inner Path nodes are still reachable.
+        match pat {
+            GraphPattern::Path { .. } => {}
+            GraphPattern::Join { left, right }
+            | GraphPattern::Union { left, right }
+            | GraphPattern::Minus { left, right } => {
+                self.rewrite_pattern(left);
+                self.rewrite_pattern(right);
+            }
+            GraphPattern::LeftJoin { left, right, .. } => {
+                self.rewrite_pattern(left);
+                self.rewrite_pattern(right);
+            }
+            GraphPattern::Filter { inner, .. }
+            | GraphPattern::Graph { inner, .. }
+            | GraphPattern::Extend { inner, .. }
+            | GraphPattern::OrderBy { inner, .. }
+            | GraphPattern::Project { inner, .. }
+            | GraphPattern::Distinct { inner }
+            | GraphPattern::Reduced { inner }
+            | GraphPattern::Slice { inner, .. }
+            | GraphPattern::Group { inner, .. }
+            | GraphPattern::Service { inner, .. } => {
+                self.rewrite_pattern(inner);
+            }
+            GraphPattern::Bgp { .. } | GraphPattern::Values { .. } => {}
+            // Catch-all for feature-gated variants (e.g. Lateral under
+            // sep-0006). Leave them untouched.
+            #[allow(unreachable_patterns)]
+            _ => {}
+        }
+        // Then rewrite at this level.
+        if let GraphPattern::Path { subject, path, object } = pat {
+            if let Some(replacement) =
+                self.rewrite_path(subject, path, object)
+            {
+                *pat = replacement;
+            }
+        }
+    }
+
+    /// Try to compute a replacement `GraphPattern` for a path triple.
+    /// Returns `None` to leave the pattern untouched.
+    fn rewrite_path(
+        &self,
+        subject: &TermPattern,
+        path: &PropertyPathExpression,
+        object: &TermPattern,
+    ) -> Option<GraphPattern> {
+        // Extract `(NamedNode(p), include_reflexive_for_star)` for paths we
+        // can handle: ZeroOrMore(P), OneOrMore(P), and the reverse-path
+        // variants ^P+ / ^P*.
+        let (named, include_reflexive, reversed) = match path {
+            PropertyPathExpression::OneOrMore(inner) => match inner.as_ref() {
+                PropertyPathExpression::NamedNode(p) => (p, false, false),
+                PropertyPathExpression::Reverse(inner2) => match inner2.as_ref() {
+                    PropertyPathExpression::NamedNode(p) => (p, false, true),
+                    _ => return None,
+                },
+                _ => return None,
+            },
+            PropertyPathExpression::ZeroOrMore(inner) => match inner.as_ref() {
+                PropertyPathExpression::NamedNode(p) => (p, true, false),
+                PropertyPathExpression::Reverse(inner2) => match inner2.as_ref() {
+                    PropertyPathExpression::NamedNode(p) => (p, true, true),
+                    _ => return None,
+                },
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let p_id = self.predicate_id(named.as_str())?;
+
+        // After reversal, the "forward" lookup direction in the sidecar
+        // corresponds to the *object* side of the SPARQL path, not the
+        // subject side. Conceptually: `?s ^P+ ?o` ≡ `?o P+ ?s`.
+        let (left, right) = if reversed {
+            (object, subject)
+        } else {
+            (subject, object)
+        };
+
+        match (left, right) {
+            // const P+ ?var  -> forward closure of const, bind ?var
+            (TermPattern::NamedNode(c), TermPattern::Variable(var)) => {
+                let c_id = self.predicate_id(c.as_str())?;
+                let mut answers = self
+                    .snapshot
+                    .idx
+                    .as_ref()?
+                    .closure_forward(p_id, c_id)
+                    .unwrap_or_default();
+                if include_reflexive {
+                    answers.push(c_id);
+                    answers.sort();
+                    answers.dedup();
+                }
+                Some(self.values_for_var(var, &answers))
+            }
+            // ?var P+ const  -> reverse closure of const, bind ?var
+            (TermPattern::Variable(var), TermPattern::NamedNode(c)) => {
+                let c_id = self.predicate_id(c.as_str())?;
+                let mut answers = self
+                    .snapshot
+                    .idx
+                    .as_ref()?
+                    .closure_reverse(p_id, c_id)
+                    .unwrap_or_default();
+                if include_reflexive {
+                    answers.push(c_id);
+                    answers.sort();
+                    answers.dedup();
+                }
+                Some(self.values_for_var(var, &answers))
+            }
+            // const1 P+ const2 -> check membership, replace with empty or true
+            (TermPattern::NamedNode(s), TermPattern::NamedNode(o)) => {
+                let s_id = self.predicate_id(s.as_str())?;
+                let o_id = self.predicate_id(o.as_str())?;
+                let answers = self
+                    .snapshot
+                    .idx
+                    .as_ref()?
+                    .closure_forward(p_id, s_id)
+                    .unwrap_or_default();
+                let reachable = answers.binary_search(&o_id).is_ok()
+                    || (include_reflexive && s_id == o_id);
+                if reachable {
+                    // Always-true: an empty BGP matches a single empty row.
+                    Some(GraphPattern::Bgp { patterns: vec![] })
+                } else {
+                    // Always-false: a Values with no rows.
+                    Some(GraphPattern::Values {
+                        variables: vec![],
+                        bindings: vec![],
+                    })
+                }
+            }
+            // Both unbound — materialize cartesian product (capped).
+            // Skip for v1 unless the result fits comfortably.
+            (TermPattern::Variable(left_var), TermPattern::Variable(right_var)) => {
+                self.materialize_both_unbound(p_id, left_var, right_var, include_reflexive)
+            }
+            // Anything else (Literal, BlankNode, Triple) — leave alone.
+            _ => None,
+        }
+    }
+
+    fn values_for_var(
+        &self,
+        var: &Variable,
+        ids: &[u64],
+    ) -> GraphPattern {
+        let mut bindings: Vec<Vec<Option<GroundTerm>>> = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(nn) = self.term_to_python_node(*id) {
+                bindings.push(vec![Some(GroundTerm::NamedNode(nn))]);
+            }
+        }
+        GraphPattern::Values {
+            variables: vec![var.clone()],
+            bindings,
+        }
+    }
+
+    /// Both endpoints are variables. In v1 we leave this to spareval —
+    /// materializing the full closure table as a VALUES block requires
+    /// an iterator over the PClos side that we don't currently expose,
+    /// and the result set can be unbounded. Falls back silently.
+    fn materialize_both_unbound(
+        &self,
+        _p_id: u64,
+        _left: &Variable,
+        _right: &Variable,
+        _include_reflexive: bool,
+    ) -> Option<GraphPattern> {
+        None
+    }
+}
+
 #[pymethods]
 impl PyRdfLibStoreBackend {
     #[new]
@@ -2954,7 +3194,7 @@ impl PyRdfLibStoreBackend {
         init_bindings: Option<HashMap<String, Py<PyAny>>>,
         query_graph: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let parsed = SparqlParser::new()
+        let mut parsed = SparqlParser::new()
             .parse_query(query)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let evaluator = QueryEvaluator::new();
@@ -2980,6 +3220,10 @@ impl PyRdfLibStoreBackend {
                 query_results_to_python(py, results)
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                // Rewrite property-path closures that the sidecar knows about
+                // into materialized VALUES blocks before handing the query
+                // to spareval.
+                PClosRewriter::new(snapshot.as_ref()).rewrite_query(&mut parsed);
                 let named_graphs = snapshot.named_graphs().map_err(anyhow_to_pyerr)?;
                 let mut prepared = evaluator.prepare(&parsed);
                 apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);

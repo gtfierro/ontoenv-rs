@@ -418,7 +418,19 @@ pub struct PersistentGraphIO {
     dirty: bool,
     batch_depth: usize,
     auto_index: bool,
+    /// Predicate IRIs to precompute transitive closures for in the sidecar.
+    /// Empty means no `IDX_PCLOS` section is built.
+    closure_predicates: Vec<String>,
 }
+
+/// Predicates that the sidecar's transitive-closure index targets by default
+/// when ``auto_closure_predicates`` is not customized. Covers the most common
+/// SPARQL property-path use cases on ontologies.
+pub const DEFAULT_CLOSURE_PREDICATES: &[&str] = &[
+    "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+    "http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
+    "http://www.w3.org/2002/07/owl#sameAs",
+];
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
@@ -476,7 +488,28 @@ impl PersistentGraphIO {
             dirty: false,
             batch_depth: 0,
             auto_index: true,
+            closure_predicates: DEFAULT_CLOSURE_PREDICATES
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         })
+    }
+
+    /// Sets the list of predicate IRIs for which the sidecar will
+    /// precompute transitive closures. Pass an empty slice to disable
+    /// the `IDX_PCLOS` section entirely. Takes effect on the next
+    /// sidecar build.
+    pub fn set_closure_predicates<I, S>(&mut self, iris: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.closure_predicates = iris.into_iter().map(Into::into).collect();
+    }
+
+    /// Returns the current closure-predicate IRIs.
+    pub fn closure_predicates(&self) -> &[String] {
+        &self.closure_predicates
     }
 
     /// Controls whether the PSO/POS sidecar (`store.r5tu.idx`) is rebuilt
@@ -507,7 +540,20 @@ impl PersistentGraphIO {
         }
         let idx_path = sidecar_path_for(&self.store_path);
         let file = R5tuFile::open(&self.store_path)?;
-        rdf5d::sidecar::build(&file, &idx_path)
+        // Resolve closure-predicate IRIs against the snapshot's term
+        // dictionary. Predicates absent from the snapshot are silently
+        // skipped — there's nothing to close over.
+        let mut closure_predicate_ids: Vec<u64> = Vec::new();
+        for iri in &self.closure_predicates {
+            let term = rdf5d::reader::DecodedTerm::Iri(std::borrow::Cow::Borrowed(iri));
+            if let Ok(Some(id)) = file.find_decoded_term(&term) {
+                closure_predicate_ids.push(id);
+            }
+        }
+        let opts = rdf5d::sidecar::BuildOptions {
+            closure_predicates: closure_predicate_ids,
+        };
+        rdf5d::sidecar::build_with_options(&file, &idx_path, &opts)
             .map_err(|e| anyhow!("sidecar build failed: {}", e))?;
         Ok(())
     }
