@@ -2772,6 +2772,72 @@ impl PyRdfLibStoreBackend {
         }
     }
 
+    /// Stream every triple across a list of named graphs without
+    /// de-duplication or per-row context lists. The right primitive for
+    /// ``ClosureGraphView.triples((None, None, None))`` — when the caller
+    /// doesn't need pattern matching, dedup, or contexts, this skips the
+    /// outer ``HashMap`` and the ``Vec<String>`` per row that
+    /// :py:meth:`triples_in_graphs` builds.
+    ///
+    /// Returns the same `TripleIter` type used by
+    /// :py:meth:`OntoEnv.iter_closure_triples`, with the same per-iterator
+    /// term cache.
+    fn iter_triples_in_graphs(
+        &self,
+        py: Python<'_>,
+        graph_names: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let backend = self.backend.lock().unwrap();
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                let mut triples: Vec<Triple> = Vec::new();
+                for name in &graph_names {
+                    let Ok(nn) = NamedNode::new(name) else {
+                        continue;
+                    };
+                    let gn = GraphName::NamedNode(nn);
+                    for quad in
+                        dataset.quads_for_pattern(None, None, None, Some(gn.as_ref()))
+                    {
+                        triples.push(Triple::new(
+                            quad.subject.clone(),
+                            quad.predicate.clone(),
+                            quad.object.clone(),
+                        ));
+                    }
+                }
+                Ok(Py::new(py, TripleIter::new(triples))?.into_any())
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                // Collect term-ID triples eagerly; defer Term/Py construction
+                // until iteration so the u64-keyed cache amortizes work
+                // across repeated terms (predicates and shared subjects).
+                let file = snapshot.file.as_ref();
+                let mut ids: Vec<(u64, u64, u64)> = Vec::new();
+                for name in &graph_names {
+                    let Some(info) = snapshot.logical_graphs.get(name) else {
+                        continue;
+                    };
+                    for gid in &info.gids {
+                        for triple_ids in file.triples_ids(*gid).map_err(r5error_to_pyerr)?
+                        {
+                            ids.push(triple_ids);
+                        }
+                    }
+                }
+                let remaining = ids.len();
+                let iter = Rdf5dTripleIdIter {
+                    snapshot: snapshot.clone(),
+                    triples: ids.into_iter(),
+                    ctors: RdflibCtors::new(py)?,
+                    term_cache: HashMap::new(),
+                    remaining,
+                };
+                Ok(Py::new(py, iter)?.into_any())
+            }
+        }
+    }
+
     /// Count unique triples across a list of named graphs. Used by
     /// ``ClosureGraphView.__len__``.
     fn len_in_graphs(&self, graph_names: Vec<String>) -> PyResult<usize> {
@@ -3042,6 +3108,60 @@ impl StoreTriplesIter {
         }
         let row = PyTuple::new(py, [triple_obj.into_any(), ctx_list.into_any()])?;
         Ok(Some(row.unbind()))
+    }
+
+    fn __len__(&self) -> usize {
+        self.remaining
+    }
+}
+
+/// Iterator over `(s, p, o)` triples that decodes term IDs against an rdf5d
+/// snapshot lazily on each `__next__`, with a u64-keyed term Py-object cache.
+/// Used by :py:meth:`PyRdfLibStoreBackend::iter_triples_in_graphs` for the
+/// rdf5d backend — preferred over `TripleIter` because it avoids
+/// materializing `oxrdf::Term` objects (whose string allocations dominate
+/// the cost when the inner cache is u64-keyed).
+#[pyclass]
+struct Rdf5dTripleIdIter {
+    snapshot: Arc<Rdf5dSnapshot>,
+    triples: std::vec::IntoIter<(u64, u64, u64)>,
+    ctors: RdflibCtors,
+    term_cache: HashMap<u64, Py<PyAny>>,
+    remaining: usize,
+}
+
+impl Rdf5dTripleIdIter {
+    fn to_py_term(&mut self, py: Python<'_>, id: u64) -> PyResult<Py<PyAny>> {
+        if let Some(cached) = self.term_cache.get(&id) {
+            return Ok(cached.clone_ref(py));
+        }
+        let decoded = self
+            .snapshot
+            .file
+            .decoded_term(id)
+            .map_err(r5error_to_pyerr)?;
+        let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
+        self.term_cache.insert(id, obj.clone_ref(py));
+        Ok(obj)
+    }
+}
+
+#[pymethods]
+impl Rdf5dTripleIdIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyTuple>>> {
+        let Some((s_id, p_id, o_id)) = self.triples.next() else {
+            return Ok(None);
+        };
+        self.remaining = self.remaining.saturating_sub(1);
+        let s = self.to_py_term(py, s_id)?;
+        let p = self.to_py_term(py, p_id)?;
+        let o = self.to_py_term(py, o_id)?;
+        let tuple = PyTuple::new(py, [s, p, o])?;
+        Ok(Some(tuple.unbind()))
     }
 
     fn __len__(&self) -> usize {
