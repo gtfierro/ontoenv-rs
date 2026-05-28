@@ -365,26 +365,37 @@ class ClosureGraphView(Graph):
         super().__init__(store=dataset.store, identifier=URIRef(ids[0]))
         self._dataset = dataset
         self._identifiers = tuple(URIRef(i) for i in ids)
+        # Plain str list for the Rust-side backend method (avoids per-call
+        # str() conversion of N URIRefs).
+        self._identifier_strs = [str(i) for i in ids]
+
+    def _backend(self) -> Any:
+        # OntoEnvStore exposes the Rust backend as `store._backend`.
+        return self._dataset.store._backend
 
     def triples(self, triple: Any) -> Generator[Any, None, None]:
-        seen: set[Any] = set()
-        for ident in self._identifiers:
-            for t in self._dataset.graph(ident).triples(triple):
-                if t in seen:
-                    continue
-                seen.add(t)
-                yield t
+        s, p, o = triple
+        # Single round-trip into Rust: scans only the closure's gids,
+        # dedups at the term-ID level, and yields rdflib term tuples
+        # lazily. Replaces the previous Python loop over per-graph
+        # triples() calls and the slow set() dedup of rdflib tuples.
+        rows = self._backend().triples_in_graphs(s, p, o, self._identifier_strs)
+        for triple_tuple, _contexts in rows:
+            yield triple_tuple
 
     def __contains__(self, triple: Any) -> bool:
-        return any(triple in self._dataset.graph(ident) for ident in self._identifiers)
+        s, p, o = triple
+        if s is None or p is None or o is None:
+            # Fall back to the streaming path; the Rust contains_in_graphs
+            # requires all three terms.
+            return any(True for _ in self.triples(triple))
+        return self._backend().contains_in_graphs(s, p, o, self._identifier_strs)
 
     def __iter__(self) -> Generator[Any, None, None]:
         return self.triples((None, None, None))
 
     def __len__(self) -> int:
-        # Count unique triples across all named graphs. The Dataset store has
-        # no cheaper way to answer this without dedup.
-        return sum(1 for _ in self.triples((None, None, None)))
+        return self._backend().len_in_graphs(self._identifier_strs)
 
 
 try:

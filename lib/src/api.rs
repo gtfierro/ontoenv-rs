@@ -793,6 +793,12 @@ impl OntoEnv {
         self.io.flush()
     }
 
+    /// Rebuild the PSO/POS sidecar index next to the persistent `.r5tu` store.
+    /// No-op for non-persistent backends.
+    pub fn build_index(&self) -> Result<()> {
+        self.io.build_index()
+    }
+
     fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
     where
         F: FnOnce(&mut Self) -> Result<T>,

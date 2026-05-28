@@ -39,6 +39,13 @@ struct R5GraphInfo {
     n_triples: u64,
 }
 
+/// Path to the sibling `.idx` sidecar for a given `.r5tu` file.
+pub fn sidecar_path_for(r5tu: &Path) -> PathBuf {
+    let mut s = r5tu.as_os_str().to_owned();
+    s.push(".idx");
+    PathBuf::from(s)
+}
+
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
     // Try multiple parsers to maximize compatibility with unknown RDF inputs.
     // Try preferred first, then fall back to all other formats.
@@ -158,6 +165,12 @@ pub trait GraphIO: Send + Sync {
 
     /// Returns a reference to the underlying store
     fn store(&self) -> &Store;
+
+    /// Build (or rebuild) any secondary indexes the backend maintains.
+    /// Default is a no-op; persistent backends rebuild the PSO/POS sidecar.
+    fn build_index(&self) -> Result<()> {
+        Ok(())
+    }
 
     /// Returns the identifiers of all graphs currently held in the store.
     fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
@@ -379,6 +392,7 @@ pub struct PersistentGraphIO {
     lock_file: File,
     dirty: bool,
     batch_depth: usize,
+    auto_index: bool,
 }
 
 impl PersistentGraphIO {
@@ -436,7 +450,32 @@ impl PersistentGraphIO {
             lock_file,
             dirty: false,
             batch_depth: 0,
+            auto_index: true,
         })
+    }
+
+    /// Controls whether the PSO/POS sidecar (`store.r5tu.idx`) is rebuilt
+    /// automatically every time the `.r5tu` file is flushed. Default is true.
+    pub fn set_auto_index(&mut self, on: bool) {
+        self.auto_index = on;
+    }
+
+    pub fn auto_index(&self) -> bool {
+        self.auto_index
+    }
+
+    /// Build (or rebuild) the sidecar PSO/POS index for the current `.r5tu`.
+    /// Logs and continues on failure rather than propagating, since the
+    /// sidecar is an optimization.
+    pub fn build_index(&self) -> Result<()> {
+        if !self.store_path.exists() {
+            return Ok(());
+        }
+        let idx_path = sidecar_path_for(&self.store_path);
+        let file = R5tuFile::open(&self.store_path)?;
+        rdf5d::sidecar::build(&file, &idx_path)
+            .map_err(|e| anyhow!("sidecar build failed: {}", e))?;
+        Ok(())
     }
 
     fn load_r5tu_into_store(store: &Store, r5tu_path: &Path) -> Result<()> {
@@ -601,6 +640,17 @@ impl PersistentGraphIO {
         // Finalize writes and mark the store clean.
         writer.finalize()?;
         self.dirty = false;
+        // Rebuild the PSO/POS sidecar synchronously when enabled.
+        if self.auto_index {
+            if let Err(e) = self.build_index() {
+                log::warn!("PSO/POS sidecar build failed: {}", e);
+            }
+        } else {
+            // Stale sidecars will simply be ignored at open time, but remove
+            // a previously-built one to avoid confusion.
+            let idx_path = sidecar_path_for(&self.store_path);
+            let _ = std::fs::remove_file(&idx_path);
+        }
         Ok(())
     }
 
@@ -624,6 +674,10 @@ impl GraphIO for PersistentGraphIO {
 
     fn store_location(&self) -> Option<&Path> {
         Some(&self.store_path)
+    }
+
+    fn build_index(&self) -> Result<()> {
+        PersistentGraphIO::build_index(self)
     }
 
     fn store(&self) -> &Store {

@@ -42,6 +42,8 @@
 
 pub mod header;
 pub mod reader;
+#[cfg(feature = "idx")]
+pub mod sidecar;
 #[cfg(feature = "sparql")]
 pub mod sparql;
 pub mod update;

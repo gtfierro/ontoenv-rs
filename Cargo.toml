@@ -44,7 +44,7 @@ oxrdf = "0.3.3"
 spargebra = "0.4.6"
 spareval = "0.2.6"
 
-rdf5d = { version = "0.6.0-a1", path = "rdf5d", features = ["oxigraph", "zstd"] }
+rdf5d = { version = "0.6.0-a1", path = "rdf5d", features = ["oxigraph", "zstd", "idx", "mmap"] }
 
 ontoenv = { version = "0.6.0-a1", path = "lib" }
 ontoenv-cli = { version = "0.6.0-a1", path = "cli" }

@@ -114,3 +114,4 @@ Example
    ontoenv
    rdflib-store
    graph-store
+   benchmarks

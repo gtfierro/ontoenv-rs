@@ -29,6 +29,7 @@ oxigraph = ["dep:oxigraph"]
 rocksdb = ["oxigraph/rocksdb"]
 mmap = ["dep:memmap2"]
 sparql = ["dep:oxrdf", "dep:spargebra", "dep:spareval"]
+idx = []
 
 [[bench]]
 name = "rdf5d_bench"
