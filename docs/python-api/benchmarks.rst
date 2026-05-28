@@ -50,30 +50,30 @@ vary, but the *shape* of the comparison should be consistent.
      - rdflib-memory
      - oxigraph
    * - Iterate all triples
-     - 154 ms
-     - 104 ms
-     - 91 ms
-     - 612 ms
+     - **93 ms**
+     - 109 ms
+     - 95 ms
+     - 565 ms
    * - Match ``?s owl:imports ?o``
-     - 0.09 ms
+     - 0.10 ms
      - 0.03 ms
      - 0.04 ms
-     - 0.14 ms
+     - 0.13 ms
    * - SPARQL ``COUNT`` of ``rdf:type``
-     - **3.0 ms**
+     - **3.2 ms**
+     - 73 ms
      - 69 ms
-     - 68 ms
-     - 3.2 ms
+     - 3.1 ms
    * - SPARQL ``rdfs:subClassOf*`` of ``brick:Equipment``
-     - 5.6 ms
-     - 4.6 ms
-     - 4.2 ms
+     - 6.3 ms
+     - 4.4 ms
+     - 4.5 ms
      - 0.4 ms
    * - SPARQL ``SELECT ... rdfs:label ... LIMIT 1000``
-     - **5.5 ms**
-     - 10.3 ms
-     - 10.1 ms
-     - 4.6 ms
+     - **5.6 ms**
+     - 10.5 ms
+     - 10.4 ms
+     - 6.1 ms
 
 (Bold entries highlight where ``ontoenv-get`` *beats* the in-memory
 baseline.)
@@ -125,11 +125,12 @@ How to read the results
 - **Selective predicate-bound patterns are at parity with in-memory.**
   ``(None, owl:imports, None)`` is 0.09 ms via the sidecar, within ~2× of the
   in-memory ``Memory`` store's hashed index.
-- **Full triple iteration is competitive but not the fastest path.** 154 ms
-  vs. 91 ms for ``rdflib-memory``; the in-memory store doesn't have to
-  construct rdflib term objects at read time. For large scans, prefer
-  ``copy_*`` if you'll iterate more than once; prefer ``get_*`` if you only
-  need to scan once or want to stop early.
+- **Full triple iteration matches in-memory.** 93 ms vs. 95 ms for
+  ``rdflib-memory`` on the Brick closure (~237k triples). The all-unbound
+  case in ``ClosureGraphView.triples`` streams directly from the rdf5d
+  snapshot's term-ID iterator with a u64-keyed cache for Python terms; it
+  doesn't build intermediate ``oxrdf::Term`` objects per row. For large
+  scans, ``get_*`` is now an equally good choice.
 - **Recursive property paths run inside ``spareval``.** ``subClassOf*`` at
   5.6 ms vs. 4.2 ms for in-memory rdflib — comparable, and within reach of
   in-memory because the per-step lookup is now sidecar-accelerated. Oxigraph

@@ -375,10 +375,16 @@ class ClosureGraphView(Graph):
 
     def triples(self, triple: Any) -> Generator[Any, None, None]:
         s, p, o = triple
-        # Single round-trip into Rust: scans only the closure's gids,
-        # dedups at the term-ID level, and yields rdflib term tuples
-        # lazily. Replaces the previous Python loop over per-graph
-        # triples() calls and the slow set() dedup of rdflib tuples.
+        if s is None and p is None and o is None:
+            # All-unbound: skip the dedup + per-row context-list bookkeeping
+            # done by ``triples_in_graphs`` and stream directly from the
+            # snapshot's per-graph quad iterators. Each triple is yielded
+            # once per graph it appears in (no cross-graph dedup), matching
+            # ``rdflib.Graph`` semantics for a merged read-only view.
+            yield from self._backend().iter_triples_in_graphs(self._identifier_strs)
+            return
+        # Pattern-restricted path: dedups at the term-ID level and yields
+        # rdflib term tuples lazily.
         rows = self._backend().triples_in_graphs(s, p, o, self._identifier_strs)
         for triple_tuple, _contexts in rows:
             yield triple_tuple
