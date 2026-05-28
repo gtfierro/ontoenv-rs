@@ -167,7 +167,7 @@ def render_benchcmp(rows, backend_names, baseline):
 
     out = []
     for other in others:
-        out.append(f"\nbenchmark vs {baseline}: {other}")
+        out.append(f"\n{other} vs {baseline}")
         out.append(
             f"  {'workload':<32s} {baseline+' best':>16s} {other+' best':>16s}  delta"
         )
