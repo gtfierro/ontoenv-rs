@@ -1852,3 +1852,467 @@ fn test_cached_add_force_refreshes() -> Result<()> {
     teardown(dir);
     Ok(())
 }
+
+// ── rename tests ─────────────────────────────────────────────────────────────
+
+fn in_memory_env() -> Result<OntoEnv> {
+    let root = std::env::current_dir()?;
+    let cfg = Config::builder()
+        .root(root)
+        .locations(vec![])
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    OntoEnv::init(cfg, true)
+}
+
+fn add_bytes(
+    env: &mut OntoEnv,
+    id: &str,
+    turtle: &str,
+) -> Result<ontoenv::ontology::GraphIdentifier> {
+    env.add_from_bytes(
+        OntologyLocation::InMemory {
+            identifier: id.to_string(),
+        },
+        turtle.as_bytes().to_vec(),
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )
+}
+
+/// After rename the new IRI resolves in the env, the old IRI does not,
+/// and the stored graph data carries the new IRI as the `owl:Ontology` subject.
+#[test]
+fn rename_updates_env_and_graph_data() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         <http://example.com/B> a owl:Ontology .\n",
+    )?;
+
+    let old_iri = NamedNode::new("http://example.com/B")?;
+    let b_id = env
+        .resolve(ResolveTarget::Graph(old_iri.clone()))
+        .expect("B should be in env before rename");
+
+    let new_iri = NamedNode::new("http://example.com/B-renamed")?;
+    let new_id = env.rename_graph_iri(&b_id, new_iri.clone())?;
+
+    // Old IRI removed, new IRI present.
+    assert!(
+        env.resolve(ResolveTarget::Graph(old_iri)).is_none(),
+        "old IRI should be gone after rename"
+    );
+    assert!(
+        env.resolve(ResolveTarget::Graph(new_iri.clone())).is_some(),
+        "new IRI should be in env after rename"
+    );
+    assert_eq!(new_id.to_uri_string(), new_iri.as_str());
+
+    // The stored graph has the new IRI as the owl:Ontology subject.
+    let graph = env.io().get_graph(&new_id)?;
+    let rdf_type = NamedNodeRef::new_unchecked("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    let owl_ontology_node =
+        NamedNodeRef::new_unchecked("http://www.w3.org/2002/07/owl#Ontology");
+
+    let new_iri_as_subject = NamedOrBlankNodeRef::NamedNode(new_iri.as_ref());
+    let has_new_declaration = graph
+        .triples_for_subject(new_iri_as_subject)
+        .any(|t| t.predicate == rdf_type && t.object == TermRef::NamedNode(owl_ontology_node));
+    assert!(has_new_declaration, "graph should declare new IRI as owl:Ontology");
+
+    let old_iri_node = NamedNode::new("http://example.com/B")?;
+    let old_iri_as_subject = NamedOrBlankNodeRef::NamedNode(old_iri_node.as_ref());
+    let old_declaration_gone = graph
+        .triples_for_subject(old_iri_as_subject)
+        .next()
+        .is_none();
+    assert!(old_declaration_gone, "old IRI should have no triples as subject");
+
+    Ok(())
+}
+
+/// Renaming a node with downstream imports keeps those imports reachable in
+/// the renamed node's own transitive closure.
+#[test]
+fn rename_preserves_downstream_closure() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    // C: standalone leaf
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         <http://example.com/C> a owl:Ontology .\n",
+    )?;
+
+    // B imports C
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         <http://example.com/B> a owl:Ontology ;\n\
+           owl:imports <http://example.com/C> .\n",
+    )?;
+
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new("http://example.com/B")?))
+        .expect("B should be in env");
+    let c_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new("http://example.com/C")?))
+        .expect("C should be in env");
+
+    // B's closure before rename: [B, C]
+    let closure_before = env.get_closure(&b_id, -1)?;
+    assert_eq!(closure_before.len(), 2);
+    assert!(closure_before.contains(&c_id));
+
+    // Rename B → B-renamed
+    let new_b_iri = NamedNode::new("http://example.com/B-renamed")?;
+    let b_new_id = env.rename_graph_iri(&b_id, new_b_iri)?;
+
+    // Old B gone, B-renamed present.
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new("http://example.com/B")?))
+            .is_none(),
+        "old B should be gone after rename"
+    );
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/B-renamed"
+        )?))
+        .is_some(),
+        "B-renamed should be in env"
+    );
+
+    // B-renamed's closure still includes C, and does not include old B.
+    let closure_after = env.get_closure(&b_new_id, -1)?;
+    assert!(
+        closure_after.contains(&c_id),
+        "C should still be in B-renamed's closure"
+    );
+    assert!(
+        !closure_after.contains(&b_id),
+        "old B should not appear in B-renamed's closure"
+    );
+    assert_eq!(closure_after.len(), 2, "closure should be [B-renamed, C]");
+
+    Ok(())
+}
+
+/// add_with_rename loads the root and its transitive imports. The returned
+/// identifier carries the renamed IRI; imported ontologies are reachable
+/// from the renamed root's closure.
+#[test]
+fn add_with_rename_closure_includes_imports() -> Result<()> {
+    let dir = new_tempdir("ontoenv_add_with_rename_closure")?;
+
+    // C: standalone leaf identified by its file URL
+    let c_path = dir.path().join("C.ttl");
+    let c_iri = url::Url::from_file_path(&c_path).unwrap().to_string();
+    fs::write(
+        &c_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{c}> a owl:Ontology .\n",
+            c = c_iri
+        ),
+    )?;
+
+    // B imports C (both identified by their file URLs)
+    let b_path = dir.path().join("B.ttl");
+    let b_iri = url::Url::from_file_path(&b_path).unwrap().to_string();
+    fs::write(
+        &b_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{b}> a owl:Ontology ; owl:imports <{c}> .\n",
+            b = b_iri,
+            c = c_iri,
+        ),
+    )?;
+
+    // A imports B (also identified by file URL)
+    let a_path = dir.path().join("A.ttl");
+    let a_iri = url::Url::from_file_path(&a_path).unwrap().to_string();
+    fs::write(
+        &a_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{a}> a owl:Ontology ; owl:imports <{b}> .\n",
+            a = a_iri,
+            b = b_iri,
+        ),
+    )?;
+
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![])
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    let mut env = OntoEnv::init(cfg, true)?;
+
+    let new_a_iri = "http://example.com/A-canonical";
+    let a_id = env.add_with_rename(
+        OntologyLocation::File(a_path),
+        Overwrite::Allow,
+        RefreshStrategy::Force,
+        NamedNode::new(new_a_iri)?,
+    )?;
+
+    // Root is registered under the new IRI.
+    assert_eq!(a_id.to_uri_string(), new_a_iri);
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(new_a_iri)?)).is_some(),
+        "renamed A should be in env"
+    );
+
+    // B and C were loaded as transitive dependencies.
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(&b_iri)?))
+        .expect("B should be in env as import of A");
+    let c_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(&c_iri)?))
+        .expect("C should be in env as transitive import");
+
+    // Transitive closure of A-canonical contains B and C.
+    let closure = env.get_closure(&a_id, -1)?;
+    assert!(closure.contains(&b_id), "B should be in A-canonical's closure");
+    assert!(closure.contains(&c_id), "C should be in A-canonical's closure");
+    assert_eq!(closure.len(), 3, "closure should be [A-canonical, B, C]");
+
+    teardown(dir);
+    Ok(())
+}
+
+/// Rename rewrites every occurrence of the old IRI inside the graph:
+///
+/// - subject position: `<old> rdf:type owl:Ontology`, `<old> owl:imports <C>`,
+///   `<old> sh:prefixes <old>`, `<old> sh:declare _:decl`,
+///   `<old> owl:versionIRI <old>`
+/// - object position: `<NamedShape> sh:prefixes <old>` (subject is NOT old IRI),
+///   self-referential `owl:versionIRI` and `sh:prefixes`
+///
+/// After rename none of the old IRI must appear anywhere in the graph.
+#[test]
+fn rename_rewrites_sh_prefixes_owl_imports_and_version_iri() -> Result<()> {
+    let old_iri = "http://example.com/B";
+    let new_iri = "http://example.com/B-new";
+    let c_iri = "http://example.com/C";
+    let shape_iri = "http://example.com/MyShape";
+
+    // Construct a rich turtle document that exercises every rewrite position:
+    //
+    //   old:B  rdf:type            owl:Ontology
+    //   old:B  owl:versionIRI      old:B          ← self-referential (subject + object)
+    //   old:B  owl:imports         C              ← subject rewrite; C object preserved
+    //   old:B  sh:prefixes         old:B          ← self-referential (subject + object)
+    //   old:B  sh:declare          _:decl         ← subject rewrite; blank-node object unchanged
+    //   shape  sh:prefixes         old:B          ← object-only rewrite (subject ≠ old)
+    let turtle = format!(
+        "@prefix owl:  <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix sh:   <http://www.w3.org/ns/shacl#> .\n\
+         @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
+         \n\
+         <{old}> a owl:Ontology ;\n\
+             owl:versionIRI <{old}> ;\n\
+             owl:imports <{c}> ;\n\
+             sh:prefixes <{old}> ;\n\
+             sh:declare [ sh:prefix \"ex\" ; sh:namespace <http://example.com/> ] .\n\
+         \n\
+         <{shape}> sh:prefixes <{old}> .\n",
+        old = old_iri,
+        c = c_iri,
+        shape = shape_iri,
+    );
+
+    let mut env = in_memory_env()?;
+    add_bytes(&mut env, "urn:test:B-rich", &turtle)?;
+
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(old_iri)?))
+        .expect("B should be loaded");
+    env.rename_graph_iri(&b_id, NamedNode::new(new_iri)?)?;
+
+    let new_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(new_iri)?))
+        .expect("B-new should be in env after rename");
+    let graph = env.io().get_graph(&new_id)?;
+
+    // Old IRI must not appear as a subject or as the object of any predicate
+    // other than owl:versionIRI (version identifiers are intentionally preserved).
+    let owl_version_iri_pred = "http://www.w3.org/2002/07/owl#versionIRI";
+    for t in graph.iter() {
+        if let oxigraph::model::NamedOrBlankNodeRef::NamedNode(nn) = t.subject {
+            assert_ne!(
+                nn.as_str(),
+                old_iri,
+                "old IRI must not appear as subject: {t}"
+            );
+        }
+        if t.predicate.as_str() != owl_version_iri_pred {
+            if let TermRef::NamedNode(nn) = t.object {
+                assert_ne!(
+                    nn.as_str(),
+                    old_iri,
+                    "old IRI must not appear as object (predicate={}): {t}",
+                    t.predicate
+                );
+            }
+        }
+    }
+
+    // New IRI must appear in every expected position.
+    let rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    let owl_ontology = "http://www.w3.org/2002/07/owl#Ontology";
+    let owl_version_iri = "http://www.w3.org/2002/07/owl#versionIRI";
+    let owl_imports = "http://www.w3.org/2002/07/owl#imports";
+    let sh_prefixes = "http://www.w3.org/ns/shacl#prefixes";
+
+    let has_triple = |s: Option<&str>, p: &str, o: Option<&str>| {
+        graph.iter().any(|t| {
+            let subj_ok = s.map_or(true, |expected| match t.subject {
+                oxigraph::model::NamedOrBlankNodeRef::NamedNode(nn) => nn.as_str() == expected,
+                _ => false,
+            });
+            let pred_ok = t.predicate.as_str() == p;
+            let obj_ok = o.map_or(true, |expected| match t.object {
+                TermRef::NamedNode(nn) => nn.as_str() == expected,
+                _ => false,
+            });
+            subj_ok && pred_ok && obj_ok
+        })
+    };
+
+    assert!(
+        has_triple(Some(new_iri), rdf_type, Some(owl_ontology)),
+        "<new> rdf:type owl:Ontology should be present"
+    );
+    assert!(
+        has_triple(Some(new_iri), owl_version_iri, Some(old_iri)),
+        "<new> owl:versionIRI <old> should be present (subject rewritten, version value preserved)"
+    );
+    assert!(
+        !has_triple(Some(new_iri), owl_version_iri, Some(new_iri)),
+        "<new> owl:versionIRI <new> must NOT appear — version IRI is not rewritten"
+    );
+    assert!(
+        has_triple(Some(new_iri), owl_imports, Some(c_iri)),
+        "<new> owl:imports <C> should be present (C object preserved)"
+    );
+    assert!(
+        has_triple(Some(new_iri), sh_prefixes, Some(new_iri)),
+        "<new> sh:prefixes <new> should be present (self-ref rewritten on both sides)"
+    );
+    assert!(
+        has_triple(Some(shape_iri), sh_prefixes, Some(new_iri)),
+        "<Shape> sh:prefixes <new> should be present (object-only rewrite)"
+    );
+
+    // C must NOT have been rewritten (it is a different named node).
+    assert!(
+        has_triple(Some(new_iri), owl_imports, Some(c_iri)),
+        "owl:imports target <C> must remain unchanged"
+    );
+
+    Ok(())
+}
+
+/// Three-node chain A → B → C built with in-memory ontologies.
+/// After renaming the middle node (B → B-new):
+///  - B-old is absent from the environment.
+///  - B-new is present, and its own closure still reaches C.
+///  - No closure of any remaining ontology contains B-old's IRI.
+#[test]
+fn rename_middle_node_dep_graph_updated() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let a_iri = "http://example.com/A";
+    let b_iri = "http://example.com/B";
+    let c_iri = "http://example.com/C";
+    let b_new_iri = "http://example.com/B-new";
+
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{c}> a owl:Ontology .\n",
+            c = c_iri
+        ),
+    )?;
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{b}> a owl:Ontology ; owl:imports <{c}> .\n",
+            b = b_iri,
+            c = c_iri,
+        ),
+    )?;
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{a}> a owl:Ontology ; owl:imports <{b}> .\n",
+            a = a_iri,
+            b = b_iri,
+        ),
+    )?;
+
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(b_iri)?))
+        .expect("B should be in env before rename");
+    let c_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(c_iri)?))
+        .expect("C should be in env");
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(a_iri)?))
+        .expect("A should be in env");
+
+    // Sanity check: full chain reachable before rename.
+    let closure_before = env.get_closure(&a_id, -1)?;
+    assert_eq!(closure_before.len(), 3, "A's closure should be [A, B, C] before rename");
+
+    // ── rename B ──────────────────────────────────────────────────────────────
+    let b_new_id = env.rename_graph_iri(&b_id, NamedNode::new(b_new_iri)?)?;
+
+    // B-old gone, B-new present.
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(b_iri)?)).is_none(),
+        "B-old should be absent after rename"
+    );
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(b_new_iri)?)).is_some(),
+        "B-new should be present after rename"
+    );
+    assert_eq!(b_new_id.to_uri_string(), b_new_iri);
+
+    // B-new still reaches C through its own imports.
+    let b_new_closure = env.get_closure(&b_new_id, -1)?;
+    assert!(
+        b_new_closure.contains(&c_id),
+        "C should still be reachable from B-new"
+    );
+    assert_eq!(b_new_closure.len(), 2, "B-new's closure should be [B-new, C]");
+
+    // B-old's IRI does not appear in any ontology's closure.
+    for (id, _) in env.ontologies() {
+        let closure = env.get_closure(id, -1).unwrap_or_default();
+        assert!(
+            !closure.iter().any(|g| g.to_uri_string() == b_iri),
+            "B-old IRI ({b_iri}) should not appear in closure of {}",
+            id.to_uri_string()
+        );
+    }
+
+    Ok(())
+}

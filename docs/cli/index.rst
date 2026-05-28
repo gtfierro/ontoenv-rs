@@ -92,7 +92,8 @@ Commands: update and manage
 - ``ontoenv init`` — Create or overwrite the environment. Pass directory paths to trigger
   immediate discovery, or omit them to start empty. ``--overwrite`` rebuilds in place.
 - ``ontoenv add`` — Register a single ontology by file path or URL. Fetches ``owl:imports``
-  unless ``--no-imports`` is passed.
+  unless ``--no-imports`` is passed.  Pass ``--rename <IRI>`` to store the graph under a
+  different IRI than the one declared in the file (see :ref:`renaming-on-add`).
 - ``ontoenv update`` — Re-ingest modified local files and re-fetch stale remote ontologies.
   ``--all`` forces a full refresh regardless of modification times or cache age.
 - ``ontoenv config`` — Read or update the persisted configuration. Supports ``get``, ``set``,
@@ -113,6 +114,9 @@ Commands: update and manage
 
    # add a remote ontology without following its imports
    ontoenv add https://brickschema.org/schema/Brick --no-imports
+
+   # add a file and store it under a different canonical IRI
+   ontoenv add ./vendor/upstream.ttl --rename https://my-org.com/local/upstream
 
    # re-ingest changed local files and re-fetch stale remote ontologies
    ontoenv update
@@ -135,6 +139,41 @@ Commands: update and manage
    ontoenv reset
    # skip the confirmation prompt
    ontoenv reset --force
+
+.. _renaming-on-add:
+
+Renaming an ontology on add
+----------------------------
+
+``--rename <IRI>`` overrides the ontology IRI that gets stored in the
+environment.  The flag is useful when you want to load a third-party ontology
+under a local or canonical IRI without modifying the source file.
+
+.. code-block:: console
+
+   # Store an upstream ontology under your own canonical IRI
+   ontoenv add ./vendor/upstream.ttl \
+     --rename https://my-org.com/local/upstream
+
+   # Same, but do not follow owl:imports
+   ontoenv add ./vendor/upstream.ttl \
+     --rename https://my-org.com/local/upstream \
+     --no-imports
+
+What gets rewritten inside the stored graph:
+
+* ``<original> rdf:type owl:Ontology`` → ``<new> rdf:type owl:Ontology``
+* ``<original> owl:imports <X>`` → ``<new> owl:imports <X>``
+* ``<original> sh:prefixes <original>`` → ``<new> sh:prefixes <new>``
+  (self-referential links are rewritten on both sides)
+* ``<X> sh:prefixes <original>`` → ``<X> sh:prefixes <new>``
+  (object-only rewrite when the subject is a different node)
+* ``<original> owl:versionIRI <original>`` → ``<new> owl:versionIRI <original>``
+  (subject rewritten; the **version value is preserved** intentionally)
+
+The original IRI is no longer directly addressable after the rename.  Other
+ontologies that import the original IRI by name will not automatically resolve
+to the renamed copy; re-add or update them as needed.
 
 Commands: extract graphs
 ------------------------
