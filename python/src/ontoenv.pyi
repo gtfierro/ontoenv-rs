@@ -172,6 +172,42 @@ class OntoEnv:
         ...
 
     # ------------------------------------------------------------------ #
+    # Aliases                                                              #
+    # ------------------------------------------------------------------ #
+
+    def add_alias(self, alias_iri: str, canonical_iri: str) -> None:
+        """Add an alias for a canonical ontology IRI.
+
+        The alias will route to the same graph as the canonical IRI.
+        Aliases only point to canonical IRIs (not other aliases) to avoid chains.
+
+        Example:
+
+            env.add_alias("http://example.com/ont-alias", "http://example.com/ont")
+            env["http://example.com/ont-alias"]  # Returns same graph as env["http://example.com/ont"]
+        """
+        ...
+
+    def remove_alias(self, alias_iri: str) -> None:
+        """Remove an alias."""
+        ...
+
+    def resolve_alias(self, alias_iri: str) -> Optional[str]:
+        """Get the canonical IRI for an alias.
+
+        Returns None if the IRI is not an alias.
+        """
+        ...
+
+    def get_aliases_for(self, canonical_iri: str) -> List[str]:
+        """List all aliases that point to a given canonical IRI."""
+        ...
+
+    def is_canonical_iri(self, iri: str) -> bool:
+        """Check if an IRI is a canonical ontology (not an alias)."""
+        ...
+
+    # ------------------------------------------------------------------ #
     # Querying ontologies                                                  #
     # ------------------------------------------------------------------ #
 

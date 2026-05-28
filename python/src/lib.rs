@@ -1413,18 +1413,15 @@ impl Rdf5dSnapshot {
     ) -> Result<Vec<String>> {
         let mut matches = Vec::new();
         for (graph_name, info) in &self.logical_graphs {
-            let mut found = false;
-            for gid in &info.gids {
-                for (s_id, p_id, o_id) in self.file.triples_ids(*gid)? {
-                    if s_id == subject_id && p_id == predicate_id && o_id == object_id {
-                        found = true;
-                        break;
-                    }
-                }
-                if found {
-                    break;
-                }
-            }
+            let found = info
+                .gids
+                .iter()
+                .any(|gid| match self.file.triples_ids(*gid) {
+                    Ok(mut triples) => triples.any(|(s_id, p_id, o_id)| {
+                        s_id == subject_id && p_id == predicate_id && o_id == object_id
+                    }),
+                    Err(_) => false,
+                });
             if found {
                 matches.push(graph_name.clone());
             }
@@ -3276,6 +3273,36 @@ fn snapshot_signature(path: &Path) -> Option<SnapshotSignature> {
     })
 }
 
+/// A high-level API for managing and querying RDF ontologies.
+///
+/// The OntoEnv class provides methods for:
+///
+/// * Adding ontologies from files, URLs, or in-memory graphs
+/// * Managing imports and resolving the dependency closure
+/// * Creating merged views over ontology closures
+/// * Managing aliases for ontology IRIs
+///
+/// Example:
+///     .. code-block:: python
+///
+///         from ontoenv import OntoEnv
+///
+///         env = OntoEnv()
+///         # Add an ontology
+///         env.add("http://example.com/ontology.ttl")
+///
+///         # Add an alias - multiple IRIs can now refer to the same ontology
+///         env.add_alias("http://example.com/B-alias", "http://example.com/B")
+///
+///         # Resolve an alias to its canonical IRI
+///         canonical = env.resolve_alias("http://example.com/B-alias")
+///
+///         # Get the closure (all imported ontologies)
+///         graph, iris = env.get_closure("http://example.com/ontology")
+///
+///     The OntoEnv uses a snapshot-based approach for consistency:
+///     operations see a consistent view of the environment, and the
+///     underlying store can be updated without affecting existing queries.
 #[pyclass]
 struct OntoEnv {
     inner: Arc<Mutex<Option<OntoEnvRs>>>,
@@ -3654,6 +3681,25 @@ impl OntoEnv {
             cache.cached = Some((current_gen, dataset.clone_ref(py)));
         }
         Ok(dataset)
+    }
+
+    /// Helper to get the inner environment or raise a Python error if closed.
+    fn get_env<'a, 'b>(
+        &self,
+        guard: &'a mut std::sync::MutexGuard<'b, Option<OntoEnvRs>>,
+    ) -> PyResult<&'a mut OntoEnvRs> {
+        guard.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+        })
+    }
+
+    fn get_env_ref<'a, 'b>(
+        &self,
+        guard: &'a std::sync::MutexGuard<'b, Option<OntoEnvRs>>,
+    ) -> PyResult<&'a OntoEnvRs> {
+        guard.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+        })
     }
 }
 
@@ -4606,6 +4652,70 @@ impl OntoEnv {
         drop(guard);
         self.bump_generation();
         Ok(new_id.to_uri_string())
+    }
+
+    /// Add an alias for a canonical ontology IRI.
+    ///
+    /// The alias will route to the same graph as the canonical IRI.
+    /// Aliases only point to canonical IRIs (not other aliases) to avoid chains.
+    ///
+    /// Args:
+    ///     alias_iri: The alias IRI to add
+    ///     canonical_iri: The canonical IRI that the alias should point to
+    ///
+    /// Example:
+    ///     .. code-block:: python
+    ///
+    ///         env.add_alias("http://example.com/B-alias", "http://example.com/B")
+    ///
+    ///     After this, ``env.get_graph("http://example.com/B-alias")`` will return
+    ///     the same graph as ``env.get_graph("http://example.com/B")``.
+    fn add_alias(&self, alias_iri: &str, canonical_iri: &str) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let env = self.get_env(&mut guard)?;
+        env.add_alias(alias_iri, canonical_iri).map_err(anyhow_to_pyerr)?;
+        Ok(())
+    }
+
+    /// Remove an alias.
+    ///
+    /// Args:
+    ///     alias_iri: The alias IRI to remove
+    fn remove_alias(&self, alias_iri: &str) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let env = self.get_env(&mut guard)?;
+        env.remove_alias(alias_iri).map_err(anyhow_to_pyerr)?;
+        Ok(())
+    }
+
+    /// Get the canonical IRI for an alias.
+    ///
+    /// Args:
+    ///     alias_iri: The alias IRI to resolve
+    ///
+    /// Returns:
+    ///     The canonical IRI if the input is an alias, or None if it's not an alias
+    fn resolve_alias(&self, alias_iri: &str) -> PyResult<Option<String>> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = self.get_env_ref(&guard)?;
+        Ok(env.resolve_alias(alias_iri).map(|id| id.to_uri_string()))
+    }
+
+    /// List all aliases that point to a given canonical IRI.
+    ///
+    /// Args:
+    ///     canonical_iri: The canonical IRI to list aliases for
+    ///
+    /// Returns:
+    ///     A list of all alias IRIs that point to the given canonical IRI
+    fn get_aliases_for(&self, canonical_iri: &str) -> PyResult<Vec<String>> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = self.get_env_ref(&guard)?;
+        Ok(env.get_aliases_for(canonical_iri))
     }
 
     /// Get the names of all ontologies that import the given ontology

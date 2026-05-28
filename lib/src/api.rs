@@ -87,18 +87,8 @@ impl PendingImport {
 
     fn meta(&self) -> (&OntologyLocation, bool, usize) {
         match self {
-            Self::FromLocation {
-                location,
-                required,
-                depth,
-                ..
-            }
-            | Self::FromBytes {
-                location,
-                required,
-                depth,
-                ..
-            } => (location, *required, *depth),
+            Self::FromLocation { location, required, depth, .. }
+            | Self::FromBytes { location, required, depth, .. } => (location, *required, *depth),
         }
     }
 }
@@ -230,12 +220,12 @@ impl OntologyFilters {
     fn allow(&self, id: &GraphIdentifier) -> bool {
         let iri = id.to_uri_string();
         if self.exclude.iter().any(|re| re.is_match(&iri)) {
-            return false;
+            false
+        } else if self.include.is_empty() {
+            true
+        } else {
+            self.include.iter().any(|re| re.is_match(&iri))
         }
-        if self.include.is_empty() {
-            return true;
-        }
-        self.include.iter().any(|re| re.is_match(&iri))
     }
 }
 
@@ -848,8 +838,6 @@ impl OntoEnv {
 
     /// Calculates and returns the environment status
     pub fn status(&self) -> Result<EnvironmentStatus> {
-        // Compute on-disk status for CLI/diagnostic output.
-        // get time modified of the self.store_path() directory
         let ontoenv_dir = self.config.root.join(".ontoenv");
         let ontoenv_path = fs::canonicalize(&ontoenv_dir).unwrap_or_else(|_| ontoenv_dir.clone());
         let last_updated: DateTime<Utc> = std::fs::metadata(&ontoenv_dir)?.modified()?.into();
@@ -1074,6 +1062,42 @@ impl OntoEnv {
         self.rebuild_dependency_graph()?;
         self.save_to_directory()?;
         Ok(new_id)
+    }
+
+    /// Add an alias for a canonical ontology IRI.
+    ///
+    /// The alias will route to the same graph as the canonical IRI.
+    /// Aliases only point to canonical IRIs (not other aliases) to avoid chains.
+    pub fn add_alias(&mut self, alias_iri: &str, canonical_iri: &str) -> Result<()> {
+        self.env.add_alias(alias_iri, canonical_iri)?;
+        self.save_to_directory()?;
+        Ok(())
+    }
+
+    /// Remove an alias.
+    pub fn remove_alias(&mut self, alias_iri: &str) -> Result<()> {
+        if self.env.remove_alias(alias_iri)?.is_some() {
+            self.save_to_directory()?;
+        }
+        Ok(())
+    }
+
+    /// Get the canonical GraphIdentifier for an alias.
+    ///
+    /// Returns None if the IRI is not an alias.
+    pub fn resolve_alias(&self, alias_iri: &str) -> Option<GraphIdentifier> {
+        let alias_norm = Environment::normalize_name(alias_iri).to_string();
+        self.env.aliases().get(&alias_norm).cloned()
+    }
+
+    /// List all aliases that point to a given canonical IRI.
+    pub fn get_aliases_for(&self, canonical_iri: &str) -> Vec<String> {
+        self.env.get_aliases_for(canonical_iri)
+    }
+
+    /// Check if an IRI is a canonical ontology (not an alias).
+    pub fn is_canonical_iri(&self, iri: &str) -> bool {
+        self.env.is_canonical_iri(iri)
     }
 
     /// Add an ontology from in-memory bytes and traverse its imports.

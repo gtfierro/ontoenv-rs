@@ -73,7 +73,8 @@ impl Default for Environment {
 }
 
 impl Environment {
-    fn normalize_name(s: &str) -> &str {
+    /// Normalize an IRI by trimming trailing hash and slashes.
+    pub fn normalize_name(s: &str) -> &str {
         let trimmed_hash = s.trim_end_matches('#');
         trimmed_hash.trim_end_matches('/')
     }
@@ -89,6 +90,11 @@ impl Environment {
 
     pub fn ontologies(&self) -> &HashMap<GraphIdentifier, Ontology> {
         &self.ontologies
+    }
+
+    /// Get all aliases in the environment.
+    pub fn aliases(&self) -> &HashMap<String, GraphIdentifier> {
+        &self.aliases
     }
 
     pub fn add_ontology(&mut self, mut ontology: Ontology) -> Result<()> {
@@ -189,12 +195,12 @@ impl Environment {
     ) {
         if let OntologyLocation::Url(url) = location {
             if let Ok(loc_node) = NamedNode::new(url.clone()) {
-                let loc_norm = Self::normalize_name(loc_node.as_str()).to_string();
+                let loc_norm = Self::normalize_name(loc_node.as_str());
                 let name_norm = Self::normalize_name(ontology_name.as_str());
                 if loc_norm != name_norm {
-                    self.aliases.insert(loc_norm, ontology_id.clone());
+                    self.aliases.insert(loc_norm.to_string(), ontology_id.clone());
                 } else {
-                    self.aliases.remove(&loc_norm);
+                    self.aliases.remove(loc_norm);
                 }
             }
         }
@@ -237,5 +243,62 @@ impl Environment {
         self.ontologies = rebuilt;
         // Rebuild alias map after normalizing paths.
         self.rebuild_aliases();
+    }
+
+    /// Add an alias pointing to a canonical ontology IRI.
+    ///
+    /// The alias will route to the ontology identified by `canonical_iri`.
+    /// Aliases only point to canonical IRIs (not other aliases) to avoid chains.
+    pub fn add_alias(&mut self, alias_iri: &str, canonical_iri: &str) -> Result<()> {
+        let canonical_id = self.ontologies
+            .values()
+            .find(|ont| Self::normalize_name(ont.name().as_str()) == Self::normalize_name(canonical_iri))
+            .map(|ont| ont.id().clone())
+            .ok_or_else(|| anyhow!("Canonical ontology not found: {}", canonical_iri))?;
+        
+        let alias_norm = Self::normalize_name(alias_iri);
+        self.aliases.insert(alias_norm.to_string(), canonical_id);
+        Ok(())
+    }
+
+    /// Remove an alias.
+    pub fn remove_alias(&mut self, alias_iri: &str) -> Result<Option<GraphIdentifier>> {
+        let alias_norm = Self::normalize_name(alias_iri);
+        Ok(self.aliases.remove(alias_norm))
+    }
+
+    /// Get the canonical GraphIdentifier for an alias.
+    ///
+    /// Returns None if the IRI is not an alias or doesn't exist.
+    pub fn resolve_alias(&self, alias_iri: &str) -> Option<&GraphIdentifier> {
+        let alias_norm = Self::normalize_name(alias_iri);
+        self.aliases.get(alias_norm)
+    }
+
+    /// List all aliases that point to a given canonical IRI.
+    pub fn get_aliases_for(&self, canonical_iri: &str) -> Vec<String> {
+        let canonical_norm = Self::normalize_name(canonical_iri);
+        let canonical_id = self
+            .ontologies
+            .values()
+            .find(|ont| Self::normalize_name(ont.name().as_str()) == canonical_norm)
+            .map(|ont| ont.id().clone());
+
+        canonical_id
+            .map(|id| {
+                self.aliases
+                    .iter()
+                    .filter_map(|(alias, target)| (target == &id).then_some(alias.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Check if an IRI is a canonical ontology (not an alias).
+    pub fn is_canonical_iri(&self, iri: &str) -> bool {
+        let norm = Self::normalize_name(iri);
+        self.ontologies
+            .values()
+            .any(|ont| Self::normalize_name(ont.name().as_str()) == norm)
     }
 }

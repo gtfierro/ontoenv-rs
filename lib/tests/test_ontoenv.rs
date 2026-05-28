@@ -2316,3 +2316,642 @@ fn rename_middle_node_dep_graph_updated() -> Result<()> {
 
     Ok(())
 }
+
+// ── alias tests ──────────────────────────────────────────────────────────────
+
+/// Add an alias and verify it resolves to the same graph as the canonical IRI.
+#[test]
+fn alias_routes_to_canonical_graph() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Add alias
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // Both IRI and alias resolve to the same graph
+    let canonical_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?))
+        .expect("canonical IRI should be in env");
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+        .expect("alias should be in env");
+
+    assert_eq!(canonical_id, alias_id, "alias should resolve to same graph as canonical");
+
+    // get_graph should work with both
+    let canonical_graph = env.get_graph(&canonical_id)?;
+    let alias_graph = env.get_graph(&alias_id)?;
+
+    assert_eq!(
+        canonical_graph.iter().count(),
+        alias_graph.iter().count(),
+        "both should return same number of triples"
+    );
+
+    Ok(())
+}
+
+/// Remove an alias and verify it no longer resolves.
+#[test]
+fn remove_alias_stops_resolving() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // Verify alias works
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?)).is_some(),
+        "alias should resolve before removal"
+    );
+
+    // Remove alias
+    env.remove_alias(alias_iri)?;
+
+    // Alias no longer resolves
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?)).is_none(),
+        "alias should not resolve after removal"
+    );
+
+    // Canonical IRI still works
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?)).is_some(),
+        "canonical IRI should still work"
+    );
+
+    Ok(())
+}
+
+/// get_aliases_for returns all aliases for a canonical IRI.
+#[test]
+fn get_aliases_for_returns_all_aliases() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias1_iri = "http://example.com/ont-alias1";
+    let alias2_iri = "http://example.com/ont-alias2";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    env.add_alias(alias1_iri, canonical_iri)?;
+    env.add_alias(alias2_iri, canonical_iri)?;
+
+    let aliases = env.get_aliases_for(canonical_iri);
+    assert_eq!(aliases.len(), 2, "should have 2 aliases");
+    assert!(aliases.contains(&alias1_iri.to_string()), "should contain alias1");
+    assert!(aliases.contains(&alias2_iri.to_string()), "should contain alias2");
+
+    Ok(())
+}
+
+/// Resolving a non-existent alias returns None.
+#[test]
+fn resolve_nonexistent_alias_returns_none() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Try to resolve an alias that was never added
+    assert!(
+        env.resolve_alias("http://example.com/nonexistent-alias").is_none(),
+        "non-existent alias should return None"
+    );
+
+    Ok(())
+}
+
+/// Aliases only point to canonical IRIs, not other aliases.
+#[test]
+fn aliases_point_only_to_canonical_no_chains() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias1_iri = "http://example.com/ont-alias1";
+    let alias2_iri = "http://example.com/ont-alias2";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Add alias1 pointing to canonical
+    env.add_alias(alias1_iri, canonical_iri)?;
+
+    // Try to add alias2 pointing to alias1 (should fail - alias1 is not canonical)
+    let result = env.add_alias(alias2_iri, alias1_iri);
+    assert!(result.is_err(), "alias chain should be rejected");
+
+    // Verify alias2 was not added
+    assert!(
+        env.resolve_alias(alias2_iri).is_none(),
+        "alias chain should not be created"
+    );
+
+    Ok(())
+}
+
+/// is_canonical_iri correctly identifies canonical IRIs vs aliases.
+#[test]
+fn is_canonical_iri_works_correctly() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Before adding alias
+    assert!(
+        env.is_canonical_iri(canonical_iri),
+        "canonical IRI should be canonical"
+    );
+    assert!(
+        !env.is_canonical_iri(alias_iri),
+        "non-existent alias should not be canonical"
+    );
+
+    // Add alias
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // After adding alias
+    assert!(
+        env.is_canonical_iri(canonical_iri),
+        "canonical IRI should still be canonical"
+    );
+    assert!(
+        !env.is_canonical_iri(alias_iri),
+        "alias should not be canonical"
+    );
+
+    Ok(())
+}
+
+/// Aliases work with get_closure and other operations.
+#[test]
+fn alias_works_with_closure_operations() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+    let imported_iri = "http://example.com/imported";
+
+    // Add imported ontology
+    add_bytes(
+        &mut env,
+        "urn:test:imported",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            imported_iri
+        ),
+    )?;
+
+    // Add ontology that imports the imported one
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            canonical_iri, imported_iri
+        ),
+    )?;
+
+    // Add alias
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // get_closure should work with both canonical and alias
+    let canonical_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?))
+        .expect("canonical IRI should be in env");
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+        .expect("alias should be in env");
+
+    let canonical_closure = env.get_closure(&canonical_id, -1)?;
+    let alias_closure = env.get_closure(&alias_id, -1)?;
+
+    assert_eq!(canonical_closure.len(), alias_closure.len(),
+        "closure should be same for canonical and alias");
+
+    Ok(())
+}
+
+/// Test that aliases don't cause duplicates when computing closure.
+/// When an ontology is reached via both its canonical IRI and an alias,
+/// it should only appear once in the closure.
+#[test]
+fn alias_deduplication_in_closure() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias = "http://example.com/B-alias";
+    let ont_c = "http://example.com/C";
+
+    // A imports B and C
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> ; owl:imports <{}> .\n",
+            ont_a, ont_b, ont_c
+        ),
+    )?;
+
+    // B imports C
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_b, ont_c
+        ),
+    )?;
+
+    // C is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_c
+        ),
+    )?;
+
+    // Add alias for B
+    env.add_alias(ont_b_alias, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B, C (3 unique ontologies)
+    // Even though B is imported directly by A and B has an alias,
+    // B should only appear once
+    assert_eq!(closure.len(), 3, "closure should be [A, B, C]");
+
+    // Verify B appears exactly once in the closure
+    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    Ok(())
+}
+
+/// Test alias deduplication when the same ontology is imported via alias and canonical.
+#[test]
+fn alias_import_via_both_paths_deduplicates() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias = "http://example.com/B-alias";
+
+    // A imports B via canonical IRI and also via alias
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> ; owl:imports <{}> .\n",
+            ont_a, ont_b, ont_b_alias
+        ),
+    )?;
+
+    // B is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_b
+        ),
+    )?;
+
+    // Add alias for B
+    env.add_alias(ont_b_alias, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B (2 unique ontologies)
+    // Even though B is imported twice (once via canonical, once via alias),
+    // B should only appear once
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify B appears exactly once
+    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    Ok(())
+}
+
+/// Test that aliases work correctly with circular imports.
+#[test]
+fn alias_with_circular_imports() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_a_alias = "http://example.com/A-alias";
+    let ont_b = "http://example.com/B";
+
+    // A imports B, B imports A (circular)
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_a, ont_b
+        ),
+    )?;
+
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_b, ont_a
+        ),
+    )?;
+
+    // Add alias for A
+    env.add_alias(ont_a_alias, ont_a)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B (2 unique ontologies, circular but no duplicates)
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify no duplicates
+    let a_count = closure.iter().filter(|id| id.to_uri_string() == ont_a).count();
+    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    assert_eq!(a_count, 1, "A should appear exactly once");
+    assert_eq!(b_count, 1, "B should appear exactly once");
+
+    // Compute closure from alias - should give same result
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a_alias)?))
+        .expect("alias should be in env");
+    let alias_closure = env.get_closure(&alias_id, -1)?;
+
+    assert_eq!(alias_closure.len(), 2, "closure from alias should be [A, B]");
+
+    Ok(())
+}
+
+/// Test that aliases are properly excluded when computing closure with depth limit.
+#[test]
+fn alias_with_recursion_depth_limit() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_a_alias = "http://example.com/A-alias";
+    let ont_b = "http://example.com/B";
+    let ont_c = "http://example.com/C";
+
+    // A imports B, B imports C
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_a, ont_b
+        ),
+    )?;
+
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_b, ont_c
+        ),
+    )?;
+
+    // C is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_c
+        ),
+    )?;
+
+    // Add alias for A
+    env.add_alias(ont_a_alias, ont_a)?;
+
+    // Compute closure with depth 0 (only root)
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure_depth_0 = env.get_closure(&a_id, 0)?;
+    assert_eq!(closure_depth_0.len(), 1, "depth 0 should only include A");
+
+    // Compute closure with depth 1 (root + direct imports)
+    let closure_depth_1 = env.get_closure(&a_id, 1)?;
+    assert_eq!(closure_depth_1.len(), 2, "depth 1 should include A and B");
+
+    // Compute closure from alias with depth 1
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a_alias)?))
+        .expect("alias should be in env");
+    let alias_closure_depth_1 = env.get_closure(&alias_id, 1)?;
+
+    assert_eq!(alias_closure_depth_1.len(), 2, "alias depth 1 should include A and B");
+
+    Ok(())
+}
+
+/// Test that aliases don't create duplicate references when the same ontology
+/// is imported multiple times via different aliases pointing to the same target.
+#[test]
+fn multiple_aliases_to_same_target_deduplicates() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias1 = "http://example.com/B-alias1";
+    let ont_b_alias2 = "http://example.com/B-alias2";
+
+    // A imports B multiple times via different aliases
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> ; owl:imports <{}> ; owl:imports <{}> .\n",
+            ont_a, ont_b, ont_b_alias1, ont_b_alias2
+        ),
+    )?;
+
+    // B is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_b
+        ),
+    )?;
+
+    // Add multiple aliases for B
+    env.add_alias(ont_b_alias1, ont_b)?;
+    env.add_alias(ont_b_alias2, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B (2 unique ontologies)
+    // Even though B is imported 3 times (direct + 2 aliases),
+    // B should only appear once
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify B appears exactly once
+    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    Ok(())
+}
+
+/// Test that blank nodes in the ontology graph don't cause issues with
+/// alias deduplication. The key is that blank nodes can't be compared for
+/// equality, so if the code tries to use them as keys in deduplication,
+/// it would fail or create duplicates.
+#[test]
+fn multiple_aliases_to_same_target_deduplicates_with_blank_nodes() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias1 = "http://example.com/B-alias1";
+    let ont_b_alias2 = "http://example.com/B-alias2";
+
+    // A imports B multiple times via different aliases
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ;\n\
+             owl:imports <{}> ;\n\
+             owl:imports <{}> ;\n\
+             owl:imports <{}> .\n",
+            ont_a, ont_b, ont_b_alias1, ont_b_alias2
+        ),
+    )?;
+
+    // B contains blank nodes that can't be compared
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+            <{}> a owl:Ontology .\n\
+            _:b0 <http://example.com/prop> \"value\" .\n\
+            _:b1 <http://example.com/other> \"data\" .\n",
+            ont_b
+        ),
+    )?;
+
+    // Add multiple aliases for B
+    env.add_alias(ont_b_alias1, ont_b)?;
+    env.add_alias(ont_b_alias2, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // We should have exactly 2 ontologies: A and B
+    // Even though B is imported 3 times (direct + 2 aliases),
+    // blank nodes in B's graph shouldn't cause issues with deduplication
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify B appears exactly once
+    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    // Verify the total number of triples
+    // A has: 1 ontology declaration + 3 owl:imports = 4 triples
+    // B has: 1 ontology declaration + 2 triples with blank nodes = 3 triples
+    // Total should be 7 triples
+    let total_triples: usize = closure
+        .iter()
+        .map(|id| env.get_graph(id).unwrap().len())
+        .sum();
+    assert_eq!(total_triples, 7, "total triples should be 7 (4 from A + 3 from B)");
+
+    Ok(())
+}
