@@ -60,6 +60,14 @@ pub const SIDECAR_VERSION: u16 = 0x0001;
 pub enum IdxKind {
     Pso = 1,
     Pos = 2,
+    /// Precomputed transitive-closure index for a configured list of
+    /// predicates (`P+` for SPARQL property paths). For each predicate `P`
+    /// in the list, stores both directions of the transitive closure:
+    /// forward (subject -> reachable objects) and reverse (object -> reachable
+    /// subjects). Used by the SPARQL query rewriter to replace
+    /// `?x P+ ?y` / `?x P* ?y` with materialized `VALUES`/`BIND` bindings
+    /// before passing the query to spareval.
+    PClos = 3,
 }
 
 impl IdxKind {
@@ -67,9 +75,18 @@ impl IdxKind {
         match v {
             1 => Some(IdxKind::Pso),
             2 => Some(IdxKind::Pos),
+            3 => Some(IdxKind::PClos),
             _ => None,
         }
     }
+}
+
+/// Build-time options for the sidecar.
+#[derive(Debug, Default, Clone)]
+pub struct BuildOptions {
+    /// Predicate term IDs to precompute transitive closures for.
+    /// Empty means no `IDX_PCLOS` section is written.
+    pub closure_predicates: Vec<u64>,
 }
 
 /// Parsed sidecar header.
@@ -360,12 +377,167 @@ fn parse_posting(payload: &[u8]) -> Option<IdxPosting<'_>> {
     })
 }
 
+/// One side (forward or reverse) of a precomputed transitive-closure index.
+///
+/// `keys` is a sorted ascending array of `u64` term IDs. `heads` is a prefix-sum
+/// array (length `n_keys + 1`) indexing into `vals`. For key at index `i`, the
+/// sorted reachable set is `vals[heads[i]..heads[i + 1]]`.
+#[derive(Debug, Clone)]
+pub struct PClosSide<'a> {
+    n_keys: u32,
+    keys: &'a [u8], // [u64 * n_keys] little-endian
+    heads: &'a [u8], // [u32 * (n_keys + 1)] little-endian
+    vals: &'a [u8], // [u64 * n_vals] little-endian
+}
+
+impl<'a> PClosSide<'a> {
+    pub fn n_keys(&self) -> u32 {
+        self.n_keys
+    }
+
+    fn key_at(&self, i: usize) -> u64 {
+        let off = i * 8;
+        u64::from_le_bytes(self.keys[off..off + 8].try_into().unwrap())
+    }
+    fn head_at(&self, i: usize) -> u32 {
+        let off = i * 4;
+        u32::from_le_bytes(self.heads[off..off + 4].try_into().unwrap())
+    }
+
+    /// Returns the reachable set (sorted, no duplicates) for `key`, or
+    /// `None` when the key has no precomputed closure (no outgoing edges
+    /// under this predicate).
+    pub fn lookup(&self, key: u64) -> Option<Vec<u64>> {
+        let n = self.n_keys as usize;
+        if n == 0 {
+            return None;
+        }
+        let mut lo = 0usize;
+        let mut hi = n;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let v = self.key_at(mid);
+            if v == key {
+                let start = self.head_at(mid) as usize;
+                let end = self.head_at(mid + 1) as usize;
+                let mut out = Vec::with_capacity(end - start);
+                for i in start..end {
+                    let off = i * 8;
+                    out.push(u64::from_le_bytes(self.vals[off..off + 8].try_into().unwrap()));
+                }
+                return Some(out);
+            } else if v < key {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        None
+    }
+}
+
+/// Parsed `IDX_PCLOS` section. Holds zero-copy slice references into the
+/// sidecar's mmap so per-predicate lookups don't allocate beyond the
+/// final answer set.
+#[derive(Debug, Clone)]
+pub struct PClosSection {
+    pub off: u64,
+    pub len: u64,
+    n_predicates: u64,
+    pred_keys_off: usize,
+    // Per-predicate posting bounds, laid out as 4 × u64 each:
+    //   [fwd_off, fwd_len, rev_off, rev_len]
+    entries_off: usize,
+}
+
+impl PClosSection {
+    fn pred_at(&self, bytes: &[u8], i: usize) -> u64 {
+        let off = self.pred_keys_off + i * 8;
+        u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
+    }
+
+    fn find_predicate(&self, bytes: &[u8], p_id: u64) -> Option<usize> {
+        let n = self.n_predicates as usize;
+        if n == 0 {
+            return None;
+        }
+        let mut lo = 0usize;
+        let mut hi = n;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let v = self.pred_at(bytes, mid);
+            if v == p_id {
+                return Some(mid);
+            } else if v < p_id {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        None
+    }
+
+    fn side<'a>(&self, bytes: &'a [u8], idx: usize, reverse: bool) -> Option<PClosSide<'a>> {
+        let off = self.entries_off + idx * 32;
+        let fwd_off = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()) as usize;
+        let fwd_len = u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap()) as usize;
+        let rev_off = u64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap()) as usize;
+        let rev_len = u64::from_le_bytes(bytes[off + 24..off + 32].try_into().unwrap()) as usize;
+        let (posting_off, posting_len) = if reverse {
+            (rev_off, rev_len)
+        } else {
+            (fwd_off, fwd_len)
+        };
+        if posting_len == 0 {
+            return None;
+        }
+        parse_pclos_side(&bytes[posting_off..posting_off + posting_len])
+    }
+
+    /// Forward closure: subject -> sorted set of reachable objects under `p_id`.
+    pub fn forward<'a>(&self, bytes: &'a [u8], p_id: u64) -> Option<PClosSide<'a>> {
+        let idx = self.find_predicate(bytes, p_id)?;
+        self.side(bytes, idx, false)
+    }
+
+    /// Reverse closure: object -> sorted set of subjects that reach it
+    /// transitively under `p_id`.
+    pub fn reverse<'a>(&self, bytes: &'a [u8], p_id: u64) -> Option<PClosSide<'a>> {
+        let idx = self.find_predicate(bytes, p_id)?;
+        self.side(bytes, idx, true)
+    }
+}
+
+fn parse_pclos_side(payload: &[u8]) -> Option<PClosSide<'_>> {
+    if payload.len() < 8 {
+        return None;
+    }
+    let n_keys = u32::from_le_bytes(payload[0..4].try_into().ok()?);
+    let n_vals = u32::from_le_bytes(payload[4..8].try_into().ok()?);
+    let keys_off = 8usize;
+    let keys_size = (n_keys as usize).checked_mul(8)?;
+    let heads_off = keys_off.checked_add(keys_size)?;
+    let heads_size = (n_keys as usize + 1).checked_mul(4)?;
+    let vals_off = heads_off.checked_add(heads_size)?;
+    let vals_size = (n_vals as usize).checked_mul(8)?;
+    if vals_off.checked_add(vals_size)? > payload.len() {
+        return None;
+    }
+    Some(PClosSide {
+        n_keys,
+        keys: &payload[keys_off..keys_off + keys_size],
+        heads: &payload[heads_off..heads_off + heads_size],
+        vals: &payload[vals_off..vals_off + vals_size],
+    })
+}
+
 /// Open sidecar file.
 #[derive(Debug)]
 pub struct IdxFile {
     bytes: Vec<u8>,
     header: IdxHeader,
     sections: Vec<IdxSection>,
+    pclos: Option<PClosSection>,
 }
 
 impl IdxFile {
@@ -428,6 +600,7 @@ impl IdxFile {
         // Parse TOC
         let toc_off_us = toc_off as usize;
         let mut sections: Vec<IdxSection> = Vec::with_capacity(toc_len as usize);
+        let mut pclos: Option<PClosSection> = None;
         for i in 0..toc_len as usize {
             let base = toc_off_us + i * 32;
             if base + 32 > bytes.len() {
@@ -439,7 +612,31 @@ impl IdxFile {
             let sec_off = u64::from_le_bytes(bytes[base + 4..base + 12].try_into().unwrap());
             let sec_len = u64::from_le_bytes(bytes[base + 12..base + 20].try_into().unwrap());
             let crc = u32::from_le_bytes(bytes[base + 20..base + 24].try_into().unwrap());
-            // Parse section header
+            let _ = crc;
+            // PClos has its own header shape; parse separately.
+            if kind == IdxKind::PClos {
+                let sec_base = sec_off as usize;
+                if sec_base + 24 > bytes.len() {
+                    return Err(R5Error::Corrupt("sidecar pclos header OOB".into()));
+                }
+                let n_predicates =
+                    u64::from_le_bytes(bytes[sec_base..sec_base + 8].try_into().unwrap());
+                let pred_keys_off =
+                    u64::from_le_bytes(bytes[sec_base + 8..sec_base + 16].try_into().unwrap())
+                        as usize;
+                let entries_off =
+                    u64::from_le_bytes(bytes[sec_base + 16..sec_base + 24].try_into().unwrap())
+                        as usize;
+                pclos = Some(PClosSection {
+                    off: sec_off,
+                    len: sec_len,
+                    n_predicates,
+                    pred_keys_off,
+                    entries_off,
+                });
+                continue;
+            }
+            // PSO / POS sections share a header shape.
             let sec_base = sec_off as usize;
             if sec_base + 32 > bytes.len() {
                 return Err(R5Error::Corrupt("sidecar section header OOB".into()));
@@ -463,7 +660,6 @@ impl IdxFile {
                 key2post_offs_off,
                 blob_off,
             });
-            let _ = crc;
         }
 
         Ok(IdxFile {
@@ -479,6 +675,7 @@ impl IdxFile {
                 src_path,
             },
             sections,
+            pclos,
         })
     }
 
@@ -492,6 +689,40 @@ impl IdxFile {
 
     pub fn section(&self, kind: IdxKind) -> Option<&IdxSection> {
         self.sections.iter().find(|s| s.kind == kind)
+    }
+
+    /// Returns true when the sidecar was built with a precomputed
+    /// transitive-closure index.
+    pub fn has_pclos(&self) -> bool {
+        self.pclos.is_some()
+    }
+
+    /// Forward transitive closure under `predicate`. Returns the sorted list
+    /// of objects reachable from `subject` via one or more `predicate` edges,
+    /// or `None` if `predicate` has no precomputed closure (not in the build
+    /// configuration) or `subject` has no outgoing edges under it.
+    pub fn closure_forward(&self, predicate: u64, subject: u64) -> Option<Vec<u64>> {
+        let side = self.pclos.as_ref()?.forward(&self.bytes, predicate)?;
+        side.lookup(subject)
+    }
+
+    /// Reverse transitive closure under `predicate`. Returns the sorted list
+    /// of subjects that reach `object` via one or more `predicate` edges.
+    pub fn closure_reverse(&self, predicate: u64, object: u64) -> Option<Vec<u64>> {
+        let side = self.pclos.as_ref()?.reverse(&self.bytes, predicate)?;
+        side.lookup(object)
+    }
+
+    /// Borrowed forward side; useful when you intend to issue many lookups
+    /// for the same predicate (avoids repeated binary search of the
+    /// predicate table).
+    pub fn closure_forward_side<'a>(&'a self, predicate: u64) -> Option<PClosSide<'a>> {
+        self.pclos.as_ref()?.forward(&self.bytes, predicate)
+    }
+
+    /// Borrowed reverse side; see [`Self::closure_forward_side`].
+    pub fn closure_reverse_side<'a>(&'a self, predicate: u64) -> Option<PClosSide<'a>> {
+        self.pclos.as_ref()?.reverse(&self.bytes, predicate)
     }
 
     /// Look up a PSO posting by predicate term ID.
@@ -563,6 +794,17 @@ fn write_uvarint(out: &mut Vec<u8>, mut v: u64) {
 /// Very large snapshots (more than a few million triples) may need
 /// substantial memory for the in-memory sort.
 pub fn build(r5tu: &R5tuFile, out_path: &Path) -> Result<()> {
+    build_with_options(r5tu, out_path, &BuildOptions::default())
+}
+
+/// Like [`build`] but accepts a `BuildOptions` to opt into additional
+/// sidecar sections (currently: precomputed predicate transitive closures
+/// via `BuildOptions::closure_predicates`).
+pub fn build_with_options(
+    r5tu: &R5tuFile,
+    out_path: &Path,
+    opts: &BuildOptions,
+) -> Result<()> {
     // 1. Walk all triples and collect (p, gid, s, o).
     let graphs = r5tu.enumerate_all()?;
     let total: u64 = graphs.iter().map(|g| g.n_triples).sum();
@@ -626,9 +868,25 @@ pub fn build(r5tu: &R5tuFile, out_path: &Path) -> Result<()> {
     out.extend_from_slice(&pos_bytes);
     let pos_len = pos_bytes.len() as u64;
 
+    // Optional PClos section. Built from `pos_tuples` (already grouped by
+    // predicate) so we don't walk the snapshot a second time.
+    let (pclos_off, pclos_len, pclos_bytes_opt) = if opts.closure_predicates.is_empty() {
+        (0u64, 0u64, None)
+    } else {
+        let mut pclos_bytes = build_pclos_section(&pos_tuples, &opts.closure_predicates);
+        let off = out.len() as u64;
+        patch_pclos_offsets(&mut pclos_bytes, off);
+        let len = pclos_bytes.len() as u64;
+        out.extend_from_slice(&pclos_bytes);
+        (off, len, Some(pclos_bytes))
+    };
+
     // Write TOC.
     let toc_off = out.len() as u64;
-    let toc_len: u32 = 2;
+    let mut toc_len: u32 = 2;
+    if pclos_bytes_opt.is_some() {
+        toc_len += 1;
+    }
     // PSO entry
     out.extend_from_slice(&(IdxKind::Pso as u16).to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes()); // resv
@@ -645,6 +903,16 @@ pub fn build(r5tu: &R5tuFile, out_path: &Path) -> Result<()> {
     out.extend_from_slice(&crc32_ieee(&pos_bytes).to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
+    // PClos entry (optional)
+    if let Some(pclos_bytes) = &pclos_bytes_opt {
+        out.extend_from_slice(&(IdxKind::PClos as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&pclos_off.to_le_bytes());
+        out.extend_from_slice(&pclos_len.to_le_bytes());
+        out.extend_from_slice(&crc32_ieee(pclos_bytes).to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
+    }
 
     // Patch header.
     {
@@ -931,6 +1199,231 @@ fn patch_section_offsets(section: &mut [u8], base_off: u64) {
     }
 }
 
+// ============================================================================
+// PClos: precomputed transitive-closure index
+// ============================================================================
+//
+// Section layout (offsets relative to the section's base, patched to
+// absolute file offsets via `patch_pclos_offsets` after placement):
+//
+//   u64 n_predicates
+//   u64 pred_keys_off    -> [u64 * n_predicates] sorted predicate IDs
+//   u64 entries_off      -> [PClosEntry * n_predicates]
+//
+// PClosEntry (32 bytes):
+//   u64 fwd_off  u64 fwd_len  u64 rev_off  u64 rev_len    (absolute file offsets)
+//
+// Each forward/reverse posting:
+//   u32 n_keys
+//   u32 n_vals
+//   [u64 * n_keys]      keys, sorted ascending
+//   [u32 * (n_keys+1)]  heads, prefix sums into vals
+//   [u64 * n_vals]      vals, sorted ascending within each key's slice
+//
+// Cycle handling: BFS uses a visited set, so cycles produce a closure
+// containing the participating nodes and terminate. The closure is the
+// non-reflexive transitive closure; callers who want reflexive (`P*`)
+// semantics add the source node themselves.
+
+fn build_pclos_section(
+    pos_tuples: &[(u64, u32, u64, u64)],
+    closure_predicates: &[u64],
+) -> Vec<u8> {
+    // Section is built in two stages: per-predicate postings as
+    // self-contained buffers (with placeholder offsets), then a header
+    // wrapping them. Offsets inside the per-predicate entries are
+    // patched to absolute file offsets via `patch_pclos_offsets`
+    // after the section's base offset is known.
+
+    // Sort predicates ascending so the lookup binary search works.
+    let mut preds: Vec<u64> = closure_predicates.to_vec();
+    preds.sort_unstable();
+    preds.dedup();
+
+    // For each predicate, gather the direct adjacency from pos_tuples
+    // (which is sorted by (p, gid, o, s) — we want (p, s, o) for the
+    // forward BFS, so we iterate and re-collect).
+    let mut postings: Vec<(u64, Vec<u8>, Vec<u8>)> = Vec::new(); // (p, fwd_bytes, rev_bytes)
+    for p in &preds {
+        // Collect distinct (s, o) pairs for predicate p, ignoring gid (the
+        // closure is whole-snapshot, not per-graph).
+        let mut adjacency: std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>> =
+            std::collections::BTreeMap::new();
+        for &(tp, _gid, s_or_o_outer, s_or_o_inner) in pos_tuples {
+            if tp != *p {
+                continue;
+            }
+            // In pos_tuples (sorted by p, gid, o, s), .2 is the original
+            // subject and .3 is the original object — see build_section.
+            let s = s_or_o_outer;
+            let o = s_or_o_inner;
+            adjacency.entry(s).or_default().insert(o);
+        }
+        if adjacency.is_empty() {
+            postings.push((*p, Vec::new(), Vec::new()));
+            continue;
+        }
+        // Forward closure: for each subject, BFS in `adjacency`.
+        let fwd_bytes = serialize_pclos_posting(bfs_closure_table(&adjacency));
+        // Reverse closure: invert and BFS.
+        let mut inv: std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>> =
+            std::collections::BTreeMap::new();
+        for (s, os) in &adjacency {
+            for o in os {
+                inv.entry(*o).or_default().insert(*s);
+            }
+        }
+        let rev_bytes = serialize_pclos_posting(bfs_closure_table(&inv));
+        postings.push((*p, fwd_bytes, rev_bytes));
+    }
+
+    serialize_pclos_section(&postings)
+}
+
+fn bfs_closure_table(
+    adj: &std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>>,
+) -> std::collections::BTreeMap<u64, Vec<u64>> {
+    // For every node that appears as a key (source) in `adj`, compute the
+    // set of nodes reachable via one or more steps. Iterative BFS with a
+    // visited set; safe against cycles.
+    let mut out = std::collections::BTreeMap::new();
+    for start in adj.keys() {
+        let mut visited = std::collections::BTreeSet::new();
+        let mut queue: std::collections::VecDeque<u64> = std::collections::VecDeque::new();
+        if let Some(direct) = adj.get(start) {
+            for d in direct {
+                if visited.insert(*d) {
+                    queue.push_back(*d);
+                }
+            }
+        }
+        while let Some(cur) = queue.pop_front() {
+            if let Some(next) = adj.get(&cur) {
+                for n in next {
+                    if visited.insert(*n) {
+                        queue.push_back(*n);
+                    }
+                }
+            }
+        }
+        if visited.is_empty() {
+            continue;
+        }
+        out.insert(*start, visited.into_iter().collect());
+    }
+    out
+}
+
+fn serialize_pclos_posting(
+    table: std::collections::BTreeMap<u64, Vec<u64>>,
+) -> Vec<u8> {
+    if table.is_empty() {
+        return Vec::new();
+    }
+    let n_keys = table.len() as u32;
+    let n_vals: u32 = table.values().map(|v| v.len() as u32).sum();
+    let mut out = Vec::with_capacity(
+        8 + (n_keys as usize) * 8 + (n_keys as usize + 1) * 4 + (n_vals as usize) * 8,
+    );
+    out.extend_from_slice(&n_keys.to_le_bytes());
+    out.extend_from_slice(&n_vals.to_le_bytes());
+    // keys
+    for k in table.keys() {
+        out.extend_from_slice(&k.to_le_bytes());
+    }
+    // heads (prefix sums)
+    let mut sum: u32 = 0;
+    out.extend_from_slice(&sum.to_le_bytes());
+    for v in table.values() {
+        sum += v.len() as u32;
+        out.extend_from_slice(&sum.to_le_bytes());
+    }
+    // vals
+    for v in table.values() {
+        for x in v {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    out
+}
+
+fn serialize_pclos_section(postings: &[(u64, Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+    // Header layout (24 bytes):
+    //   u64 n_predicates
+    //   u64 pred_keys_off  (relative; patched later)
+    //   u64 entries_off    (relative; patched later)
+    let n = postings.len() as u64;
+    let header_size = 24usize;
+    let pred_keys_size = (postings.len()) * 8;
+    let entries_size = (postings.len()) * 32;
+    // Pred keys at [header_size]
+    // Entries at [header_size + pred_keys_size]
+    // Blob at [header_size + pred_keys_size + entries_size]
+    let blob_off_local = header_size + pred_keys_size + entries_size;
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&n.to_le_bytes());
+    out.extend_from_slice(&(header_size as u64).to_le_bytes());
+    out.extend_from_slice(
+        &((header_size + pred_keys_size) as u64).to_le_bytes(),
+    );
+    // pred keys
+    for (p, _, _) in postings {
+        out.extend_from_slice(&p.to_le_bytes());
+    }
+    // entries — write placeholders for absolute offsets, patch after blob known.
+    let entries_start = out.len();
+    out.resize(entries_start + entries_size, 0);
+    // blob
+    let mut blob_cur = blob_off_local as u64;
+    let mut entry_writes: Vec<(u64, u64, u64, u64)> = Vec::with_capacity(postings.len());
+    for (_, fwd, rev) in postings {
+        let fwd_off_rel = if fwd.is_empty() { 0 } else { blob_cur };
+        let fwd_len = fwd.len() as u64;
+        blob_cur += fwd_len;
+        let rev_off_rel = if rev.is_empty() { 0 } else { blob_cur };
+        let rev_len = rev.len() as u64;
+        blob_cur += rev_len;
+        entry_writes.push((fwd_off_rel, fwd_len, rev_off_rel, rev_len));
+        out.extend_from_slice(fwd);
+        out.extend_from_slice(rev);
+    }
+    // Write entries
+    for (i, (fwd_off, fwd_len, rev_off, rev_len)) in entry_writes.iter().enumerate() {
+        let off = entries_start + i * 32;
+        out[off..off + 8].copy_from_slice(&fwd_off.to_le_bytes());
+        out[off + 8..off + 16].copy_from_slice(&fwd_len.to_le_bytes());
+        out[off + 16..off + 24].copy_from_slice(&rev_off.to_le_bytes());
+        out[off + 24..off + 32].copy_from_slice(&rev_len.to_le_bytes());
+    }
+    out
+}
+
+fn patch_pclos_offsets(section: &mut [u8], base_off: u64) {
+    // Patch the two header offsets (pred_keys_off, entries_off).
+    for off in [8usize, 16] {
+        let cur = u64::from_le_bytes(section[off..off + 8].try_into().unwrap());
+        let abs = cur + base_off;
+        section[off..off + 8].copy_from_slice(&abs.to_le_bytes());
+    }
+    // Patch every PClosEntry's fwd_off and rev_off (skip zero "no posting" markers).
+    let n = u64::from_le_bytes(section[0..8].try_into().unwrap()) as usize;
+    let pred_keys_size = n * 8;
+    let entries_start = 24 + pred_keys_size;
+    for i in 0..n {
+        let off = entries_start + i * 32;
+        for field in [0usize, 16] {
+            let pos = off + field;
+            let cur = u64::from_le_bytes(section[pos..pos + 8].try_into().unwrap());
+            if cur == 0 {
+                continue;
+            }
+            let abs = cur + base_off;
+            section[pos..pos + 8].copy_from_slice(&abs.to_le_bytes());
+        }
+    }
+}
+
 fn read_uvarint(buf: &[u8], mut off: usize) -> Option<(u64, usize)> {
     let (mut x, mut s) = (0u64, 0u32);
     for _ in 0..10 {
@@ -1113,6 +1606,171 @@ mod tests {
             assert_eq!(post.block_for_gid(*g), Some(idx));
         }
         assert_eq!(post.block_for_gid(99), None);
+    }
+
+    #[test]
+    fn pclos_roundtrip_and_lookup() {
+        // Build a small class hierarchy:  A <- B <- C, B <- D, E <- F
+        // (X <- Y means "Y subClassOf X")
+        let dir = tempdir().unwrap();
+        let r5tu = dir.path().join("store.r5tu");
+        let idx = dir.path().join("store.r5tu.idx");
+        let subclass = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        let quads = vec![
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/B"),
+                p: iri(subclass),
+                o: iri("http://ex/A"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/C"),
+                p: iri(subclass),
+                o: iri("http://ex/B"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/D"),
+                p: iri(subclass),
+                o: iri("http://ex/B"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/F"),
+                p: iri(subclass),
+                o: iri("http://ex/E"),
+                gname: "g1".into(),
+            },
+        ];
+        write_file(&r5tu, &quads).unwrap();
+        let f = R5tuFile::open(&r5tu).unwrap();
+        let p_id = f
+            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
+                subclass,
+            )))
+            .unwrap()
+            .unwrap();
+        let opts = BuildOptions {
+            closure_predicates: vec![p_id],
+        };
+        build_with_options(&f, &idx, &opts).unwrap();
+        let idx_file = IdxFile::open(&idx).unwrap();
+        assert!(idx_file.has_pclos());
+
+        let resolve = |iri_str: &str| {
+            f.find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
+                iri_str,
+            )))
+            .unwrap()
+            .unwrap()
+        };
+        let id_a = resolve("http://ex/A");
+        let id_b = resolve("http://ex/B");
+        let id_c = resolve("http://ex/C");
+        let id_d = resolve("http://ex/D");
+        let id_e = resolve("http://ex/E");
+        let id_f = resolve("http://ex/F");
+
+        // Forward (subject -> reachable objects):
+        //   B+ -> {A}
+        //   C+ -> {B, A}
+        //   D+ -> {B, A}
+        //   F+ -> {E}
+        let mut got = idx_file.closure_forward(p_id, id_c).unwrap();
+        got.sort();
+        let mut want = vec![id_a, id_b];
+        want.sort();
+        assert_eq!(got, want);
+
+        let mut got = idx_file.closure_forward(p_id, id_b).unwrap();
+        got.sort();
+        assert_eq!(got, vec![id_a]);
+
+        let mut got = idx_file.closure_forward(p_id, id_f).unwrap();
+        got.sort();
+        assert_eq!(got, vec![id_e]);
+
+        // No precomputed closure for A (it's a leaf-target).
+        assert!(idx_file.closure_forward(p_id, id_a).is_none());
+
+        // Reverse (object -> reachable subjects):
+        //   A+ -> {B, C, D}
+        //   B+ -> {C, D}
+        //   E+ -> {F}
+        let mut got = idx_file.closure_reverse(p_id, id_a).unwrap();
+        got.sort();
+        let mut want = vec![id_b, id_c, id_d];
+        want.sort();
+        assert_eq!(got, want);
+
+        let mut got = idx_file.closure_reverse(p_id, id_e).unwrap();
+        got.sort();
+        assert_eq!(got, vec![id_f]);
+
+        // Predicate not in build list: no closure data.
+        // (use a fake predicate id that won't be in the table)
+        assert!(idx_file.closure_forward(999_999, id_a).is_none());
+    }
+
+    #[test]
+    fn pclos_cycle_handling() {
+        // A -> B -> A (cycle). Closure of A should be {B}; closure of B should be {A}.
+        let dir = tempdir().unwrap();
+        let r5tu = dir.path().join("store.r5tu");
+        let idx = dir.path().join("store.r5tu.idx");
+        let p = "http://ex/p";
+        let quads = vec![
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/A"),
+                p: iri(p),
+                o: iri("http://ex/B"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/B"),
+                p: iri(p),
+                o: iri("http://ex/A"),
+                gname: "g1".into(),
+            },
+        ];
+        write_file(&r5tu, &quads).unwrap();
+        let f = R5tuFile::open(&r5tu).unwrap();
+        let p_id = f
+            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(p)))
+            .unwrap()
+            .unwrap();
+        let a = f
+            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
+                "http://ex/A",
+            )))
+            .unwrap()
+            .unwrap();
+        let b = f
+            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
+                "http://ex/B",
+            )))
+            .unwrap()
+            .unwrap();
+        build_with_options(
+            &f,
+            &idx,
+            &BuildOptions {
+                closure_predicates: vec![p_id],
+            },
+        )
+        .unwrap();
+        let idx_file = IdxFile::open(&idx).unwrap();
+        // Non-reflexive closure: A reaches {B}, B reaches {A}.
+        let got = idx_file.closure_forward(p_id, a).unwrap();
+        assert!(got.contains(&b));
+        let got = idx_file.closure_forward(p_id, b).unwrap();
+        assert!(got.contains(&a));
     }
 
     #[test]
