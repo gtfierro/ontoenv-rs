@@ -59,6 +59,7 @@ class OntoEnv:
         remote_cache_ttl_secs: Optional[int] = None,
         graph_store: Optional[object] = None,
         init_from_store: bool = False,
+        auto_index: bool = True,
     ) -> None:
         """Create or open an ontology environment.
 
@@ -69,6 +70,15 @@ class OntoEnv:
         Set ``init_from_store=True`` together with ``graph_store`` to
         reconstruct the environment's metadata from graphs that are already
         present in the store, instead of starting from an empty state.
+
+        When ``auto_index`` is true (the default), each flush of the
+        persistent ``.r5tu`` store also rebuilds a sibling PSO/POS index file
+        (``store.r5tu.idx``) that accelerates triple-pattern lookups where the
+        predicate is bound. Disable with ``auto_index=False`` to skip the
+        rebuild (and remove any existing sidecar); use :py:meth:`build_index`
+        to rebuild it on demand, or :py:meth:`set_auto_index` to toggle the
+        setting on an existing environment. Has no effect on temporary or
+        external-graph-store environments.
         """
         ...
 
@@ -388,6 +398,33 @@ class OntoEnv:
 
     def flush(self) -> None: ...
     def close(self) -> None: ...
+
+    def build_index(self) -> None:
+        """Build (or rebuild) the PSO/POS sidecar index next to the persistent
+        ``.r5tu`` store.
+
+        The sidecar (``store.r5tu.idx``) is a regenerable file that holds
+        per-predicate posting lists. Triple-pattern queries with a bound
+        predicate (e.g. ``(None, OWL.imports, None)``) read from the sidecar
+        when present, falling back to a per-graph scan otherwise.
+
+        No-op for temporary environments and environments backed by an
+        external graph store.
+        """
+        ...
+
+    def set_auto_index(self, on: bool) -> None:
+        """Toggle automatic sidecar index rebuilds at flush time.
+
+        When ``on`` is ``False``, subsequent flushes skip the sidecar build
+        and delete any existing ``store.r5tu.idx`` file so a stale index
+        is never read back. When ``on`` is ``True``, the sidecar is rebuilt
+        on the next flush that writes data to disk.
+
+        No-op for temporary environments and environments backed by an
+        external graph store.
+        """
+        ...
 
     # ------------------------------------------------------------------ #
     # Pythonic sugar                                                       #

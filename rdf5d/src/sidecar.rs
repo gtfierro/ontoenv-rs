@@ -1,19 +1,42 @@
 //! Sidecar PSO/POS index for R5TU files.
 //!
-//! See `plans/rdf5d-pso-pos-sidecar-index.md` for the design rationale.
-//! On-disk layout summary:
+//! A sidecar is an optional file stored next to a `.r5tu` snapshot
+//! (`<snapshot>.r5tu.idx`) that holds per-predicate posting lists in both
+//! `predicate → subject → object` (PSO) and `predicate → object → subject`
+//! (POS) order. Triple-pattern queries with a bound predicate can read from
+//! the postings directly instead of scanning every triple in every graph.
+//!
+//! The sidecar is regenerable: it carries no data that isn't derivable from
+//! the source `.r5tu` file, so a missing or stale sidecar is a soft failure
+//! that triggers a fallback scan, not a corruption error.
+//!
+//! On-disk layout:
 //!
 //! ```text
 //! +----------------------+ 0x00
 //! | Header (variable)    |   magic "R5IDX" + version + invalidation fields + TOC pointer
 //! +----------------------+
-//! | TOC                  |   array of 32 B entries
+//! | TOC                  |   array of 32 B entries (one per permutation)
 //! +----------------------+
 //! | Sections...          |   IDX_PSO, IDX_POS
 //! +----------------------+
 //! | Footer (16 B)        |   global_crc32 + "R5IDX_ENDM\0\0"
 //! +----------------------+
 //! ```
+//!
+//! Each permutation section stores:
+//!
+//! - `pred_keys[n_predicates]` — sorted u64 predicate term IDs (binary-searchable).
+//! - `key2post_offs[n_predicates + 1]` — slice table into the per-predicate blob.
+//! - Concatenated per-predicate postings, each laid out as:
+//!
+//!   * `gid_vals[n_gids]`, `s_heads[n_gids + 1]`, `s_byte_heads[n_gids + 1]`
+//!     (fixed-width u32, for O(1) random access into one gid's run).
+//!   * Uvarint+delta `s_vals` and `o_vals` streams (compact bulk payload).
+//!
+//! Use [`build`] to (re)build a sidecar from an open [`R5tuFile`].
+//! Use [`IdxFile::open`] + [`IdxFile::lookup_pso`] / [`IdxFile::lookup_pos`]
+//! to read.
 
 use std::fs;
 use std::io::Write;
@@ -482,8 +505,13 @@ impl IdxFile {
     }
 
     /// Validate the sidecar against a freshly-statted `.r5tu` file.
-    /// Returns `Ok(true)` if the sidecar should still be valid, `Ok(false)`
-    /// if it is stale (mtime/len mismatch or gdir CRC mismatch).
+    ///
+    /// The sidecar header captures the source file's length, modification
+    /// time (ns), and GDir CRC at build time. This method compares those
+    /// against the current source. Any mismatch — file rewritten in place,
+    /// truncated, replaced, or contents altered — returns `Ok(false)`,
+    /// signaling the caller should ignore the sidecar and fall back to the
+    /// per-graph scan.
     pub fn validate_against(
         &self,
         r5tu_path: &Path,
@@ -526,9 +554,14 @@ fn write_uvarint(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
-/// Build a sidecar PSO/POS index from an opened R5TU file and write it to disk.
+/// Build a sidecar PSO/POS index from an opened R5TU file and write it to
+/// `out_path` atomically (write to `<out_path>.tmp`, then rename).
 ///
-/// Atomically renames into `out_path` on success.
+/// The build pass walks every triple in every graph and sorts in memory; cost
+/// scales roughly with the source `.r5tu`'s build cost. Sub-second for
+/// snapshots up to a few hundred thousand triples on contemporary hardware.
+/// Very large snapshots (more than a few million triples) may need
+/// substantial memory for the in-memory sort.
 pub fn build(r5tu: &R5tuFile, out_path: &Path) -> Result<()> {
     // 1. Walk all triples and collect (p, gid, s, o).
     let graphs = r5tu.enumerate_all()?;
@@ -688,8 +721,9 @@ fn compute_gdir_crc(r5tu: &R5tuFile) -> Result<u32> {
     Ok(crc32_ieee(&buf))
 }
 
-/// Compute the canonical "gdir CRC" used for invalidation. Stable across reopens
-/// of an unchanged .r5tu file.
+/// Compute the canonical "GDir CRC" used to invalidate a sidecar against its
+/// source `.r5tu` file. Stable across reopens of an unchanged snapshot;
+/// flips whenever the snapshot's graph layout changes.
 pub fn gdir_crc(r5tu: &R5tuFile) -> Result<u32> {
     compute_gdir_crc(r5tu)
 }

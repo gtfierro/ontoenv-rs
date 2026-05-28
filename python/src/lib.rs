@@ -234,6 +234,7 @@ fn add_resolved_to_env(
     overwrite: Overwrite,
     refresh: RefreshStrategy,
     fetch_imports: bool,
+    rename: Option<&str>,
 ) -> PyResult<String> {
     let preferred_name = resolved.preferred_name;
     let location = resolved.location;
@@ -262,6 +263,16 @@ fn add_resolved_to_env(
         }
     }
     .map_err(anyhow_to_pyerr)?;
+
+    // Apply rename if requested.
+    let graph_id = if let Some(new_iri_str) = rename {
+        let new_iri = NamedNode::new(new_iri_str)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        env.rename_graph_iri(&graph_id, new_iri)
+            .map_err(anyhow_to_pyerr)?
+    } else {
+        graph_id
+    };
 
     let actual_name = graph_id.to_uri_string();
     if let Some(pref) = preferred_name {
@@ -3234,7 +3245,7 @@ impl OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false, auto_index=true))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -3257,6 +3268,7 @@ impl OntoEnv {
         remote_cache_ttl_secs: Option<u64>,
         graph_store: Option<Py<PyAny>>,
         init_from_store: bool,
+        auto_index: bool,
     ) -> PyResult<Self> {
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
@@ -3319,12 +3331,13 @@ impl OntoEnv {
             cfg.external_graph_store = Some(desc);
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
                 .map_err(anyhow_to_pyerr)?;
-            let env = if init_from_store {
+            let mut env = if init_from_store {
                 OntoEnvRs::new_with_graph_io_from_existing(cfg, Box::new(io))
             } else {
                 OntoEnvRs::new_with_graph_io(cfg, Box::new(io))
             }
             .map_err(anyhow_to_pyerr)?;
+            env.set_auto_index(auto_index);
             let inner = Arc::new(Mutex::new(Some(env)));
             return Ok(OntoEnv {
                 inner,
@@ -3333,7 +3346,7 @@ impl OntoEnv {
         }
 
         let root_for_lookup = cfg.root.clone();
-        let env = if cfg.temporary {
+        let mut env = if cfg.temporary {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
@@ -3359,6 +3372,7 @@ impl OntoEnv {
             };
             OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?
         };
+        env.set_auto_index(auto_index);
 
         let inner = Arc::new(Mutex::new(Some(env)));
 
@@ -4090,13 +4104,14 @@ impl OntoEnv {
     }
 
     /// Add a new ontology to the OntoEnv
-    #[pyo3(signature = (location, overwrite = false, fetch_imports = true, force = false))]
+    #[pyo3(signature = (location, overwrite = false, fetch_imports = true, force = false, rename = None))]
     fn add(
         &self,
         location: &Bound<'_, PyAny>,
         overwrite: bool,
         fetch_imports: bool,
         force: bool,
+        rename: Option<&str>,
     ) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
@@ -4114,6 +4129,7 @@ impl OntoEnv {
             overwrite_flag,
             refresh,
             fetch_imports,
+            rename,
         );
         drop(guard);
         self.bump_generation();
@@ -4121,12 +4137,13 @@ impl OntoEnv {
     }
 
     /// Add a new ontology to the OntoEnv without exploring owl:imports.
-    #[pyo3(signature = (location, overwrite = false, force = false))]
+    #[pyo3(signature = (location, overwrite = false, force = false, rename = None))]
     fn add_no_imports(
         &self,
         location: &Bound<'_, PyAny>,
         overwrite: bool,
         force: bool,
+        rename: Option<&str>,
     ) -> PyResult<String> {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
@@ -4136,7 +4153,8 @@ impl OntoEnv {
         let resolved = ontology_location_from_py(location)?;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
-        let result = add_resolved_to_env(env, location, resolved, overwrite_flag, refresh, false);
+        let result =
+            add_resolved_to_env(env, location, resolved, overwrite_flag, refresh, false, rename);
         drop(guard);
         self.bump_generation();
         result
@@ -4776,6 +4794,34 @@ impl OntoEnv {
     /// Flush pending changes and rebind cached Graph views to the new
     /// snapshot. Graphs returned by prior `get_graph` calls share the cached
     /// Dataset's store, so they observe post-flush state without re-fetching.
+    /// Rebuild the PSO/POS sidecar index next to the persistent `.r5tu` store.
+    /// No-op for non-persistent backends.
+    pub fn build_index(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| {
+            let inner = self.inner.clone();
+            let guard = inner.lock().unwrap();
+            let Some(env) = guard.as_ref() else {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "OntoEnv is closed",
+                ));
+            };
+            env.build_index().map_err(anyhow_to_pyerr)
+        })
+    }
+
+    /// Toggle automatic PSO/POS sidecar rebuilds at flush time.
+    pub fn set_auto_index(&self, on: bool) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ));
+        };
+        env.set_auto_index(on);
+        Ok(())
+    }
+
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         let track_cached_snapshot = self.cached_view_dataset_exists();
         let cached_dataset_is_stale = self.cached_view_dataset_is_stale();
