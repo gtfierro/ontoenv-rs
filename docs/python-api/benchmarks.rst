@@ -81,34 +81,45 @@ baseline.)
 benchcmp-style comparison
 -------------------------
 
-Each block compares one backend against ``rdflib-memory`` (positive ``delta``
-means slower than the baseline; negative means faster).
+Each block compares one backend against a baseline (positive ``delta`` means
+slower than the baseline; negative means faster). The default baseline is
+``rdflib-memory``; an extra ``ontoenv-get vs oxigraph`` block is also emitted
+because Oxigraph is the most direct alternative for read-only ``get_*``
+workloads.
 
 .. code-block:: text
 
    ontoenv-get vs rdflib-memory
      workload                         rdflib-memory best    ontoenv-get best  delta
-     iterate all triples                      91.03 ms           154.45 ms  +  69.66%
-     match ?s owl:imports ?o                  39.96 us            91.42 us  + 128.78%
-     SPARQL: COUNT rdf:type                   67.51 ms             2.99 ms   -95.57%
-     SPARQL: subClassOf* Equip.                4.22 ms             5.59 ms  +  32.46%
-     SPARQL: labels LIMIT 1000                10.07 ms             5.53 ms   -45.05%
+     iterate all triples                      95.64 ms            93.77 ms   -  1.96%
+     match ?s owl:imports ?o                  54.96 us           107.13 us   + 94.94%
+     SPARQL: COUNT rdf:type                   68.34 ms             3.28 ms   -95.20%
+     SPARQL: subClassOf* Equip.                4.45 ms             6.04 ms   + 35.84%
+     SPARQL: labels LIMIT 1000                10.28 ms             5.81 ms   -43.51%
 
    ontoenv-copy vs rdflib-memory
      workload                         rdflib-memory best   ontoenv-copy best  delta
-     iterate all triples                      91.03 ms           103.97 ms  +  14.21%
-     match ?s owl:imports ?o                  39.96 us            30.13 us   -24.61%
-     SPARQL: COUNT rdf:type                   67.51 ms            69.48 ms  +   2.93%
-     SPARQL: subClassOf* Equip.                4.22 ms             4.55 ms  +   7.74%
-     SPARQL: labels LIMIT 1000                10.07 ms            10.28 ms  +   2.09%
+     iterate all triples                      95.64 ms           108.50 ms   + 13.45%
+     match ?s owl:imports ?o                  54.96 us            28.66 us   -47.85%
+     SPARQL: COUNT rdf:type                   68.34 ms            72.84 ms   +  6.59%
+     SPARQL: subClassOf* Equip.                4.45 ms             4.43 ms   -  0.43%
+     SPARQL: labels LIMIT 1000                10.28 ms            10.45 ms   +  1.65%
 
    oxigraph vs rdflib-memory
      workload                         rdflib-memory best       oxigraph best  delta
-     iterate all triples                      91.03 ms           611.87 ms  + 572.13%
-     match ?s owl:imports ?o                  39.96 us           135.58 us  + 239.31%
-     SPARQL: COUNT rdf:type                   67.51 ms             3.17 ms   -95.31%
-     SPARQL: subClassOf* Equip.                4.22 ms           403.58 us   -90.44%
-     SPARQL: labels LIMIT 1000                10.07 ms             4.60 ms   -54.31%
+     iterate all triples                      95.64 ms           568.02 ms  +493.88%
+     match ?s owl:imports ?o                  54.96 us           136.00 us  +147.46%
+     SPARQL: COUNT rdf:type                   68.34 ms             3.17 ms   -95.37%
+     SPARQL: subClassOf* Equip.                4.45 ms           370.75 us   -91.68%
+     SPARQL: labels LIMIT 1000                10.28 ms             6.05 ms   -41.17%
+
+   ontoenv-get vs oxigraph
+     workload                            oxigraph best    ontoenv-get best  delta
+     iterate all triples                     568.02 ms            93.77 ms   -83.49%
+     match ?s owl:imports ?o                 136.00 us           107.13 us   -21.23%
+     SPARQL: COUNT rdf:type                    3.17 ms             3.28 ms   +  3.64%
+     SPARQL: subClassOf* Equip.              370.75 us             6.04 ms +1528.94%
+     SPARQL: labels LIMIT 1000                 6.05 ms             5.81 ms   -  4.00%
 
 How to read the results
 -----------------------
