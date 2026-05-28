@@ -4331,6 +4331,39 @@ impl OntoEnv {
         result
     }
 
+    /// Rename the IRI of an ontology already in the environment.
+    ///
+    /// Reads the stored graph for ``uri``, rewrites every occurrence of its
+    /// current IRI to ``new_iri`` (subject and object positions, excluding
+    /// ``owl:versionIRI`` values), stores the result under the new name,
+    /// removes the old named graph, and rebuilds the import dependency graph.
+    ///
+    /// Returns the new IRI string.
+    fn rename_graph_iri(&self, uri: &str, new_iri: &str) -> PyResult<String> {
+        let old_iri = NamedNode::new(uri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let new_iri_node = NamedNode::new(new_iri)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        let graph_id = env
+            .resolve(ResolveTarget::Graph(old_iri))
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Ontology not found: {uri}"
+                ))
+            })?;
+        let new_id = env
+            .rename_graph_iri(&graph_id, new_iri_node)
+            .map_err(anyhow_to_pyerr)?;
+        drop(guard);
+        self.bump_generation();
+        Ok(new_id.to_uri_string())
+    }
+
     /// Get the names of all ontologies that import the given ontology
     fn get_importers(&self, uri: &str) -> PyResult<Vec<String>> {
         let iri = NamedNode::new(uri)

@@ -184,6 +184,9 @@ enum Commands {
         /// Do not explore owl:imports of the added ontology
         #[clap(long, action)]
         no_imports: bool,
+        /// Override the ontology IRI stored in the environment (e.g. "https://my-ns.org/my-ont")
+        #[clap(long)]
+        rename: Option<String>,
     },
     /// List various properties of the environment
     /// List various properties of the environment
@@ -769,6 +772,7 @@ fn execute(cmd: Cli) -> Result<()> {
         Commands::Add {
             location,
             no_imports,
+            rename,
         } => {
             let location = if location.starts_with("http") {
                 OntologyLocation::Url(location)
@@ -776,11 +780,15 @@ fn execute(cmd: Cli) -> Result<()> {
                 OntologyLocation::File(PathBuf::from(location))
             };
             let mut env = require_ontoenv(env)?;
-            if no_imports {
-                let _ =
-                    env.add_no_imports(location, Overwrite::Allow, RefreshStrategy::UseCache)?;
+            let id = if no_imports {
+                env.add_no_imports(location, Overwrite::Allow, RefreshStrategy::UseCache)?
             } else {
-                let _ = env.add(location, Overwrite::Allow, RefreshStrategy::UseCache)?;
+                env.add(location, Overwrite::Allow, RefreshStrategy::UseCache)?
+            };
+            if let Some(new_iri_str) = rename {
+                let new_iri = NamedNode::new(&new_iri_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid rename IRI: {}", e))?;
+                env.rename_graph_iri(&id, new_iri)?;
             }
         }
         Commands::List { list_cmd, json } => {

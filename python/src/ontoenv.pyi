@@ -112,6 +112,7 @@ class OntoEnv:
         overwrite: bool = False,
         fetch_imports: bool = True,
         force: bool = False,
+        rename: Optional[str] = None,
     ) -> str:
         """Add an ontology to the environment and return its IRI.
 
@@ -119,6 +120,18 @@ class OntoEnv:
         ``rdflib.Graph``.  Set ``fetch_imports=False`` to skip recursive
         import resolution; ``force=True`` forces re-fetching even when a
         cached copy is fresh.
+
+        *rename* optionally overrides the ontology's declared IRI.  When
+        supplied, every occurrence of the original IRI in the stored graph
+        (subject and object positions, except ``owl:versionIRI`` values) is
+        rewritten to *rename* before the graph is stored.  The environment
+        registers the ontology under the new IRI; the original IRI is no
+        longer directly addressable.
+
+        Example — load a third-party ontology under a local canonical IRI::
+
+            env.add("https://example.org/upstream.ttl",
+                    rename="https://my-org.com/local/upstream")
         """
         ...
 
@@ -127,8 +140,35 @@ class OntoEnv:
         location: Union[str, Path, Graph],
         overwrite: bool = False,
         force: bool = False,
+        rename: Optional[str] = None,
     ) -> str:
-        """Add an ontology without following its ``owl:imports`` declarations."""
+        """Add an ontology without following its ``owl:imports`` declarations.
+
+        Accepts the same *rename* parameter as :py:meth:`add`.
+        """
+        ...
+
+    def rename_graph_iri(self, uri: str, new_iri: str) -> str:
+        """Rename the IRI of an ontology already in the environment.
+
+        Reads the stored graph for *uri*, rewrites all occurrences of the
+        current IRI to *new_iri* (subject and object positions, excluding
+        ``owl:versionIRI`` values), stores the result under the new name,
+        removes the old named graph, and rebuilds the import dependency graph.
+
+        Returns the new IRI string.
+
+        Rewrite rules:
+
+        * ``<old> rdf:type owl:Ontology`` → ``<new> rdf:type owl:Ontology``
+        * ``<old> owl:imports <X>`` → ``<new> owl:imports <X>``
+        * ``<old> sh:prefixes <old>`` → ``<new> sh:prefixes <new>``
+          (self-referential link rewritten on both sides)
+        * ``<X> sh:prefixes <old>`` → ``<X> sh:prefixes <new>``
+          (object-only rewrite when subject differs)
+        * ``<old> owl:versionIRI <old>`` → ``<new> owl:versionIRI <old>``
+          (subject rewritten; version value **preserved**)
+        """
         ...
 
     # ------------------------------------------------------------------ #

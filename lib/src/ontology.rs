@@ -453,6 +453,13 @@ impl Ontology {
         self.location = Some(location);
     }
 
+    /// Update the ontology's declared IRI (graph name) while keeping the source location.
+    pub fn set_iri(&mut self, new_iri: NamedNode) {
+        let location = self.id.location().clone();
+        self.id = GraphIdentifier::new_with_location(new_iri.as_ref(), location);
+        self.name = new_iri;
+    }
+
     pub fn set_content_hash(&mut self, hash: String) {
         // Record content hash for change detection without re-parsing.
         self.content_hash = Some(hash);
