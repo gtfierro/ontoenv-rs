@@ -86,7 +86,7 @@ means slower than the baseline; negative means faster).
 
 .. code-block:: text
 
-   benchmark vs rdflib-memory: ontoenv-get
+   ontoenv-get vs rdflib-memory
      workload                         rdflib-memory best    ontoenv-get best  delta
      iterate all triples                      91.03 ms           154.45 ms  +  69.66%
      match ?s owl:imports ?o                  39.96 us            91.42 us  + 128.78%
@@ -94,7 +94,7 @@ means slower than the baseline; negative means faster).
      SPARQL: subClassOf* Equip.                4.22 ms             5.59 ms  +  32.46%
      SPARQL: labels LIMIT 1000                10.07 ms             5.53 ms   -45.05%
 
-   benchmark vs rdflib-memory: ontoenv-copy
+   ontoenv-copy vs rdflib-memory
      workload                         rdflib-memory best   ontoenv-copy best  delta
      iterate all triples                      91.03 ms           103.97 ms  +  14.21%
      match ?s owl:imports ?o                  39.96 us            30.13 us   -24.61%
@@ -102,7 +102,7 @@ means slower than the baseline; negative means faster).
      SPARQL: subClassOf* Equip.                4.22 ms             4.55 ms  +   7.74%
      SPARQL: labels LIMIT 1000                10.07 ms            10.28 ms  +   2.09%
 
-   benchmark vs rdflib-memory: oxigraph
+   oxigraph vs rdflib-memory
      workload                         rdflib-memory best       oxigraph best  delta
      iterate all triples                      91.03 ms           611.87 ms  + 572.13%
      match ?s owl:imports ?o                  39.96 us           135.58 us  + 239.31%
