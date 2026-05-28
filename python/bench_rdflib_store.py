@@ -150,10 +150,10 @@ def fmt_time(seconds: float) -> str:
 
 
 def render_benchcmp(rows, backend_names, baseline):
-    """benchcmp-style pairwise comparison: every backend vs the baseline."""
+    """benchcmp-style pairwise comparison: every backend vs the baseline,
+    plus an explicit `ontoenv-get vs oxigraph` block when both are present."""
     if baseline not in backend_names:
         baseline = backend_names[0]
-    others = [b for b in backend_names if b != baseline]
 
     # Reorganize rows: workload -> backend -> (best, mean, result)
     data: dict[str, dict[str, tuple]] = {}
@@ -165,14 +165,25 @@ def render_benchcmp(rows, backend_names, baseline):
         else:
             data[wname][bname] = (timing[0], timing[1], result)
 
+    pairs: list[tuple[str, str]] = [
+        (other, baseline) for other in backend_names if other != baseline
+    ]
+    # Extra ontoenv-get vs oxigraph comparison when both backends ran.
+    if (
+        "ontoenv-get" in backend_names
+        and "oxigraph" in backend_names
+        and ("ontoenv-get", "oxigraph") not in pairs
+    ):
+        pairs.append(("ontoenv-get", "oxigraph"))
+
     out = []
-    for other in others:
-        out.append(f"\n{other} vs {baseline}")
+    for other, base_name in pairs:
+        out.append(f"\n{other} vs {base_name}")
         out.append(
-            f"  {'workload':<32s} {baseline+' best':>16s} {other+' best':>16s}  delta"
+            f"  {'workload':<32s} {base_name+' best':>16s} {other+' best':>16s}  delta"
         )
         for w in workloads:
-            base = data[w].get(baseline)
+            base = data[w].get(base_name)
             cur = data[w].get(other)
             if base is None or cur is None:
                 continue
