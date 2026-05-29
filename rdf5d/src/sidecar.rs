@@ -1,48 +1,34 @@
-//! Sidecar PSO/POS index for R5TU files.
+//! In-memory permutation indexes for R5TU files.
 //!
-//! A sidecar is an optional file stored next to a `.r5tu` snapshot
-//! (`<snapshot>.r5tu.idx`) that holds per-predicate posting lists in both
-//! `predicate → subject → object` (PSO) and `predicate → object → subject`
-//! (POS) order. Triple-pattern queries with a bound predicate can read from
-//! the postings directly instead of scanning every triple in every graph.
+//! These indexes are built on demand from an open [`R5tuFile`] and held in
+//! RAM — there is no on-disk sidecar. Each [`MemSection`] holds one
+//! permutation's posting lists in a compact, binary-searchable layout:
 //!
-//! The sidecar is regenerable: it carries no data that isn't derivable from
-//! the source `.r5tu` file, so a missing or stale sidecar is a soft failure
-//! that triggers a fallback scan, not a corruption error.
+//! - PSO (`predicate → subject → object`) and POS (`predicate → object →
+//!   subject`) for patterns with a bound predicate;
+//! - SPO (`subject → predicate → object`) for a bound subject;
+//! - OSP (`object → subject → predicate`) for a bound object.
 //!
-//! On-disk layout:
+//! [`MemPClos`] additionally precomputes the transitive closure of a
+//! configured set of predicates (for SPARQL `P+`/`P*` property paths).
 //!
-//! ```text
-//! +----------------------+ 0x00
-//! | Header (variable)    |   magic "R5IDX" + version + invalidation fields + TOC pointer
-//! +----------------------+
-//! | TOC                  |   array of 32 B entries (one per permutation)
-//! +----------------------+
-//! | Sections...          |   IDX_PSO, IDX_POS, IDX_SPO, IDX_OSP
-//! +----------------------+
-//! | Footer (16 B)        |   global_crc32 + "R5IDX_ENDM\0\0"
-//! +----------------------+
-//! ```
+//! Indexes carry no data that isn't derivable from the source `.r5tu` file,
+//! so they are always fresh by construction (built from the snapshot you just
+//! opened) and need no validation against disk.
 //!
-//! Each permutation section stores:
+//! Each section stores:
 //!
-//! - `pred_keys[n_predicates]` — sorted u64 predicate term IDs (binary-searchable).
-//! - `key2post_offs[n_predicates + 1]` — slice table into the per-predicate blob.
-//! - Concatenated per-predicate postings, each laid out as:
+//! - `pred_keys[n_predicates]` — sorted u64 key term IDs (binary-searchable).
+//! - `key2post_offs[n_predicates + 1]` — slice table into the per-key blob.
+//! - Concatenated per-key postings, each laid out as:
 //!
 //!   * `gid_vals[n_gids]`, `s_heads[n_gids + 1]`, `s_byte_heads[n_gids + 1]`
 //!     (fixed-width u32, for O(1) random access into one gid's run).
 //!   * Uvarint+delta `s_vals` and `o_vals` streams (compact bulk payload).
 //!
-//! Use [`build`] to (re)build a sidecar from an open [`R5tuFile`].
-//! Use [`IdxFile::open`] + [`IdxFile::lookup_pso`] / [`IdxFile::lookup_pos`]
-//! to read.
+//! Use [`build_mem_section`] / [`build_mem_pclos`] to build, and
+//! [`MemSection::lookup`] / [`MemPClos::closure_forward`] to read.
 
-use std::fs;
-use std::io::Write;
-use std::path::Path;
-
-use crate::header::crc32_ieee;
 use crate::reader::{R5Error, R5tuFile, Result};
 
 /// Sidecar magic at the start of every sidecar file.
@@ -89,36 +75,6 @@ impl IdxKind {
             _ => None,
         }
     }
-}
-
-/// Build-time options for the sidecar.
-#[derive(Debug, Default, Clone)]
-pub struct BuildOptions {
-    /// Predicate term IDs to precompute transitive closures for.
-    /// Empty means no `IDX_PCLOS` section is written.
-    pub closure_predicates: Vec<u64>,
-}
-
-/// Parsed sidecar header.
-#[derive(Debug, Clone)]
-pub struct IdxHeader {
-    pub version: u16,
-    pub flags: u16,
-    pub src_mtime_ns: i64,
-    pub src_len: u64,
-    pub src_gdir_crc: u32,
-    pub toc_off: u64,
-    pub toc_len: u32,
-    pub src_path: String,
-}
-
-/// Single section entry (32 bytes on disk: u16 kind, u16 resv, u64 off, u64 len, u32 crc, u32 resv).
-#[derive(Debug, Clone, Copy)]
-pub struct IdxToc {
-    pub kind: IdxKind,
-    pub off: u64,
-    pub len: u64,
-    pub crc: u32,
 }
 
 /// Read-only view of one predicate's PSO/POS posting block.
@@ -541,257 +497,6 @@ fn parse_pclos_side(payload: &[u8]) -> Option<PClosSide<'_>> {
     })
 }
 
-/// Open sidecar file.
-#[derive(Debug)]
-pub struct IdxFile {
-    bytes: Vec<u8>,
-    header: IdxHeader,
-    sections: Vec<IdxSection>,
-    pclos: Option<PClosSection>,
-}
-
-impl IdxFile {
-    pub fn open(path: &Path) -> Result<Self> {
-        let bytes = fs::read(path)?;
-        Self::from_bytes(bytes)
-    }
-
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
-        // Parse header
-        if bytes.len() < 5 + 2 + 2 + 2 + 8 + 8 + 4 + 8 + 4 + 4 {
-            return Err(R5Error::Corrupt("sidecar too short".into()));
-        }
-        if &bytes[0..5] != SIDECAR_MAGIC {
-            return Err(R5Error::Invalid("bad sidecar magic"));
-        }
-        let mut off = 5usize;
-        let version = u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap());
-        off += 2;
-        let flags = u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap());
-        off += 2;
-        let src_path_len =
-            u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap()) as usize;
-        off += 2;
-        let src_mtime_ns = i64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-        off += 8;
-        let src_len = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-        off += 8;
-        let src_gdir_crc = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-        off += 4;
-        let toc_off = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-        off += 8;
-        let toc_len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-        off += 4;
-        let _reserved = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-        off += 4;
-        if off + src_path_len > bytes.len() {
-            return Err(R5Error::Corrupt("sidecar src path OOB".into()));
-        }
-        let src_path = String::from_utf8_lossy(&bytes[off..off + src_path_len]).into_owned();
-        // skip src_path bytes; not needed for further parsing
-
-        if version != SIDECAR_VERSION {
-            return Err(R5Error::Invalid("unsupported sidecar version"));
-        }
-        // Footer check.
-        if bytes.len() < 16 {
-            return Err(R5Error::Corrupt("sidecar missing footer".into()));
-        }
-        let footer_base = bytes.len() - 16;
-        let footer_crc = u32::from_le_bytes(bytes[footer_base..footer_base + 4].try_into().unwrap());
-        if &bytes[footer_base + 4..footer_base + 16] != SIDECAR_EOF_MAGIC {
-            return Err(R5Error::Invalid("bad sidecar footer magic"));
-        }
-        let computed = crc32_ieee(&bytes[..footer_base]);
-        if computed != footer_crc {
-            return Err(R5Error::Corrupt("sidecar global CRC mismatch".into()));
-        }
-
-        // Parse TOC
-        let toc_off_us = toc_off as usize;
-        let mut sections: Vec<IdxSection> = Vec::with_capacity(toc_len as usize);
-        let mut pclos: Option<PClosSection> = None;
-        for i in 0..toc_len as usize {
-            let base = toc_off_us + i * 32;
-            if base + 32 > bytes.len() {
-                return Err(R5Error::Corrupt("sidecar TOC entry OOB".into()));
-            }
-            let kind_u = u16::from_le_bytes(bytes[base..base + 2].try_into().unwrap());
-            let kind = IdxKind::from_u16(kind_u)
-                .ok_or(R5Error::Invalid("unknown sidecar section kind"))?;
-            let sec_off = u64::from_le_bytes(bytes[base + 4..base + 12].try_into().unwrap());
-            let sec_len = u64::from_le_bytes(bytes[base + 12..base + 20].try_into().unwrap());
-            let crc = u32::from_le_bytes(bytes[base + 20..base + 24].try_into().unwrap());
-            let _ = crc;
-            // PClos has its own header shape; parse separately.
-            if kind == IdxKind::PClos {
-                let sec_base = sec_off as usize;
-                if sec_base + 24 > bytes.len() {
-                    return Err(R5Error::Corrupt("sidecar pclos header OOB".into()));
-                }
-                let n_predicates =
-                    u64::from_le_bytes(bytes[sec_base..sec_base + 8].try_into().unwrap());
-                let pred_keys_off =
-                    u64::from_le_bytes(bytes[sec_base + 8..sec_base + 16].try_into().unwrap())
-                        as usize;
-                let entries_off =
-                    u64::from_le_bytes(bytes[sec_base + 16..sec_base + 24].try_into().unwrap())
-                        as usize;
-                pclos = Some(PClosSection {
-                    off: sec_off,
-                    len: sec_len,
-                    n_predicates,
-                    pred_keys_off,
-                    entries_off,
-                });
-                continue;
-            }
-            // PSO / POS sections share a header shape.
-            let sec_base = sec_off as usize;
-            if sec_base + 32 > bytes.len() {
-                return Err(R5Error::Corrupt("sidecar section header OOB".into()));
-            }
-            let n_predicates =
-                u64::from_le_bytes(bytes[sec_base..sec_base + 8].try_into().unwrap());
-            let pred_keys_off =
-                u64::from_le_bytes(bytes[sec_base + 8..sec_base + 16].try_into().unwrap())
-                    as usize;
-            let key2post_offs_off =
-                u64::from_le_bytes(bytes[sec_base + 16..sec_base + 24].try_into().unwrap())
-                    as usize;
-            let blob_off = u64::from_le_bytes(bytes[sec_base + 24..sec_base + 32].try_into().unwrap())
-                as usize;
-            sections.push(IdxSection {
-                kind,
-                off: sec_off,
-                len: sec_len,
-                n_predicates,
-                pred_keys_off,
-                key2post_offs_off,
-                blob_off,
-            });
-        }
-
-        Ok(IdxFile {
-            bytes,
-            header: IdxHeader {
-                version,
-                flags,
-                src_mtime_ns,
-                src_len,
-                src_gdir_crc,
-                toc_off,
-                toc_len,
-                src_path,
-            },
-            sections,
-            pclos,
-        })
-    }
-
-    pub fn header(&self) -> &IdxHeader {
-        &self.header
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    pub fn section(&self, kind: IdxKind) -> Option<&IdxSection> {
-        self.sections.iter().find(|s| s.kind == kind)
-    }
-
-    /// Returns true when the sidecar was built with a precomputed
-    /// transitive-closure index.
-    pub fn has_pclos(&self) -> bool {
-        self.pclos.is_some()
-    }
-
-    /// Forward transitive closure under `predicate`. Returns the sorted list
-    /// of objects reachable from `subject` via one or more `predicate` edges,
-    /// or `None` if `predicate` has no precomputed closure (not in the build
-    /// configuration) or `subject` has no outgoing edges under it.
-    pub fn closure_forward(&self, predicate: u64, subject: u64) -> Option<Vec<u64>> {
-        let side = self.pclos.as_ref()?.forward(&self.bytes, predicate)?;
-        side.lookup(subject)
-    }
-
-    /// Reverse transitive closure under `predicate`. Returns the sorted list
-    /// of subjects that reach `object` via one or more `predicate` edges.
-    pub fn closure_reverse(&self, predicate: u64, object: u64) -> Option<Vec<u64>> {
-        let side = self.pclos.as_ref()?.reverse(&self.bytes, predicate)?;
-        side.lookup(object)
-    }
-
-    /// Borrowed forward side; useful when you intend to issue many lookups
-    /// for the same predicate (avoids repeated binary search of the
-    /// predicate table).
-    pub fn closure_forward_side<'a>(&'a self, predicate: u64) -> Option<PClosSide<'a>> {
-        self.pclos.as_ref()?.forward(&self.bytes, predicate)
-    }
-
-    /// Borrowed reverse side; see [`Self::closure_forward_side`].
-    pub fn closure_reverse_side<'a>(&'a self, predicate: u64) -> Option<PClosSide<'a>> {
-        self.pclos.as_ref()?.reverse(&self.bytes, predicate)
-    }
-
-    /// Look up a PSO posting by predicate term ID.
-    pub fn lookup_pso(&self, p_id: u64) -> Option<IdxPosting<'_>> {
-        self.section(IdxKind::Pso)?.lookup(&self.bytes, p_id)
-    }
-
-    /// Look up a POS posting by predicate term ID.
-    pub fn lookup_pos(&self, p_id: u64) -> Option<IdxPosting<'_>> {
-        self.section(IdxKind::Pos)?.lookup(&self.bytes, p_id)
-    }
-
-    /// Look up an SPO posting by subject term ID. The posting's `(A, B)`
-    /// pairs are `(predicate, object)`; `None` when the subject has no
-    /// triples (or the sidecar predates SPO/OSP sections).
-    pub fn lookup_spo(&self, s_id: u64) -> Option<IdxPosting<'_>> {
-        self.section(IdxKind::Spo)?.lookup(&self.bytes, s_id)
-    }
-
-    /// Look up an OSP posting by object term ID. The posting's `(A, B)`
-    /// pairs are `(subject, predicate)`.
-    pub fn lookup_osp(&self, o_id: u64) -> Option<IdxPosting<'_>> {
-        self.section(IdxKind::Osp)?.lookup(&self.bytes, o_id)
-    }
-
-    /// Validate the sidecar against a freshly-statted `.r5tu` file.
-    ///
-    /// The sidecar header captures the source file's length, modification
-    /// time (ns), and GDir CRC at build time. This method compares those
-    /// against the current source. Any mismatch — file rewritten in place,
-    /// truncated, replaced, or contents altered — returns `Ok(false)`,
-    /// signaling the caller should ignore the sidecar and fall back to the
-    /// per-graph scan.
-    pub fn validate_against(
-        &self,
-        r5tu_path: &Path,
-        r5tu_gdir_crc: u32,
-    ) -> Result<bool> {
-        let md = fs::metadata(r5tu_path)?;
-        let len = md.len();
-        let mtime = md
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-        if self.header.src_len != len {
-            return Ok(false);
-        }
-        if self.header.src_mtime_ns != mtime {
-            return Ok(false);
-        }
-        if self.header.src_gdir_crc != r5tu_gdir_crc {
-            return Ok(false);
-        }
-        Ok(true)
-    }
-}
-
 // ---------------- Writer ----------------
 
 fn write_uvarint(out: &mut Vec<u8>, mut v: u64) {
@@ -808,279 +513,162 @@ fn write_uvarint(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
-/// Build a sidecar PSO/POS index from an opened R5TU file and write it to
-/// `out_path` atomically (write to `<out_path>.tmp`, then rename).
-///
-/// The build pass walks every triple in every graph and sorts in memory; cost
-/// scales roughly with the source `.r5tu`'s build cost. Sub-second for
-/// snapshots up to a few hundred thousand triples on contemporary hardware.
-/// Very large snapshots (more than a few million triples) may need
-/// substantial memory for the in-memory sort.
-pub fn build(r5tu: &R5tuFile, out_path: &Path) -> Result<()> {
-    build_with_options(r5tu, out_path, &BuildOptions::default())
+// ============================================================================
+// In-memory index builders
+// ============================================================================
+
+/// An in-memory, owned index for one permutation, built directly from an
+/// [`R5tuFile`]. Holds the same compact posting layout the on-disk sidecar
+/// used; query with [`MemSection::lookup`]. The byte buffer's offsets are
+/// relative to its own start (base 0), so it is self-contained.
+#[derive(Debug)]
+pub struct MemSection {
+    kind: IdxKind,
+    bytes: Vec<u8>,
+    section: IdxSection,
 }
 
-/// Like [`build`] but accepts a `BuildOptions` to opt into additional
-/// sidecar sections (currently: precomputed predicate transitive closures
-/// via `BuildOptions::closure_predicates`).
-pub fn build_with_options(
-    r5tu: &R5tuFile,
-    out_path: &Path,
-    opts: &BuildOptions,
-) -> Result<()> {
-    // 1. Walk all triples and collect (p, gid, s, o).
+impl MemSection {
+    /// The permutation this section indexes.
+    pub fn kind(&self) -> IdxKind {
+        self.kind
+    }
+
+    /// Look up the posting for `key` (a subject id for SPO, object id for OSP,
+    /// predicate id for PSO/POS). The posting's `(A, B)` pairs follow the
+    /// permutation's convention — see [`build_section`].
+    pub fn lookup(&self, key: u64) -> Option<IdxPosting<'_>> {
+        self.section.lookup(&self.bytes, key)
+    }
+}
+
+/// Parse a freshly-built (base-0) section buffer into an [`IdxSection`] view.
+fn parse_mem_section(kind: IdxKind, bytes: &[u8]) -> Result<IdxSection> {
+    if bytes.len() < 32 {
+        return Err(R5Error::Corrupt("mem section too short".into()));
+    }
+    let n_predicates = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+    let pred_keys_off = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
+    let key2post_offs_off = u64::from_le_bytes(bytes[16..24].try_into().unwrap()) as usize;
+    let blob_off = u64::from_le_bytes(bytes[24..32].try_into().unwrap()) as usize;
+    Ok(IdxSection {
+        kind,
+        off: 0,
+        len: bytes.len() as u64,
+        n_predicates,
+        pred_keys_off,
+        key2post_offs_off,
+        blob_off,
+    })
+}
+
+/// Walk every triple in the snapshot into a `(p, gid, s, o)` tuple vector.
+fn collect_tuples(r5tu: &R5tuFile) -> Result<Vec<(u64, u32, u64, u64)>> {
     let graphs = r5tu.enumerate_all()?;
     let total: u64 = graphs.iter().map(|g| g.n_triples).sum();
     let mut tuples: Vec<(u64, u32, u64, u64)> = Vec::with_capacity(total as usize);
     for g in &graphs {
         if g.gid > u32::MAX as u64 {
-            return Err(R5Error::Invalid("gid exceeds u32 (sidecar limit)"));
+            return Err(R5Error::Invalid("gid exceeds u32 (index limit)"));
         }
-        for (s_id, p_id, o_id) in r5tu.triples_ids(g.gid)? {
-            tuples.push((p_id, g.gid as u32, s_id, o_id));
+        for (s, p, o) in r5tu.triples_ids(g.gid)? {
+            tuples.push((p, g.gid as u32, s, o));
         }
     }
-
-    // 2. Compute src metadata for header
-    let (src_mtime_ns, src_len) = match r5tu_metadata_for_sidecar(out_path) {
-        Some(v) => v,
-        None => (0i64, 0u64),
-    };
-    // GDir CRC: compute over the gdir section of the source file. Need
-    // access to bytes; do this via R5tuFile header & toc.
-    let src_gdir_crc = compute_gdir_crc(r5tu)?;
-
-    // Determine source path (best-effort): out_path is `<src>.idx`.
-    let src_path_str = out_path
-        .file_name()
-        .and_then(|f| f.to_str())
-        .map(|n| n.trim_end_matches(".idx").to_string())
-        .unwrap_or_default();
-
-    // 3. Build PSO and POS sections in-memory.
-    // PSO sort: (p, gid, s, o)
-    tuples.sort_unstable();
-    let mut pso_bytes = build_section(&tuples, /*swap_s_o=*/ false);
-
-    // POS: same tuples but order (p, gid, o, s)
-    let mut pos_tuples = tuples;
-    pos_tuples.sort_unstable_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then(a.1.cmp(&b.1))
-            .then(a.3.cmp(&b.3))
-            .then(a.2.cmp(&b.2))
-    });
-    let mut pos_bytes = build_section(&pos_tuples, /*swap_s_o=*/ true);
-
-    // 4. Assemble final file.
-    let mut out: Vec<u8> = Vec::new();
-    // Reserve header (we'll patch toc_off/toc_len at the end).
-    // Header is variable-length due to src_path. Compute header size first:
-    let header_fixed = 5 + 2 + 2 + 2 + 8 + 8 + 4 + 8 + 4 + 4;
-    let header_size = header_fixed + src_path_str.len();
-    out.resize(header_size, 0);
-
-    // Patch section-relative offsets to absolute file offsets before copying.
-    let pso_off = out.len() as u64;
-    patch_section_offsets(&mut pso_bytes, pso_off);
-    out.extend_from_slice(&pso_bytes);
-    let pso_len = pso_bytes.len() as u64;
-
-    let pos_off = out.len() as u64;
-    patch_section_offsets(&mut pos_bytes, pos_off);
-    out.extend_from_slice(&pos_bytes);
-    let pos_len = pos_bytes.len() as u64;
-
-    // SPO: subject-keyed. Reuse the generic posting builder with the tuple
-    // remapped to (s, gid, p, o) so the key dimension is the subject and the
-    // inner (A, B) pairs are (predicate, object). Built, serialized, and
-    // dropped one section at a time to bound peak memory.
-    let (spo_off, spo_len, spo_crc) = {
-        let mut spo_tuples: Vec<(u64, u32, u64, u64)> = pos_tuples
-            .iter()
-            .map(|&(p, gid, s, o)| (s, gid, p, o))
-            .collect();
-        spo_tuples.sort_unstable();
-        let mut spo_bytes = build_section(&spo_tuples, /*swap_s_o=*/ false);
-        drop(spo_tuples);
-        let off = out.len() as u64;
-        patch_section_offsets(&mut spo_bytes, off);
-        let len = spo_bytes.len() as u64;
-        let crc = crc32_ieee(&spo_bytes);
-        out.extend_from_slice(&spo_bytes);
-        (off, len, crc)
-    };
-
-    // OSP: object-keyed. Tuple remapped to (o, gid, s, p) so the key is the
-    // object and the inner (A, B) pairs are (subject, predicate).
-    let (osp_off, osp_len, osp_crc) = {
-        let mut osp_tuples: Vec<(u64, u32, u64, u64)> = pos_tuples
-            .iter()
-            .map(|&(p, gid, s, o)| (o, gid, s, p))
-            .collect();
-        osp_tuples.sort_unstable();
-        let mut osp_bytes = build_section(&osp_tuples, /*swap_s_o=*/ false);
-        drop(osp_tuples);
-        let off = out.len() as u64;
-        patch_section_offsets(&mut osp_bytes, off);
-        let len = osp_bytes.len() as u64;
-        let crc = crc32_ieee(&osp_bytes);
-        out.extend_from_slice(&osp_bytes);
-        (off, len, crc)
-    };
-
-    // Optional PClos section. Built from `pos_tuples` (already grouped by
-    // predicate) so we don't walk the snapshot a second time.
-    let (pclos_off, pclos_len, pclos_bytes_opt) = if opts.closure_predicates.is_empty() {
-        (0u64, 0u64, None)
-    } else {
-        let mut pclos_bytes = build_pclos_section(&pos_tuples, &opts.closure_predicates);
-        let off = out.len() as u64;
-        patch_pclos_offsets(&mut pclos_bytes, off);
-        let len = pclos_bytes.len() as u64;
-        out.extend_from_slice(&pclos_bytes);
-        (off, len, Some(pclos_bytes))
-    };
-
-    // Write TOC.
-    let toc_off = out.len() as u64;
-    let mut toc_len: u32 = 4;
-    if pclos_bytes_opt.is_some() {
-        toc_len += 1;
-    }
-    // PSO entry
-    out.extend_from_slice(&(IdxKind::Pso as u16).to_le_bytes());
-    out.extend_from_slice(&0u16.to_le_bytes()); // resv
-    out.extend_from_slice(&pso_off.to_le_bytes());
-    out.extend_from_slice(&pso_len.to_le_bytes());
-    out.extend_from_slice(&crc32_ieee(&pso_bytes).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
-    // POS entry
-    out.extend_from_slice(&(IdxKind::Pos as u16).to_le_bytes());
-    out.extend_from_slice(&0u16.to_le_bytes());
-    out.extend_from_slice(&pos_off.to_le_bytes());
-    out.extend_from_slice(&pos_len.to_le_bytes());
-    out.extend_from_slice(&crc32_ieee(&pos_bytes).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
-    // SPO entry
-    out.extend_from_slice(&(IdxKind::Spo as u16).to_le_bytes());
-    out.extend_from_slice(&0u16.to_le_bytes());
-    out.extend_from_slice(&spo_off.to_le_bytes());
-    out.extend_from_slice(&spo_len.to_le_bytes());
-    out.extend_from_slice(&spo_crc.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
-    // OSP entry
-    out.extend_from_slice(&(IdxKind::Osp as u16).to_le_bytes());
-    out.extend_from_slice(&0u16.to_le_bytes());
-    out.extend_from_slice(&osp_off.to_le_bytes());
-    out.extend_from_slice(&osp_len.to_le_bytes());
-    out.extend_from_slice(&osp_crc.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
-    // PClos entry (optional)
-    if let Some(pclos_bytes) = &pclos_bytes_opt {
-        out.extend_from_slice(&(IdxKind::PClos as u16).to_le_bytes());
-        out.extend_from_slice(&0u16.to_le_bytes());
-        out.extend_from_slice(&pclos_off.to_le_bytes());
-        out.extend_from_slice(&pclos_len.to_le_bytes());
-        out.extend_from_slice(&crc32_ieee(pclos_bytes).to_le_bytes());
-        out.extend_from_slice(&0u32.to_le_bytes());
-        out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
-    }
-
-    // Patch header.
-    {
-        let mut o = 0usize;
-        out[o..o + 5].copy_from_slice(SIDECAR_MAGIC);
-        o += 5;
-        out[o..o + 2].copy_from_slice(&SIDECAR_VERSION.to_le_bytes());
-        o += 2;
-        out[o..o + 2].copy_from_slice(&0u16.to_le_bytes()); // flags
-        o += 2;
-        let src_path_len_u16 = src_path_str.len() as u16;
-        out[o..o + 2].copy_from_slice(&src_path_len_u16.to_le_bytes());
-        o += 2;
-        out[o..o + 8].copy_from_slice(&src_mtime_ns.to_le_bytes());
-        o += 8;
-        out[o..o + 8].copy_from_slice(&src_len.to_le_bytes());
-        o += 8;
-        out[o..o + 4].copy_from_slice(&src_gdir_crc.to_le_bytes());
-        o += 4;
-        out[o..o + 8].copy_from_slice(&toc_off.to_le_bytes());
-        o += 8;
-        out[o..o + 4].copy_from_slice(&toc_len.to_le_bytes());
-        o += 4;
-        out[o..o + 4].copy_from_slice(&0u32.to_le_bytes()); // reserved
-        o += 4;
-        out[o..o + src_path_str.len()].copy_from_slice(src_path_str.as_bytes());
-    }
-
-    // Footer
-    let crc = crc32_ieee(&out);
-    out.extend_from_slice(&crc.to_le_bytes());
-    out.extend_from_slice(SIDECAR_EOF_MAGIC);
-
-    // Atomic rename.
-    let tmp = out_path.with_extension("idx.tmp");
-    let mut f = fs::File::create(&tmp)?;
-    f.write_all(&out)?;
-    f.sync_all()?;
-    drop(f);
-    fs::rename(&tmp, out_path)?;
-    Ok(())
+    Ok(tuples)
 }
 
-fn r5tu_metadata_for_sidecar(out_path: &Path) -> Option<(i64, u64)> {
-    // out_path is <src>.idx — figure out the src path.
-    let parent = out_path.parent()?;
-    let fname = out_path.file_name()?.to_str()?;
-    let stripped = fname.strip_suffix(".idx")?;
-    let src = parent.join(stripped);
-    let md = fs::metadata(&src).ok()?;
-    let mtime = md
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())?
-        .as_nanos() as i64;
-    Some((mtime, md.len()))
+/// Build one permutation index in memory from an open snapshot. Accepts
+/// `Pso`, `Pos`, `Spo`, or `Osp`; use [`build_mem_pclos`] for `PClos`.
+pub fn build_mem_section(r5tu: &R5tuFile, kind: IdxKind) -> Result<MemSection> {
+    let mut tuples = collect_tuples(r5tu)?;
+    let bytes = match kind {
+        IdxKind::Pso => {
+            tuples.sort_unstable(); // (p, gid, s, o)
+            build_section(&tuples, /*swap_s_o=*/ false)
+        }
+        IdxKind::Pos => {
+            tuples.sort_unstable_by(|a, b| {
+                a.0.cmp(&b.0)
+                    .then(a.1.cmp(&b.1))
+                    .then(a.3.cmp(&b.3))
+                    .then(a.2.cmp(&b.2))
+            }); // (p, gid, o, s)
+            build_section(&tuples, /*swap_s_o=*/ true)
+        }
+        IdxKind::Spo => {
+            let mut t: Vec<(u64, u32, u64, u64)> =
+                tuples.iter().map(|&(p, g, s, o)| (s, g, p, o)).collect();
+            t.sort_unstable();
+            build_section(&t, /*swap_s_o=*/ false)
+        }
+        IdxKind::Osp => {
+            let mut t: Vec<(u64, u32, u64, u64)> =
+                tuples.iter().map(|&(p, g, s, o)| (o, g, s, p)).collect();
+            t.sort_unstable();
+            build_section(&t, /*swap_s_o=*/ false)
+        }
+        IdxKind::PClos => {
+            return Err(R5Error::Invalid("use build_mem_pclos for PClos"));
+        }
+    };
+    let section = parse_mem_section(kind, &bytes)?;
+    Ok(MemSection { kind, bytes, section })
 }
 
-fn compute_gdir_crc(r5tu: &R5tuFile) -> Result<u32> {
-    // R5tuFile doesn't expose raw section bytes, so synthesize a stable summary
-    // of GDir contents (gid, n_triples, id, graphname) and CRC that. Strong
-    // enough for invalidation: any change to the .r5tu's graph layout flips it.
-    let mut buf: Vec<u8> = Vec::new();
-    let graphs = r5tu.enumerate_all()?;
-    buf.extend_from_slice(&(graphs.len() as u64).to_le_bytes());
-    for g in &graphs {
-        buf.extend_from_slice(&g.gid.to_le_bytes());
-        buf.extend_from_slice(&g.n_triples.to_le_bytes());
-        buf.extend_from_slice(g.id.as_bytes());
-        buf.push(0);
-        buf.extend_from_slice(g.graphname.as_bytes());
-        buf.push(0);
+/// An in-memory precomputed transitive-closure index over a configured set of
+/// predicates, built directly from an [`R5tuFile`].
+#[derive(Debug)]
+pub struct MemPClos {
+    bytes: Vec<u8>,
+    section: PClosSection,
+}
+
+impl MemPClos {
+    /// Forward closure: objects reachable from `subject` via one or more
+    /// `predicate` edges, sorted; `None` if `predicate` has no precomputed
+    /// closure or `subject` has no outgoing edges under it.
+    pub fn closure_forward(&self, predicate: u64, subject: u64) -> Option<Vec<u64>> {
+        self.section.forward(&self.bytes, predicate)?.lookup(subject)
     }
-    Ok(crc32_ieee(&buf))
+
+    /// Reverse closure: subjects that reach `object` via one or more
+    /// `predicate` edges, sorted.
+    pub fn closure_reverse(&self, predicate: u64, object: u64) -> Option<Vec<u64>> {
+        self.section.reverse(&self.bytes, predicate)?.lookup(object)
+    }
 }
 
-/// Compute the canonical "GDir CRC" used to invalidate a sidecar against its
-/// source `.r5tu` file. Stable across reopens of an unchanged snapshot;
-/// flips whenever the snapshot's graph layout changes.
-pub fn gdir_crc(r5tu: &R5tuFile) -> Result<u32> {
-    compute_gdir_crc(r5tu)
+/// Build the in-memory transitive-closure index for `predicates`.
+pub fn build_mem_pclos(r5tu: &R5tuFile, predicates: &[u64]) -> Result<MemPClos> {
+    // build_pclos_section reads (p, gid, s, o) tuples directly (fields .2 = s,
+    // .3 = o); it groups by predicate itself, so no particular sort is needed.
+    let tuples = collect_tuples(r5tu)?;
+    let bytes = build_pclos_section(&tuples, predicates);
+    if bytes.len() < 24 {
+        return Err(R5Error::Corrupt("mem pclos too short".into()));
+    }
+    let n_predicates = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+    let pred_keys_off = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
+    let entries_off = u64::from_le_bytes(bytes[16..24].try_into().unwrap()) as usize;
+    let section = PClosSection {
+        off: 0,
+        len: bytes.len() as u64,
+        n_predicates,
+        pred_keys_off,
+        entries_off,
+    };
+    Ok(MemPClos { bytes, section })
 }
 
-/// Build one PSO (or POS) section. `tuples` must be sorted by
-/// `(p, gid, inner_a, inner_b)`. When `swap_s_o` is false, inner is (s, o)
-/// — PSO. When true, the tuples were sorted (p, gid, o, s), so we still
-/// pass them as `(p, gid, a, b)` where `a` = inner-outer ID.
+/// Build one permutation section. `tuples` must be sorted by
+/// `(key, gid, A, B)`. When `swap_s_o` is false the posting's inner pairs are
+/// `(A, B)` as given; when true the tuple was sorted with its last two fields
+/// swapped, so the posting emits `(B, A)`.
 ///
-/// To unify code, we always interpret the tuple as `(p, gid, A, B)`, where:
-///   PSO: A = s, B = o (the inner stream we delta-code on the outside)
-///   POS: A = o, B = s
+/// The key dimension and the meaning of `A`/`B` depend on the permutation:
+///   PSO: key = p, A = s, B = o      POS: key = p, A = o, B = s (swap)
+///   SPO: key = s, A = p, B = o      OSP: key = o, A = s, B = p
 fn build_section(tuples: &[(u64, u32, u64, u64)], swap_s_o: bool) -> Vec<u8> {
     // Group by predicate
     let mut postings: Vec<(u64, Vec<u8>)> = Vec::new();
@@ -1263,17 +851,6 @@ fn serialize_section(postings: &[(u64, Vec<u8>)]) -> Vec<u8> {
     // offsets. So before assembling the final file, we must patch them by adding
     // the section's actual base offset within the file.
     out
-}
-
-/// Patch a section's stored offsets (pred_keys_off, key2post_offs_off, blob_off)
-/// from section-relative to absolute file offsets. `section` is the entire section
-/// buffer, and `base_off` is its location in the final file.
-fn patch_section_offsets(section: &mut [u8], base_off: u64) {
-    for off in [8usize, 16, 24] {
-        let cur = u64::from_le_bytes(section[off..off + 8].try_into().unwrap());
-        let abs = cur + base_off;
-        section[off..off + 8].copy_from_slice(&abs.to_le_bytes());
-    }
 }
 
 // ============================================================================
@@ -1476,31 +1053,6 @@ fn serialize_pclos_section(postings: &[(u64, Vec<u8>, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-fn patch_pclos_offsets(section: &mut [u8], base_off: u64) {
-    // Patch the two header offsets (pred_keys_off, entries_off).
-    for off in [8usize, 16] {
-        let cur = u64::from_le_bytes(section[off..off + 8].try_into().unwrap());
-        let abs = cur + base_off;
-        section[off..off + 8].copy_from_slice(&abs.to_le_bytes());
-    }
-    // Patch every PClosEntry's fwd_off and rev_off (skip zero "no posting" markers).
-    let n = u64::from_le_bytes(section[0..8].try_into().unwrap()) as usize;
-    let pred_keys_size = n * 8;
-    let entries_start = 24 + pred_keys_size;
-    for i in 0..n {
-        let off = entries_start + i * 32;
-        for field in [0usize, 16] {
-            let pos = off + field;
-            let cur = u64::from_le_bytes(section[pos..pos + 8].try_into().unwrap());
-            if cur == 0 {
-                continue;
-            }
-            let abs = cur + base_off;
-            section[pos..pos + 8].copy_from_slice(&abs.to_le_bytes());
-        }
-    }
-}
-
 fn read_uvarint(buf: &[u8], mut off: usize) -> Option<(u64, usize)> {
     let (mut x, mut s) = (0u64, 0u32);
     for _ in 0..10 {
@@ -1525,110 +1077,55 @@ mod tests {
         Term::Iri(s.into())
     }
 
-    #[test]
-    fn roundtrip_small() {
-        let dir = tempdir().unwrap();
-        let r5tu = dir.path().join("store.r5tu");
-        let idx = dir.path().join("store.r5tu.idx");
-        // Three gids, three predicates, with overlap.
+    fn term_id(f: &R5tuFile, s: &str) -> u64 {
+        f.find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(s)))
+            .unwrap()
+            .unwrap_or_else(|| panic!("missing term {s}"))
+    }
+
+    /// Three gids; s1 has (p1,o1) and (p1,o3), s2 has (p2,o2), in each gid.
+    fn sample_file(dir: &std::path::Path) -> R5tuFile {
+        let r5tu = dir.join("store.r5tu");
         let mut quads = Vec::new();
         for (id, gname) in [("d1", "g1"), ("d2", "g2"), ("d3", "g3")] {
-            quads.push(Quint {
-                id: id.into(),
-                s: iri("http://ex/s1"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o1"),
-                gname: gname.into(),
-            });
-            quads.push(Quint {
-                id: id.into(),
-                s: iri("http://ex/s2"),
-                p: iri("http://ex/p2"),
-                o: iri("http://ex/o2"),
-                gname: gname.into(),
-            });
-            quads.push(Quint {
-                id: id.into(),
-                s: iri("http://ex/s1"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o3"),
-                gname: gname.into(),
-            });
+            quads.push(Quint { id: id.into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: gname.into() });
+            quads.push(Quint { id: id.into(), s: iri("http://ex/s2"), p: iri("http://ex/p2"), o: iri("http://ex/o2"), gname: gname.into() });
+            quads.push(Quint { id: id.into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o3"), gname: gname.into() });
         }
         write_file(&r5tu, &quads).unwrap();
-        let f = R5tuFile::open(&r5tu).unwrap();
-        build(&f, &idx).unwrap();
-        let idx_file = IdxFile::open(&idx).unwrap();
-
-        // Find term ID for p1
-        let p1_id = f
-            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                "http://ex/p1",
-            )))
-            .unwrap()
-            .expect("p1");
-        let post = idx_file.lookup_pso(p1_id).expect("p1 posting");
-        assert_eq!(post.n_gids(), 3);
-        let all: Vec<_> = post.iter_all().collect();
-        // p1 has 2 triples per gid (s1->o1, s1->o3), x 3 gids = 6
-        assert_eq!(all.len(), 6);
-
-        // POS for p1: same 6
-        let post = idx_file.lookup_pos(p1_id).expect("p1 pos posting");
-        let all: Vec<_> = post.iter_all().collect();
-        assert_eq!(all.len(), 6);
+        R5tuFile::open(&r5tu).unwrap()
     }
 
     #[test]
-    fn spo_osp_roundtrip_and_lookup() {
+    fn pso_pos_mem_lookup() {
         let dir = tempdir().unwrap();
-        let r5tu = dir.path().join("store.r5tu");
-        let idx = dir.path().join("store.r5tu.idx");
-        // Same shape as roundtrip_small: 3 gids; s1 has (p1,o1) and (p1,o3),
-        // s2 has (p2,o2) in each gid.
-        let mut quads = Vec::new();
-        for (id, gname) in [("d1", "g1"), ("d2", "g2"), ("d3", "g3")] {
-            quads.push(Quint {
-                id: id.into(),
-                s: iri("http://ex/s1"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o1"),
-                gname: gname.into(),
-            });
-            quads.push(Quint {
-                id: id.into(),
-                s: iri("http://ex/s2"),
-                p: iri("http://ex/p2"),
-                o: iri("http://ex/o2"),
-                gname: gname.into(),
-            });
-            quads.push(Quint {
-                id: id.into(),
-                s: iri("http://ex/s1"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o3"),
-                gname: gname.into(),
-            });
-        }
-        write_file(&r5tu, &quads).unwrap();
-        let f = R5tuFile::open(&r5tu).unwrap();
-        build(&f, &idx).unwrap();
-        let idx_file = IdxFile::open(&idx).unwrap();
+        let f = sample_file(dir.path());
+        let pso = build_mem_section(&f, IdxKind::Pso).unwrap();
+        let pos = build_mem_section(&f, IdxKind::Pos).unwrap();
+        let p1 = term_id(&f, "http://ex/p1");
 
-        let term_id = |s: &str| {
-            f.find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(s)))
-                .unwrap()
-                .unwrap_or_else(|| panic!("missing term {s}"))
-        };
+        let post = pso.lookup(p1).expect("p1 pso posting");
+        assert_eq!(post.n_gids(), 3);
+        assert_eq!(post.iter_all().count(), 6); // (s1,o1) and (s1,o3) x 3 gids
+        assert_eq!(pos.lookup(p1).expect("p1 pos posting").iter_all().count(), 6);
+        assert!(pso.lookup(999_999).is_none());
+    }
+
+    #[test]
+    fn spo_osp_mem_lookup() {
+        let dir = tempdir().unwrap();
+        let f = sample_file(dir.path());
+        let spo = build_mem_section(&f, IdxKind::Spo).unwrap();
+        let osp = build_mem_section(&f, IdxKind::Osp).unwrap();
         let (s1, p1, o1, o3) = (
-            term_id("http://ex/s1"),
-            term_id("http://ex/p1"),
-            term_id("http://ex/o1"),
-            term_id("http://ex/o3"),
+            term_id(&f, "http://ex/s1"),
+            term_id(&f, "http://ex/p1"),
+            term_id(&f, "http://ex/o1"),
+            term_id(&f, "http://ex/o3"),
         );
 
-        // SPO: subject s1 -> (predicate, object) pairs. 2 per gid x 3 gids.
-        let post = idx_file.lookup_spo(s1).expect("s1 spo posting");
+        // SPO: subject s1 -> (predicate, object) pairs. 2 per gid x 3.
+        let post = spo.lookup(s1).expect("s1 spo posting");
         assert_eq!(post.n_gids(), 3);
         let pairs: Vec<(u64, u64)> = post.iter_all().map(|(_, p, o)| (p, o)).collect();
         assert_eq!(pairs.len(), 6);
@@ -1637,79 +1134,47 @@ mod tests {
         assert!(pairs.iter().any(|&(_, o)| o == o3));
 
         // OSP: object o1 -> (subject, predicate) pairs. once per gid x 3.
-        let post = idx_file.lookup_osp(o1).expect("o1 osp posting");
+        let post = osp.lookup(o1).expect("o1 osp posting");
         assert_eq!(post.n_gids(), 3);
         let pairs: Vec<(u64, u64)> = post.iter_all().map(|(_, s, p)| (s, p)).collect();
         assert_eq!(pairs.len(), 3);
         assert!(pairs.iter().all(|&(s, p)| s == s1 && p == p1));
 
-        // A subject that doesn't exist has no posting.
-        assert!(idx_file.lookup_spo(99_999).is_none());
+        assert!(spo.lookup(999_999).is_none());
     }
 
     #[test]
     fn pso_pos_values_match() {
         let dir = tempdir().unwrap();
         let r5tu = dir.path().join("store.r5tu");
-        let idx = dir.path().join("store.r5tu.idx");
         let quads = vec![
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/s1"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o1"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/s2"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o2"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d2".into(),
-                s: iri("http://ex/s3"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o1"),
-                gname: "g2".into(),
-            },
+            Quint { id: "d1".into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: "g1".into() },
+            Quint { id: "d1".into(), s: iri("http://ex/s2"), p: iri("http://ex/p1"), o: iri("http://ex/o2"), gname: "g1".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/s3"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: "g2".into() },
         ];
         write_file(&r5tu, &quads).unwrap();
         let f = R5tuFile::open(&r5tu).unwrap();
-        build(&f, &idx).unwrap();
-        let idx_file = IdxFile::open(&idx).unwrap();
+        let pso = build_mem_section(&f, IdxKind::Pso).unwrap();
+        let pos = build_mem_section(&f, IdxKind::Pos).unwrap();
+        let p1 = term_id(&f, "http://ex/p1");
 
-        let p1_id = f
-            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                "http://ex/p1",
-            )))
-            .unwrap()
-            .unwrap();
-
-        // Build expected from the raw r5tu (filter by p1)
         let mut expected: Vec<(u64, u64, u64)> = Vec::new();
         for gr in f.enumerate_all().unwrap() {
             for (s, p, o) in f.triples_ids(gr.gid).unwrap() {
-                if p == p1_id {
+                if p == p1 {
                     expected.push((gr.gid, s, o));
                 }
             }
         }
         expected.sort();
 
-        let post = idx_file.lookup_pso(p1_id).unwrap();
-        let mut got: Vec<(u64, u64, u64)> = post.iter_all().collect();
+        let mut got: Vec<(u64, u64, u64)> = pso.lookup(p1).unwrap().iter_all().collect();
         got.sort();
         assert_eq!(expected, got);
 
-        // POS: should yield (gid, s, o) too (the iter_all reconstructs s/o regardless of perm)
-        // For POS, iter_block yields (o, s). Reorder accordingly.
-        let post = idx_file.lookup_pos(p1_id).unwrap();
-        let mut got_pos: Vec<(u64, u64, u64)> = post
-            .iter_all()
-            .map(|(gid, a, b)| (gid, b, a)) // swap back: POS iter_all returns (gid, o, s)
-            .collect();
+        // POS iter_all yields (gid, o, s); swap back to (gid, s, o).
+        let mut got_pos: Vec<(u64, u64, u64)> =
+            pos.lookup(p1).unwrap().iter_all().map(|(gid, o, s)| (gid, s, o)).collect();
         got_pos.sort();
         assert_eq!(expected, got_pos);
     }
@@ -1718,34 +1183,14 @@ mod tests {
     fn block_for_gid_lookup() {
         let dir = tempdir().unwrap();
         let r5tu = dir.path().join("store.r5tu");
-        let idx = dir.path().join("store.r5tu.idx");
         let quads = vec![
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/s1"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o1"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d2".into(),
-                s: iri("http://ex/s2"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o2"),
-                gname: "g2".into(),
-            },
+            Quint { id: "d1".into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: "g1".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/s2"), p: iri("http://ex/p1"), o: iri("http://ex/o2"), gname: "g2".into() },
         ];
         write_file(&r5tu, &quads).unwrap();
         let f = R5tuFile::open(&r5tu).unwrap();
-        build(&f, &idx).unwrap();
-        let idx_file = IdxFile::open(&idx).unwrap();
-        let p1_id = f
-            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                "http://ex/p1",
-            )))
-            .unwrap()
-            .unwrap();
-        let post = idx_file.lookup_pso(p1_id).unwrap();
+        let pso = build_mem_section(&f, IdxKind::Pso).unwrap();
+        let post = pso.lookup(term_id(&f, "http://ex/p1")).unwrap();
         let gids = post.gids();
         for (idx, g) in gids.iter().enumerate() {
             assert_eq!(post.block_for_gid(*g), Some(idx));
@@ -1755,209 +1200,69 @@ mod tests {
 
     #[test]
     fn pclos_roundtrip_and_lookup() {
-        // Build a small class hierarchy:  A <- B <- C, B <- D, E <- F
-        // (X <- Y means "Y subClassOf X")
+        // Class hierarchy: A <- B <- C, B <- D, E <- F  (X <- Y: Y subClassOf X)
         let dir = tempdir().unwrap();
         let r5tu = dir.path().join("store.r5tu");
-        let idx = dir.path().join("store.r5tu.idx");
         let subclass = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        let edge = |s: &str, o: &str| Quint {
+            id: "d1".into(), s: iri(s), p: iri(subclass), o: iri(o), gname: "g1".into(),
+        };
         let quads = vec![
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/B"),
-                p: iri(subclass),
-                o: iri("http://ex/A"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/C"),
-                p: iri(subclass),
-                o: iri("http://ex/B"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/D"),
-                p: iri(subclass),
-                o: iri("http://ex/B"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/F"),
-                p: iri(subclass),
-                o: iri("http://ex/E"),
-                gname: "g1".into(),
-            },
+            edge("http://ex/B", "http://ex/A"),
+            edge("http://ex/C", "http://ex/B"),
+            edge("http://ex/D", "http://ex/B"),
+            edge("http://ex/F", "http://ex/E"),
         ];
         write_file(&r5tu, &quads).unwrap();
         let f = R5tuFile::open(&r5tu).unwrap();
-        let p_id = f
-            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                subclass,
-            )))
-            .unwrap()
-            .unwrap();
-        let opts = BuildOptions {
-            closure_predicates: vec![p_id],
-        };
-        build_with_options(&f, &idx, &opts).unwrap();
-        let idx_file = IdxFile::open(&idx).unwrap();
-        assert!(idx_file.has_pclos());
+        let p_id = term_id(&f, subclass);
+        let pclos = build_mem_pclos(&f, &[p_id]).unwrap();
 
-        let resolve = |iri_str: &str| {
-            f.find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                iri_str,
-            )))
-            .unwrap()
-            .unwrap()
-        };
-        let id_a = resolve("http://ex/A");
-        let id_b = resolve("http://ex/B");
-        let id_c = resolve("http://ex/C");
-        let id_d = resolve("http://ex/D");
-        let id_e = resolve("http://ex/E");
-        let id_f = resolve("http://ex/F");
+        let id = |s: &str| term_id(&f, s);
+        let (id_a, id_b, id_c, id_d, id_e, id_f) = (
+            id("http://ex/A"), id("http://ex/B"), id("http://ex/C"),
+            id("http://ex/D"), id("http://ex/E"), id("http://ex/F"),
+        );
 
-        // Forward (subject -> reachable objects):
-        //   B+ -> {A}
-        //   C+ -> {B, A}
-        //   D+ -> {B, A}
-        //   F+ -> {E}
-        let mut got = idx_file.closure_forward(p_id, id_c).unwrap();
+        // Forward (subject -> reachable objects).
+        let mut got = pclos.closure_forward(p_id, id_c).unwrap();
         got.sort();
         let mut want = vec![id_a, id_b];
         want.sort();
         assert_eq!(got, want);
+        assert_eq!(pclos.closure_forward(p_id, id_b).unwrap(), vec![id_a]);
+        assert_eq!(pclos.closure_forward(p_id, id_f).unwrap(), vec![id_e]);
+        assert!(pclos.closure_forward(p_id, id_a).is_none()); // leaf target
 
-        let mut got = idx_file.closure_forward(p_id, id_b).unwrap();
-        got.sort();
-        assert_eq!(got, vec![id_a]);
-
-        let mut got = idx_file.closure_forward(p_id, id_f).unwrap();
-        got.sort();
-        assert_eq!(got, vec![id_e]);
-
-        // No precomputed closure for A (it's a leaf-target).
-        assert!(idx_file.closure_forward(p_id, id_a).is_none());
-
-        // Reverse (object -> reachable subjects):
-        //   A+ -> {B, C, D}
-        //   B+ -> {C, D}
-        //   E+ -> {F}
-        let mut got = idx_file.closure_reverse(p_id, id_a).unwrap();
+        // Reverse (object -> reachable subjects).
+        let mut got = pclos.closure_reverse(p_id, id_a).unwrap();
         got.sort();
         let mut want = vec![id_b, id_c, id_d];
         want.sort();
         assert_eq!(got, want);
-
-        let mut got = idx_file.closure_reverse(p_id, id_e).unwrap();
-        got.sort();
-        assert_eq!(got, vec![id_f]);
+        assert_eq!(pclos.closure_reverse(p_id, id_e).unwrap(), vec![id_f]);
 
         // Predicate not in build list: no closure data.
-        // (use a fake predicate id that won't be in the table)
-        assert!(idx_file.closure_forward(999_999, id_a).is_none());
+        assert!(pclos.closure_forward(999_999, id_a).is_none());
     }
 
     #[test]
     fn pclos_cycle_handling() {
-        // A -> B -> A (cycle). Closure of A should be {B}; closure of B should be {A}.
+        // A -> B -> A. Non-reflexive closure: A reaches {B}, B reaches {A}.
         let dir = tempdir().unwrap();
         let r5tu = dir.path().join("store.r5tu");
-        let idx = dir.path().join("store.r5tu.idx");
         let p = "http://ex/p";
         let quads = vec![
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/A"),
-                p: iri(p),
-                o: iri("http://ex/B"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/B"),
-                p: iri(p),
-                o: iri("http://ex/A"),
-                gname: "g1".into(),
-            },
+            Quint { id: "d1".into(), s: iri("http://ex/A"), p: iri(p), o: iri("http://ex/B"), gname: "g1".into() },
+            Quint { id: "d1".into(), s: iri("http://ex/B"), p: iri(p), o: iri("http://ex/A"), gname: "g1".into() },
         ];
         write_file(&r5tu, &quads).unwrap();
         let f = R5tuFile::open(&r5tu).unwrap();
-        let p_id = f
-            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(p)))
-            .unwrap()
-            .unwrap();
-        let a = f
-            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                "http://ex/A",
-            )))
-            .unwrap()
-            .unwrap();
-        let b = f
-            .find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                "http://ex/B",
-            )))
-            .unwrap()
-            .unwrap();
-        build_with_options(
-            &f,
-            &idx,
-            &BuildOptions {
-                closure_predicates: vec![p_id],
-            },
-        )
-        .unwrap();
-        let idx_file = IdxFile::open(&idx).unwrap();
-        // Non-reflexive closure: A reaches {B}, B reaches {A}.
-        let got = idx_file.closure_forward(p_id, a).unwrap();
-        assert!(got.contains(&b));
-        let got = idx_file.closure_forward(p_id, b).unwrap();
-        assert!(got.contains(&a));
-    }
-
-    #[test]
-    fn stale_detection() {
-        let dir = tempdir().unwrap();
-        let r5tu = dir.path().join("store.r5tu");
-        let idx = dir.path().join("store.r5tu.idx");
-        let quads = vec![Quint {
-            id: "d1".into(),
-            s: iri("http://ex/s1"),
-            p: iri("http://ex/p1"),
-            o: iri("http://ex/o1"),
-            gname: "g1".into(),
-        }];
-        write_file(&r5tu, &quads).unwrap();
-        let f = R5tuFile::open(&r5tu).unwrap();
-        build(&f, &idx).unwrap();
-        let crc = gdir_crc(&f).unwrap();
-        let idx_file = IdxFile::open(&idx).unwrap();
-        assert!(idx_file.validate_against(&r5tu, crc).unwrap());
-
-        // Now rewrite r5tu with different content so size/mtime change.
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let quads2 = vec![
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/s1"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o1"),
-                gname: "g1".into(),
-            },
-            Quint {
-                id: "d1".into(),
-                s: iri("http://ex/s2"),
-                p: iri("http://ex/p1"),
-                o: iri("http://ex/o2"),
-                gname: "g1".into(),
-            },
-        ];
-        write_file(&r5tu, &quads2).unwrap();
-        let f2 = R5tuFile::open(&r5tu).unwrap();
-        let crc2 = gdir_crc(&f2).unwrap();
-        assert!(!idx_file.validate_against(&r5tu, crc2).unwrap());
+        let p_id = term_id(&f, p);
+        let a = term_id(&f, "http://ex/A");
+        let b = term_id(&f, "http://ex/B");
+        let pclos = build_mem_pclos(&f, &[p_id]).unwrap();
+        assert!(pclos.closure_forward(p_id, a).unwrap().contains(&b));
+        assert!(pclos.closure_forward(p_id, b).unwrap().contains(&a));
     }
 }

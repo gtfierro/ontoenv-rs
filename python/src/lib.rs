@@ -24,6 +24,7 @@ use pyo3::{
     types::{IntoPyDict, PyDict, PyList, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
+use rdf5d::sidecar::{MemPClos, MemSection};
 use rdf5d::{DecodedTerm, R5tuFile};
 use spareval::{
     InternalQuad as SpareInternalQuad, QueryEvaluator, QueryResults as SpareQueryResults,
@@ -1247,52 +1248,32 @@ struct LogicalGraphInfo {
     triple_count: OnceLock<usize>,
 }
 
+/// Predicate IRIs whose transitive closure is precomputed (in memory, on
+/// first use) to accelerate SPARQL `P+`/`P*` property paths.
+const CLOSURE_PREDICATE_IRIS: &[&str] = &[
+    "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+    "http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
+    "http://www.w3.org/2002/07/owl#sameAs",
+];
+
 #[derive(Debug)]
 struct Rdf5dSnapshot {
     file: Arc<R5tuFile>,
     logical_graphs: HashMap<String, LogicalGraphInfo>,
-    // PSO/POS sidecar. None when the sidecar is missing or stale.
-    idx: Option<Arc<rdf5d::sidecar::IdxFile>>,
+    // Permutation indexes, built in memory from `file` on first use. Each is
+    // independent so we only pay for the permutations a workload actually
+    // queries. `None` inside the `OnceLock` means the build failed (logged).
+    mem_pso: OnceLock<Option<MemSection>>,
+    mem_pos: OnceLock<Option<MemSection>>,
+    mem_spo: OnceLock<Option<MemSection>>,
+    mem_osp: OnceLock<Option<MemSection>>,
+    // Precomputed transitive closures for CLOSURE_PREDICATE_IRIS, built lazily.
+    mem_pclos: OnceLock<Option<MemPClos>>,
 }
 
 impl Rdf5dSnapshot {
     fn open(path: &Path) -> Result<Self> {
         let file = Arc::new(R5tuFile::open_mmap(path)?);
-        // Attempt to load the PSO/POS sidecar. Treat any error (missing,
-        // stale, version mismatch) as a soft failure — we just fall back to
-        // the slow path.
-        let idx_path = {
-            let mut s = path.as_os_str().to_owned();
-            s.push(".idx");
-            std::path::PathBuf::from(s)
-        };
-        let idx: Option<Arc<rdf5d::sidecar::IdxFile>> = if idx_path.exists() {
-            match rdf5d::sidecar::IdxFile::open(&idx_path) {
-                Ok(idx_file) => {
-                    let r5_crc = rdf5d::sidecar::gdir_crc(&file).unwrap_or(0);
-                    match idx_file.validate_against(path, r5_crc) {
-                        Ok(true) => Some(Arc::new(idx_file)),
-                        Ok(false) => {
-                            log::warn!(
-                                "PSO/POS sidecar {:?} is stale; ignoring",
-                                idx_path
-                            );
-                            None
-                        }
-                        Err(e) => {
-                            log::warn!("PSO/POS sidecar validate failed: {}; ignoring", e);
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::warn!("could not open PSO/POS sidecar {:?}: {}", idx_path, e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
         let mut grouped: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
         for graph in file.enumerate_all()? {
             grouped
@@ -1315,8 +1296,67 @@ impl Rdf5dSnapshot {
         Ok(Self {
             file,
             logical_graphs,
-            idx,
+            mem_pso: OnceLock::new(),
+            mem_pos: OnceLock::new(),
+            mem_spo: OnceLock::new(),
+            mem_osp: OnceLock::new(),
+            mem_pclos: OnceLock::new(),
         })
+    }
+
+    /// Lazily build (once) and borrow a permutation index. Returns `None` if
+    /// the build failed.
+    fn mem_section(&self, kind: rdf5d::sidecar::IdxKind) -> Option<&MemSection> {
+        let cell = match kind {
+            rdf5d::sidecar::IdxKind::Pso => &self.mem_pso,
+            rdf5d::sidecar::IdxKind::Pos => &self.mem_pos,
+            rdf5d::sidecar::IdxKind::Spo => &self.mem_spo,
+            rdf5d::sidecar::IdxKind::Osp => &self.mem_osp,
+            rdf5d::sidecar::IdxKind::PClos => return None,
+        };
+        cell.get_or_init(|| match rdf5d::sidecar::build_mem_section(&self.file, kind) {
+            Ok(section) => Some(section),
+            Err(e) => {
+                log::warn!("building {:?} index failed: {}", kind, e);
+                None
+            }
+        })
+        .as_ref()
+    }
+
+    /// Lazily build (once) and borrow the precomputed transitive-closure index.
+    fn mem_pclos(&self) -> Option<&MemPClos> {
+        self.mem_pclos
+            .get_or_init(|| {
+                // Resolve the default closure-predicate IRIs to term ids that
+                // exist in this snapshot; skip any that are absent.
+                let mut pred_ids = Vec::new();
+                for iri in CLOSURE_PREDICATE_IRIS {
+                    let term = DecodedTerm::Iri(Cow::Borrowed(iri));
+                    if let Some(id) = self.file.term_id(&term) {
+                        pred_ids.push(id);
+                    }
+                }
+                if pred_ids.is_empty() {
+                    return None;
+                }
+                match rdf5d::sidecar::build_mem_pclos(&self.file, &pred_ids) {
+                    Ok(pclos) => Some(pclos),
+                    Err(e) => {
+                        log::warn!("building closure index failed: {}", e);
+                        None
+                    }
+                }
+            })
+            .as_ref()
+    }
+
+    fn closure_forward(&self, predicate: u64, subject: u64) -> Option<Vec<u64>> {
+        self.mem_pclos()?.closure_forward(predicate, subject)
+    }
+
+    fn closure_reverse(&self, predicate: u64, object: u64) -> Option<Vec<u64>> {
+        self.mem_pclos()?.closure_reverse(predicate, object)
     }
 
     /// Helper: when a sidecar is present and the predicate is bound, use the
@@ -1332,12 +1372,12 @@ impl Rdf5dSnapshot {
         object_id: Option<u64>,
         gid_filter: &[u64],
     ) -> Option<Vec<(u64, u64, u64, u64)>> {
-        let idx = self.idx.as_ref()?;
+        use rdf5d::sidecar::IdxKind;
         let mut out = Vec::new();
         match (subject_id, predicate_id, object_id) {
             // Predicate + object bound: POS (skips gid-S scans).
             (subject_id, Some(p_id), Some(o_id)) => {
-                let post = idx.lookup_pos(p_id)?;
+                let post = self.mem_section(IdxKind::Pos)?.lookup(p_id)?;
                 for &gid in gid_filter {
                     let Some(block) = post.block_for_gid(gid) else {
                         continue;
@@ -1352,7 +1392,7 @@ impl Rdf5dSnapshot {
             }
             // Predicate bound, object unbound: PSO.
             (subject_id, Some(p_id), None) => {
-                let post = idx.lookup_pso(p_id)?;
+                let post = self.mem_section(IdxKind::Pso)?.lookup(p_id)?;
                 for &gid in gid_filter {
                     let Some(block) = post.block_for_gid(gid) else {
                         continue;
@@ -1367,7 +1407,7 @@ impl Rdf5dSnapshot {
             }
             // Predicate unbound, subject bound: SPO (pairs are (predicate, object)).
             (Some(s_id), None, object_id) => {
-                let post = idx.lookup_spo(s_id)?;
+                let post = self.mem_section(IdxKind::Spo)?.lookup(s_id)?;
                 for &gid in gid_filter {
                     let Some(block) = post.block_for_gid(gid) else {
                         continue;
@@ -1382,7 +1422,7 @@ impl Rdf5dSnapshot {
             }
             // Predicate + subject unbound, object bound: OSP (pairs are (subject, predicate)).
             (None, None, Some(o_id)) => {
-                let post = idx.lookup_osp(o_id)?;
+                let post = self.mem_section(IdxKind::Osp)?.lookup(o_id)?;
                 for &gid in gid_filter {
                     let Some(block) = post.block_for_gid(gid) else {
                         continue;
@@ -1970,9 +2010,9 @@ impl<'a> PClosRewriter<'a> {
         Self { snapshot }
     }
 
-    /// Returns true when the snapshot has any PClos data to consult.
+    /// Returns true when the snapshot has any precomputed closure data.
     fn enabled(&self) -> bool {
-        self.snapshot.idx.as_ref().map(|i| i.has_pclos()).unwrap_or(false)
+        self.snapshot.mem_pclos().is_some()
     }
 
     fn predicate_id(&self, iri: &str) -> Option<u64> {
@@ -2091,8 +2131,6 @@ impl<'a> PClosRewriter<'a> {
                 let c_id = self.predicate_id(c.as_str())?;
                 let mut answers = self
                     .snapshot
-                    .idx
-                    .as_ref()?
                     .closure_forward(p_id, c_id)
                     .unwrap_or_default();
                 if include_reflexive {
@@ -2107,8 +2145,6 @@ impl<'a> PClosRewriter<'a> {
                 let c_id = self.predicate_id(c.as_str())?;
                 let mut answers = self
                     .snapshot
-                    .idx
-                    .as_ref()?
                     .closure_reverse(p_id, c_id)
                     .unwrap_or_default();
                 if include_reflexive {
@@ -2124,8 +2160,6 @@ impl<'a> PClosRewriter<'a> {
                 let o_id = self.predicate_id(o.as_str())?;
                 let answers = self
                     .snapshot
-                    .idx
-                    .as_ref()?
                     .closure_forward(p_id, s_id)
                     .unwrap_or_default();
                 let reachable = answers.binary_search(&o_id).is_ok()
@@ -3606,7 +3640,7 @@ impl OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false, auto_index=true))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -3629,7 +3663,6 @@ impl OntoEnv {
         remote_cache_ttl_secs: Option<u64>,
         graph_store: Option<Py<PyAny>>,
         init_from_store: bool,
-        auto_index: bool,
     ) -> PyResult<Self> {
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
@@ -3692,13 +3725,12 @@ impl OntoEnv {
             cfg.external_graph_store = Some(desc);
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
                 .map_err(anyhow_to_pyerr)?;
-            let mut env = if init_from_store {
+            let env = if init_from_store {
                 OntoEnvRs::new_with_graph_io_from_existing(cfg, Box::new(io))
             } else {
                 OntoEnvRs::new_with_graph_io(cfg, Box::new(io))
             }
             .map_err(anyhow_to_pyerr)?;
-            env.set_auto_index(auto_index);
             let inner = Arc::new(Mutex::new(Some(env)));
             return Ok(OntoEnv {
                 inner,
@@ -3707,7 +3739,7 @@ impl OntoEnv {
         }
 
         let root_for_lookup = cfg.root.clone();
-        let mut env = if cfg.temporary {
+        let env = if cfg.temporary {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
@@ -3733,7 +3765,6 @@ impl OntoEnv {
             };
             OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?
         };
-        env.set_auto_index(auto_index);
 
         let inner = Arc::new(Mutex::new(Some(env)));
 
@@ -5250,34 +5281,6 @@ impl OntoEnv {
     /// Flush pending changes and rebind cached Graph views to the new
     /// snapshot. Graphs returned by prior `get_graph` calls share the cached
     /// Dataset's store, so they observe post-flush state without re-fetching.
-    /// Rebuild the PSO/POS sidecar index next to the persistent `.r5tu` store.
-    /// No-op for non-persistent backends.
-    pub fn build_index(&self, py: Python<'_>) -> PyResult<()> {
-        py.detach(|| {
-            let inner = self.inner.clone();
-            let guard = inner.lock().unwrap();
-            let Some(env) = guard.as_ref() else {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "OntoEnv is closed",
-                ));
-            };
-            env.build_index().map_err(anyhow_to_pyerr)
-        })
-    }
-
-    /// Toggle automatic PSO/POS sidecar rebuilds at flush time.
-    pub fn set_auto_index(&self, on: bool) -> PyResult<()> {
-        let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
-        let Some(env) = guard.as_mut() else {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "OntoEnv is closed",
-            ));
-        };
-        env.set_auto_index(on);
-        Ok(())
-    }
-
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         let track_cached_snapshot = self.cached_view_dataset_exists();
         let cached_dataset_is_stale = self.cached_view_dataset_is_stale();

@@ -167,21 +167,6 @@ pub trait GraphIO: Send + Sync {
     /// Returns a reference to the underlying store
     fn store(&self) -> &Store;
 
-    /// Build (or rebuild) any secondary indexes the backend maintains.
-    ///
-    /// The persistent backend rebuilds the PSO/POS sidecar
-    /// (`store.r5tu.idx`) here. Non-persistent backends have no secondary
-    /// indexes and return `Ok(())`.
-    fn build_index(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Toggle automatic sidecar index rebuilds at flush time. See
-    /// [`PersistentGraphIO::set_auto_index`] for details.
-    ///
-    /// Non-persistent backends ignore this call.
-    fn set_auto_index(&mut self, _on: bool) {}
-
     /// Returns the identifiers of all graphs currently held in the store.
     fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
         self.store()
@@ -417,15 +402,11 @@ pub struct PersistentGraphIO {
     lock_file: File,
     dirty: bool,
     batch_depth: usize,
-    auto_index: bool,
-    /// Predicate IRIs to precompute transitive closures for in the sidecar.
-    /// Empty means no `IDX_PCLOS` section is built.
-    closure_predicates: Vec<String>,
 }
 
-/// Predicates that the sidecar's transitive-closure index targets by default
-/// when ``auto_closure_predicates`` is not customized. Covers the most common
-/// SPARQL property-path use cases on ontologies.
+/// Predicates whose transitive closure the query layer precomputes by default
+/// (in memory, on demand) for SPARQL `P+`/`P*` property paths. Covers the most
+/// common property-path use cases on ontologies.
 pub const DEFAULT_CLOSURE_PREDICATES: &[&str] = &[
     "http://www.w3.org/2000/01/rdf-schema#subClassOf",
     "http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
@@ -487,75 +468,7 @@ impl PersistentGraphIO {
             lock_file,
             dirty: false,
             batch_depth: 0,
-            auto_index: true,
-            closure_predicates: DEFAULT_CLOSURE_PREDICATES
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect(),
         })
-    }
-
-    /// Sets the list of predicate IRIs for which the sidecar will
-    /// precompute transitive closures. Pass an empty slice to disable
-    /// the `IDX_PCLOS` section entirely. Takes effect on the next
-    /// sidecar build.
-    pub fn set_closure_predicates<I, S>(&mut self, iris: I)
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.closure_predicates = iris.into_iter().map(Into::into).collect();
-    }
-
-    /// Returns the current closure-predicate IRIs.
-    pub fn closure_predicates(&self) -> &[String] {
-        &self.closure_predicates
-    }
-
-    /// Controls whether the PSO/POS sidecar (`store.r5tu.idx`) is rebuilt
-    /// automatically every time the `.r5tu` snapshot is flushed.
-    ///
-    /// When `true` (default), each call to [`Self::flush`] that writes a new
-    /// snapshot rebuilds the sidecar synchronously. When `false`, the sidecar
-    /// is not rebuilt and any existing sidecar is removed so that readers
-    /// cannot pick up a stale index. Call [`Self::build_index`] to rebuild it
-    /// on demand.
-    pub fn set_auto_index(&mut self, on: bool) {
-        self.auto_index = on;
-    }
-
-    /// Returns whether automatic sidecar rebuilds at flush time are enabled.
-    pub fn auto_index(&self) -> bool {
-        self.auto_index
-    }
-
-    /// Build (or rebuild) the sidecar PSO/POS index for the current `.r5tu`.
-    ///
-    /// Reads the snapshot from disk, collects every triple, and writes a
-    /// fresh `store.r5tu.idx` atomically. Returns `Ok(())` and silently
-    /// succeeds when no snapshot exists yet.
-    pub fn build_index(&self) -> Result<()> {
-        if !self.store_path.exists() {
-            return Ok(());
-        }
-        let idx_path = sidecar_path_for(&self.store_path);
-        let file = R5tuFile::open(&self.store_path)?;
-        // Resolve closure-predicate IRIs against the snapshot's term
-        // dictionary. Predicates absent from the snapshot are silently
-        // skipped — there's nothing to close over.
-        let mut closure_predicate_ids: Vec<u64> = Vec::new();
-        for iri in &self.closure_predicates {
-            let term = rdf5d::reader::DecodedTerm::Iri(std::borrow::Cow::Borrowed(iri));
-            if let Ok(Some(id)) = file.find_decoded_term(&term) {
-                closure_predicate_ids.push(id);
-            }
-        }
-        let opts = rdf5d::sidecar::BuildOptions {
-            closure_predicates: closure_predicate_ids,
-        };
-        rdf5d::sidecar::build_with_options(&file, &idx_path, &opts)
-            .map_err(|e| anyhow!("sidecar build failed: {}", e))?;
-        Ok(())
     }
 
     fn load_r5tu_into_store(store: &Store, r5tu_path: &Path) -> Result<()> {
@@ -720,17 +633,10 @@ impl PersistentGraphIO {
         // Finalize writes and mark the store clean.
         writer.finalize()?;
         self.dirty = false;
-        // Rebuild the PSO/POS sidecar synchronously when enabled.
-        if self.auto_index {
-            if let Err(e) = self.build_index() {
-                log::warn!("PSO/POS sidecar build failed: {}", e);
-            }
-        } else {
-            // Stale sidecars will simply be ignored at open time, but remove
-            // a previously-built one to avoid confusion.
-            let idx_path = sidecar_path_for(&self.store_path);
-            let _ = std::fs::remove_file(&idx_path);
-        }
+        // Query indexes are now built in memory on demand, so no sidecar is
+        // written. Remove any sidecar left behind by an older version to
+        // reclaim disk and avoid confusion.
+        let _ = std::fs::remove_file(sidecar_path_for(&self.store_path));
         Ok(())
     }
 
@@ -754,14 +660,6 @@ impl GraphIO for PersistentGraphIO {
 
     fn store_location(&self) -> Option<&Path> {
         Some(&self.store_path)
-    }
-
-    fn build_index(&self) -> Result<()> {
-        PersistentGraphIO::build_index(self)
-    }
-
-    fn set_auto_index(&mut self, on: bool) {
-        PersistentGraphIO::set_auto_index(self, on);
     }
 
     fn store(&self) -> &Store {

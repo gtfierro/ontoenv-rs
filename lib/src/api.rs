@@ -783,31 +783,6 @@ impl OntoEnv {
         self.io.flush()
     }
 
-    /// Build (or rebuild) the PSO/POS sidecar index that sits next to the
-    /// persistent `store.r5tu` snapshot.
-    ///
-    /// The sidecar accelerates triple-pattern queries with a bound predicate
-    /// (including unbound-graph queries across an imports closure). It is
-    /// regenerable: a missing or stale sidecar is detected at open time and
-    /// the reader falls back to a per-graph scan.
-    ///
-    /// No-op for non-persistent backends (temporary or external graph store).
-    pub fn build_index(&self) -> Result<()> {
-        self.io.build_index()
-    }
-
-    /// Toggle automatic PSO/POS sidecar rebuilds at flush time.
-    ///
-    /// Default behavior (`on = true`) rebuilds the sidecar at the end of
-    /// every flush that writes data to disk. Disabling skips the rebuild and
-    /// removes any existing sidecar so stale data is never read back; call
-    /// [`Self::build_index`] to rebuild manually.
-    ///
-    /// No-op for non-persistent backends.
-    pub fn set_auto_index(&mut self, on: bool) {
-        self.io.set_auto_index(on);
-    }
-
     fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
     where
         F: FnOnce(&mut Self) -> Result<T>,

@@ -11,8 +11,8 @@ ontology and its imports closure (15 graphs, ~223k triples) into an
 ``rdflib``-compatible backends:
 
 - ``ontoenv-get`` — ``env.get_closure(...)``, a read-only view backed by the
-  on-disk rdf5d store via ``mmap``, accelerated by the PSO/POS/SPO/OSP sidecar
-  index (see :ref:`sidecar-index`).
+  on-disk rdf5d store via ``mmap``, accelerated by in-memory permutation
+  indexes built on demand (see :ref:`sidecar-index`).
 - ``ontoenv-copy`` — ``env.copy_closure(...)``, a mutable in-memory
   ``rdflib.Graph`` materialized from the same closure.
 - ``rdflib-memory`` — default rdflib ``Memory`` store loaded from the same
@@ -150,9 +150,9 @@ How to read the results
   joining on integer term ids and never crossing the FFI boundary for
   individual triples. ``COUNT rdf:type`` is **~78× faster** than the
   in-memory baseline (1.4 ms vs. 110 ms), and a ``LIMIT 1000`` label scan is
-  ~1.9× faster — both wins lean on the PSO sidecar to skip per-predicate
+  ~1.9× faster — both wins lean on the PSO index to skip per-predicate
   scans.
-- **Triple patterns with any bound term are served from the sidecar.** A
+- **Triple patterns with any bound term are served from an index.** A
   bound predicate uses PSO/POS, a bound subject uses SPO, a bound object uses
   OSP — so ``brick:Equipment ?p ?o`` (0.12 ms) and ``?s ?p owl:Class``
   (1.53 ms) skip the per-graph scan that the unindexed fallback would do
@@ -166,7 +166,7 @@ How to read the results
   snapshot's term-ID iterator with a u64-keyed cache for Python terms; it
   doesn't build intermediate ``oxrdf::Term`` objects per row. For large
   scans, ``get_*`` is now an equally good choice.
-- **Recursive property paths short-circuit through the sidecar.**
+- **Recursive property paths short-circuit through the closure index.**
   ``subClassOf*`` at 0.57 ms vs. 4.32 ms for in-memory rdflib (~7.6×
   faster) and at parity with Oxigraph's 0.47 ms. See
   :ref:`pclos-rewriting` below.
@@ -192,11 +192,12 @@ Rule of thumb
 
 .. _sidecar-index:
 
-Triple-pattern sidecar index
-----------------------------
+In-memory query indexes
+-----------------------
 
-Persistent environments build a sidecar file ``store.r5tu.idx`` next to the
-``store.r5tu`` snapshot. The sidecar holds posting lists in four orders:
+The first query that needs one triggers the construction of a permutation
+index, held in memory for the life of the snapshot. Nothing is written to
+disk and there is no configuration. Indexes are built in four orders:
 
 - ``predicate → subject → object`` (PSO) and ``predicate → object →
   subject`` (POS) for patterns with a **bound predicate**;
@@ -208,24 +209,21 @@ Persistent environments build a sidecar file ``store.r5tu.idx`` next to the
 A triple-pattern query reads the matching posting list directly instead of
 scanning every triple of every named graph in the closure.
 
-The sidecar is:
+The indexes are:
 
-- **Built automatically** at the end of every flush that writes data to
-  ``store.r5tu``. Disable via the ``auto_index=False`` constructor kwarg or
-  ``env.set_auto_index(False)``; rebuild on demand with
-  ``env.build_index()``.
-- **Validated at open time** against the source ``store.r5tu`` (file size,
-  mtime, and a CRC over the graph directory). A stale or missing sidecar is
-  treated as a soft failure — the query path logs a warning and falls back to
-  the per-graph scan.
-- **Optional**. The sidecar is purely additive; deleting it has no effect on
-  correctness, only on performance.
-- **A few times the size of the source snapshot.** The four posting orders
-  (PSO, POS, SPO, OSP) plus the optional closure index put the sidecar at
-  roughly 3× the ``store.r5tu`` size (Brick: ~4.3 MB snapshot, ~13.6 MB
-  sidecar).
+- **Built lazily and per-permutation.** Each order is constructed on first
+  use, so a workload only pays for the permutations it actually queries. The
+  build walks the snapshot once and sorts in memory — on the order of tens of
+  milliseconds per permutation for the Brick closure (~237k triples), then
+  free on every subsequent query.
+- **Always fresh.** Because an index is built from the snapshot you just
+  opened, there is nothing to invalidate — no staleness checks, no sidecar
+  files to keep in sync. (Older versions wrote a ``store.r5tu.idx`` sidecar;
+  it is no longer used and is removed on the next flush.)
+- **Held in RAM**, roughly a few times the on-disk snapshot's size for the
+  full set of permutations. They are discarded when the snapshot is dropped.
 
-The sidecar accelerates every triple pattern with at least one bound term —
+The indexes accelerate every triple pattern with at least one bound term —
 bound predicate (PSO/POS), bound subject (SPO), or bound object (OSP) —
 including unbound-graph queries across an imports closure. Only the
 fully-unbound pattern (``(?, ?, ?)``, i.e. full triple iteration) scans the
@@ -236,39 +234,30 @@ closure directly.
 Property-path closure rewriting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The sidecar also precomputes the transitive closure of a configurable
-list of predicates (default ``rdfs:subClassOf``, ``rdfs:subPropertyOf``,
-``owl:sameAs``). At query time, the SPARQL evaluator intercepts
-``?x P+ ?y`` / ``?x P* ?y`` patterns whose predicate is in the list and
-substitutes a materialized ``VALUES`` block before handing the query to
-spareval. Supported path shapes: ``P+``, ``P*``, ``^P+``, ``^P*`` where
-``P`` is a single IRI.
+The query layer also precomputes (in memory, on first use) the transitive
+closure of a fixed list of predicates (``rdfs:subClassOf``,
+``rdfs:subPropertyOf``, ``owl:sameAs``). At query time, the SPARQL evaluator
+intercepts ``?x P+ ?y`` / ``?x P* ?y`` patterns whose predicate is in the
+list and substitutes a materialized ``VALUES`` block before handing the
+query to spareval. Supported path shapes: ``P+``, ``P*``, ``^P+``, ``^P*``
+where ``P`` is a single IRI.
 
 Bail-out cases (the path is left intact and spareval evaluates it
 itself, exactly as before):
 
-- Predicate is not in the configured closure-precompute list.
+- Predicate is not in the precomputed closure list.
 - Path is a sequence, alternative, negated-property-set, or otherwise
   not a direct ``P+``/``P*`` of a single IRI.
 - Both endpoints of the path are variables.
-
-The closure index roughly doubles the sidecar size (Brick: ~640 KB
-``IDX_PSO``/``IDX_POS`` + ~1.7 MB ``IDX_PCLOS``); rebuilds happen at
-``env.build_index()`` time alongside the rest of the sidecar.
 
 .. code-block:: python
 
    from ontoenv import OntoEnv
 
-   # Default — sidecar rebuilt on every flush.
+   # Indexes are built in memory on demand — no setup required.
    env = OntoEnv(path="./.ontoenv", create_or_use_cached=True)
-
-   # Skip the rebuild (and delete any existing sidecar) on next flush.
-   env = OntoEnv(path="./.ontoenv", create_or_use_cached=True, auto_index=False)
    env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
    env.flush()
-   # ...later, manually build the sidecar:
-   env.build_index()
 
-   # Toggle the flag on an existing env:
-   env.set_auto_index(True)
+   # The first subClassOf* query builds the closure index; later ones reuse it.
+   g = env.get_closure("https://brickschema.org/schema/1.4.4/Brick")
