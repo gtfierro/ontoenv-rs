@@ -39,9 +39,10 @@ struct R5GraphInfo {
     n_triples: u64,
 }
 
-/// Returns the path of the PSO/POS sidecar file that lives next to a given
-/// `.r5tu` snapshot. The sidecar path is always `<r5tu>.idx`.
-pub fn sidecar_path_for(r5tu: &Path) -> PathBuf {
+/// Returns `<r5tu>.idx`, the path of the legacy on-disk index sidecar that
+/// older versions wrote next to a snapshot. Query indexes are now built in
+/// memory; this is only used to delete a stale sidecar left by an upgrade.
+fn legacy_sidecar_path(r5tu: &Path) -> PathBuf {
     let mut s = r5tu.as_os_str().to_owned();
     s.push(".idx");
     PathBuf::from(s)
@@ -636,7 +637,7 @@ impl PersistentGraphIO {
         // Query indexes are now built in memory on demand, so no sidecar is
         // written. Remove any sidecar left behind by an older version to
         // reclaim disk and avoid confusion.
-        let _ = std::fs::remove_file(sidecar_path_for(&self.store_path));
+        let _ = std::fs::remove_file(legacy_sidecar_path(&self.store_path));
         Ok(())
     }
 

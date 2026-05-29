@@ -24,7 +24,7 @@ use pyo3::{
     types::{IntoPyDict, PyDict, PyList, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
-use rdf5d::sidecar::{MemPClos, MemSection};
+use rdf5d::index::{MemPClos, MemSection};
 use rdf5d::{DecodedTerm, R5tuFile};
 use spareval::{
     InternalQuad as SpareInternalQuad, QueryEvaluator, QueryResults as SpareQueryResults,
@@ -1306,15 +1306,15 @@ impl Rdf5dSnapshot {
 
     /// Lazily build (once) and borrow a permutation index. Returns `None` if
     /// the build failed.
-    fn mem_section(&self, kind: rdf5d::sidecar::IdxKind) -> Option<&MemSection> {
+    fn mem_section(&self, kind: rdf5d::index::IdxKind) -> Option<&MemSection> {
         let cell = match kind {
-            rdf5d::sidecar::IdxKind::Pso => &self.mem_pso,
-            rdf5d::sidecar::IdxKind::Pos => &self.mem_pos,
-            rdf5d::sidecar::IdxKind::Spo => &self.mem_spo,
-            rdf5d::sidecar::IdxKind::Osp => &self.mem_osp,
-            rdf5d::sidecar::IdxKind::PClos => return None,
+            rdf5d::index::IdxKind::Pso => &self.mem_pso,
+            rdf5d::index::IdxKind::Pos => &self.mem_pos,
+            rdf5d::index::IdxKind::Spo => &self.mem_spo,
+            rdf5d::index::IdxKind::Osp => &self.mem_osp,
+            rdf5d::index::IdxKind::PClos => return None,
         };
-        cell.get_or_init(|| match rdf5d::sidecar::build_mem_section(&self.file, kind) {
+        cell.get_or_init(|| match rdf5d::index::build_mem_section(&self.file, kind) {
             Ok(section) => Some(section),
             Err(e) => {
                 log::warn!("building {:?} index failed: {}", kind, e);
@@ -1340,7 +1340,7 @@ impl Rdf5dSnapshot {
                 if pred_ids.is_empty() {
                     return None;
                 }
-                match rdf5d::sidecar::build_mem_pclos(&self.file, &pred_ids) {
+                match rdf5d::index::build_mem_pclos(&self.file, &pred_ids) {
                     Ok(pclos) => Some(pclos),
                     Err(e) => {
                         log::warn!("building closure index failed: {}", e);
@@ -1372,7 +1372,7 @@ impl Rdf5dSnapshot {
         object_id: Option<u64>,
         gid_filter: &[u64],
     ) -> Option<Vec<(u64, u64, u64, u64)>> {
-        use rdf5d::sidecar::IdxKind;
+        use rdf5d::index::IdxKind;
         let mut out = Vec::new();
         match (subject_id, predicate_id, object_id) {
             // Predicate + object bound: POS (skips gid-S scans).
@@ -1987,23 +1987,16 @@ struct PyRdfLibStoreBackend {
 
 /// Rewrites `?x P+ ?y` / `?x P* ?y` graph patterns in a parsed SPARQL
 /// query, substituting precomputed `VALUES` blocks (or BGPs) for paths
-/// whose predicate is in the snapshot's `IDX_PCLOS` index.
+/// whose predicate is in the snapshot's precomputed closure index.
 ///
 /// Bail-out cases: predicate not in the closure index; both endpoints are
-/// variables and the materialized table would exceed `MAX_PCLOS_VALUES`
-/// rows; path is anything other than a direct `ZeroOrMore`/`OneOrMore` of
-/// a single `NamedNode`. In all bail-outs, the original pattern is left
-/// intact and spareval evaluates the property path itself.
+/// variables; path is anything other than a direct `ZeroOrMore`/`OneOrMore`
+/// of a single `NamedNode` (optionally reversed). In all bail-outs, the
+/// original pattern is left intact and spareval evaluates the property path
+/// itself.
 struct PClosRewriter<'a> {
     snapshot: &'a Rdf5dSnapshot,
 }
-
-/// Cap on the size of a fully-materialized closure (both endpoints
-/// variable). Above this, we leave the path alone — spareval is likely a
-/// better choice than a huge `VALUES` block. Reserved for a future
-/// extension that supports the both-variables case.
-#[allow(dead_code)]
-const MAX_PCLOS_VALUES: usize = 200_000;
 
 impl<'a> PClosRewriter<'a> {
     fn new(snapshot: &'a Rdf5dSnapshot) -> Self {
@@ -2175,11 +2168,10 @@ impl<'a> PClosRewriter<'a> {
                     })
                 }
             }
-            // Both unbound — materialize cartesian product (capped).
-            // Skip for v1 unless the result fits comfortably.
-            (TermPattern::Variable(left_var), TermPattern::Variable(right_var)) => {
-                self.materialize_both_unbound(p_id, left_var, right_var, include_reflexive)
-            }
+            // Both endpoints variable — leave the path to spareval. The full
+            // closure table can be unbounded, so a materialized VALUES block
+            // is rarely a win here.
+            (TermPattern::Variable(_), TermPattern::Variable(_)) => None,
             // Anything else (Literal, BlankNode, Triple) — leave alone.
             _ => None,
         }
@@ -2200,20 +2192,6 @@ impl<'a> PClosRewriter<'a> {
             variables: vec![var.clone()],
             bindings,
         }
-    }
-
-    /// Both endpoints are variables. In v1 we leave this to spareval —
-    /// materializing the full closure table as a VALUES block requires
-    /// an iterator over the PClos side that we don't currently expose,
-    /// and the result set can be unbounded. Falls back silently.
-    fn materialize_both_unbound(
-        &self,
-        _p_id: u64,
-        _left: &Variable,
-        _right: &Variable,
-        _include_reflexive: bool,
-    ) -> Option<GraphPattern> {
-        None
     }
 }
 

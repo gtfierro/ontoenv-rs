@@ -31,58 +31,36 @@
 
 use crate::reader::{R5Error, R5tuFile, Result};
 
-/// Sidecar magic at the start of every sidecar file.
-pub const SIDECAR_MAGIC: &[u8; 5] = b"R5IDX";
-
-/// Sidecar end-of-file marker (12 bytes).
-pub const SIDECAR_EOF_MAGIC: &[u8; 12] = b"R5IDX_ENDM\0\0";
-
-/// Current sidecar format version.
-pub const SIDECAR_VERSION: u16 = 0x0001;
-
-/// Kinds of sections within a sidecar file.
+/// The permutation a [`MemSection`] indexes (which term is the key, and the
+/// order of the inner pair).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum IdxKind {
+    /// `predicate → subject → object`. Serves patterns with a bound predicate.
     Pso = 1,
+    /// `predicate → object → subject`. Serves patterns with a bound predicate
+    /// and object.
     Pos = 2,
     /// Precomputed transitive-closure index for a configured list of
-    /// predicates (`P+` for SPARQL property paths). For each predicate `P`
-    /// in the list, stores both directions of the transitive closure:
-    /// forward (subject -> reachable objects) and reverse (object -> reachable
-    /// subjects). Used by the SPARQL query rewriter to replace
-    /// `?x P+ ?y` / `?x P* ?y` with materialized `VALUES`/`BIND` bindings
-    /// before passing the query to spareval.
+    /// predicates (`P+`/`P*` SPARQL property paths). For each predicate `P`
+    /// it stores both directions of the closure: forward (subject -> reachable
+    /// objects) and reverse (object -> reaching subjects). Consumed by the
+    /// SPARQL property-path rewriter. Built via [`build_mem_pclos`], not
+    /// [`build_mem_section`].
     PClos = 3,
-    /// Subject-keyed posting list (`subject → predicate → object`). Serves
-    /// triple patterns with a bound subject and an unbound predicate
-    /// (`(s, ?, ?)` / `(s, ?, o)`) without scanning every graph.
+    /// `subject → predicate → object`. Serves patterns with a bound subject
+    /// and an unbound predicate (`(s, ?, ?)` / `(s, ?, o)`).
     Spo = 4,
-    /// Object-keyed posting list (`object → subject → predicate`). Serves
-    /// triple patterns with a bound object and an unbound predicate
-    /// (`(?, ?, o)`) without scanning every graph.
+    /// `object → subject → predicate`. Serves patterns with a bound object
+    /// and an unbound predicate (`(?, ?, o)`).
     Osp = 5,
 }
 
-impl IdxKind {
-    pub fn from_u16(v: u16) -> Option<Self> {
-        match v {
-            1 => Some(IdxKind::Pso),
-            2 => Some(IdxKind::Pos),
-            3 => Some(IdxKind::PClos),
-            4 => Some(IdxKind::Spo),
-            5 => Some(IdxKind::Osp),
-            _ => None,
-        }
-    }
-}
-
-/// Read-only view of one predicate's PSO/POS posting block.
+/// Read-only view of one key's posting block.
 ///
-/// In PSO, the inner dimension is S; in POS, it is O. The shape is identical
-/// — only the semantics of the inner stream differ. Field names follow the
-/// PSO convention (`s_*`, `o_*`) for clarity; for POS, "s" means "object" and
-/// "o" means "subject".
+/// The posting groups its `(A, B)` inner pairs by gid. The meaning of `A`/`B`
+/// depends on the permutation (see [`build_section`]); the field names follow
+/// the `s_*` / `o_*` convention of the original PSO layout for clarity.
 #[derive(Debug, Clone)]
 pub struct IdxPosting<'a> {
     bytes: &'a [u8],
@@ -194,56 +172,56 @@ pub struct IdxBlockIter<'a> {
 impl<'a> Iterator for IdxBlockIter<'a> {
     type Item = (u64, u64);
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            // Advance to next S run if needed.
-            while self.o_idx >= self.o_end {
-                if self.s_idx >= self.s_end {
-                    return None;
-                }
-                // Decode next S
-                if self.need_s {
-                    let (v, n) = read_uvarint(self.bytes, self.s_byte_off)?;
-                    self.s_byte_off = n;
-                    self.current_s = v;
-                    self.need_s = false;
-                } else {
-                    let (d, n) = read_uvarint(self.bytes, self.s_byte_off)?;
-                    self.s_byte_off = n;
-                    self.current_s = self.current_s.checked_add(d)?;
-                }
-                // Lookup o run
-                let o_start_off = self.o_heads_off + self.s_idx * 4;
-                let o_end_off = o_start_off + 4;
-                let o_start = u32::from_le_bytes(self.bytes[o_start_off..o_start_off + 4].try_into().unwrap())
-                    as usize;
-                let o_end =
-                    u32::from_le_bytes(self.bytes[o_end_off..o_end_off + 4].try_into().unwrap()) as usize;
-                self.o_idx = o_start;
-                self.o_end = o_end;
-                if o_end > o_start {
-                    let oboff_off = self.o_byte_heads_off + self.s_idx * 4;
-                    let oboff =
-                        u32::from_le_bytes(self.bytes[oboff_off..oboff_off + 4].try_into().unwrap())
-                            as usize;
-                    self.o_byte_off = self.o_vals_off + oboff;
-                    self.need_o_first = true;
-                }
-                self.s_idx += 1;
+        // Advance past any exhausted/empty S runs until we find one with a
+        // pending O, or run out of S entries. The loop body sets up the O run
+        // for each S; once `o_idx < o_end` we fall through and emit one O.
+        while self.o_idx >= self.o_end {
+            if self.s_idx >= self.s_end {
+                return None;
             }
-            // Decode next O
-            if self.need_o_first {
-                let (v, n) = read_uvarint(self.bytes, self.o_byte_off)?;
-                self.o_byte_off = n;
-                self.current_o = v;
-                self.need_o_first = false;
+            // Decode next S
+            if self.need_s {
+                let (v, n) = read_uvarint(self.bytes, self.s_byte_off)?;
+                self.s_byte_off = n;
+                self.current_s = v;
+                self.need_s = false;
             } else {
-                let (d, n) = read_uvarint(self.bytes, self.o_byte_off)?;
-                self.o_byte_off = n;
-                self.current_o = self.current_o.checked_add(d)?;
+                let (d, n) = read_uvarint(self.bytes, self.s_byte_off)?;
+                self.s_byte_off = n;
+                self.current_s = self.current_s.checked_add(d)?;
             }
-            self.o_idx += 1;
-            return Some((self.current_s, self.current_o));
+            // Lookup o run
+            let o_start_off = self.o_heads_off + self.s_idx * 4;
+            let o_end_off = o_start_off + 4;
+            let o_start = u32::from_le_bytes(self.bytes[o_start_off..o_start_off + 4].try_into().unwrap())
+                as usize;
+            let o_end =
+                u32::from_le_bytes(self.bytes[o_end_off..o_end_off + 4].try_into().unwrap()) as usize;
+            self.o_idx = o_start;
+            self.o_end = o_end;
+            if o_end > o_start {
+                let oboff_off = self.o_byte_heads_off + self.s_idx * 4;
+                let oboff =
+                    u32::from_le_bytes(self.bytes[oboff_off..oboff_off + 4].try_into().unwrap())
+                        as usize;
+                self.o_byte_off = self.o_vals_off + oboff;
+                self.need_o_first = true;
+            }
+            self.s_idx += 1;
         }
+        // Decode next O in the current S run.
+        if self.need_o_first {
+            let (v, n) = read_uvarint(self.bytes, self.o_byte_off)?;
+            self.o_byte_off = n;
+            self.current_o = v;
+            self.need_o_first = false;
+        } else {
+            let (d, n) = read_uvarint(self.bytes, self.o_byte_off)?;
+            self.o_byte_off = n;
+            self.current_o = self.current_o.checked_add(d)?;
+        }
+        self.o_idx += 1;
+        Some((self.current_s, self.current_o))
     }
 }
 
@@ -402,9 +380,9 @@ impl<'a> PClosSide<'a> {
     }
 }
 
-/// Parsed `IDX_PCLOS` section. Holds zero-copy slice references into the
-/// sidecar's mmap so per-predicate lookups don't allocate beyond the
-/// final answer set.
+/// Parsed precomputed-closure section header. Offsets index into the owning
+/// [`MemPClos`] buffer; per-predicate lookups don't allocate beyond the final
+/// answer set.
 #[derive(Debug, Clone)]
 pub struct PClosSection {
     pub off: u64,
@@ -745,8 +723,8 @@ fn build_posting_block(slice: &[(u64, u32, u64, u64)], swap_s_o: bool) -> Vec<u8
 
             // Emit O run for this A.
             let mut prev_b: Option<u64> = None;
-            for m in k..l {
-                let (_, b_m) = get_ab(&slice[m]);
+            for entry in &slice[k..l] {
+                let (_, b_m) = get_ab(entry);
                 let dlt = match prev_b {
                     None => b_m,
                     Some(p) => b_m - p,
@@ -795,35 +773,22 @@ fn build_posting_block(slice: &[(u64, u32, u64, u64)], swap_s_o: bool) -> Vec<u8
 }
 
 fn serialize_section(postings: &[(u64, Vec<u8>)]) -> Vec<u8> {
-    // Section header: u64 n_predicates, u64 pred_keys_off, u64 key2post_offs_off, u64 blob_off
-    // Then pred_keys[n_predicates], key2post_offs[n_predicates+1] (byte offsets into blob),
-    // then blob (concatenated postings).
-    let n = postings.len() as u64;
-    // We need absolute file offsets, but we don't know where this section sits in the
-    // larger file yet. Patch them as relative-from-section-start, then add base_off
-    // when writing into output. We'll write the header with absolute placeholders and
-    // patch later? No — produce the section as a self-contained buffer and have the
-    // outer writer record offsets that include the section's base offset.
-    //
-    // Strategy: produce a buffer with the offsets stored as ABSOLUTE assuming the
-    // section will be placed at offset 0. Then in the outer writer, we patch each
-    // u64 offset by adding the actual base offset. Use the layout:
+    // Self-contained section buffer. All offsets are relative to the section's
+    // own start (base 0), so the buffer can be parsed directly by
+    // `parse_mem_section` without any relocation. Layout:
     //
     //   [0]  n_predicates u64
-    //   [8]  pred_keys_off u64           — patch later
-    //   [16] key2post_offs_off u64       — patch later
-    //   [24] blob_off u64                — patch later
+    //   [8]  pred_keys_off u64
+    //   [16] key2post_offs_off u64
+    //   [24] blob_off u64
     //   [32] pred_keys[n]
-    //   [32 + 8n] key2post_offs[n+1] (u64 byte offsets into blob, relative)
-    //   [32 + 8n + 8(n+1)] blob (concatenated)
-    //
-    // We'll return the buffer and let the outer writer call `patch_section_offsets`
-    // with the right base.
+    //   [32 + 8n] key2post_offs[n+1] (u64 byte offsets into blob)
+    //   [32 + 8n + 8(n+1)] blob (concatenated postings)
+    let n = postings.len() as u64;
     let header_size = 32usize;
     let pred_keys_size = 8 * postings.len();
     let key2post_size = 8 * (postings.len() + 1);
     let mut out = Vec::with_capacity(header_size + pred_keys_size + key2post_size);
-    // Header — placeholder. We'll patch with actual relative offsets.
     out.extend_from_slice(&n.to_le_bytes());
     let pred_keys_off_rel = header_size as u64;
     let key2post_off_rel = (header_size + pred_keys_size) as u64;
@@ -846,10 +811,6 @@ fn serialize_section(postings: &[(u64, Vec<u8>)]) -> Vec<u8> {
     for (_, b) in postings {
         out.extend_from_slice(b);
     }
-    // Now the section is self-contained but offsets are RELATIVE to section start.
-    // The reader's parse_section reads them and treats them as absolute file
-    // offsets. So before assembling the final file, we must patch them by adding
-    // the section's actual base offset within the file.
     out
 }
 
@@ -857,15 +818,15 @@ fn serialize_section(postings: &[(u64, Vec<u8>)]) -> Vec<u8> {
 // PClos: precomputed transitive-closure index
 // ============================================================================
 //
-// Section layout (offsets relative to the section's base, patched to
-// absolute file offsets via `patch_pclos_offsets` after placement):
+// Section layout (all offsets relative to the section's own base, i.e. base
+// 0 — the buffer is parsed directly without relocation):
 //
 //   u64 n_predicates
 //   u64 pred_keys_off    -> [u64 * n_predicates] sorted predicate IDs
 //   u64 entries_off      -> [PClosEntry * n_predicates]
 //
 // PClosEntry (32 bytes):
-//   u64 fwd_off  u64 fwd_len  u64 rev_off  u64 rev_len    (absolute file offsets)
+//   u64 fwd_off  u64 fwd_len  u64 rev_off  u64 rev_len    (byte offsets into the section)
 //
 // Each forward/reverse posting:
 //   u32 n_keys
@@ -880,37 +841,26 @@ fn serialize_section(postings: &[(u64, Vec<u8>)]) -> Vec<u8> {
 // semantics add the source node themselves.
 
 fn build_pclos_section(
-    pos_tuples: &[(u64, u32, u64, u64)],
+    tuples: &[(u64, u32, u64, u64)],
     closure_predicates: &[u64],
 ) -> Vec<u8> {
-    // Section is built in two stages: per-predicate postings as
-    // self-contained buffers (with placeholder offsets), then a header
-    // wrapping them. Offsets inside the per-predicate entries are
-    // patched to absolute file offsets via `patch_pclos_offsets`
-    // after the section's base offset is known.
-
     // Sort predicates ascending so the lookup binary search works.
     let mut preds: Vec<u64> = closure_predicates.to_vec();
     preds.sort_unstable();
     preds.dedup();
 
-    // For each predicate, gather the direct adjacency from pos_tuples
-    // (which is sorted by (p, gid, o, s) — we want (p, s, o) for the
-    // forward BFS, so we iterate and re-collect).
+    // `tuples` are `(p, gid, s, o)` in any order; we filter by predicate and
+    // build the adjacency ourselves, so no particular sort is required.
     let mut postings: Vec<(u64, Vec<u8>, Vec<u8>)> = Vec::new(); // (p, fwd_bytes, rev_bytes)
     for p in &preds {
         // Collect distinct (s, o) pairs for predicate p, ignoring gid (the
         // closure is whole-snapshot, not per-graph).
         let mut adjacency: std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>> =
             std::collections::BTreeMap::new();
-        for &(tp, _gid, s_or_o_outer, s_or_o_inner) in pos_tuples {
+        for &(tp, _gid, s, o) in tuples {
             if tp != *p {
                 continue;
             }
-            // In pos_tuples (sorted by p, gid, o, s), .2 is the original
-            // subject and .3 is the original object — see build_section.
-            let s = s_or_o_outer;
-            let o = s_or_o_inner;
             adjacency.entry(s).or_default().insert(o);
         }
         if adjacency.is_empty() {
