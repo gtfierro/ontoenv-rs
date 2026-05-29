@@ -74,6 +74,31 @@ def match_owl_imports(graph):
     return n
 
 
+# A well-connected class used as the bound endpoint for the subject-only and
+# object-only patterns below. As a subject it has its own definition triples;
+# as an object it is the target of many rdfs:subClassOf edges.
+BRICK_EQUIPMENT = URIRef("https://brickschema.org/schema/Brick#Equipment")
+
+
+def match_subject_only(graph):
+    # (s, ?, ?): no bound predicate, so the sidecar PSO/POS index can't be
+    # used today; the closure view falls back to scanning every graph.
+    n = 0
+    for _ in graph.triples((BRICK_EQUIPMENT, None, None)):
+        n += 1
+    return n
+
+
+def match_object_only(graph):
+    # (?, ?, o): same fallback as the subject-only case. owl:Class is a
+    # high-cardinality object (every class declaration), so the full scan
+    # cost dominates regardless of result size.
+    n = 0
+    for _ in graph.triples((None, None, OWL.Class)):
+        n += 1
+    return n
+
+
 SPARQL_TYPE_COUNT = """
 SELECT (COUNT(*) AS ?n) WHERE {
   ?s a ?t .
@@ -226,6 +251,8 @@ def run_all(env, repeat=3):
     workloads = [
         ("iterate all triples",         count_all_triples),
         ("match ?s owl:imports ?o",     match_owl_imports),
+        ("match Equipment ?p ?o",       match_subject_only),
+        ("match ?s ?p owl:Class",       match_object_only),
         ("SPARQL: COUNT rdf:type",      lambda g: run_sparql(g, SPARQL_TYPE_COUNT)),
         ("SPARQL: subClassOf* Equip.",  lambda g: run_sparql(g, SPARQL_SUBCLASS_STAR)),
         ("SPARQL: labels LIMIT 1000",   lambda g: run_sparql(g, SPARQL_LABELS)),
