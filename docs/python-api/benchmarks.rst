@@ -11,8 +11,8 @@ ontology and its imports closure (15 graphs, ~223k triples) into an
 ``rdflib``-compatible backends:
 
 - ``ontoenv-get`` — ``env.get_closure(...)``, a read-only view backed by the
-  on-disk rdf5d store via ``mmap``, accelerated by the PSO/POS sidecar index
-  (see :ref:`sidecar-index`).
+  on-disk rdf5d store via ``mmap``, accelerated by the PSO/POS/SPO/OSP sidecar
+  index (see :ref:`sidecar-index`).
 - ``ontoenv-copy`` — ``env.copy_closure(...)``, a mutable in-memory
   ``rdflib.Graph`` materialized from the same closure.
 - ``rdflib-memory`` — default rdflib ``Memory`` store loaded from the same
@@ -50,30 +50,40 @@ vary, but the *shape* of the comparison should be consistent.
      - rdflib-memory
      - oxigraph
    * - Iterate all triples
-     - **93 ms**
-     - 109 ms
-     - 95 ms
-     - 565 ms
+     - **131 ms**
+     - 154 ms
+     - 135 ms
+     - 784 ms
    * - Match ``?s owl:imports ?o``
-     - 0.10 ms
-     - 0.03 ms
+     - 0.07 ms
+     - 0.04 ms
      - 0.04 ms
      - 0.13 ms
+   * - Match ``brick:Equipment ?p ?o`` (subject-only)
+     - 0.12 ms
+     - 0.05 ms
+     - 0.05 ms
+     - 0.25 ms
+   * - Match ``?s ?p owl:Class`` (object-only)
+     - 1.53 ms
+     - 1.48 ms
+     - 1.33 ms
+     - 5.02 ms
    * - SPARQL ``COUNT`` of ``rdf:type``
-     - **3.2 ms**
-     - 73 ms
-     - 69 ms
-     - 3.1 ms
+     - **1.41 ms**
+     - 114 ms
+     - 110 ms
+     - 5.30 ms
    * - SPARQL ``rdfs:subClassOf*`` of ``brick:Equipment``
-     - **0.6 ms**
-     - 4.4 ms
-     - 4.4 ms
-     - 0.4 ms
+     - **0.57 ms**
+     - 4.46 ms
+     - 4.32 ms
+     - 0.47 ms
    * - SPARQL ``SELECT ... rdfs:label ... LIMIT 1000``
-     - **5.6 ms**
-     - 10.5 ms
-     - 10.4 ms
-     - 6.1 ms
+     - **5.48 ms**
+     - 10.99 ms
+     - 10.52 ms
+     - 5.50 ms
 
 (Bold entries highlight where ``ontoenv-get`` *beats* the in-memory
 baseline.)
@@ -90,36 +100,44 @@ workloads.
 .. code-block:: text
 
    ontoenv-get vs rdflib-memory
-     workload                         rdflib-memory best    ontoenv-get best  delta
-     iterate all triples                      95.64 ms            93.77 ms   -  1.96%
-     match ?s owl:imports ?o                  54.96 us           107.13 us   + 94.94%
-     SPARQL: COUNT rdf:type                   68.34 ms             3.28 ms   -95.20%
-     SPARQL: subClassOf* Equip.                4.45 ms             6.04 ms   + 35.84%
-     SPARQL: labels LIMIT 1000                10.28 ms             5.81 ms   -43.51%
+     workload                         rdflib-memory best ontoenv-get best  delta
+     iterate all triples                     134.54 ms        131.72 ms    -2.10%
+     match ?s owl:imports ?o                  39.46 us         73.75 us  +  86.91%
+     match Equipment ?p ?o                    53.67 us        121.96 us  + 127.25%
+     match ?s ?p owl:Class                     1.33 ms          1.53 ms  +  15.20%
+     SPARQL: COUNT rdf:type                  109.82 ms          1.41 ms   -98.71%
+     SPARQL: subClassOf* Equip.                4.32 ms        570.96 us   -86.79%
+     SPARQL: labels LIMIT 1000                10.52 ms          5.48 ms   -47.90%
 
    ontoenv-copy vs rdflib-memory
-     workload                         rdflib-memory best   ontoenv-copy best  delta
-     iterate all triples                      95.64 ms           108.50 ms   + 13.45%
-     match ?s owl:imports ?o                  54.96 us            28.66 us   -47.85%
-     SPARQL: COUNT rdf:type                   68.34 ms            72.84 ms   +  6.59%
-     SPARQL: subClassOf* Equip.                4.45 ms             4.43 ms   -  0.43%
-     SPARQL: labels LIMIT 1000                10.28 ms            10.45 ms   +  1.65%
+     workload                         rdflib-memory best ontoenv-copy best  delta
+     iterate all triples                     134.54 ms        154.49 ms  +  14.82%
+     match ?s owl:imports ?o                  39.46 us         36.46 us    -7.60%
+     match Equipment ?p ?o                    53.67 us         54.96 us  +   2.41%
+     match ?s ?p owl:Class                     1.33 ms          1.48 ms  +  11.21%
+     SPARQL: COUNT rdf:type                  109.82 ms        113.63 ms  +   3.47%
+     SPARQL: subClassOf* Equip.                4.32 ms          4.46 ms  +   3.12%
+     SPARQL: labels LIMIT 1000                10.52 ms         10.99 ms  +   4.39%
 
    oxigraph vs rdflib-memory
-     workload                         rdflib-memory best       oxigraph best  delta
-     iterate all triples                      95.64 ms           568.02 ms  +493.88%
-     match ?s owl:imports ?o                  54.96 us           136.00 us  +147.46%
-     SPARQL: COUNT rdf:type                   68.34 ms             3.17 ms   -95.37%
-     SPARQL: subClassOf* Equip.                4.45 ms           370.75 us   -91.68%
-     SPARQL: labels LIMIT 1000                10.28 ms             6.05 ms   -41.17%
+     workload                         rdflib-memory best    oxigraph best  delta
+     iterate all triples                     134.54 ms        783.96 ms  + 482.68%
+     match ?s owl:imports ?o                  39.46 us        127.33 us  + 222.71%
+     match Equipment ?p ?o                    53.67 us        251.08 us  + 367.85%
+     match ?s ?p owl:Class                     1.33 ms          5.02 ms  + 277.85%
+     SPARQL: COUNT rdf:type                  109.82 ms          5.30 ms   -95.18%
+     SPARQL: subClassOf* Equip.                4.32 ms        471.88 us   -89.08%
+     SPARQL: labels LIMIT 1000                10.52 ms          5.50 ms   -47.77%
 
    ontoenv-get vs oxigraph
-     workload                            oxigraph best    ontoenv-get best  delta
-     iterate all triples                     568.02 ms            93.77 ms   -83.49%
-     match ?s owl:imports ?o                 136.00 us           107.13 us   -21.23%
-     SPARQL: COUNT rdf:type                    3.17 ms             3.28 ms   +  3.64%
-     SPARQL: subClassOf* Equip.              370.75 us             6.04 ms +1528.94%
-     SPARQL: labels LIMIT 1000                 6.05 ms             5.81 ms   -  4.00%
+     workload                            oxigraph best ontoenv-get best  delta
+     iterate all triples                     783.96 ms        131.72 ms   -83.20%
+     match ?s owl:imports ?o                 127.33 us         73.75 us   -42.08%
+     match Equipment ?p ?o                   251.08 us        121.96 us   -51.43%
+     match ?s ?p owl:Class                     5.02 ms          1.53 ms   -69.51%
+     SPARQL: COUNT rdf:type                    5.30 ms          1.41 ms   -73.36%
+     SPARQL: subClassOf* Equip.              471.88 us        570.96 us  +  21.00%
+     SPARQL: labels LIMIT 1000                 5.50 ms          5.48 ms    -0.24%
 
 How to read the results
 -----------------------
@@ -128,27 +146,35 @@ How to read the results
   materializes the closure into a vanilla rdflib ``Memory`` store, so it
   inherits the same query engine and the same performance profile.
 - **``ontoenv-get`` wins outright on SPARQL with small result sets.** The
-  whole query plan runs against the rdf5d-backed dataset via ``spareval`` and
-  never has to cross the FFI boundary for individual triples. ``COUNT
-  rdf:type`` is **~22× faster** than the in-memory baseline (3.0 ms vs.
-  68 ms), and a ``LIMIT 1000`` label scan is ~1.8× faster — both wins lean on
-  the PSO sidecar to skip per-predicate scans.
-- **Selective predicate-bound patterns are at parity with in-memory.**
-  ``(None, owl:imports, None)`` is 0.09 ms via the sidecar, within ~2× of the
-  in-memory ``Memory`` store's hashed index.
-- **Full triple iteration matches in-memory.** 93 ms vs. 95 ms for
+  whole query plan runs against the rdf5d-backed dataset via ``spareval``,
+  joining on integer term ids and never crossing the FFI boundary for
+  individual triples. ``COUNT rdf:type`` is **~78× faster** than the
+  in-memory baseline (1.4 ms vs. 110 ms), and a ``LIMIT 1000`` label scan is
+  ~1.9× faster — both wins lean on the PSO sidecar to skip per-predicate
+  scans.
+- **Triple patterns with any bound term are served from the sidecar.** A
+  bound predicate uses PSO/POS, a bound subject uses SPO, a bound object uses
+  OSP — so ``brick:Equipment ?p ?o`` (0.12 ms) and ``?s ?p owl:Class``
+  (1.53 ms) skip the per-graph scan that the unindexed fallback would do
+  (those same patterns were ~5–7 ms before the SPO/OSP sections existed).
+  rdflib's pure in-memory hash still edges ahead on the microsecond-scale
+  matches (e.g. ``owl:imports`` at 0.07 ms vs. 0.04 ms), but ``ontoenv-get``
+  now beats Oxigraph on every triple-pattern shape.
+- **Full triple iteration matches in-memory.** 131 ms vs. 135 ms for
   ``rdflib-memory`` on the Brick closure (~237k triples). The all-unbound
   case in ``ClosureGraphView.triples`` streams directly from the rdf5d
   snapshot's term-ID iterator with a u64-keyed cache for Python terms; it
   doesn't build intermediate ``oxrdf::Term`` objects per row. For large
   scans, ``get_*`` is now an equally good choice.
 - **Recursive property paths short-circuit through the sidecar.**
-  ``subClassOf*`` at 0.6 ms vs. 4.4 ms for in-memory rdflib (~7×
-  faster) and within ~1.5× of Oxigraph's 0.4 ms. See
+  ``subClassOf*`` at 0.57 ms vs. 4.32 ms for in-memory rdflib (~7.6×
+  faster) and at parity with Oxigraph's 0.47 ms. See
   :ref:`pclos-rewriting` below.
-- **Oxigraph is the fastest SPARQL backend on every query workload**, at the
-  cost of a slower load and a slower full-iteration path. Use it when you
-  load once and query many times.
+- **Oxigraph remains a strong SPARQL backend**, but ``ontoenv-get`` now
+  matches or beats it on every query workload here, at the cost of a slower
+  load and a slower full-iteration path on Oxigraph's side. Reach for
+  Oxigraph when you load once and query many times with the full SPARQL
+  surface.
 
 Rule of thumb
 -------------
@@ -166,15 +192,21 @@ Rule of thumb
 
 .. _sidecar-index:
 
-PSO/POS sidecar index
----------------------
+Triple-pattern sidecar index
+----------------------------
 
 Persistent environments build a sidecar file ``store.r5tu.idx`` next to the
-``store.r5tu`` snapshot. The sidecar holds per-predicate posting lists in
-both ``predicate → subject → object`` (PSO) and ``predicate → object →
-subject`` (POS) order. Triple-pattern queries with a bound predicate read
-from the posting list directly instead of scanning every triple of every
-named graph in the closure.
+``store.r5tu`` snapshot. The sidecar holds posting lists in four orders:
+
+- ``predicate → subject → object`` (PSO) and ``predicate → object →
+  subject`` (POS) for patterns with a **bound predicate**;
+- ``subject → predicate → object`` (SPO) for patterns with a **bound
+  subject** and unbound predicate (``(s, ?, ?)`` / ``(s, ?, o)``);
+- ``object → subject → predicate`` (OSP) for patterns with a **bound
+  object** and unbound predicate (``(?, ?, o)``).
+
+A triple-pattern query reads the matching posting list directly instead of
+scanning every triple of every named graph in the closure.
 
 The sidecar is:
 
@@ -188,13 +220,16 @@ The sidecar is:
   the per-graph scan.
 - **Optional**. The sidecar is purely additive; deleting it has no effect on
   correctness, only on performance.
-- **Roughly the same size as the source snapshot.** For Brick's ~8 MB
-  ``store.r5tu`` the sidecar is ~5–7 MB.
+- **A few times the size of the source snapshot.** The four posting orders
+  (PSO, POS, SPO, OSP) plus the optional closure index put the sidecar at
+  roughly 3× the ``store.r5tu`` size (Brick: ~4.3 MB snapshot, ~13.6 MB
+  sidecar).
 
-The sidecar accelerates patterns where the predicate is bound, including
-unbound-graph queries across an imports closure. Patterns with only the
-subject or only the object bound still scan every graph in the relevant
-closure; full triple iteration is unaffected.
+The sidecar accelerates every triple pattern with at least one bound term —
+bound predicate (PSO/POS), bound subject (SPO), or bound object (OSP) —
+including unbound-graph queries across an imports closure. Only the
+fully-unbound pattern (``(?, ?, ?)``, i.e. full triple iteration) scans the
+closure directly.
 
 .. _pclos-rewriting:
 

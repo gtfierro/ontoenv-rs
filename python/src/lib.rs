@@ -1327,49 +1327,73 @@ impl Rdf5dSnapshot {
     /// the predicate has no postings.
     fn scan_indexed(
         &self,
-        predicate_id: u64,
         subject_id: Option<u64>,
+        predicate_id: Option<u64>,
         object_id: Option<u64>,
         gid_filter: &[u64],
     ) -> Option<Vec<(u64, u64, u64, u64)>> {
         let idx = self.idx.as_ref()?;
-        // Prefer POS when object is bound (skips gid-S scans).
-        if let Some(o_id) = object_id {
-            let post = idx.lookup_pos(predicate_id)?;
-            let mut out = Vec::new();
-            for &gid in gid_filter {
-                let Some(block) = post.block_for_gid(gid) else {
-                    continue;
-                };
-                for (o, s) in post.iter_block(block) {
-                    if o != o_id {
+        let mut out = Vec::new();
+        match (subject_id, predicate_id, object_id) {
+            // Predicate + object bound: POS (skips gid-S scans).
+            (subject_id, Some(p_id), Some(o_id)) => {
+                let post = idx.lookup_pos(p_id)?;
+                for &gid in gid_filter {
+                    let Some(block) = post.block_for_gid(gid) else {
                         continue;
-                    }
-                    if let Some(sid) = subject_id {
-                        if s != sid {
+                    };
+                    for (o, s) in post.iter_block(block) {
+                        if o != o_id || subject_id.is_some_and(|sid| s != sid) {
                             continue;
                         }
+                        out.push((gid, s, p_id, o));
                     }
-                    out.push((gid, s, predicate_id, o));
                 }
             }
-            return Some(out);
-        }
-        // PSO path
-        let post = idx.lookup_pso(predicate_id)?;
-        let mut out = Vec::new();
-        for &gid in gid_filter {
-            let Some(block) = post.block_for_gid(gid) else {
-                continue;
-            };
-            for (s, o) in post.iter_block(block) {
-                if let Some(sid) = subject_id {
-                    if s != sid {
+            // Predicate bound, object unbound: PSO.
+            (subject_id, Some(p_id), None) => {
+                let post = idx.lookup_pso(p_id)?;
+                for &gid in gid_filter {
+                    let Some(block) = post.block_for_gid(gid) else {
                         continue;
+                    };
+                    for (s, o) in post.iter_block(block) {
+                        if subject_id.is_some_and(|sid| s != sid) {
+                            continue;
+                        }
+                        out.push((gid, s, p_id, o));
                     }
                 }
-                out.push((gid, s, predicate_id, o));
             }
+            // Predicate unbound, subject bound: SPO (pairs are (predicate, object)).
+            (Some(s_id), None, object_id) => {
+                let post = idx.lookup_spo(s_id)?;
+                for &gid in gid_filter {
+                    let Some(block) = post.block_for_gid(gid) else {
+                        continue;
+                    };
+                    for (p, o) in post.iter_block(block) {
+                        if object_id.is_some_and(|oid| o != oid) {
+                            continue;
+                        }
+                        out.push((gid, s_id, p, o));
+                    }
+                }
+            }
+            // Predicate + subject unbound, object bound: OSP (pairs are (subject, predicate)).
+            (None, None, Some(o_id)) => {
+                let post = idx.lookup_osp(o_id)?;
+                for &gid in gid_filter {
+                    let Some(block) = post.block_for_gid(gid) else {
+                        continue;
+                    };
+                    for (s, p) in post.iter_block(block) {
+                        out.push((gid, s, p, o_id));
+                    }
+                }
+            }
+            // All unbound: no index can help — caller does a full scan.
+            (None, None, None) => return None,
         }
         Some(out)
     }
@@ -1626,21 +1650,22 @@ impl<'a> LogicalSparqlDatasetView<'a> {
         let mut quads = Vec::new();
         let mut seen = HashSet::new();
 
-        // Fast path: predicate bound and a sidecar is available.
-        if let Some(p_id) = predicate {
-            if let Some(hits) = snapshot.scan_indexed(p_id, subject, object, &info.gids) {
-                for (_gid, s_id, p_id, o_id) in hits {
-                    if seen.insert((s_id, p_id, o_id)) {
-                        quads.push(Ok(SpareInternalQuad {
-                            subject: s_id,
-                            predicate: p_id,
-                            object: o_id,
-                            graph_name: Some(graph_id),
-                        }));
-                    }
+        // Fast path: serve from the sidecar indexes — PSO/POS for a bound
+        // predicate, SPO/OSP for a bound subject/object. Returns None only
+        // when no term is bound (or the sidecar is missing), in which case we
+        // fall through to the full per-graph scan below.
+        if let Some(hits) = snapshot.scan_indexed(subject, predicate, object, &info.gids) {
+            for (_gid, s_id, p_id, o_id) in hits {
+                if seen.insert((s_id, p_id, o_id)) {
+                    quads.push(Ok(SpareInternalQuad {
+                        subject: s_id,
+                        predicate: p_id,
+                        object: o_id,
+                        graph_name: Some(graph_id),
+                    }));
                 }
-                return Box::new(quads.into_iter());
             }
+            return Box::new(quads.into_iter());
         }
 
         for gid in &info.gids {
@@ -2452,11 +2477,12 @@ impl PyRdfLibStoreBackend {
                         return empty_iter(py);
                     };
                     let mut seen = HashSet::new();
-                    // Fast path via sidecar PSO/POS when predicate is bound.
+                    // Fast path via the sidecar indexes when any term is bound
+                    // (PSO/POS for predicate, SPO/OSP for subject/object).
                     let mut used_idx = false;
-                    if let Some(p_id) = predicate_id {
+                    if subject_id.is_some() || predicate_id.is_some() || object_id.is_some() {
                         if let Some(hits) =
-                            snapshot.scan_indexed(p_id, subject_id, object_id, &info.gids)
+                            snapshot.scan_indexed(subject_id, predicate_id, object_id, &info.gids)
                         {
                             used_idx = true;
                             for (_gid, s_id, p_id, o_id) in hits {
@@ -2489,9 +2515,10 @@ impl PyRdfLibStoreBackend {
                         }
                     }
                 } else {
-                    // Fast path: sidecar PSO when predicate is bound across all gids.
+                    // Fast path: sidecar indexes when any term is bound across
+                    // all gids (PSO/POS for predicate, SPO/OSP for subject/object).
                     let mut used_idx = false;
-                    if let Some(p_id) = predicate_id {
+                    if subject_id.is_some() || predicate_id.is_some() || object_id.is_some() {
                         // Build a gid -> graph_name lookup once.
                         let mut gid_to_graphs: HashMap<u64, Vec<&String>> = HashMap::new();
                         for (gname, info) in &snapshot.logical_graphs {
@@ -2501,7 +2528,7 @@ impl PyRdfLibStoreBackend {
                         }
                         let all_gids: Vec<u64> = gid_to_graphs.keys().copied().collect();
                         if let Some(hits) = snapshot
-                            .scan_indexed(p_id, subject_id, object_id, &all_gids)
+                            .scan_indexed(subject_id, predicate_id, object_id, &all_gids)
                         {
                             used_idx = true;
                             for (gid, s_id, p_id, o_id) in hits {
@@ -2808,11 +2835,14 @@ impl PyRdfLibStoreBackend {
                 };
 
                 let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
-                // Fast path via sidecar PSO/POS when predicate is bound. We
-                // gather all gids across the requested graph names and let
-                // the sidecar do the per-predicate filtering.
+                // Fast path via the sidecar indexes whenever at least one term
+                // is bound: PSO/POS for a bound predicate, SPO/OSP for a bound
+                // subject/object. We gather all gids across the requested graph
+                // names and let the sidecar do the filtering.
                 let mut used_idx = false;
-                if let Some(p_id) = predicate_id {
+                let any_bound =
+                    subject_id.is_some() || predicate_id.is_some() || object_id.is_some();
+                if any_bound {
                     let mut all_gids: Vec<u64> = Vec::new();
                     let mut gid_to_name: HashMap<u64, &String> = HashMap::new();
                     for name in &graph_names {
@@ -2825,7 +2855,7 @@ impl PyRdfLibStoreBackend {
                     }
                     if !all_gids.is_empty() {
                         if let Some(hits) =
-                            snapshot.scan_indexed(p_id, subject_id, object_id, &all_gids)
+                            snapshot.scan_indexed(subject_id, predicate_id, object_id, &all_gids)
                         {
                             used_idx = true;
                             for (gid, s_id, p_id, o_id) in hits {

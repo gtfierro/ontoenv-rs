@@ -18,7 +18,7 @@
 //! +----------------------+
 //! | TOC                  |   array of 32 B entries (one per permutation)
 //! +----------------------+
-//! | Sections...          |   IDX_PSO, IDX_POS
+//! | Sections...          |   IDX_PSO, IDX_POS, IDX_SPO, IDX_OSP
 //! +----------------------+
 //! | Footer (16 B)        |   global_crc32 + "R5IDX_ENDM\0\0"
 //! +----------------------+
@@ -68,6 +68,14 @@ pub enum IdxKind {
     /// `?x P+ ?y` / `?x P* ?y` with materialized `VALUES`/`BIND` bindings
     /// before passing the query to spareval.
     PClos = 3,
+    /// Subject-keyed posting list (`subject → predicate → object`). Serves
+    /// triple patterns with a bound subject and an unbound predicate
+    /// (`(s, ?, ?)` / `(s, ?, o)`) without scanning every graph.
+    Spo = 4,
+    /// Object-keyed posting list (`object → subject → predicate`). Serves
+    /// triple patterns with a bound object and an unbound predicate
+    /// (`(?, ?, o)`) without scanning every graph.
+    Osp = 5,
 }
 
 impl IdxKind {
@@ -76,6 +84,8 @@ impl IdxKind {
             1 => Some(IdxKind::Pso),
             2 => Some(IdxKind::Pos),
             3 => Some(IdxKind::PClos),
+            4 => Some(IdxKind::Spo),
+            5 => Some(IdxKind::Osp),
             _ => None,
         }
     }
@@ -735,6 +745,19 @@ impl IdxFile {
         self.section(IdxKind::Pos)?.lookup(&self.bytes, p_id)
     }
 
+    /// Look up an SPO posting by subject term ID. The posting's `(A, B)`
+    /// pairs are `(predicate, object)`; `None` when the subject has no
+    /// triples (or the sidecar predates SPO/OSP sections).
+    pub fn lookup_spo(&self, s_id: u64) -> Option<IdxPosting<'_>> {
+        self.section(IdxKind::Spo)?.lookup(&self.bytes, s_id)
+    }
+
+    /// Look up an OSP posting by object term ID. The posting's `(A, B)`
+    /// pairs are `(subject, predicate)`.
+    pub fn lookup_osp(&self, o_id: u64) -> Option<IdxPosting<'_>> {
+        self.section(IdxKind::Osp)?.lookup(&self.bytes, o_id)
+    }
+
     /// Validate the sidecar against a freshly-statted `.r5tu` file.
     ///
     /// The sidecar header captures the source file's length, modification
@@ -868,6 +891,44 @@ pub fn build_with_options(
     out.extend_from_slice(&pos_bytes);
     let pos_len = pos_bytes.len() as u64;
 
+    // SPO: subject-keyed. Reuse the generic posting builder with the tuple
+    // remapped to (s, gid, p, o) so the key dimension is the subject and the
+    // inner (A, B) pairs are (predicate, object). Built, serialized, and
+    // dropped one section at a time to bound peak memory.
+    let (spo_off, spo_len, spo_crc) = {
+        let mut spo_tuples: Vec<(u64, u32, u64, u64)> = pos_tuples
+            .iter()
+            .map(|&(p, gid, s, o)| (s, gid, p, o))
+            .collect();
+        spo_tuples.sort_unstable();
+        let mut spo_bytes = build_section(&spo_tuples, /*swap_s_o=*/ false);
+        drop(spo_tuples);
+        let off = out.len() as u64;
+        patch_section_offsets(&mut spo_bytes, off);
+        let len = spo_bytes.len() as u64;
+        let crc = crc32_ieee(&spo_bytes);
+        out.extend_from_slice(&spo_bytes);
+        (off, len, crc)
+    };
+
+    // OSP: object-keyed. Tuple remapped to (o, gid, s, p) so the key is the
+    // object and the inner (A, B) pairs are (subject, predicate).
+    let (osp_off, osp_len, osp_crc) = {
+        let mut osp_tuples: Vec<(u64, u32, u64, u64)> = pos_tuples
+            .iter()
+            .map(|&(p, gid, s, o)| (o, gid, s, p))
+            .collect();
+        osp_tuples.sort_unstable();
+        let mut osp_bytes = build_section(&osp_tuples, /*swap_s_o=*/ false);
+        drop(osp_tuples);
+        let off = out.len() as u64;
+        patch_section_offsets(&mut osp_bytes, off);
+        let len = osp_bytes.len() as u64;
+        let crc = crc32_ieee(&osp_bytes);
+        out.extend_from_slice(&osp_bytes);
+        (off, len, crc)
+    };
+
     // Optional PClos section. Built from `pos_tuples` (already grouped by
     // predicate) so we don't walk the snapshot a second time.
     let (pclos_off, pclos_len, pclos_bytes_opt) = if opts.closure_predicates.is_empty() {
@@ -883,7 +944,7 @@ pub fn build_with_options(
 
     // Write TOC.
     let toc_off = out.len() as u64;
-    let mut toc_len: u32 = 2;
+    let mut toc_len: u32 = 4;
     if pclos_bytes_opt.is_some() {
         toc_len += 1;
     }
@@ -901,6 +962,22 @@ pub fn build_with_options(
     out.extend_from_slice(&pos_off.to_le_bytes());
     out.extend_from_slice(&pos_len.to_le_bytes());
     out.extend_from_slice(&crc32_ieee(&pos_bytes).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
+    // SPO entry
+    out.extend_from_slice(&(IdxKind::Spo as u16).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&spo_off.to_le_bytes());
+    out.extend_from_slice(&spo_len.to_le_bytes());
+    out.extend_from_slice(&spo_crc.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
+    // OSP entry
+    out.extend_from_slice(&(IdxKind::Osp as u16).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&osp_off.to_le_bytes());
+    out.extend_from_slice(&osp_len.to_le_bytes());
+    out.extend_from_slice(&osp_crc.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes()); // pad to 32 bytes
     // PClos entry (optional)
@@ -1500,6 +1577,74 @@ mod tests {
         let post = idx_file.lookup_pos(p1_id).expect("p1 pos posting");
         let all: Vec<_> = post.iter_all().collect();
         assert_eq!(all.len(), 6);
+    }
+
+    #[test]
+    fn spo_osp_roundtrip_and_lookup() {
+        let dir = tempdir().unwrap();
+        let r5tu = dir.path().join("store.r5tu");
+        let idx = dir.path().join("store.r5tu.idx");
+        // Same shape as roundtrip_small: 3 gids; s1 has (p1,o1) and (p1,o3),
+        // s2 has (p2,o2) in each gid.
+        let mut quads = Vec::new();
+        for (id, gname) in [("d1", "g1"), ("d2", "g2"), ("d3", "g3")] {
+            quads.push(Quint {
+                id: id.into(),
+                s: iri("http://ex/s1"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o1"),
+                gname: gname.into(),
+            });
+            quads.push(Quint {
+                id: id.into(),
+                s: iri("http://ex/s2"),
+                p: iri("http://ex/p2"),
+                o: iri("http://ex/o2"),
+                gname: gname.into(),
+            });
+            quads.push(Quint {
+                id: id.into(),
+                s: iri("http://ex/s1"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o3"),
+                gname: gname.into(),
+            });
+        }
+        write_file(&r5tu, &quads).unwrap();
+        let f = R5tuFile::open(&r5tu).unwrap();
+        build(&f, &idx).unwrap();
+        let idx_file = IdxFile::open(&idx).unwrap();
+
+        let term_id = |s: &str| {
+            f.find_decoded_term(&crate::DecodedTerm::Iri(std::borrow::Cow::Borrowed(s)))
+                .unwrap()
+                .unwrap_or_else(|| panic!("missing term {s}"))
+        };
+        let (s1, p1, o1, o3) = (
+            term_id("http://ex/s1"),
+            term_id("http://ex/p1"),
+            term_id("http://ex/o1"),
+            term_id("http://ex/o3"),
+        );
+
+        // SPO: subject s1 -> (predicate, object) pairs. 2 per gid x 3 gids.
+        let post = idx_file.lookup_spo(s1).expect("s1 spo posting");
+        assert_eq!(post.n_gids(), 3);
+        let pairs: Vec<(u64, u64)> = post.iter_all().map(|(_, p, o)| (p, o)).collect();
+        assert_eq!(pairs.len(), 6);
+        assert!(pairs.iter().all(|&(p, _)| p == p1));
+        assert!(pairs.iter().any(|&(_, o)| o == o1));
+        assert!(pairs.iter().any(|&(_, o)| o == o3));
+
+        // OSP: object o1 -> (subject, predicate) pairs. once per gid x 3.
+        let post = idx_file.lookup_osp(o1).expect("o1 osp posting");
+        assert_eq!(post.n_gids(), 3);
+        let pairs: Vec<(u64, u64)> = post.iter_all().map(|(_, s, p)| (s, p)).collect();
+        assert_eq!(pairs.len(), 3);
+        assert!(pairs.iter().all(|&(s, p)| s == s1 && p == p1));
+
+        // A subject that doesn't exist has no posting.
+        assert!(idx_file.lookup_spo(99_999).is_none());
     }
 
     #[test]
