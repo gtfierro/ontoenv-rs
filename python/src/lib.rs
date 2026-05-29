@@ -1251,11 +1251,6 @@ struct LogicalGraphInfo {
 struct Rdf5dSnapshot {
     file: Arc<R5tuFile>,
     logical_graphs: HashMap<String, LogicalGraphInfo>,
-    // Memoizes term -> term_id lookups so repeated SPARQL bindings of the
-    // same IRIs don't repeatedly linear-scan the term table via
-    // R5tuFile::find_decoded_term. A proper on-disk reverse index in rdf5d
-    // is the right long-term fix.
-    term_id_cache: Mutex<HashMap<DecodedTerm<'static>, Option<u64>>>,
     // PSO/POS sidecar. None when the sidecar is missing or stale.
     idx: Option<Arc<rdf5d::sidecar::IdxFile>>,
 }
@@ -1320,7 +1315,6 @@ impl Rdf5dSnapshot {
         Ok(Self {
             file,
             logical_graphs,
-            term_id_cache: Mutex::new(HashMap::new()),
             idx,
         })
     }
@@ -1430,28 +1424,13 @@ impl Rdf5dSnapshot {
     }
 
     fn find_term_id(&self, term: &Term) -> Result<Option<u64>> {
-        let key = term_to_decoded_term(term);
-        self.find_decoded_term_id_owned(key)
+        self.find_decoded_term_id(&term_to_decoded_term(term))
     }
 
+    /// Reverse lookup of a decoded term's on-disk id, or `None` if absent.
+    /// Backed by `R5tuFile`'s lazily-built `O(1)` reverse index.
     fn find_decoded_term_id(&self, term: &DecodedTerm<'_>) -> Result<Option<u64>> {
-        // Called once per bound pattern term per SPARQL iterator
-        // construction — the clone is paid at most a handful of times per
-        // query, not per scanned triple.
-        self.find_decoded_term_id_owned(term.clone().into_owned())
-    }
-
-    fn find_decoded_term_id_owned(&self, key: DecodedTerm<'static>) -> Result<Option<u64>> {
-        {
-            let cache = self.term_id_cache.lock().unwrap();
-            if let Some(cached) = cache.get(&key) {
-                return Ok(*cached);
-            }
-        }
-        let result = self.file.find_decoded_term(&key)?;
-        let mut cache = self.term_id_cache.lock().unwrap();
-        cache.insert(key, result);
-        Ok(result)
+        Ok(self.file.term_id(term))
     }
 }
 
@@ -1618,94 +1597,47 @@ impl<'a> LogicalSparqlDatasetView<'a> {
         Self { snapshot }
     }
 
-    fn graph_term(graph_name: &'a str) -> DecodedTerm<'a> {
-        DecodedTerm::Iri(Cow::Borrowed(graph_name))
-    }
-
     fn quads_for_logical_graph(
         snapshot: &'a Rdf5dSnapshot,
         graph_name: &'a str,
         info: &'a LogicalGraphInfo,
-        subject: Option<DecodedTerm<'a>>,
-        predicate: Option<DecodedTerm<'a>>,
-        object: Option<DecodedTerm<'a>>,
+        subject: Option<u64>,
+        predicate: Option<u64>,
+        object: Option<u64>,
     ) -> Box<
         dyn Iterator<
-                Item = std::result::Result<
-                    SpareInternalQuad<DecodedTerm<'a>>,
-                    rdf5d::reader::R5Error,
-                >,
+                Item = std::result::Result<SpareInternalQuad<u64>, rdf5d::reader::R5Error>,
             > + 'a,
     > {
-        // Resolve each bound pattern term to its term ID once, then compare
-        // IDs in the inner loop. Avoids decoding s/p/o for every scanned
-        // triple just to discard it on a predicate filter mismatch.
-        //
-        // Returns Ok(Some(Some(id))) when the term is bound and present,
-        // Ok(Some(None)) when the term is bound but absent (entire iterator
-        // is empty), and Ok(None) when the term is unbound.
-        let resolve = |bound: &Option<DecodedTerm<'a>>| -> std::result::Result<
-            Option<Option<u64>>,
-            rdf5d::reader::R5Error,
-        > {
-            match bound {
-                None => Ok(None),
-                Some(term) => snapshot
-                    .find_decoded_term_id(term)
-                    .map(Some)
-                    .map_err(|e| rdf5d::reader::R5Error::Corrupt(e.to_string())),
-            }
-        };
-        let (subject_id, predicate_id, object_id) = {
-            let s = match resolve(&subject) {
-                Ok(v) => v,
-                Err(e) => return Box::new(once(Err(e))),
-            };
-            let p = match resolve(&predicate) {
-                Ok(v) => v,
-                Err(e) => return Box::new(once(Err(e))),
-            };
-            let o = match resolve(&object) {
-                Ok(v) => v,
-                Err(e) => return Box::new(once(Err(e))),
-            };
-            // Any bound-but-absent term means zero matches.
-            if matches!(s, Some(None)) || matches!(p, Some(None)) || matches!(o, Some(None)) {
-                return Box::new(empty());
-            }
-            (s.flatten(), p.flatten(), o.flatten())
-        };
-
         let file = snapshot.file.as_ref();
+        let graph_id = file.intern_decoded(&DecodedTerm::Iri(Cow::Borrowed(graph_name)));
+
+        // A bound term that is absent from the on-disk dictionary was interned
+        // to an overflow id (>= num_terms) which can never equal a scanned id,
+        // so the pattern matches nothing — short-circuit the scan.
+        let n_terms = file.num_terms();
+        if [subject, predicate, object]
+            .iter()
+            .any(|bound| bound.is_some_and(|id| id >= n_terms))
+        {
+            return Box::new(empty());
+        }
+
         let mut quads = Vec::new();
         let mut seen = HashSet::new();
 
         // Fast path: predicate bound and a sidecar is available.
-        if let Some(p_id) = predicate_id {
-            if let Some(hits) = snapshot.scan_indexed(p_id, subject_id, object_id, &info.gids)
-            {
+        if let Some(p_id) = predicate {
+            if let Some(hits) = snapshot.scan_indexed(p_id, subject, object, &info.gids) {
                 for (_gid, s_id, p_id, o_id) in hits {
-                    if !seen.insert((s_id, p_id, o_id)) {
-                        continue;
+                    if seen.insert((s_id, p_id, o_id)) {
+                        quads.push(Ok(SpareInternalQuad {
+                            subject: s_id,
+                            predicate: p_id,
+                            object: o_id,
+                            graph_name: Some(graph_id),
+                        }));
                     }
-                    let subject_term = match file.decoded_term(s_id) {
-                        Ok(term) => term,
-                        Err(error) => return Box::new(once(Err(error))),
-                    };
-                    let predicate_term = match file.decoded_term(p_id) {
-                        Ok(term) => term,
-                        Err(error) => return Box::new(once(Err(error))),
-                    };
-                    let object_term = match file.decoded_term(o_id) {
-                        Ok(term) => term,
-                        Err(error) => return Box::new(once(Err(error))),
-                    };
-                    quads.push(Ok(SpareInternalQuad {
-                        subject: subject_term,
-                        predicate: predicate_term,
-                        object: object_term,
-                        graph_name: Some(Self::graph_term(graph_name)),
-                    }));
                 }
                 return Box::new(quads.into_iter());
             }
@@ -1717,35 +1649,20 @@ impl<'a> LogicalSparqlDatasetView<'a> {
                 Err(error) => return Box::new(once(Err(error))),
             };
             for (s_id, p_id, o_id) in triples {
-                if subject_id.is_some_and(|id| id != s_id)
-                    || predicate_id.is_some_and(|id| id != p_id)
-                    || object_id.is_some_and(|id| id != o_id)
+                if subject.is_some_and(|id| id != s_id)
+                    || predicate.is_some_and(|id| id != p_id)
+                    || object.is_some_and(|id| id != o_id)
                 {
                     continue;
                 }
-                if !seen.insert((s_id, p_id, o_id)) {
-                    continue;
+                if seen.insert((s_id, p_id, o_id)) {
+                    quads.push(Ok(SpareInternalQuad {
+                        subject: s_id,
+                        predicate: p_id,
+                        object: o_id,
+                        graph_name: Some(graph_id),
+                    }));
                 }
-
-                let subject_term = match file.decoded_term(s_id) {
-                    Ok(term) => term,
-                    Err(error) => return Box::new(once(Err(error))),
-                };
-                let predicate_term = match file.decoded_term(p_id) {
-                    Ok(term) => term,
-                    Err(error) => return Box::new(once(Err(error))),
-                };
-                let object_term = match file.decoded_term(o_id) {
-                    Ok(term) => term,
-                    Err(error) => return Box::new(once(Err(error))),
-                };
-
-                quads.push(Ok(SpareInternalQuad {
-                    subject: subject_term,
-                    predicate: predicate_term,
-                    object: object_term,
-                    graph_name: Some(Self::graph_term(graph_name)),
-                }));
             }
         }
         Box::new(quads.into_iter())
@@ -1753,15 +1670,12 @@ impl<'a> LogicalSparqlDatasetView<'a> {
 
     fn quads_for_all_logical_graphs(
         snapshot: &'a Rdf5dSnapshot,
-        subject: Option<DecodedTerm<'a>>,
-        predicate: Option<DecodedTerm<'a>>,
-        object: Option<DecodedTerm<'a>>,
+        subject: Option<u64>,
+        predicate: Option<u64>,
+        object: Option<u64>,
     ) -> Box<
         dyn Iterator<
-                Item = std::result::Result<
-                    SpareInternalQuad<DecodedTerm<'a>>,
-                    rdf5d::reader::R5Error,
-                >,
+                Item = std::result::Result<SpareInternalQuad<u64>, rdf5d::reader::R5Error>,
             > + 'a,
     > {
         Box::new(
@@ -1773,9 +1687,9 @@ impl<'a> LogicalSparqlDatasetView<'a> {
                         snapshot,
                         graph_name.as_str(),
                         info,
-                        subject.clone(),
-                        predicate.clone(),
-                        object.clone(),
+                        subject,
+                        predicate,
+                        object,
                     )
                 }),
         )
@@ -1783,7 +1697,7 @@ impl<'a> LogicalSparqlDatasetView<'a> {
 }
 
 impl<'a> QueryableDataset<'a> for LogicalSparqlDatasetView<'a> {
-    type InternalTerm = DecodedTerm<'a>;
+    type InternalTerm = u64;
     type Error = rdf5d::reader::R5Error;
 
     #[allow(refining_impl_trait)]
@@ -1797,31 +1711,36 @@ impl<'a> QueryableDataset<'a> for LogicalSparqlDatasetView<'a> {
         dyn Iterator<Item = std::result::Result<SpareInternalQuad<Self::InternalTerm>, Self::Error>>
             + 'a,
     > {
-        let subject = subject.cloned();
-        let predicate = predicate.cloned();
-        let object = object.cloned();
+        let subject = subject.copied();
+        let predicate = predicate.copied();
+        let object = object.copied();
         let snapshot = self.snapshot;
 
         match graph_name {
             None | Some(None) => {
                 Self::quads_for_all_logical_graphs(snapshot, subject, predicate, object)
             }
-            Some(Some(DecodedTerm::Iri(graph_name))) => {
+            Some(Some(&graph_id)) => {
+                let graph_name = match snapshot.file.externalize_id(graph_id) {
+                    Ok(DecodedTerm::Iri(name)) => name.into_owned(),
+                    // A non-IRI graph name matches no logical graph.
+                    Ok(_) => return Box::new(empty()),
+                    Err(error) => return Box::new(once(Err(error))),
+                };
                 let Some((graph_name, info)) =
-                    snapshot.logical_graphs.get_key_value(graph_name.as_ref())
+                    snapshot.logical_graphs.get_key_value(graph_name.as_str())
                 else {
                     return Box::new(empty());
                 };
                 Self::quads_for_logical_graph(
                     snapshot,
-                    graph_name.as_ref(),
+                    graph_name.as_str(),
                     info,
                     subject,
                     predicate,
                     object,
                 )
             }
-            Some(Some(_)) => Box::new(empty()),
         }
     }
 
@@ -1829,84 +1748,35 @@ impl<'a> QueryableDataset<'a> for LogicalSparqlDatasetView<'a> {
     fn internal_named_graphs(
         &self,
     ) -> Box<dyn Iterator<Item = std::result::Result<Self::InternalTerm, Self::Error>> + 'a> {
-        Box::new(
-            self.snapshot
-                .logical_graphs
-                .keys()
-                .map(|graph_name| Ok(Self::graph_term(graph_name.as_str()))),
-        )
+        let snapshot = self.snapshot;
+        Box::new(snapshot.logical_graphs.keys().map(move |graph_name| {
+            Ok(snapshot
+                .file
+                .intern_decoded(&DecodedTerm::Iri(Cow::Borrowed(graph_name.as_str()))))
+        }))
     }
 
     fn contains_internal_graph_name(
         &self,
         graph_name: &Self::InternalTerm,
     ) -> std::result::Result<bool, Self::Error> {
-        let DecodedTerm::Iri(graph_name) = graph_name else {
-            return Ok(false);
+        let name = match self.snapshot.file.externalize_id(*graph_name)? {
+            DecodedTerm::Iri(name) => name.into_owned(),
+            _ => return Ok(false),
         };
-        Ok(self
-            .snapshot
-            .logical_graphs
-            .contains_key(graph_name.as_ref()))
+        Ok(self.snapshot.logical_graphs.contains_key(name.as_str()))
     }
 
     fn internalize_term(&self, term: Term) -> std::result::Result<Self::InternalTerm, Self::Error> {
-        Ok(match term {
-            Term::NamedNode(node) => DecodedTerm::Iri(Cow::Owned(node.into_string())),
-            Term::BlankNode(node) => DecodedTerm::BNode(Cow::Owned(node.as_str().to_string())),
-            Term::Literal(literal) => {
-                if let Some(language) = literal.language() {
-                    DecodedTerm::Literal {
-                        lex: Cow::Owned(literal.value().to_string()),
-                        dt: None,
-                        lang: Some(Cow::Owned(language.to_string())),
-                    }
-                } else {
-                    let datatype = literal.datatype();
-                    let datatype = if datatype.as_str() == "http://www.w3.org/2001/XMLSchema#string"
-                    {
-                        None
-                    } else {
-                        Some(Cow::Owned(datatype.as_str().to_string()))
-                    };
-                    DecodedTerm::Literal {
-                        lex: Cow::Owned(literal.value().to_string()),
-                        dt: datatype,
-                        lang: None,
-                    }
-                }
-            }
-        })
+        Ok(self
+            .snapshot
+            .file
+            .intern_decoded(&term_to_decoded_term(&term)))
     }
 
     fn externalize_term(&self, term: Self::InternalTerm) -> std::result::Result<Term, Self::Error> {
-        Ok(match term {
-            DecodedTerm::Iri(value) => NamedNode::new(value.into_owned())
-                .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid IRI term"))?
-                .into(),
-            DecodedTerm::BNode(value) => {
-                let label = value.strip_prefix("_:").unwrap_or(value.as_ref());
-                BlankNode::new(label.to_string())
-                    .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid blank node"))?
-                    .into()
-            }
-            DecodedTerm::Literal { lex, dt, lang } => {
-                if let Some(dt) = dt {
-                    Literal::new_typed_literal(
-                        lex.into_owned(),
-                        NamedNode::new(dt.into_owned())
-                            .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid datatype IRI"))?,
-                    )
-                    .into()
-                } else if let Some(lang) = lang {
-                    Literal::new_language_tagged_literal(lex.into_owned(), lang.into_owned())
-                        .map_err(|_| rdf5d::reader::R5Error::Invalid("invalid language tag"))?
-                        .into()
-                } else {
-                    Literal::new_simple_literal(lex.into_owned()).into()
-                }
-            }
-        })
+        let decoded = self.snapshot.file.externalize_id(term)?;
+        decoded_term_to_term(decoded).map_err(|e| rdf5d::reader::R5Error::Corrupt(e.to_string()))
     }
 }
 

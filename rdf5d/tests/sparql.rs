@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use rdf5d::{Quint, R5tuFile, Term, write_file};
-use spareval::{QueryEvaluationError, QueryResults};
+use spareval::{QueryEvaluationError, QueryEvaluator, QueryResults};
 use spargebra::SparqlParser;
 use tempfile::tempdir;
 
@@ -104,6 +104,47 @@ fn default_graph_is_union_of_named_graphs() -> Result<(), QueryEvaluationError> 
             "<http://example.org/bob>",
             "<http://example.org/carol>",
         ]
+    );
+    Ok(())
+}
+
+#[test]
+fn scoped_view_restricts_to_subset_of_gids() -> Result<(), QueryEvaluationError> {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("fixture.r5tu");
+    build_fixture(&path);
+    let file = R5tuFile::open(&path).expect("open fixture");
+
+    // Scope to the "dataset:1" source: alice@shared and carol@other, but not
+    // bob (which lives under dataset:2). The gid set is derived from the
+    // id (source) index.
+    let gids: Vec<u64> = file
+        .enumerate_by_id("dataset:1")
+        .expect("enumerate by id")
+        .into_iter()
+        .map(|graph| graph.gid)
+        .collect();
+    assert_eq!(gids.len(), 2, "dataset:1 spans two graph groups");
+
+    let query = SparqlParser::new()
+        .parse_query("SELECT ?s WHERE { ?s <http://example.org/name> ?o }")
+        .expect("query parses");
+
+    let results = QueryEvaluator::new()
+        .prepare(&query)
+        .execute(file.sparql_view_for_gids(&gids))?;
+    let QueryResults::Solutions(solutions) = results else {
+        panic!("expected solution results");
+    };
+    let mut subjects = solutions
+        .map(|row| row.map(|solution| solution["s"].to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    subjects.sort();
+
+    assert_eq!(
+        subjects,
+        vec!["<http://example.org/alice>", "<http://example.org/carol>"],
+        "scoped view excludes triples from other sources"
     );
     Ok(())
 }
