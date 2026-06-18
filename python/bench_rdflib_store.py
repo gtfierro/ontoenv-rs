@@ -47,14 +47,16 @@ def _timed():
 
 
 def bench(fn, *, repeat=3):
-    """Run ``fn`` ``repeat`` times, return (best_seconds, result_of_last_run)."""
+    """Run ``fn`` ``repeat`` times, return (mean_seconds, stddev_seconds, result_of_last_run)."""
     times = []
     result = None
     for _ in range(repeat):
         with _timed() as elapsed:
             result = fn()
         times.append(elapsed())
-    return min(times), statistics.mean(times), result
+    mean = statistics.mean(times)
+    stddev = statistics.stdev(times) if len(times) > 1 else 0.0
+    return mean, stddev, result
 
 
 # ---------- workloads ---------------------------------------------------------
@@ -162,8 +164,8 @@ def make_oxigraph_from_view(view):
 # ---------- reporting --------------------------------------------------------
 
 
-def fmt_row(label, best, mean, result):
-    return f"  {label:<22s} best={best*1000:8.2f} ms  mean={mean*1000:8.2f} ms  result={result}"
+def fmt_row(label, mean, stddev, result):
+    return f"  {label:<22s} mean={mean*1000:8.2f} ± {stddev*1000:6.2f} ms  result={result}"
 
 
 def fmt_time(seconds: float) -> str:
@@ -180,7 +182,7 @@ def render_benchcmp(rows, backend_names, baseline):
     if baseline not in backend_names:
         baseline = backend_names[0]
 
-    # Reorganize rows: workload -> backend -> (best, mean, result)
+    # Reorganize rows: workload -> backend -> (mean, stddev, result)
     data: dict[str, dict[str, tuple]] = {}
     workloads: list[str] = []
     for kind, wname, bname, timing, result in rows:
@@ -212,12 +214,12 @@ def render_benchcmp(rows, backend_names, baseline):
             cur = data[w].get(other)
             if base is None or cur is None:
                 continue
-            b_best = base[0]
-            c_best = cur[0]
-            delta = (c_best - b_best) / b_best * 100.0 if b_best > 0 else float("inf")
+            b_mean = base[0]
+            c_mean = cur[0]
+            delta = (c_mean - b_mean) / b_mean * 100.0 if b_mean > 0 else float("inf")
             sign = "+" if delta >= 0 else ""
             out.append(
-                f"  {w:<32s} {fmt_time(b_best):>16s} {fmt_time(c_best):>16s}  {sign}{delta:7.2f}%"
+                f"  {w:<32s} {fmt_time(b_mean):>16s} {fmt_time(c_mean):>16s}  {sign}{delta:7.2f}%"
             )
     return "\n".join(out)
 
@@ -263,9 +265,9 @@ def run_all(env, repeat=3):
         print(f"\n## {wname}")
         rows.append(("workload", wname, None, None, None))
         for bname, graph in backends:
-            best, mean, result = bench(lambda g=graph, fn=wfn: fn(g), repeat=repeat)
-            print(fmt_row(bname, best, mean, result))
-            rows.append(("row", wname, bname, (best, mean), result))
+            mean, stddev, result = bench(lambda g=graph, fn=wfn: fn(g), repeat=repeat)
+            print(fmt_row(bname, mean, stddev, result))
+            rows.append(("row", wname, bname, (mean, stddev), result))
     return rows, [b[0] for b in backends]
 
 
@@ -292,8 +294,8 @@ def render_markdown_table(rows, backend_names):
             if entry is None:
                 cells.append("—")
             else:
-                (best, _mean), _result = entry
-                cells.append(f"{best*1000:.2f} ms")
+                (mean, stddev), _result = entry
+                cells.append(f"{mean*1000:.2f} ± {stddev*1000:.2f} ms")
         out.append(f"| {w} | " + " | ".join(cells) + " |")
     return "\n".join(out)
 
