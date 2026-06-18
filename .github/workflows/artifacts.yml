@@ -150,17 +150,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: |
-          VERSION=$(awk '
-            /^\[workspace.package\]/ { in_section=1; next }
-            /^\[/ { if (in_section) exit; in_section=0 }
-            in_section && $1 ~ /^version/ {
-              gsub(/"/, "", $3);
-              print $3;
-              exit
-            }
-          ' Cargo.toml)
-          echo "ONTOENV_VERSION=$VERSION" >> "$GITHUB_ENV"
       - run: pip install build
       - run: python -m build
         working-directory: ./pyontoenv-shim
