@@ -2777,6 +2777,7 @@ version = "0.6.0-a2"
 dependencies = [
  "clap",
  "criterion",
+ "log",
  "memmap2",
  "oxigraph",
  "oxrdf",

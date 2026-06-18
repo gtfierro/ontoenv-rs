@@ -44,14 +44,18 @@ pub mod header;
 pub mod reader;
 #[cfg(feature = "idx")]
 pub mod index;
+#[cfg(feature = "idx")]
+pub mod snapshot;
 #[cfg(feature = "sparql")]
 pub mod sparql;
 pub mod update;
 pub mod writer;
 
 pub use reader::{DecodedTerm, GraphRef, IntegrityMode, OpenOptions, R5tuFile};
+#[cfg(feature = "idx")]
+pub use snapshot::{Match, Pattern, Scope, Snapshot};
 #[cfg(feature = "sparql")]
-pub use sparql::SparqlDatasetView;
+pub use sparql::SparqlView;
 pub use update::{replace_graph, replace_graph_with_options};
 pub use writer::{
     Quint, SpillPolicy, StreamingWriteStats, StreamingWriter, StreamingWriterOptions, Term,

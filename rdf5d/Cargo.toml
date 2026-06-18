@@ -11,6 +11,7 @@ readme = "README.md"
 
 [dependencies]
 clap.workspace = true
+log = { workspace = true, optional = true }
 oxrdf = { workspace = true, optional = true }
 oxigraph = { workspace = true, optional = true }
 spargebra = { workspace = true, optional = true }
@@ -28,8 +29,8 @@ zstd = ["dep:zstd"]
 oxigraph = ["dep:oxigraph"]
 rocksdb = ["oxigraph/rocksdb"]
 mmap = ["dep:memmap2"]
-sparql = ["dep:oxrdf", "dep:spargebra", "dep:spareval"]
-idx = []
+sparql = ["dep:oxrdf", "dep:spargebra", "dep:spareval", "idx"]
+idx = ["dep:log"]
 
 [[bench]]
 name = "rdf5d_bench"

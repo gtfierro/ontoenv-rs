@@ -2,11 +2,14 @@
 
 use std::path::Path;
 
-use rdf5d::{Quint, R5tuFile, Term, write_file};
-use spareval::{QueryEvaluationError, QueryEvaluator, QueryResults};
+use rdf5d::{Quint, Snapshot, Term, write_file};
+use spareval::{QueryEvaluationError, QueryResults};
 use spargebra::SparqlParser;
 use tempfile::tempdir;
 
+/// Two datasets feed the graph name `shared` (alice via dataset:1, bob via
+/// dataset:2), so that name spans two physical graph groups. `other` holds
+/// carol via dataset:1 only.
 fn build_fixture(path: &Path) {
     let quints = vec![
         Quint {
@@ -46,13 +49,25 @@ fn build_fixture(path: &Path) {
     write_file(path, &quints).expect("fixture written");
 }
 
+fn solution_subjects(results: QueryResults<'_>) -> Result<Vec<String>, QueryEvaluationError> {
+    let QueryResults::Solutions(solutions) = results else {
+        panic!("expected solution results");
+    };
+    let mut subjects = solutions
+        .map(|row| row.map(|solution| solution["s"].to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    subjects.sort();
+    Ok(subjects)
+}
+
 #[test]
-fn select_over_shared_graph_unions_ids() -> Result<(), QueryEvaluationError> {
+fn graph_clause_unions_gids_sharing_a_name() -> Result<(), QueryEvaluationError> {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("fixture.r5tu");
     build_fixture(&path);
-    let file = R5tuFile::open(&path).expect("open fixture");
-    let query = SparqlParser::new()
+    let snap = Snapshot::open(&path).expect("open fixture");
+
+    let mut query = SparqlParser::new()
         .parse_query(
             "SELECT ?s WHERE {
                GRAPH <http://example.org/graph/shared> {
@@ -62,15 +77,8 @@ fn select_over_shared_graph_unions_ids() -> Result<(), QueryEvaluationError> {
         )
         .expect("query parses");
 
-    let results = file.query(&query)?;
-    let QueryResults::Solutions(solutions) = results else {
-        panic!("expected solution results");
-    };
-    let mut subjects = solutions
-        .map(|row| row.map(|solution| solution["s"].to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    subjects.sort();
-
+    // The logical graph `shared` unions the two physical gids behind the name.
+    let subjects = solution_subjects(snap.query(&mut query)?)?;
     assert_eq!(
         subjects,
         vec!["<http://example.org/alice>", "<http://example.org/bob>"]
@@ -83,20 +91,12 @@ fn default_graph_is_union_of_named_graphs() -> Result<(), QueryEvaluationError> 
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("fixture.r5tu");
     build_fixture(&path);
-    let file = R5tuFile::open(&path).expect("open fixture");
+    let snap = Snapshot::open(&path).expect("open fixture");
 
-    let query = SparqlParser::new()
+    let mut query = SparqlParser::new()
         .parse_query("SELECT ?s WHERE { ?s <http://example.org/name> ?o }")
         .expect("query parses");
-    let results = file.query(&query)?;
-    let QueryResults::Solutions(solutions) = results else {
-        panic!("expected solution results");
-    };
-    let mut subjects = solutions
-        .map(|row| row.map(|solution| solution["s"].to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    subjects.sort();
-
+    let subjects = solution_subjects(snap.query(&mut query)?)?;
     assert_eq!(
         subjects,
         vec![
@@ -109,43 +109,31 @@ fn default_graph_is_union_of_named_graphs() -> Result<(), QueryEvaluationError> 
 }
 
 #[test]
-fn scoped_view_restricts_to_subset_of_gids() -> Result<(), QueryEvaluationError> {
+fn logical_view_dedups_triples_across_shared_name() -> Result<(), QueryEvaluationError> {
+    // The same triple is written under two datasets that share one graph name,
+    // so it lives in two physical gids. The logical view must surface it once.
     let dir = tempdir().expect("tempdir");
-    let path = dir.path().join("fixture.r5tu");
-    build_fixture(&path);
-    let file = R5tuFile::open(&path).expect("open fixture");
+    let path = dir.path().join("dup.r5tu");
+    let triple = |id: &str| Quint {
+        id: id.into(),
+        s: Term::Iri("http://example.org/alice".into()),
+        p: Term::Iri("http://example.org/name".into()),
+        o: Term::Literal {
+            lex: "Alice".into(),
+            dt: None,
+            lang: None,
+        },
+        gname: "http://example.org/graph/shared".into(),
+    };
+    write_file(&path, &[triple("dataset:1"), triple("dataset:2")]).expect("write");
+    let snap = Snapshot::open(&path).expect("open");
 
-    // Scope to the "dataset:1" source: alice@shared and carol@other, but not
-    // bob (which lives under dataset:2). The gid set is derived from the
-    // id (source) index.
-    let gids: Vec<u64> = file
-        .enumerate_by_id("dataset:1")
-        .expect("enumerate by id")
-        .into_iter()
-        .map(|graph| graph.gid)
-        .collect();
-    assert_eq!(gids.len(), 2, "dataset:1 spans two graph groups");
-
-    let query = SparqlParser::new()
+    // No DISTINCT: a non-deduped (physical) view would bind ?s twice.
+    let mut query = SparqlParser::new()
         .parse_query("SELECT ?s WHERE { ?s <http://example.org/name> ?o }")
         .expect("query parses");
-
-    let results = QueryEvaluator::new()
-        .prepare(&query)
-        .execute(file.sparql_view_for_gids(&gids))?;
-    let QueryResults::Solutions(solutions) = results else {
-        panic!("expected solution results");
-    };
-    let mut subjects = solutions
-        .map(|row| row.map(|solution| solution["s"].to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    subjects.sort();
-
-    assert_eq!(
-        subjects,
-        vec!["<http://example.org/alice>", "<http://example.org/carol>"],
-        "scoped view excludes triples from other sources"
-    );
+    let subjects = solution_subjects(snap.query(&mut query)?)?;
+    assert_eq!(subjects, vec!["<http://example.org/alice>"]);
     Ok(())
 }
 
@@ -154,9 +142,9 @@ fn graph_variable_filter_uses_graph_name_terms() -> Result<(), QueryEvaluationEr
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("fixture.r5tu");
     build_fixture(&path);
-    let file = R5tuFile::open(&path).expect("open fixture");
+    let snap = Snapshot::open(&path).expect("open fixture");
 
-    let query = SparqlParser::new()
+    let mut query = SparqlParser::new()
         .parse_query(
             "SELECT DISTINCT ?g WHERE {
                GRAPH ?g { ?s <http://example.org/name> ?o }
@@ -164,8 +152,7 @@ fn graph_variable_filter_uses_graph_name_terms() -> Result<(), QueryEvaluationEr
              }",
         )
         .expect("query parses");
-    let results = file.query(&query)?;
-    let QueryResults::Solutions(mut solutions) = results else {
+    let QueryResults::Solutions(mut solutions) = snap.query(&mut query)? else {
         panic!("expected solution results");
     };
     let first = solutions.next().expect("one row")?;

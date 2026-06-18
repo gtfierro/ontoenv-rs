@@ -24,20 +24,13 @@ use pyo3::{
     types::{IntoPyDict, PyDict, PyList, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
-use rdf5d::index::{MemPClos, MemSection};
-use rdf5d::{DecodedTerm, R5tuFile};
-use spareval::{
-    InternalQuad as SpareInternalQuad, QueryEvaluator, QueryResults as SpareQueryResults,
-    QueryableDataset,
-};
+use rdf5d::{DecodedTerm, Pattern, Scope, Snapshot};
+use spareval::{QueryEvaluator, QueryResults as SpareQueryResults};
 use spargebra::SparqlParser;
-use spargebra::algebra::{GraphPattern, PropertyPathExpression};
-use spargebra::term::{GroundTerm, TermPattern, Variable};
 use std::borrow::{Borrow, Cow};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
-use std::iter::{empty, once};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -1238,264 +1231,19 @@ impl PyOntology {
     }
 }
 
-#[derive(Debug)]
-struct LogicalGraphInfo {
-    gids: Vec<u64>,
-    /// Exact, dedup-aware unique-triple count. Filled lazily on the first
-    /// `len()` call so that opening a snapshot stays O(graphs). For
-    /// single-gid logical graphs we initialize this from the GDIR
-    /// `n_triples` at open time, since no cross-gid dedup is needed.
-    triple_count: OnceLock<usize>,
+/// Resolve an oxrdf [`Term`] to its on-disk term id in `snapshot`, or `None`
+/// when the term is absent from the dictionary.
+fn snapshot_term_id(snapshot: &Snapshot, term: &Term) -> Option<u64> {
+    snapshot.file().term_id(&term_to_decoded_term(term))
 }
 
-/// Predicate IRIs whose transitive closure is precomputed (in memory, on
-/// first use) to accelerate SPARQL `P+`/`P*` property paths.
-const CLOSURE_PREDICATE_IRIS: &[&str] = &[
-    "http://www.w3.org/2000/01/rdf-schema#subClassOf",
-    "http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
-    "http://www.w3.org/2002/07/owl#sameAs",
-];
-
-#[derive(Debug)]
-struct Rdf5dSnapshot {
-    file: Arc<R5tuFile>,
-    logical_graphs: HashMap<String, LogicalGraphInfo>,
-    // Permutation indexes, built in memory from `file` on first use. Each is
-    // independent so we only pay for the permutations a workload actually
-    // queries. `None` inside the `OnceLock` means the build failed (logged).
-    mem_pso: OnceLock<Option<MemSection>>,
-    mem_pos: OnceLock<Option<MemSection>>,
-    mem_spo: OnceLock<Option<MemSection>>,
-    mem_osp: OnceLock<Option<MemSection>>,
-    // Precomputed transitive closures for CLOSURE_PREDICATE_IRIS, built lazily.
-    mem_pclos: OnceLock<Option<MemPClos>>,
-}
-
-impl Rdf5dSnapshot {
-    fn open(path: &Path) -> Result<Self> {
-        let file = Arc::new(R5tuFile::open_mmap(path)?);
-        let mut grouped: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
-        for graph in file.enumerate_all()? {
-            grouped
-                .entry(graph.graphname)
-                .or_default()
-                .push((graph.gid, graph.n_triples));
-        }
-
-        let mut logical_graphs = HashMap::with_capacity(grouped.len());
-        for (graph_name, entries) in grouped {
-            let triple_count = OnceLock::new();
-            if entries.len() == 1 {
-                // Single physical gid: no cross-gid dedup needed.
-                let _ = triple_count.set(entries[0].1 as usize);
-            }
-            let gids = entries.into_iter().map(|(gid, _)| gid).collect();
-            logical_graphs.insert(graph_name, LogicalGraphInfo { gids, triple_count });
-        }
-
-        Ok(Self {
-            file,
-            logical_graphs,
-            mem_pso: OnceLock::new(),
-            mem_pos: OnceLock::new(),
-            mem_spo: OnceLock::new(),
-            mem_osp: OnceLock::new(),
-            mem_pclos: OnceLock::new(),
-        })
+/// The snapshot's logical graphs as rdflib graph-name nodes.
+fn snapshot_named_graphs(snapshot: &Snapshot) -> Result<Vec<NamedOrBlankNode>> {
+    let mut values = Vec::new();
+    for graph_name in snapshot.graph_names() {
+        values.push(named_or_blank_node_from_graph_name(graph_name)?);
     }
-
-    /// Lazily build (once) and borrow a permutation index. Returns `None` if
-    /// the build failed.
-    fn mem_section(&self, kind: rdf5d::index::IdxKind) -> Option<&MemSection> {
-        let cell = match kind {
-            rdf5d::index::IdxKind::Pso => &self.mem_pso,
-            rdf5d::index::IdxKind::Pos => &self.mem_pos,
-            rdf5d::index::IdxKind::Spo => &self.mem_spo,
-            rdf5d::index::IdxKind::Osp => &self.mem_osp,
-            rdf5d::index::IdxKind::PClos => return None,
-        };
-        cell.get_or_init(|| match rdf5d::index::build_mem_section(&self.file, kind) {
-            Ok(section) => Some(section),
-            Err(e) => {
-                log::warn!("building {:?} index failed: {}", kind, e);
-                None
-            }
-        })
-        .as_ref()
-    }
-
-    /// Lazily build (once) and borrow the precomputed transitive-closure index.
-    fn mem_pclos(&self) -> Option<&MemPClos> {
-        self.mem_pclos
-            .get_or_init(|| {
-                // Resolve the default closure-predicate IRIs to term ids that
-                // exist in this snapshot; skip any that are absent.
-                let mut pred_ids = Vec::new();
-                for iri in CLOSURE_PREDICATE_IRIS {
-                    let term = DecodedTerm::Iri(Cow::Borrowed(iri));
-                    if let Some(id) = self.file.term_id(&term) {
-                        pred_ids.push(id);
-                    }
-                }
-                if pred_ids.is_empty() {
-                    return None;
-                }
-                match rdf5d::index::build_mem_pclos(&self.file, &pred_ids) {
-                    Ok(pclos) => Some(pclos),
-                    Err(e) => {
-                        log::warn!("building closure index failed: {}", e);
-                        None
-                    }
-                }
-            })
-            .as_ref()
-    }
-
-    fn closure_forward(&self, predicate: u64, subject: u64) -> Option<Vec<u64>> {
-        self.mem_pclos()?.closure_forward(predicate, subject)
-    }
-
-    fn closure_reverse(&self, predicate: u64, object: u64) -> Option<Vec<u64>> {
-        self.mem_pclos()?.closure_reverse(predicate, object)
-    }
-
-    /// Helper: when a sidecar is present and the predicate is bound, use the
-    /// PSO posting (or POS when both P and O are bound) to iterate matching
-    /// triples for the given set of gids. `gid_filter` is a list of physical
-    /// gids to include. `subject_id` and `object_id` further restrict by ID.
-    /// Returns Some(triples) on success, None when the sidecar is missing or
-    /// the predicate has no postings.
-    fn scan_indexed(
-        &self,
-        subject_id: Option<u64>,
-        predicate_id: Option<u64>,
-        object_id: Option<u64>,
-        gid_filter: &[u64],
-    ) -> Option<Vec<(u64, u64, u64, u64)>> {
-        use rdf5d::index::IdxKind;
-        let mut out = Vec::new();
-        match (subject_id, predicate_id, object_id) {
-            // Predicate + object bound: POS (skips gid-S scans).
-            (subject_id, Some(p_id), Some(o_id)) => {
-                let post = self.mem_section(IdxKind::Pos)?.lookup(p_id)?;
-                for &gid in gid_filter {
-                    let Some(block) = post.block_for_gid(gid) else {
-                        continue;
-                    };
-                    for (o, s) in post.iter_block(block) {
-                        if o != o_id || subject_id.is_some_and(|sid| s != sid) {
-                            continue;
-                        }
-                        out.push((gid, s, p_id, o));
-                    }
-                }
-            }
-            // Predicate bound, object unbound: PSO.
-            (subject_id, Some(p_id), None) => {
-                let post = self.mem_section(IdxKind::Pso)?.lookup(p_id)?;
-                for &gid in gid_filter {
-                    let Some(block) = post.block_for_gid(gid) else {
-                        continue;
-                    };
-                    for (s, o) in post.iter_block(block) {
-                        if subject_id.is_some_and(|sid| s != sid) {
-                            continue;
-                        }
-                        out.push((gid, s, p_id, o));
-                    }
-                }
-            }
-            // Predicate unbound, subject bound: SPO (pairs are (predicate, object)).
-            (Some(s_id), None, object_id) => {
-                let post = self.mem_section(IdxKind::Spo)?.lookup(s_id)?;
-                for &gid in gid_filter {
-                    let Some(block) = post.block_for_gid(gid) else {
-                        continue;
-                    };
-                    for (p, o) in post.iter_block(block) {
-                        if object_id.is_some_and(|oid| o != oid) {
-                            continue;
-                        }
-                        out.push((gid, s_id, p, o));
-                    }
-                }
-            }
-            // Predicate + subject unbound, object bound: OSP (pairs are (subject, predicate)).
-            (None, None, Some(o_id)) => {
-                let post = self.mem_section(IdxKind::Osp)?.lookup(o_id)?;
-                for &gid in gid_filter {
-                    let Some(block) = post.block_for_gid(gid) else {
-                        continue;
-                    };
-                    for (s, p) in post.iter_block(block) {
-                        out.push((gid, s, p, o_id));
-                    }
-                }
-            }
-            // All unbound: no index can help — caller does a full scan.
-            (None, None, None) => return None,
-        }
-        Some(out)
-    }
-
-    fn triple_count_for(&self, info: &LogicalGraphInfo) -> Result<usize> {
-        if let Some(count) = info.triple_count.get() {
-            return Ok(*count);
-        }
-        let count = count_unique_triples_for_gids(&self.file, &info.gids)?;
-        let _ = info.triple_count.set(count);
-        Ok(*info.triple_count.get().unwrap_or(&count))
-    }
-
-    fn named_graphs(&self) -> Result<Vec<NamedOrBlankNode>> {
-        let mut values = Vec::with_capacity(self.logical_graphs.len());
-        for graph_name in self.logical_graphs.keys() {
-            values.push(named_or_blank_node_from_graph_name(graph_name)?);
-        }
-        Ok(values)
-    }
-
-    fn logical_graph(&self, graph_name: &GraphName) -> Option<&LogicalGraphInfo> {
-        match graph_name {
-            GraphName::NamedNode(node) => self.logical_graphs.get(node.as_str()),
-            GraphName::BlankNode(node) => self.logical_graphs.get(node.as_str()),
-            GraphName::DefaultGraph => None,
-        }
-    }
-
-    fn graph_names_for_term_ids(
-        &self,
-        subject_id: u64,
-        predicate_id: u64,
-        object_id: u64,
-    ) -> Result<Vec<String>> {
-        let mut matches = Vec::new();
-        for (graph_name, info) in &self.logical_graphs {
-            let found = info
-                .gids
-                .iter()
-                .any(|gid| match self.file.triples_ids(*gid) {
-                    Ok(mut triples) => triples.any(|(s_id, p_id, o_id)| {
-                        s_id == subject_id && p_id == predicate_id && o_id == object_id
-                    }),
-                    Err(_) => false,
-                });
-            if found {
-                matches.push(graph_name.clone());
-            }
-        }
-        Ok(matches)
-    }
-
-    fn find_term_id(&self, term: &Term) -> Result<Option<u64>> {
-        self.find_decoded_term_id(&term_to_decoded_term(term))
-    }
-
-    /// Reverse lookup of a decoded term's on-disk id, or `None` if absent.
-    /// Backed by `R5tuFile`'s lazily-built `O(1)` reverse index.
-    fn find_decoded_term_id(&self, term: &DecodedTerm<'_>) -> Result<Option<u64>> {
-        Ok(self.file.term_id(term))
-    }
+    Ok(values)
 }
 
 /// The storage strategy currently bound to an `OntoEnvStore`.
@@ -1512,7 +1260,7 @@ enum RdfLibStoreBackend {
     EnvSnapshotRdf5d {
         #[allow(dead_code)]
         store_path: PathBuf,
-        snapshot: Arc<Rdf5dSnapshot>,
+        snapshot: Arc<Snapshot>,
     },
 }
 
@@ -1549,15 +1297,6 @@ fn collect_graph_triples(env: &OntoEnvRs, id: &GraphIdentifier) -> Result<Vec<Tr
     Ok(out)
 }
 
-fn count_unique_triples_for_gids(file: &R5tuFile, gids: &[u64]) -> Result<usize> {
-    let mut triples = HashSet::new();
-    for gid in gids {
-        for triple_ids in file.triples_ids(*gid)? {
-            triples.insert(triple_ids);
-        }
-    }
-    Ok(triples.len())
-}
 
 fn named_or_blank_node_from_graph_name(graph_name: &str) -> Result<NamedOrBlankNode> {
     let graph_name = graph_name_from_string(graph_name)?;
@@ -1642,206 +1381,6 @@ fn subject_to_term(subject: &NamedOrBlankNode) -> Term {
     match subject {
         NamedOrBlankNode::NamedNode(node) => Term::NamedNode(node.clone()),
         NamedOrBlankNode::BlankNode(node) => Term::BlankNode(node.clone()),
-    }
-}
-
-/// `spareval::QueryableDataset` adapter that exposes an `Rdf5dSnapshot` as
-/// a SPARQL-queryable dataset organized by logical (by-name) graph.
-///
-/// Differs from `rdf5d::SparqlDatasetView` in that it deduplicates triples
-/// across the physical gids that share a single graph name, so SPARQL sees
-/// each logical graph as a single named graph.
-#[derive(Clone, Copy, Debug)]
-struct LogicalSparqlDatasetView<'a> {
-    snapshot: &'a Rdf5dSnapshot,
-}
-
-impl<'a> LogicalSparqlDatasetView<'a> {
-    fn new(snapshot: &'a Rdf5dSnapshot) -> Self {
-        Self { snapshot }
-    }
-
-    fn quads_for_logical_graph(
-        snapshot: &'a Rdf5dSnapshot,
-        graph_name: &'a str,
-        info: &'a LogicalGraphInfo,
-        subject: Option<u64>,
-        predicate: Option<u64>,
-        object: Option<u64>,
-    ) -> Box<
-        dyn Iterator<
-                Item = std::result::Result<SpareInternalQuad<u64>, rdf5d::reader::R5Error>,
-            > + 'a,
-    > {
-        let file = snapshot.file.as_ref();
-        let graph_id = file.intern_decoded(&DecodedTerm::Iri(Cow::Borrowed(graph_name)));
-
-        // A bound term that is absent from the on-disk dictionary was interned
-        // to an overflow id (>= num_terms) which can never equal a scanned id,
-        // so the pattern matches nothing — short-circuit the scan.
-        let n_terms = file.num_terms();
-        if [subject, predicate, object]
-            .iter()
-            .any(|bound| bound.is_some_and(|id| id >= n_terms))
-        {
-            return Box::new(empty());
-        }
-
-        let mut quads = Vec::new();
-        let mut seen = HashSet::new();
-
-        // Fast path: serve from the sidecar indexes — PSO/POS for a bound
-        // predicate, SPO/OSP for a bound subject/object. Returns None only
-        // when no term is bound (or the sidecar is missing), in which case we
-        // fall through to the full per-graph scan below.
-        if let Some(hits) = snapshot.scan_indexed(subject, predicate, object, &info.gids) {
-            for (_gid, s_id, p_id, o_id) in hits {
-                if seen.insert((s_id, p_id, o_id)) {
-                    quads.push(Ok(SpareInternalQuad {
-                        subject: s_id,
-                        predicate: p_id,
-                        object: o_id,
-                        graph_name: Some(graph_id),
-                    }));
-                }
-            }
-            return Box::new(quads.into_iter());
-        }
-
-        for gid in &info.gids {
-            let triples = match file.triples_ids(*gid) {
-                Ok(triples) => triples,
-                Err(error) => return Box::new(once(Err(error))),
-            };
-            for (s_id, p_id, o_id) in triples {
-                if subject.is_some_and(|id| id != s_id)
-                    || predicate.is_some_and(|id| id != p_id)
-                    || object.is_some_and(|id| id != o_id)
-                {
-                    continue;
-                }
-                if seen.insert((s_id, p_id, o_id)) {
-                    quads.push(Ok(SpareInternalQuad {
-                        subject: s_id,
-                        predicate: p_id,
-                        object: o_id,
-                        graph_name: Some(graph_id),
-                    }));
-                }
-            }
-        }
-        Box::new(quads.into_iter())
-    }
-
-    fn quads_for_all_logical_graphs(
-        snapshot: &'a Rdf5dSnapshot,
-        subject: Option<u64>,
-        predicate: Option<u64>,
-        object: Option<u64>,
-    ) -> Box<
-        dyn Iterator<
-                Item = std::result::Result<SpareInternalQuad<u64>, rdf5d::reader::R5Error>,
-            > + 'a,
-    > {
-        Box::new(
-            snapshot
-                .logical_graphs
-                .iter()
-                .flat_map(move |(graph_name, info)| {
-                    Self::quads_for_logical_graph(
-                        snapshot,
-                        graph_name.as_str(),
-                        info,
-                        subject,
-                        predicate,
-                        object,
-                    )
-                }),
-        )
-    }
-}
-
-impl<'a> QueryableDataset<'a> for LogicalSparqlDatasetView<'a> {
-    type InternalTerm = u64;
-    type Error = rdf5d::reader::R5Error;
-
-    #[allow(refining_impl_trait)]
-    fn internal_quads_for_pattern(
-        &self,
-        subject: Option<&Self::InternalTerm>,
-        predicate: Option<&Self::InternalTerm>,
-        object: Option<&Self::InternalTerm>,
-        graph_name: Option<Option<&Self::InternalTerm>>,
-    ) -> Box<
-        dyn Iterator<Item = std::result::Result<SpareInternalQuad<Self::InternalTerm>, Self::Error>>
-            + 'a,
-    > {
-        let subject = subject.copied();
-        let predicate = predicate.copied();
-        let object = object.copied();
-        let snapshot = self.snapshot;
-
-        match graph_name {
-            None | Some(None) => {
-                Self::quads_for_all_logical_graphs(snapshot, subject, predicate, object)
-            }
-            Some(Some(&graph_id)) => {
-                let graph_name = match snapshot.file.externalize_id(graph_id) {
-                    Ok(DecodedTerm::Iri(name)) => name.into_owned(),
-                    // A non-IRI graph name matches no logical graph.
-                    Ok(_) => return Box::new(empty()),
-                    Err(error) => return Box::new(once(Err(error))),
-                };
-                let Some((graph_name, info)) =
-                    snapshot.logical_graphs.get_key_value(graph_name.as_str())
-                else {
-                    return Box::new(empty());
-                };
-                Self::quads_for_logical_graph(
-                    snapshot,
-                    graph_name.as_str(),
-                    info,
-                    subject,
-                    predicate,
-                    object,
-                )
-            }
-        }
-    }
-
-    #[allow(refining_impl_trait)]
-    fn internal_named_graphs(
-        &self,
-    ) -> Box<dyn Iterator<Item = std::result::Result<Self::InternalTerm, Self::Error>> + 'a> {
-        let snapshot = self.snapshot;
-        Box::new(snapshot.logical_graphs.keys().map(move |graph_name| {
-            Ok(snapshot
-                .file
-                .intern_decoded(&DecodedTerm::Iri(Cow::Borrowed(graph_name.as_str()))))
-        }))
-    }
-
-    fn contains_internal_graph_name(
-        &self,
-        graph_name: &Self::InternalTerm,
-    ) -> std::result::Result<bool, Self::Error> {
-        let name = match self.snapshot.file.externalize_id(*graph_name)? {
-            DecodedTerm::Iri(name) => name.into_owned(),
-            _ => return Ok(false),
-        };
-        Ok(self.snapshot.logical_graphs.contains_key(name.as_str()))
-    }
-
-    fn internalize_term(&self, term: Term) -> std::result::Result<Self::InternalTerm, Self::Error> {
-        Ok(self
-            .snapshot
-            .file
-            .intern_decoded(&term_to_decoded_term(&term)))
-    }
-
-    fn externalize_term(&self, term: Self::InternalTerm) -> std::result::Result<Term, Self::Error> {
-        let decoded = self.snapshot.file.externalize_id(term)?;
-        decoded_term_to_term(decoded).map_err(|e| rdf5d::reader::R5Error::Corrupt(e.to_string()))
     }
 }
 
@@ -1985,216 +1524,6 @@ struct PyRdfLibStoreBackend {
     backend: Arc<Mutex<RdfLibStoreBackend>>,
 }
 
-/// Rewrites `?x P+ ?y` / `?x P* ?y` graph patterns in a parsed SPARQL
-/// query, substituting precomputed `VALUES` blocks (or BGPs) for paths
-/// whose predicate is in the snapshot's precomputed closure index.
-///
-/// Bail-out cases: predicate not in the closure index; both endpoints are
-/// variables; path is anything other than a direct `ZeroOrMore`/`OneOrMore`
-/// of a single `NamedNode` (optionally reversed). In all bail-outs, the
-/// original pattern is left intact and spareval evaluates the property path
-/// itself.
-struct PClosRewriter<'a> {
-    snapshot: &'a Rdf5dSnapshot,
-}
-
-impl<'a> PClosRewriter<'a> {
-    fn new(snapshot: &'a Rdf5dSnapshot) -> Self {
-        Self { snapshot }
-    }
-
-    /// Returns true when the snapshot has any precomputed closure data.
-    fn enabled(&self) -> bool {
-        self.snapshot.mem_pclos().is_some()
-    }
-
-    fn predicate_id(&self, iri: &str) -> Option<u64> {
-        let term = DecodedTerm::Iri(Cow::Borrowed(iri));
-        self.snapshot.find_decoded_term_id(&term).ok().flatten()
-    }
-
-    fn term_to_python_node(&self, term_id: u64) -> Option<spargebra::term::NamedNode> {
-        let decoded = self.snapshot.file.decoded_term(term_id).ok()?;
-        match decoded {
-            DecodedTerm::Iri(s) => spargebra::term::NamedNode::new(s.into_owned()).ok(),
-            _ => None,
-        }
-    }
-
-    fn rewrite_query(&self, q: &mut spargebra::Query) {
-        if !self.enabled() {
-            return;
-        }
-        match q {
-            spargebra::Query::Select { pattern, .. }
-            | spargebra::Query::Construct { pattern, .. }
-            | spargebra::Query::Describe { pattern, .. }
-            | spargebra::Query::Ask { pattern, .. } => {
-                self.rewrite_pattern(pattern);
-            }
-        }
-    }
-
-    fn rewrite_pattern(&self, pat: &mut GraphPattern) {
-        // Recurse first so inner Path nodes are still reachable.
-        match pat {
-            GraphPattern::Path { .. } => {}
-            GraphPattern::Join { left, right }
-            | GraphPattern::Union { left, right }
-            | GraphPattern::Minus { left, right } => {
-                self.rewrite_pattern(left);
-                self.rewrite_pattern(right);
-            }
-            GraphPattern::LeftJoin { left, right, .. } => {
-                self.rewrite_pattern(left);
-                self.rewrite_pattern(right);
-            }
-            GraphPattern::Filter { inner, .. }
-            | GraphPattern::Graph { inner, .. }
-            | GraphPattern::Extend { inner, .. }
-            | GraphPattern::OrderBy { inner, .. }
-            | GraphPattern::Project { inner, .. }
-            | GraphPattern::Distinct { inner }
-            | GraphPattern::Reduced { inner }
-            | GraphPattern::Slice { inner, .. }
-            | GraphPattern::Group { inner, .. }
-            | GraphPattern::Service { inner, .. } => {
-                self.rewrite_pattern(inner);
-            }
-            GraphPattern::Bgp { .. } | GraphPattern::Values { .. } => {}
-            // Catch-all for feature-gated variants (e.g. Lateral under
-            // sep-0006). Leave them untouched.
-            #[allow(unreachable_patterns)]
-            _ => {}
-        }
-        // Then rewrite at this level.
-        if let GraphPattern::Path { subject, path, object } = pat {
-            if let Some(replacement) =
-                self.rewrite_path(subject, path, object)
-            {
-                *pat = replacement;
-            }
-        }
-    }
-
-    /// Try to compute a replacement `GraphPattern` for a path triple.
-    /// Returns `None` to leave the pattern untouched.
-    fn rewrite_path(
-        &self,
-        subject: &TermPattern,
-        path: &PropertyPathExpression,
-        object: &TermPattern,
-    ) -> Option<GraphPattern> {
-        // Extract `(NamedNode(p), include_reflexive_for_star)` for paths we
-        // can handle: ZeroOrMore(P), OneOrMore(P), and the reverse-path
-        // variants ^P+ / ^P*.
-        let (named, include_reflexive, reversed) = match path {
-            PropertyPathExpression::OneOrMore(inner) => match inner.as_ref() {
-                PropertyPathExpression::NamedNode(p) => (p, false, false),
-                PropertyPathExpression::Reverse(inner2) => match inner2.as_ref() {
-                    PropertyPathExpression::NamedNode(p) => (p, false, true),
-                    _ => return None,
-                },
-                _ => return None,
-            },
-            PropertyPathExpression::ZeroOrMore(inner) => match inner.as_ref() {
-                PropertyPathExpression::NamedNode(p) => (p, true, false),
-                PropertyPathExpression::Reverse(inner2) => match inner2.as_ref() {
-                    PropertyPathExpression::NamedNode(p) => (p, true, true),
-                    _ => return None,
-                },
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let p_id = self.predicate_id(named.as_str())?;
-
-        // After reversal, the "forward" lookup direction in the sidecar
-        // corresponds to the *object* side of the SPARQL path, not the
-        // subject side. Conceptually: `?s ^P+ ?o` ≡ `?o P+ ?s`.
-        let (left, right) = if reversed {
-            (object, subject)
-        } else {
-            (subject, object)
-        };
-
-        match (left, right) {
-            // const P+ ?var  -> forward closure of const, bind ?var
-            (TermPattern::NamedNode(c), TermPattern::Variable(var)) => {
-                let c_id = self.predicate_id(c.as_str())?;
-                let mut answers = self
-                    .snapshot
-                    .closure_forward(p_id, c_id)
-                    .unwrap_or_default();
-                if include_reflexive {
-                    answers.push(c_id);
-                    answers.sort();
-                    answers.dedup();
-                }
-                Some(self.values_for_var(var, &answers))
-            }
-            // ?var P+ const  -> reverse closure of const, bind ?var
-            (TermPattern::Variable(var), TermPattern::NamedNode(c)) => {
-                let c_id = self.predicate_id(c.as_str())?;
-                let mut answers = self
-                    .snapshot
-                    .closure_reverse(p_id, c_id)
-                    .unwrap_or_default();
-                if include_reflexive {
-                    answers.push(c_id);
-                    answers.sort();
-                    answers.dedup();
-                }
-                Some(self.values_for_var(var, &answers))
-            }
-            // const1 P+ const2 -> check membership, replace with empty or true
-            (TermPattern::NamedNode(s), TermPattern::NamedNode(o)) => {
-                let s_id = self.predicate_id(s.as_str())?;
-                let o_id = self.predicate_id(o.as_str())?;
-                let answers = self
-                    .snapshot
-                    .closure_forward(p_id, s_id)
-                    .unwrap_or_default();
-                let reachable = answers.binary_search(&o_id).is_ok()
-                    || (include_reflexive && s_id == o_id);
-                if reachable {
-                    // Always-true: an empty BGP matches a single empty row.
-                    Some(GraphPattern::Bgp { patterns: vec![] })
-                } else {
-                    // Always-false: a Values with no rows.
-                    Some(GraphPattern::Values {
-                        variables: vec![],
-                        bindings: vec![],
-                    })
-                }
-            }
-            // Both endpoints variable — leave the path to spareval. The full
-            // closure table can be unbounded, so a materialized VALUES block
-            // is rarely a win here.
-            (TermPattern::Variable(_), TermPattern::Variable(_)) => None,
-            // Anything else (Literal, BlankNode, Triple) — leave alone.
-            _ => None,
-        }
-    }
-
-    fn values_for_var(
-        &self,
-        var: &Variable,
-        ids: &[u64],
-    ) -> GraphPattern {
-        let mut bindings: Vec<Vec<Option<GroundTerm>>> = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some(nn) = self.term_to_python_node(*id) {
-                bindings.push(vec![Some(GroundTerm::NamedNode(nn))]);
-            }
-        }
-        GraphPattern::Values {
-            variables: vec![var.clone()],
-            bindings,
-        }
-    }
-}
-
 #[pymethods]
 impl PyRdfLibStoreBackend {
     #[new]
@@ -2280,10 +1609,10 @@ impl PyRdfLibStoreBackend {
         Ok(())
     }
 
-    /// Bind this store to an mmap-backed, zero-copy `Rdf5dSnapshot` opened
-    /// from `store_path` (typically `.ontoenv/store.r5tu`).
+    /// Bind this store to an mmap-backed, zero-copy [`Snapshot`] opened from
+    /// `store_path` (typically `.ontoenv/store.r5tu`).
     fn bind_rdf5d_snapshot(&self, store_path: &str) -> PyResult<()> {
-        let snapshot = Rdf5dSnapshot::open(Path::new(store_path)).map_err(anyhow_to_pyerr)?;
+        let snapshot = Snapshot::open(Path::new(store_path)).map_err(r5error_to_pyerr)?;
         let mut backend = self.backend.lock().unwrap();
         *backend = RdfLibStoreBackend::EnvSnapshotRdf5d {
             store_path: PathBuf::from(store_path),
@@ -2438,27 +1767,11 @@ impl PyRdfLibStoreBackend {
                 let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
                 let subject_id = subject
                     .as_ref()
-                    .map(|value| {
-                        snapshot
-                            .find_term_id(&subject_to_term(value))
-                            .map_err(anyhow_to_pyerr)
-                    })
-                    .transpose()?
-                    .flatten();
+                    .map(|value| snapshot_term_id(snapshot, &subject_to_term(value)));
                 let predicate_id = predicate
                     .as_ref()
-                    .map(|value| {
-                        snapshot
-                            .find_term_id(&Term::NamedNode(value.clone()))
-                            .map_err(anyhow_to_pyerr)
-                    })
-                    .transpose()?
-                    .flatten();
-                let object_id = object
-                    .as_ref()
-                    .map(|value| snapshot.find_term_id(value).map_err(anyhow_to_pyerr))
-                    .transpose()?
-                    .flatten();
+                    .map(|value| snapshot_term_id(snapshot, &Term::NamedNode(value.clone())));
+                let object_id = object.as_ref().map(|value| snapshot_term_id(snapshot, value));
                 let empty_iter = |py: Python<'_>| -> PyResult<Py<PyAny>> {
                     Py::new(
                         py,
@@ -2474,105 +1787,39 @@ impl PyRdfLibStoreBackend {
                     .map(|p| p.into_any())
                 };
 
-                if (subject.is_some() && subject_id.is_none())
-                    || (predicate.is_some() && predicate_id.is_none())
-                    || (object.is_some() && object_id.is_none())
+                // A bound-but-absent term means no matches.
+                if [subject_id, predicate_id, object_id]
+                    .iter()
+                    .any(|resolved| matches!(resolved, Some(None)))
                 {
                     return empty_iter(py);
                 }
+                let pat = Pattern {
+                    s: subject_id.flatten(),
+                    p: predicate_id.flatten(),
+                    o: object_id.flatten(),
+                };
 
                 if let Some(graph_name) = graph_name.as_ref() {
-                    let Some(info) = snapshot.logical_graph(graph_name) else {
+                    let Some(name) = graph_name_key(graph_name) else {
                         return empty_iter(py);
                     };
-                    let Some(graph_name_key) = graph_name_key(graph_name) else {
+                    if !snapshot.has_graph(&name) {
                         return empty_iter(py);
-                    };
-                    let mut seen = HashSet::new();
-                    // Fast path via the sidecar indexes when any term is bound
-                    // (PSO/POS for predicate, SPO/OSP for subject/object).
-                    let mut used_idx = false;
-                    if subject_id.is_some() || predicate_id.is_some() || object_id.is_some() {
-                        if let Some(hits) =
-                            snapshot.scan_indexed(subject_id, predicate_id, object_id, &info.gids)
-                        {
-                            used_idx = true;
-                            for (_gid, s_id, p_id, o_id) in hits {
-                                if !seen.insert((s_id, p_id, o_id)) {
-                                    continue;
-                                }
-                                grouped
-                                    .insert((s_id, p_id, o_id), vec![graph_name_key.clone()]);
-                            }
-                        }
                     }
-                    if !used_idx {
-                        for gid in &info.gids {
-                            for triple_ids in
-                                snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
-                            {
-                                let (s_id, p_id, o_id) = triple_ids;
-                                if subject_id.is_some_and(|id| id != s_id)
-                                    || predicate_id.is_some_and(|id| id != p_id)
-                                    || object_id.is_some_and(|id| id != o_id)
-                                {
-                                    continue;
-                                }
-                                if !seen.insert(triple_ids) {
-                                    continue;
-                                }
-                                grouped
-                                    .insert((s_id, p_id, o_id), vec![graph_name_key.clone()]);
-                            }
-                        }
+                    for hit in snapshot.scan(pat, Scope::ByName(&name)) {
+                        let m = hit.map_err(r5error_to_pyerr)?;
+                        grouped
+                            .entry((m.s, m.p, m.o))
+                            .or_insert_with(|| vec![name.clone()]);
                     }
                 } else {
-                    // Fast path: sidecar indexes when any term is bound across
-                    // all gids (PSO/POS for predicate, SPO/OSP for subject/object).
-                    let mut used_idx = false;
-                    if subject_id.is_some() || predicate_id.is_some() || object_id.is_some() {
-                        // Build a gid -> graph_name lookup once.
-                        let mut gid_to_graphs: HashMap<u64, Vec<&String>> = HashMap::new();
-                        for (gname, info) in &snapshot.logical_graphs {
-                            for gid in &info.gids {
-                                gid_to_graphs.entry(*gid).or_default().push(gname);
-                            }
-                        }
-                        let all_gids: Vec<u64> = gid_to_graphs.keys().copied().collect();
-                        if let Some(hits) = snapshot
-                            .scan_indexed(subject_id, predicate_id, object_id, &all_gids)
-                        {
-                            used_idx = true;
-                            for (gid, s_id, p_id, o_id) in hits {
-                                let Some(gnames) = gid_to_graphs.get(&gid) else {
-                                    continue;
-                                };
-                                let contexts = grouped.entry((s_id, p_id, o_id)).or_default();
-                                for gname in gnames {
-                                    if !contexts.contains(*gname) {
-                                        contexts.push((*gname).clone());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !used_idx {
-                        for (graph_name, info) in &snapshot.logical_graphs {
-                            for gid in &info.gids {
-                                for (s_id, p_id, o_id) in
-                                    snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
-                                {
-                                    if subject_id.is_some_and(|id| id != s_id)
-                                        || predicate_id.is_some_and(|id| id != p_id)
-                                        || object_id.is_some_and(|id| id != o_id)
-                                    {
-                                        continue;
-                                    }
-                                    let contexts = grouped.entry((s_id, p_id, o_id)).or_default();
-                                    if !contexts.iter().any(|value| value == graph_name) {
-                                        contexts.push(graph_name.clone());
-                                    }
-                                }
+                    for name in snapshot.graph_names() {
+                        for hit in snapshot.scan(pat, Scope::ByName(name)) {
+                            let m = hit.map_err(r5error_to_pyerr)?;
+                            let contexts = grouped.entry((m.s, m.p, m.o)).or_default();
+                            if !contexts.iter().any(|c| c == name) {
+                                contexts.push(name.to_string());
                             }
                         }
                     }
@@ -2644,37 +1891,34 @@ impl PyRdfLibStoreBackend {
                             .map_err(anyhow_to_pyerr)?;
                     let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
 
-                    let Some(subject_id) = snapshot
-                        .find_term_id(&subject_to_term(&subject))
-                        .map_err(anyhow_to_pyerr)?
+                    let Some(subject_id) = snapshot_term_id(snapshot, &subject_to_term(&subject))
                     else {
                         return Ok(Vec::new());
                     };
-                    let Some(predicate_id) = snapshot
-                        .find_term_id(&Term::NamedNode(predicate))
-                        .map_err(anyhow_to_pyerr)?
+                    let Some(predicate_id) = snapshot_term_id(snapshot, &Term::NamedNode(predicate))
                     else {
                         return Ok(Vec::new());
                     };
-                    let Some(object_id) =
-                        snapshot.find_term_id(&object).map_err(anyhow_to_pyerr)?
-                    else {
+                    let Some(object_id) = snapshot_term_id(snapshot, &object) else {
                         return Ok(Vec::new());
                     };
-                    let graph_names = snapshot
-                        .graph_names_for_term_ids(subject_id, predicate_id, object_id)
-                        .map_err(anyhow_to_pyerr)?;
-                    graph_names
+                    let pat = Pattern {
+                        s: Some(subject_id),
+                        p: Some(predicate_id),
+                        o: Some(object_id),
+                    };
+                    snapshot
+                        .names_containing(pat)
+                        .map_err(r5error_to_pyerr)?
                         .into_iter()
                         .map(|graph_name| {
-                            graph_name_to_python_from_str(py, &rdflib, &graph_name)
+                            graph_name_to_python_from_str(py, &rdflib, graph_name)
                                 .map(Bound::unbind)
                         })
                         .collect()
                 } else {
                     snapshot
-                        .logical_graphs
-                        .keys()
+                        .graph_names()
                         .map(|graph_name| {
                             graph_name_to_python_from_str(py, &rdflib, graph_name)
                                 .map(Bound::unbind)
@@ -2706,19 +1950,20 @@ impl PyRdfLibStoreBackend {
                         || matches!(graph_name, GraphName::DefaultGraph)
                     {
                         0
+                    } else if let Some(name) = graph_name_key(&graph_name) {
+                        snapshot
+                            .triple_count(Scope::ByName(&name))
+                            .map_err(r5error_to_pyerr)?
                     } else {
-                        match snapshot.logical_graph(&graph_name) {
-                            Some(info) => {
-                                snapshot.triple_count_for(info).map_err(anyhow_to_pyerr)?
-                            }
-                            None => 0,
-                        }
+                        0
                     }
                 }
                 None => {
                     let mut total = 0usize;
-                    for info in snapshot.logical_graphs.values() {
-                        total += snapshot.triple_count_for(info).map_err(anyhow_to_pyerr)?;
+                    for name in snapshot.graph_names() {
+                        total += snapshot
+                            .triple_count(Scope::ByName(name))
+                            .map_err(r5error_to_pyerr)?;
                     }
                     total
                 }
@@ -2819,91 +2064,46 @@ impl PyRdfLibStoreBackend {
                     .map(|p| p.into_any())
                 };
 
-                // Resolve bound terms to IDs once. Any bound-but-absent term
+                // Resolve bound terms to ids once; any bound-but-absent term
                 // means the result is empty.
-                let resolve = |t: &Term| -> PyResult<Option<u64>> {
-                    snapshot.find_term_id(t).map_err(anyhow_to_pyerr)
-                };
+                let resolve = |t: &Term| snapshot_term_id(snapshot, t);
                 let subject_id = match subject.as_ref() {
-                    Some(v) => match resolve(&subject_to_term(v))? {
+                    Some(v) => match resolve(&subject_to_term(v)) {
                         Some(id) => Some(id),
                         None => return empty_iter(py),
                     },
                     None => None,
                 };
                 let predicate_id = match predicate.as_ref() {
-                    Some(v) => match resolve(&Term::NamedNode(v.clone()))? {
+                    Some(v) => match resolve(&Term::NamedNode(v.clone())) {
                         Some(id) => Some(id),
                         None => return empty_iter(py),
                     },
                     None => None,
                 };
                 let object_id = match object.as_ref() {
-                    Some(v) => match resolve(v)? {
+                    Some(v) => match resolve(v) {
                         Some(id) => Some(id),
                         None => return empty_iter(py),
                     },
                     None => None,
                 };
+                let pat = Pattern {
+                    s: subject_id,
+                    p: predicate_id,
+                    o: object_id,
+                };
 
                 let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
-                // Fast path via the sidecar indexes whenever at least one term
-                // is bound: PSO/POS for a bound predicate, SPO/OSP for a bound
-                // subject/object. We gather all gids across the requested graph
-                // names and let the sidecar do the filtering.
-                let mut used_idx = false;
-                let any_bound =
-                    subject_id.is_some() || predicate_id.is_some() || object_id.is_some();
-                if any_bound {
-                    let mut all_gids: Vec<u64> = Vec::new();
-                    let mut gid_to_name: HashMap<u64, &String> = HashMap::new();
-                    for name in &graph_names {
-                        if let Some(info) = snapshot.logical_graphs.get(name) {
-                            for gid in &info.gids {
-                                gid_to_name.entry(*gid).or_insert(name);
-                                all_gids.push(*gid);
-                            }
-                        }
+                for name in &graph_names {
+                    if !snapshot.has_graph(name) {
+                        continue;
                     }
-                    if !all_gids.is_empty() {
-                        if let Some(hits) =
-                            snapshot.scan_indexed(subject_id, predicate_id, object_id, &all_gids)
-                        {
-                            used_idx = true;
-                            for (gid, s_id, p_id, o_id) in hits {
-                                let Some(name) = gid_to_name.get(&gid) else {
-                                    continue;
-                                };
-                                let contexts =
-                                    grouped.entry((s_id, p_id, o_id)).or_default();
-                                if !contexts.contains(name) {
-                                    contexts.push((*name).clone());
-                                }
-                            }
-                        }
-                    }
-                }
-                if !used_idx {
-                    for name in &graph_names {
-                        let Some(info) = snapshot.logical_graphs.get(name) else {
-                            continue;
-                        };
-                        for gid in &info.gids {
-                            for (s_id, p_id, o_id) in
-                                snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
-                            {
-                                if subject_id.is_some_and(|id| id != s_id)
-                                    || predicate_id.is_some_and(|id| id != p_id)
-                                    || object_id.is_some_and(|id| id != o_id)
-                                {
-                                    continue;
-                                }
-                                let contexts =
-                                    grouped.entry((s_id, p_id, o_id)).or_default();
-                                if !contexts.iter().any(|c| c == name) {
-                                    contexts.push(name.clone());
-                                }
-                            }
+                    for hit in snapshot.scan(pat, Scope::ByName(name.as_str())) {
+                        let m = hit.map_err(r5error_to_pyerr)?;
+                        let contexts = grouped.entry((m.s, m.p, m.o)).or_default();
+                        if !contexts.iter().any(|c| c == name) {
+                            contexts.push(name.clone());
                         }
                     }
                 }
@@ -2961,15 +2161,14 @@ impl PyRdfLibStoreBackend {
                 // Collect term-ID triples eagerly; defer Term/Py construction
                 // until iteration so the u64-keyed cache amortizes work
                 // across repeated terms (predicates and shared subjects).
-                let file = snapshot.file.as_ref();
+                let file = snapshot.file();
                 let mut ids: Vec<(u64, u64, u64)> = Vec::new();
                 for name in &graph_names {
-                    let Some(info) = snapshot.logical_graphs.get(name) else {
+                    let Some(gids) = snapshot.gids_for_name(name) else {
                         continue;
                     };
-                    for gid in &info.gids {
-                        for triple_ids in file.triples_ids(*gid).map_err(r5error_to_pyerr)?
-                        {
+                    for &gid in gids {
+                        for triple_ids in file.triples_ids(gid).map_err(r5error_to_pyerr)? {
                             ids.push(triple_ids);
                         }
                     }
@@ -3010,11 +2209,13 @@ impl PyRdfLibStoreBackend {
             RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
                 let mut gids: Vec<u64> = Vec::new();
                 for name in &graph_names {
-                    if let Some(info) = snapshot.logical_graphs.get(name) {
-                        gids.extend(info.gids.iter().copied());
+                    if let Some(g) = snapshot.gids_for_name(name) {
+                        gids.extend_from_slice(g);
                     }
                 }
-                count_unique_triples_for_gids(&snapshot.file, &gids).map_err(anyhow_to_pyerr)
+                snapshot
+                    .triple_count(Scope::Gids(&gids))
+                    .map_err(r5error_to_pyerr)
             }
         }
     }
@@ -3059,39 +2260,31 @@ impl PyRdfLibStoreBackend {
                 Ok(false)
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
-                let s_id = match snapshot
-                    .find_term_id(&subject_to_term(&subject))
-                    .map_err(anyhow_to_pyerr)?
-                {
-                    Some(id) => id,
-                    None => return Ok(false),
+                let Some(s_id) = snapshot_term_id(snapshot, &subject_to_term(&subject)) else {
+                    return Ok(false);
                 };
-                let p_id = match snapshot
-                    .find_term_id(&Term::NamedNode(predicate))
-                    .map_err(anyhow_to_pyerr)?
-                {
-                    Some(id) => id,
-                    None => return Ok(false),
+                let Some(p_id) = snapshot_term_id(snapshot, &Term::NamedNode(predicate)) else {
+                    return Ok(false);
                 };
-                let o_id = match snapshot.find_term_id(&object).map_err(anyhow_to_pyerr)? {
-                    Some(id) => id,
-                    None => return Ok(false),
+                let Some(o_id) = snapshot_term_id(snapshot, &object) else {
+                    return Ok(false);
                 };
+                let pat = Pattern {
+                    s: Some(s_id),
+                    p: Some(p_id),
+                    o: Some(o_id),
+                };
+                let mut gids: Vec<u64> = Vec::new();
                 for name in &graph_names {
-                    let Some(info) = snapshot.logical_graphs.get(name) else {
-                        continue;
-                    };
-                    for gid in &info.gids {
-                        for (s, p, o) in
-                            snapshot.file.triples_ids(*gid).map_err(r5error_to_pyerr)?
-                        {
-                            if s == s_id && p == p_id && o == o_id {
-                                return Ok(true);
-                            }
-                        }
+                    if let Some(g) = snapshot.gids_for_name(name) {
+                        gids.extend_from_slice(g);
                     }
                 }
-                Ok(false)
+                match snapshot.scan(pat, Scope::Gids(&gids)).next() {
+                    Some(Ok(_)) => Ok(true),
+                    Some(Err(error)) => Err(r5error_to_pyerr(error)),
+                    None => Ok(false),
+                }
             }
         }
     }
@@ -3129,11 +2322,10 @@ impl PyRdfLibStoreBackend {
                 query_results_to_python(py, results)
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
-                // Rewrite property-path closures that the sidecar knows about
-                // into materialized VALUES blocks before handing the query
-                // to spareval.
-                PClosRewriter::new(snapshot.as_ref()).rewrite_query(&mut parsed);
-                let named_graphs = snapshot.named_graphs().map_err(anyhow_to_pyerr)?;
+                // Rewrite property-path closures the snapshot knows about into
+                // materialized VALUES blocks before handing the query to spareval.
+                snapshot.rewrite_query(&mut parsed);
+                let named_graphs = snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
                 let mut prepared = evaluator.prepare(&parsed);
                 apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
                 if let Some(init_bindings) = init_bindings {
@@ -3145,7 +2337,7 @@ impl PyRdfLibStoreBackend {
                         );
                     }
                 }
-                let view = LogicalSparqlDatasetView::new(snapshot.as_ref());
+                let view = snapshot.sparql_view();
                 let results = prepared
                     .execute(view)
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -3236,7 +2428,7 @@ struct OntoEnv {
 /// common case) are constructed once per scan.
 #[pyclass]
 struct StoreTriplesIter {
-    snapshot: Arc<Rdf5dSnapshot>,
+    snapshot: Arc<Snapshot>,
     grouped: std::collections::hash_map::IntoIter<(u64, u64, u64), Vec<String>>,
     ctors: RdflibCtors,
     term_cache: HashMap<u64, Py<PyAny>>,
@@ -3251,7 +2443,7 @@ impl StoreTriplesIter {
         }
         let decoded = self
             .snapshot
-            .file
+            .file()
             .decoded_term(id)
             .map_err(r5error_to_pyerr)?;
         let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
@@ -3306,7 +2498,7 @@ impl StoreTriplesIter {
 /// the cost when the inner cache is u64-keyed).
 #[pyclass]
 struct Rdf5dTripleIdIter {
-    snapshot: Arc<Rdf5dSnapshot>,
+    snapshot: Arc<Snapshot>,
     triples: std::vec::IntoIter<(u64, u64, u64)>,
     ctors: RdflibCtors,
     term_cache: HashMap<u64, Py<PyAny>>,
@@ -3320,7 +2512,7 @@ impl Rdf5dTripleIdIter {
         }
         let decoded = self
             .snapshot
-            .file
+            .file()
             .decoded_term(id)
             .map_err(r5error_to_pyerr)?;
         let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
@@ -5412,13 +4604,12 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogicalSparqlDatasetView, Rdf5dSnapshot};
-    use rdf5d::{write_file, writer::Term as WriterTerm, Quint};
-    use spareval::{QueryEvaluator, QueryResults};
+    use rdf5d::{write_file, writer::Term as WriterTerm, Quint, Snapshot};
+    use spareval::QueryResults;
     use spargebra::SparqlParser;
 
     #[test]
-    fn logical_sparql_view_collapses_duplicate_graph_names() {
+    fn logical_snapshot_collapses_duplicate_graph_names() {
         let path = std::env::temp_dir().join(format!(
             "ontoenv_python_logical_view_{}.r5tu",
             rand::random::<u64>()
@@ -5460,8 +4651,8 @@ mod tests {
         ];
         write_file(&path, &quints).expect("write test fixture");
 
-        let snapshot = Rdf5dSnapshot::open(&path).expect("open snapshot");
-        let query = SparqlParser::new()
+        let snapshot = Snapshot::open(&path).expect("open snapshot");
+        let mut query = SparqlParser::new()
             .parse_query(
                 "SELECT ?s WHERE {
                     GRAPH <http://example.org/graph/shared> {
@@ -5470,11 +4661,7 @@ mod tests {
                 }",
             )
             .expect("parse query");
-        let evaluator = QueryEvaluator::new();
-        let prepared = evaluator.prepare(&query);
-        let results = prepared
-            .execute(LogicalSparqlDatasetView::new(&snapshot))
-            .expect("execute query");
+        let results = snapshot.query(&mut query).expect("execute query");
         let QueryResults::Solutions(solutions) = results else {
             panic!("expected solution results");
         };
