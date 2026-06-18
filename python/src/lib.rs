@@ -3741,7 +3741,33 @@ impl OntoEnv {
                     ));
                 }
             };
-            OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?
+            let mut env =
+                OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?;
+            // Apply any explicitly-activated flags so that e.g.
+            // `OntoEnv(offline=True)` makes the loaded env offline.
+            // Only non-default values are applied; calling `OntoEnv()` with
+            // all defaults is still a pure load with no config side-effects.
+            let mut config_changed = false;
+            if offline && !env.is_offline() {
+                env.set_offline(true);
+                config_changed = true;
+            }
+            if strict && !env.is_strict() {
+                env.set_strict(true);
+                config_changed = true;
+            }
+            if require_ontology_names && !env.requires_ontology_names() {
+                env.set_require_ontology_names(true);
+                config_changed = true;
+            }
+            if let Some(ttl) = remote_cache_ttl_secs {
+                env.set_remote_cache_ttl_secs(ttl);
+                config_changed = true;
+            }
+            if !read_only && config_changed {
+                env.save_to_directory().map_err(anyhow_to_pyerr)?;
+            }
+            env
         };
 
         let inner = Arc::new(Mutex::new(Some(env)));

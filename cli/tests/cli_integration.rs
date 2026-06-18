@@ -434,3 +434,55 @@ fn get_with_location_disambiguates() {
     let s2 = String::from_utf8_lossy(&out.stdout);
     assert!(s2.contains("\"v2\""), "expected v2 triple, got: {}", s2);
 }
+
+/// `ontoenv init --offline` on an already-initialized environment must persist
+/// the offline flag to ontoenv.json so subsequent loads honour it.
+#[test]
+fn init_offline_flag_persists_on_existing_env() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("init-offline-persist");
+
+    // First init without --offline.
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init");
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let cfg_path = root.join(".ontoenv").join("ontoenv.json");
+    let raw = fs::read_to_string(&cfg_path).expect("read ontoenv.json");
+    let json: serde_json::Value = serde_json::from_str(&raw).expect("parse json");
+    assert_eq!(
+        json["offline"].as_bool(),
+        Some(false),
+        "offline should be false after first init"
+    );
+
+    // Second init with --offline on the existing env (no --overwrite).
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("--offline")
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init --offline");
+    assert!(
+        out.status.success(),
+        "init --offline failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let raw2 = fs::read_to_string(&cfg_path).expect("read ontoenv.json after second init");
+    let json2: serde_json::Value = serde_json::from_str(&raw2).expect("parse json2");
+    assert_eq!(
+        json2["offline"].as_bool(),
+        Some(true),
+        "offline must be true after `ontoenv init --offline` on existing env"
+    );
+}

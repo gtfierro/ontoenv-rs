@@ -2955,3 +2955,134 @@ fn multiple_aliases_to_same_target_deduplicates_with_blank_nodes() -> Result<()>
 
     Ok(())
 }
+
+// ── Config persistence tests ──────────────────────────────────────────────────
+
+/// Scalar flags written during `init` must survive a full save→reload cycle.
+#[test]
+fn config_flags_persist_across_reload() -> Result<()> {
+    let dir = new_tempdir("ontoenv-cfg-persist")?;
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .offline(true)
+        .strict(true)
+        .require_ontology_names(true)
+        .remote_cache_ttl_secs(3600)
+        .build()?;
+
+    let env = OntoEnv::init(cfg, false)?;
+    drop(env);
+
+    let reloaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(reloaded.is_offline(), "offline should survive reload");
+    assert!(reloaded.is_strict(), "strict should survive reload");
+    assert!(
+        reloaded.requires_ontology_names(),
+        "require_ontology_names should survive reload"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+/// `open_or_init` must apply scalar flags from the provided config even when
+/// the environment already exists on disk.
+#[test]
+fn open_or_init_applies_flags_on_existing_env() -> Result<()> {
+    let dir = new_tempdir("ontoenv-open-or-init-flags")?;
+
+    // Create an env with offline=false (the default).
+    let online_cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .offline(false)
+        .build()?;
+    let env = OntoEnv::init(online_cfg, false)?;
+    assert!(!env.is_offline());
+    drop(env);
+
+    // Re-open with offline=true via open_or_init.
+    let offline_cfg = Config::builder()
+        .root(dir.path().into())
+        .offline(true)
+        .build()?;
+    let env2 = OntoEnv::open_or_init(offline_cfg, false)?;
+    assert!(env2.is_offline(), "open_or_init should apply offline=true");
+    drop(env2);
+
+    // The flag must be persisted so the next plain load also sees it.
+    let env3 = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(
+        env3.is_offline(),
+        "offline=true must be persisted by open_or_init"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+/// The mechanism used by `new_offline`: loading an online env, switching the
+/// offline flag, and saving must persist so the next load honours it.
+#[test]
+fn new_offline_mechanism_persists_flag() -> Result<()> {
+    let dir = new_tempdir("ontoenv-new-offline")?;
+
+    // Start online.
+    let online_cfg = Config::builder()
+        .root(dir.path().into())
+        .offline(false)
+        .build()?;
+    let env = OntoEnv::init(online_cfg, false)?;
+    assert!(!env.is_offline());
+    drop(env);
+
+    // Simulate what new_offline() does when it finds an existing env.
+    let mut loaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(!loaded.is_offline());
+    if !loaded.is_offline() {
+        loaded.set_offline(true);
+        loaded.save_to_directory()?;
+    }
+    assert!(loaded.is_offline());
+    drop(loaded);
+
+    // The flag must survive a fresh load.
+    let reloaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(reloaded.is_offline(), "offline=true must be persisted");
+
+    teardown(dir);
+    Ok(())
+}
+
+/// The mechanism used by `new_online`: loading an offline env, clearing the
+/// offline flag, and saving must persist so the next load honours it.
+#[test]
+fn new_online_mechanism_persists_flag() -> Result<()> {
+    let dir = new_tempdir("ontoenv-new-online")?;
+
+    // Start offline.
+    let offline_cfg = Config::builder()
+        .root(dir.path().into())
+        .offline(true)
+        .build()?;
+    let env = OntoEnv::init(offline_cfg, false)?;
+    assert!(env.is_offline());
+    drop(env);
+
+    // Simulate what new_online() does when it finds an existing env.
+    let mut loaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(loaded.is_offline());
+    if loaded.is_offline() {
+        loaded.set_offline(false);
+        loaded.save_to_directory()?;
+    }
+    assert!(!loaded.is_offline());
+    drop(loaded);
+
+    let reloaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(!reloaded.is_offline(), "offline=false must be persisted");
+
+    teardown(dir);
+    Ok(())
+}

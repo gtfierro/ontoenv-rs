@@ -590,7 +590,32 @@ fn execute(cmd: Cli) -> Result<()> {
                 );
                 println!("Use --overwrite to re-initialize or `ontoenv update` to update.");
 
-                let env = OntoEnv::load_from_directory(root, false)?;
+                // Apply any explicitly-set scalar flags to the persisted config so that
+                // e.g. `ontoenv init --offline` makes the offline flag sticky without
+                // requiring a full --overwrite re-init.
+                let mut env = OntoEnv::load_from_directory(root, false)?;
+                let mut config_changed = false;
+                if cmd.offline && !env.is_offline() {
+                    env.set_offline(true);
+                    config_changed = true;
+                }
+                if cmd.strict && !env.is_strict() {
+                    env.set_strict(true);
+                    config_changed = true;
+                }
+                if cmd.require_ontology_names && !env.requires_ontology_names() {
+                    env.set_require_ontology_names(true);
+                    config_changed = true;
+                }
+                if let Some(ttl) = cmd.remote_cache_ttl_secs {
+                    env.set_remote_cache_ttl_secs(ttl);
+                    config_changed = true;
+                }
+                if config_changed {
+                    env.save_to_directory()?;
+                    println!("Configuration updated.");
+                }
+
                 let status = env.status()?;
                 println!("\nCurrent status:");
                 println!("{status}");

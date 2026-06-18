@@ -398,18 +398,31 @@ impl OntoEnv {
 
         let root = config.root.clone();
 
-        if let Some(found_root) = find_ontoenv_root_from(&root) {
-            let ontoenv_dir = found_root.join(".ontoenv");
-            if ontoenv_dir.exists() {
-                return Self::load_from_directory(found_root, read_only);
+        let existing_root = if let Some(found_root) = find_ontoenv_root_from(&root) {
+            if found_root.join(".ontoenv").exists() {
+                Some(found_root)
+            } else {
+                None
             }
+        } else if root.join(".ontoenv").exists() {
+            Some(root.clone())
+        } else {
+            None
+        };
+
+        if let Some(load_root) = existing_root {
+            let mut env = Self::load_from_directory(load_root, read_only)?;
+            // The caller provided an explicit config; apply its scalar mode flags
+            // (offline, strict, TTL, …) so they take effect even when the env
+            // already exists.  List fields (locations, includes, …) from the
+            // stored config are left intact.
+            if !read_only && env.merge_scalar_flags(&config) {
+                env.save_to_directory()?;
+            }
+            return Ok(env);
         }
 
         let ontoenv_dir = root.join(".ontoenv");
-        if ontoenv_dir.exists() {
-            return Self::load_from_directory(root, read_only);
-        }
-
         if read_only {
             return Err(anyhow::anyhow!(
                 "OntoEnv directory not found at {} and read_only=true",
@@ -426,8 +439,12 @@ impl OntoEnv {
     pub fn new_online() -> Result<Self> {
         // Convenience ctor for local dev: scan cwd and allow network fetches.
         if let Some(root) = find_ontoenv_root() {
-            // Don't load as read_only
-            Self::load_from_directory(root, false)
+            let mut env = Self::load_from_directory(root, false)?;
+            if env.is_offline() {
+                env.set_offline(false);
+                env.save_to_directory()?;
+            }
+            Ok(env)
         } else {
             let root = std::env::current_dir()?;
             let locations = vec![root.clone()];
@@ -439,7 +456,6 @@ impl OntoEnv {
                 .temporary(false)
                 .locations(locations)
                 .build()?;
-            // overwrite should be false, but init will create it.
             Self::init(config, false)
         }
     }
@@ -450,8 +466,12 @@ impl OntoEnv {
     pub fn new_offline() -> Result<Self> {
         // Convenience ctor for local dev without network access.
         if let Some(root) = find_ontoenv_root() {
-            // Don't load as read_only
-            Self::load_from_directory(root, false)
+            let mut env = Self::load_from_directory(root, false)?;
+            if !env.is_offline() {
+                env.set_offline(true);
+                env.save_to_directory()?;
+            }
+            Ok(env)
         } else {
             let root = std::env::current_dir()?;
             let locations = vec![root.clone()];
@@ -463,7 +483,6 @@ impl OntoEnv {
                 .temporary(false)
                 .locations(locations)
                 .build()?;
-            // overwrite should be false, but init will create it.
             Self::init(config, false)
         }
     }
@@ -474,8 +493,12 @@ impl OntoEnv {
     pub fn new_offline_no_search() -> Result<Self> {
         // Offline mode with no search paths to avoid filesystem scans.
         if let Some(root) = find_ontoenv_root() {
-            // Don't load as read_only
-            Self::load_from_directory(root, false)
+            let mut env = Self::load_from_directory(root, false)?;
+            if !env.is_offline() {
+                env.set_offline(true);
+                env.save_to_directory()?;
+            }
+            Ok(env)
         } else {
             let root = std::env::current_dir()?;
             let config = Config::builder()
@@ -486,7 +509,6 @@ impl OntoEnv {
                 .temporary(false)
                 .locations(vec![])
                 .build()?;
-            // overwrite should be false, but init will create it.
             Self::init(config, false)
         }
     }
@@ -923,6 +945,12 @@ impl OntoEnv {
         if !ontoenv.config.use_cached_ontologies.is_enabled() {
             let _ = ontoenv.update_all(false)?;
         }
+
+        // Always persist the config so flags like `offline` survive across sessions.
+        // `update_all` writes via `register_ontologies`, but that path is skipped when
+        // `use_cached_ontologies` is enabled or when no ontologies are discovered, so
+        // we call it explicitly here as the authoritative write.
+        ontoenv.save_to_directory()?;
 
         Ok(ontoenv)
     }
@@ -2792,6 +2820,47 @@ impl OntoEnv {
     pub fn set_require_ontology_names(&mut self, require: bool) {
         // Toggle name requirement to influence future imports/updates.
         self.config.require_ontology_names = require;
+    }
+
+    pub fn set_remote_cache_ttl_secs(&mut self, ttl_secs: u64) {
+        self.config.remote_cache_ttl_secs = ttl_secs;
+    }
+
+    pub fn set_use_cached_ontologies(&mut self, mode: crate::options::CacheMode) {
+        self.config.use_cached_ontologies = mode;
+    }
+
+    /// Apply scalar mode flags (offline, strict, etc.) from `source` to this
+    /// env's persisted config, leaving list fields (locations, includes, …)
+    /// untouched. Returns `true` if any field actually changed.
+    fn merge_scalar_flags(&mut self, source: &Config) -> bool {
+        let c = &mut self.config;
+        let mut changed = false;
+        if c.offline != source.offline {
+            c.offline = source.offline;
+            changed = true;
+        }
+        if c.strict != source.strict {
+            c.strict = source.strict;
+            changed = true;
+        }
+        if c.require_ontology_names != source.require_ontology_names {
+            c.require_ontology_names = source.require_ontology_names;
+            changed = true;
+        }
+        if c.remote_cache_ttl_secs != source.remote_cache_ttl_secs {
+            c.remote_cache_ttl_secs = source.remote_cache_ttl_secs;
+            changed = true;
+        }
+        if c.use_cached_ontologies != source.use_cached_ontologies {
+            c.use_cached_ontologies = source.use_cached_ontologies;
+            changed = true;
+        }
+        if c.resolution_policy != source.resolution_policy {
+            c.resolution_policy = source.resolution_policy.clone();
+            changed = true;
+        }
+        changed
     }
 
     pub fn resolution_policy(&self) -> &str {
