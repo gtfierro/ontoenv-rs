@@ -315,6 +315,24 @@ class OntoEnv:
         """
         ...
 
+    def copy_union(
+        self,
+        uris: List[str],
+        root: str,
+        graph: Optional[Graph] = None,
+        include_closures: bool = False,
+        rewrite_sh_prefixes: bool = True,
+        remove_owl_imports: bool = True,
+        recursion_depth: int = -1,
+    ) -> Tuple[Graph, List[str]]:
+        """Copy the union of explicitly enumerated ontology graphs.
+
+        Set ``include_closures=True`` to include each listed graph's
+        transitive ``owl:imports`` closure. ``root`` is used for ontology
+        declaration cleanup and optional SHACL prefix rewriting.
+        """
+        ...
+
     def import_graph(
         self,
         destination_graph: Graph,
@@ -519,4 +537,3 @@ class OntoEnvStore:
     def triples(self, triple_pattern: Tuple[Optional[object], Optional[object], Optional[object]], context: Optional[object] = None) -> object: ...
     def contexts(self, triple: Optional[Tuple[object, object, object]] = None) -> object: ...
     def query(self, query: object, initNs: Dict[str, object], initBindings: Dict[str, object], queryGraph: str, **kwargs: object) -> Result: ...
-

@@ -2,7 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::config::Config;
-use crate::consts::IMPORTS;
+use crate::consts::{IMPORTS, ONTOLOGY, TYPE};
 use crate::doctor::{
     ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
 };
@@ -14,7 +14,8 @@ use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
-    Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, Quad, TripleRef,
+    Dataset, Graph, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef,
+    TermRef, TripleRef,
 };
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
@@ -2359,12 +2360,70 @@ impl OntoEnv {
         }
         // Collapse ontology declarations onto the chosen root.
         transform::remove_ontology_declarations(&mut dataset, root_ontology);
+        let has_root_declaration = dataset.iter().any(|q| {
+            q.subject == root_ontology
+                && q.predicate == TYPE
+                && q.object == TermRef::NamedNode(ONTOLOGY)
+        });
+        if !has_root_declaration {
+            dataset.insert(QuadRef::new(
+                root_ontology,
+                TYPE,
+                ONTOLOGY,
+                GraphNameRef::DefaultGraph,
+            ));
+        }
         Ok(UnionGraph {
             dataset,
             graph_ids,
             failed_imports,
             namespace_map,
         })
+    }
+
+    /// Resolve an explicitly enumerated set of graph IRIs and return their union.
+    ///
+    /// When `include_closures` is true, each enumerated graph contributes its
+    /// full `owl:imports` closure. Otherwise only the enumerated graphs are
+    /// included. The `root` IRI is used only for union normalization
+    /// (`sh:prefixes` rewriting and ontology declaration cleanup); it does not
+    /// need to be one of the enumerated graphs.
+    pub fn get_explicit_union_graph(
+        &self,
+        graph_iris: &[NamedNode],
+        root: NamedNodeRef,
+        include_closures: bool,
+        recursion_depth: i32,
+        rewrite_sh_prefixes: Option<bool>,
+        remove_owl_imports: Option<bool>,
+    ) -> Result<UnionGraph> {
+        if graph_iris.is_empty() {
+            return Err(anyhow!("No graphs specified"));
+        }
+
+        let mut graph_ids = Vec::new();
+        let mut seen = HashSet::new();
+        for iri in graph_iris {
+            let id = self
+                .resolve(ResolveTarget::Graph(iri.clone()))
+                .ok_or_else(|| anyhow!("Ontology {} not found", iri.as_str()))?;
+            if include_closures {
+                for closure_id in self.get_closure(&id, recursion_depth)? {
+                    if seen.insert(closure_id.clone()) {
+                        graph_ids.push(closure_id);
+                    }
+                }
+            } else if seen.insert(id.clone()) {
+                graph_ids.push(id);
+            }
+        }
+
+        self.get_union_graph(
+            &graph_ids,
+            root,
+            rewrite_sh_prefixes,
+            remove_owl_imports,
+        )
     }
 
     /// Collect namespace prefixes for a single ontology.

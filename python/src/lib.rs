@@ -3322,19 +3322,90 @@ impl OntoEnv {
             destination_graph.getattr("add")?.call1((t,))?;
         }
 
-        // Remove each successful_imports url in the closure from the destination_graph
+        Ok((destination_graph, closure_names))
+    }
+
+    /// Copy the union of explicitly listed ontology graphs into a mutable graph.
+    ///
+    /// Set ``include_closures=True`` to include each listed graph's transitive
+    /// ``owl:imports`` closure. The ``root`` IRI is used for ontology
+    /// declaration cleanup and optional SHACL prefix rewriting; it does not
+    /// need to be one of the listed graphs.
+    #[pyo3(signature = (uris, root, graph=None, include_closures=false, rewrite_sh_prefixes=true, remove_owl_imports=true, recursion_depth=-1))]
+    fn copy_union<'a>(
+        &self,
+        py: Python<'a>,
+        uris: Vec<String>,
+        root: &str,
+        graph: Option<&Bound<'a, PyAny>>,
+        include_closures: bool,
+        rewrite_sh_prefixes: bool,
+        remove_owl_imports: bool,
+        recursion_depth: i32,
+    ) -> PyResult<(Bound<'a, PyAny>, Vec<String>)> {
+        let rdflib = py.import("rdflib")?;
+        let graph_iris: Vec<NamedNode> = uris
+            .iter()
+            .map(|uri| {
+                NamedNode::new(uri.as_str()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                })
+            })
+            .collect::<PyResult<_>>()?;
+        let root_node = NamedNode::new(root)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let env = guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        let union = env
+            .get_explicit_union_graph(
+                &graph_iris,
+                root_node.as_ref(),
+                include_closures,
+                recursion_depth,
+                Some(rewrite_sh_prefixes),
+                Some(remove_owl_imports),
+            )
+            .map_err(anyhow_to_pyerr)?;
+        let union_names: Vec<String> = union
+            .graph_ids
+            .iter()
+            .map(|graph_id| graph_id.to_uri_string())
+            .collect();
+
+        let destination_graph = match graph {
+            Some(g) => g.clone(),
+            None => rdflib.getattr("Graph")?.call0()?,
+        };
+        for triple in union.dataset.into_iter() {
+            let s: Term = triple.subject.into();
+            let p: Term = triple.predicate.into();
+            let o: Term = triple.object.into();
+            let t = PyTuple::new(
+                py,
+                &[
+                    term_to_python(py, &rdflib, s)?,
+                    term_to_python(py, &rdflib, p)?,
+                    term_to_python(py, &rdflib, o)?,
+                ],
+            )?;
+            destination_graph.getattr("add")?.call1((t,))?;
+        }
+
         if remove_owl_imports {
-            for graphid in union.graph_ids {
-                let iri = term_to_python(py, &rdflib, Term::NamedNode(graphid.into()))?;
+            for graph_id in union.graph_ids {
+                let iri = term_to_python(py, &rdflib, Term::NamedNode(graph_id.into()))?;
                 let pred = term_to_python(py, &rdflib, IMPORTS.into())?;
-                // remove triples with (None, pred, iri)
                 let remove_tuple = PyTuple::new(py, &[py.None(), pred.into(), iri.into()])?;
                 destination_graph
                     .getattr("remove")?
                     .call1((remove_tuple,))?;
             }
         }
-        Ok((destination_graph, closure_names))
+        Ok((destination_graph, union_names))
     }
 
     /// Print the contents of the OntoEnv

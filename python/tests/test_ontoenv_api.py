@@ -853,6 +853,71 @@ ex:BaseClass a owl:Class .
         self.assertTrue(any("BaseClass" in str(t) for t in dest))
         self.assertTrue(any("ImpClass" in str(t) for t in dest))
 
+    def test_copy_union_explicit_and_with_closures(self):
+        """copy_union unions an explicit set, optionally expanding each closure."""
+        a_path = self.test_dir / "a.ttl"
+        b_path = self.test_dir / "b.ttl"
+        c_path = self.test_dir / "c.ttl"
+        a_iri = a_path.resolve().as_uri()
+        b_iri = b_path.resolve().as_uri()
+        c_iri = c_path.resolve().as_uri()
+        root_iri = "http://example.com/union-root"
+
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology .
+<{b_iri}#Class> a <http://example.com/Marker> .
+""",
+            encoding="utf-8",
+        )
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> .
+<{a_iri}#Class> a <http://example.com/Marker> .
+""",
+            encoding="utf-8",
+        )
+        c_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{c_iri}> a owl:Ontology .
+<{c_iri}#Class> a <http://example.com/Marker> .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(b_path))
+        self.env.add(str(a_path))
+        self.env.add(str(c_path))
+
+        explicit_graph, explicit_names = self.env.copy_union([a_iri, c_iri], root_iri)
+        self.assertEqual(set(explicit_names), {a_iri, c_iri})
+        self.assertNotIn(
+            (URIRef(f"{b_iri}#Class"), RDF.type, URIRef("http://example.com/Marker")),
+            explicit_graph,
+        )
+        self.assertIn(
+            (URIRef(f"{c_iri}#Class"), RDF.type, URIRef("http://example.com/Marker")),
+            explicit_graph,
+        )
+
+        closure_graph, closure_names = self.env.copy_union(
+            [a_iri, c_iri],
+            root_iri,
+            include_closures=True,
+        )
+        self.assertEqual(set(closure_names), {a_iri, b_iri, c_iri})
+        self.assertIn(
+            (URIRef(f"{b_iri}#Class"), RDF.type, URIRef("http://example.com/Marker")),
+            closure_graph,
+        )
+        declarations = list(closure_graph.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(declarations, [(URIRef(root_iri), RDF.type, OWL.Ontology)])
+
     def test_import_graph_handles_cycles(self):
         """import_graph should handle cycles (A imports B imports A) without duplicating imports."""
         a_path = self.test_dir / "A.ttl"

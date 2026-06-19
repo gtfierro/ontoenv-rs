@@ -163,6 +163,31 @@ enum Commands {
         #[clap(long, default_value = "-1")]
         recursion_depth: i32,
     },
+    /// Union explicitly enumerated ontology graphs and write the result to a file
+    Union {
+        /// Ontology IRI used as the root for rewriting and ontology declaration cleanup
+        #[clap(long)]
+        root: String,
+        /// Include each enumerated graph's transitive owl:imports closure
+        #[clap(long, action, default_value = "false")]
+        include_closures: bool,
+        /// Do NOT rewrite sh:prefixes (rewrite is ON by default)
+        #[clap(long, action, default_value = "false")]
+        no_rewrite_sh_prefixes: bool,
+        /// Keep owl:imports statements (removal is ON by default)
+        #[clap(long, action, default_value = "false")]
+        keep_owl_imports: bool,
+        /// The recursion depth for exploring owl:imports when --include-closures is set.
+        /// <0: unlimited, 0: no imports, >0: specific depth.
+        #[clap(long, default_value = "-1")]
+        recursion_depth: i32,
+        /// The file to write the union to, defaults to 'output.ttl'
+        #[clap(long, short)]
+        output: Option<String>,
+        /// Ontology IRIs to union
+        #[clap(value_name = "ONTOLOGY", required = true)]
+        ontologies: Vec<String>,
+    },
     /// Retrieve a single graph from the environment and write it to STDOUT or a file
     Get {
         /// Ontology IRI (name)
@@ -261,6 +286,7 @@ impl std::fmt::Display for Commands {
             Commands::Status { .. } => "Status",
             Commands::Update { .. } => "Update",
             Commands::Closure { .. } => "Closure",
+            Commands::Union { .. } => "Union",
             Commands::Get { .. } => "Get",
             Commands::Add { .. } => "Add",
             Commands::List { .. } => "List",
@@ -789,6 +815,41 @@ fn execute(cmd: Cli) -> Result<()> {
             }
             // write the graph to a file
             let destination = destination.unwrap_or_else(|| "output.ttl".to_string());
+            write_dataset_to_file(&union.dataset, &destination)?;
+        }
+        Commands::Union {
+            root,
+            include_closures,
+            no_rewrite_sh_prefixes,
+            keep_owl_imports,
+            recursion_depth,
+            output,
+            ontologies,
+        } => {
+            let env = require_ontoenv(env)?;
+            let root = NamedNode::new(root).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            let graph_iris: Vec<NamedNode> = ontologies
+                .iter()
+                .map(|ontology| {
+                    NamedNode::new(ontology).map_err(|e| anyhow::anyhow!(e.to_string()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let rewrite = !no_rewrite_sh_prefixes;
+            let remove = !keep_owl_imports;
+            let union = env.get_explicit_union_graph(
+                &graph_iris,
+                root.as_ref(),
+                include_closures,
+                recursion_depth,
+                Some(rewrite),
+                Some(remove),
+            )?;
+            if let Some(failed_imports) = union.failed_imports {
+                for imp in failed_imports {
+                    eprintln!("{imp}");
+                }
+            }
+            let destination = output.unwrap_or_else(|| "output.ttl".to_string());
             write_dataset_to_file(&union.dataset, &destination)?;
         }
         Commands::Add {

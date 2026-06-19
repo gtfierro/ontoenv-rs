@@ -526,6 +526,96 @@ exc:shape sh:prefixes <http://ex.org/C> .
 }
 
 #[test]
+fn explicit_union_includes_closures_only_when_requested() -> Result<()> {
+    let dir = new_tempdir("ontoenv-explicit-union")?;
+
+    let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+<http://ex.org/A> a owl:Ontology ;
+  owl:imports <http://ex.org/B> .
+<http://ex.org/A#Class> a <http://ex.org/Marker> .
+"#;
+    let b_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://ex.org/B> a owl:Ontology .
+<http://ex.org/B#Class> a <http://ex.org/Marker> .
+"#;
+    let c_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://ex.org/C> a owl:Ontology .
+<http://ex.org/C#Class> a <http://ex.org/Marker> .
+"#;
+    fs::write(dir.path().join("A.ttl"), a_ttl)?;
+    fs::write(dir.path().join("B.ttl"), b_ttl)?;
+    fs::write(dir.path().join("C.ttl"), c_ttl)?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update_all(false)?;
+
+    let a = NamedNode::new("http://ex.org/A")?;
+    let c = NamedNode::new("http://ex.org/C")?;
+    let root = NamedNode::new("http://ex.org/UnionRoot")?;
+    let b_class = NamedNodeRef::new_unchecked("http://ex.org/B#Class");
+    let c_class = NamedNodeRef::new_unchecked("http://ex.org/C#Class");
+    let rdf_type =
+        NamedNodeRef::new_unchecked("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    let owl_ontology = NamedNodeRef::new_unchecked("http://www.w3.org/2002/07/owl#Ontology");
+
+    let explicit_only = env.get_explicit_union_graph(
+        &[a.clone(), c.clone()],
+        root.as_ref(),
+        false,
+        -1,
+        Some(true),
+        Some(true),
+    )?;
+    assert_eq!(explicit_only.graph_ids.len(), 2);
+    assert!(
+        explicit_only
+            .dataset
+            .iter()
+            .all(|q| q.subject != NamedOrBlankNodeRef::NamedNode(b_class)),
+        "B should not be included without closure expansion"
+    );
+    assert!(
+        explicit_only
+            .dataset
+            .iter()
+            .any(|q| q.subject == NamedOrBlankNodeRef::NamedNode(c_class)),
+        "Explicitly listed C should be included"
+    );
+
+    let with_closures = env.get_explicit_union_graph(
+        &[a, c],
+        root.as_ref(),
+        true,
+        -1,
+        Some(true),
+        Some(true),
+    )?;
+    assert_eq!(with_closures.graph_ids.len(), 3);
+    assert!(
+        with_closures
+            .dataset
+            .iter()
+            .any(|q| q.subject == NamedOrBlankNodeRef::NamedNode(b_class)),
+        "B should be included through A's closure"
+    );
+    let declarations: Vec<_> = with_closures
+        .dataset
+        .iter()
+        .filter(|q| q.predicate == rdf_type && q.object == TermRef::NamedNode(owl_ontology))
+        .collect();
+    assert_eq!(declarations.len(), 1);
+    assert_eq!(
+        declarations[0].subject,
+        NamedOrBlankNodeRef::NamedNode(root.as_ref())
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
 fn union_graph_errors_on_conflicting_sh_prefix() -> Result<()> {
     let dir = new_tempdir("ontoenv-prefix-conflict")?;
 

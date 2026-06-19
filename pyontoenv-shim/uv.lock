@@ -37,7 +37,6 @@ wheels = [
 
 [[package]]
 name = "pyontoenv"
-version = "0.6.0a2"
 source = { editable = "." }
 dependencies = [
     { name = "ontoenv" },
