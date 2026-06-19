@@ -9,6 +9,7 @@ use ontoenv::ontology::{GraphIdentifier, Ontology as OntologyRs, OntologyLocatio
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ontoenv::transform;
 use ontoenv::util::{get_file_contents, get_url_contents};
+use ontoenv::FailedImport;
 use ontoenv::ToUriString;
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{
@@ -1010,6 +1011,43 @@ impl GraphIO for PythonGraphIO {
         })
     }
 
+    /// Best-effort union assembled from `get_graph` rather than the default
+    /// `store()`-streaming impl. A custom `graph_store=` keeps its data in
+    /// Python and exposes only an empty scratch oxigraph store, so the default
+    /// would silently union nothing. Routing through `get_graph` (which this
+    /// backend overrides) gives `get_union_graph`/`copy_closure`/`copy_union`
+    /// correct results, including the prefix/imports/declaration transforms
+    /// that run on the returned dataset.
+    fn union_graph(&self, ids: &[GraphIdentifier]) -> (OxDataset, Vec<FailedImport>) {
+        let mut dataset = OxDataset::new();
+        let mut failures: Vec<FailedImport> = Vec::new();
+        for id in ids {
+            let graph_name = match id.graphname() {
+                Ok(gn) => gn,
+                Err(e) => {
+                    failures.push(FailedImport::new(id.clone(), e.to_string()));
+                    continue;
+                }
+            };
+            match self.get_graph(id) {
+                Ok(graph) => {
+                    for triple in graph.iter() {
+                        dataset.insert(&Quad::new(
+                            triple.subject.into_owned(),
+                            triple.predicate.into_owned(),
+                            triple.object.into_owned(),
+                            graph_name.clone(),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    failures.push(FailedImport::new(id.clone(), e.to_string()));
+                }
+            }
+        }
+        (dataset, failures)
+    }
+
     fn size(&self) -> Result<StoreStats> {
         self.with_store(|py, store| {
             if store.hasattr("size").map_err(pyerr_to_anyhow)? {
@@ -1272,22 +1310,21 @@ impl Default for RdfLibStoreBackend {
     }
 }
 
-/// Pull every quad in the named graph identified by `id` out of the env's
-/// store and turn it into an owned `Triple` in `out`. Cheaper than
-/// `env.get_graph(id)` followed by `graph.iter()` because it skips the
-/// intermediate `Graph` allocation and the `into_owned` clone on each
-/// triple — the strings come straight from the store's quad iterator.
+/// Pull every triple in the named graph identified by `id` into `out`.
+///
+/// Routes through `env.get_graph(id)` (which dispatches to the IO backend's
+/// `get_graph`) rather than reading `env.io().store()` directly. Custom
+/// `graph_store=` backends keep their data in Python and expose an *empty*
+/// scratch oxigraph store, so reading the store directly would silently
+/// return nothing for them. The backend `get_graph` path is the one that
+/// works for every backend, matching `copy_graph`/`get_closure`.
 fn collect_graph_triples_into(
     env: &OntoEnvRs,
     id: &GraphIdentifier,
     out: &mut Vec<Triple>,
 ) -> Result<()> {
-    let graphname = id.graphname()?;
-    let store = env.io().store();
-    for quad in store.quads_for_pattern(None, None, None, Some(graphname.as_ref())) {
-        let q = quad?;
-        out.push(Triple::new(q.subject, q.predicate, q.object));
-    }
+    let graph = env.get_graph(id)?;
+    out.extend(graph.iter().map(|t| t.into_owned()));
     Ok(())
 }
 

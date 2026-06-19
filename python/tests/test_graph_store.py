@@ -276,5 +276,106 @@ class TestTransientGraphQueries(unittest.TestCase):
             env.missing_imports(42)
 
 
+class TestPythonGraphStoreReadParity(unittest.TestCase):
+    """Custom graph_store= read parity for the copy/iter aggregation APIs.
+
+    get_graph()/get_closure()/copy_graph() already route through the
+    overridden GraphIO::get_graph and so work against a custom store. These
+    tests pin down that the aggregating reads -- copy_closure, copy_union,
+    iter_closure_triples, iter_triples -- reach the same parity instead of
+    silently reading an empty backing store.
+    """
+
+    P = "http://example.com/p"
+    DEP = "http://example.com/dep"
+    BASE = "http://example.com/base"
+
+    def _env(self):
+        from rdflib import Graph as G, Literal, URIRef
+        from rdflib.namespace import OWL, RDF
+
+        store = DictGraphStore()
+
+        dep_g = G()
+        dep_g.add((URIRef(self.DEP), RDF.type, OWL.Ontology))
+        dep_g.add((URIRef(self.DEP), URIRef(self.P), Literal("dep-value")))
+        store.add_graph(self.DEP, dep_g)
+
+        base_g = G()
+        base_g.add((URIRef(self.BASE), RDF.type, OWL.Ontology))
+        base_g.add((URIRef(self.BASE), OWL.imports, URIRef(self.DEP)))
+        base_g.add((URIRef(self.BASE), URIRef(self.P), Literal("base-value")))
+        store.add_graph(self.BASE, base_g)
+
+        return OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+
+    def _content_values(self, graph):
+        from rdflib import URIRef
+
+        return {str(o) for _, _, o in graph.triples((None, URIRef(self.P), None))}
+
+    def test_copy_graph_parity(self) -> None:
+        env = self._env()
+        g = env.copy_graph(self.DEP)
+        self.assertEqual(self._content_values(g), {"dep-value"})
+
+    def test_copy_closure_includes_imported_graphs(self) -> None:
+        env = self._env()
+        g, names = env.copy_closure(self.BASE)
+        self.assertEqual(self._content_values(g), {"base-value", "dep-value"})
+        self.assertIn(self.BASE, names)
+        self.assertIn(self.DEP, names)
+
+    def test_copy_closure_into_destination_graph(self) -> None:
+        from rdflib import Graph as G
+
+        env = self._env()
+        dest = G()
+        g, _ = env.copy_closure(self.BASE, graph=dest)
+        self.assertIs(g, dest)
+        self.assertEqual(self._content_values(dest), {"base-value", "dep-value"})
+
+    def test_copy_closure_remove_owl_imports(self) -> None:
+        from rdflib import URIRef
+        from rdflib.namespace import OWL
+
+        env = self._env()
+        kept, _ = env.copy_closure(self.BASE, remove_owl_imports=False)
+        self.assertIn(
+            (URIRef(self.BASE), OWL.imports, URIRef(self.DEP)),
+            kept,
+        )
+        dropped, _ = env.copy_closure(self.BASE, remove_owl_imports=True)
+        self.assertNotIn(
+            (URIRef(self.BASE), OWL.imports, URIRef(self.DEP)),
+            dropped,
+        )
+
+    def test_copy_union_includes_listed_graphs(self) -> None:
+        env = self._env()
+        g, names = env.copy_union([self.BASE, self.DEP], root=self.BASE)
+        self.assertEqual(self._content_values(g), {"base-value", "dep-value"})
+        self.assertIn(self.BASE, names)
+        self.assertIn(self.DEP, names)
+
+    def test_iter_triples_parity(self) -> None:
+        env = self._env()
+        values = {
+            str(o)
+            for (_, p, o) in env.iter_triples(self.BASE)
+            if str(p) == self.P
+        }
+        self.assertEqual(values, {"base-value"})
+
+    def test_iter_closure_triples_parity(self) -> None:
+        env = self._env()
+        values = {
+            str(o)
+            for (_, p, o) in env.iter_closure_triples(self.BASE)
+            if str(p) == self.P
+        }
+        self.assertEqual(values, {"base-value", "dep-value"})
+
+
 if __name__ == "__main__":
     unittest.main()
