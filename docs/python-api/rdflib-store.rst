@@ -11,12 +11,12 @@ RDFLib Store
      through <code>spareval</code> — and reading triples directly from the
      <a href="https://crates.io/crates/rdf5d"><code>rdf5d</code></a> on-disk format via
      <code>mmap</code> for zero-copy traversal. The <code>get_*</code> accessors
-     (<code>get_graph</code>, <code>get_closure</code>, <code>get_dataset</code>, …) return
-     read-only views over that storage and are significantly faster for queries and
-     iteration; the <code>copy_*</code> variants (<code>copy_graph</code>,
-     <code>copy_closure</code>, <code>copy_dataset</code>) instead materialize the data
-     into a standard in-memory <code>rdflib</code> graph or dataset that you can freely
-     mutate.
+     (<code>get_graph</code>, <code>get_closure</code>, <code>get_union</code>,
+     <code>get_dataset</code>, …) return read-only views over that storage and are
+     significantly faster for queries and iteration; the <code>copy_*</code> variants
+     (<code>copy_graph</code>, <code>copy_closure</code>, <code>copy_union</code>,
+     <code>copy_dataset</code>) instead materialize the data into a standard in-memory
+     <code>rdflib</code> graph or dataset that you can freely mutate.
    </div>
 
 When to use it

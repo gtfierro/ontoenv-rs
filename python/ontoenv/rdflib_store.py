@@ -133,7 +133,7 @@ def dataset_from_env(
     _bind_dataset_namespaces(dataset, env)
     for ontology_name in env.get_ontology_names():
         target_graph = dataset.graph(URIRef(ontology_name))
-        target_graph += env.get_graph(ontology_name)
+        target_graph += env.copy_graph(ontology_name)
     return dataset
 
 
@@ -350,12 +350,14 @@ class OntoEnvStore(Store):
 class ClosureGraphView(Graph):
     """Read-only merged view across a fixed set of named graphs in a Dataset.
 
-    Returned by :py:meth:`ontoenv.OntoEnv.get_closure`. Triple lookups
-    are dispatched to each underlying named graph and de-duplicated; the
-    underlying store is shared with the dataset, so mutation through this
-    view raises ``ValueError`` from the store layer.
+    Returned by :py:meth:`ontoenv.OntoEnv.get_closure` and
+    :py:meth:`ontoenv.OntoEnv.get_union`. Triple lookups are dispatched to
+    each underlying named graph and de-duplicated; the underlying store is
+    shared with the dataset, so mutation through this view raises
+    ``ValueError`` from the store layer.
 
-    Construct via ``env.get_closure(...)`` rather than directly.
+    Construct via ``env.get_closure(...)`` or ``env.get_union(...)`` rather
+    than directly.
     """
 
     def __init__(self, dataset: Dataset, identifiers: Iterable[str]) -> None:

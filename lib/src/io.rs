@@ -233,6 +233,16 @@ pub trait GraphIO: Send + Sync {
         Ok(graph)
     }
 
+    /// Returns a copy of the graph for mutable operations.
+    ///
+    /// Backends that can provide a more efficient or semantically distinct
+    /// copy path (e.g. a Python graph store that returns a cached view from
+    /// `get_graph` but a fresh deep copy from `copy_graph`) should override
+    /// this. The default delegates to `get_graph`.
+    fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        self.get_graph(id)
+    }
+
     /// Returns the size of the underlying store.
     fn size(&self) -> Result<StoreStats> {
         let num_graphs = self.store().named_graphs().count();

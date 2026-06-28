@@ -1011,13 +1011,37 @@ impl GraphIO for PythonGraphIO {
         })
     }
 
-    /// Best-effort union assembled from `get_graph` rather than the default
+    /// Returns a copy of the graph for mutable operations.
+    ///
+    /// If the Python store exposes a `copy_graph(id)` method it is called;
+    /// otherwise falls back to `get_graph(id)`. This lets Python stores
+    /// distinguish between returning a live view and returning a fresh
+    /// mutable copy.
+    fn copy_graph(&self, id: &GraphIdentifier) -> Result<OxigraphGraph> {
+        let graph_id = id.to_uri_string();
+        self.with_store(|py, store| {
+            let has_copy = store.hasattr("copy_graph").map_err(pyerr_to_anyhow)?;
+            let method = if has_copy { "copy_graph" } else { "get_graph" };
+            let graph_obj = store
+                .getattr(method)
+                .map_err(pyerr_to_anyhow)?
+                .call1((graph_id.as_str(),))
+                .map_err(pyerr_to_anyhow)?;
+            if graph_obj.is_none() {
+                return Err(anyhow!("Graph not found: {graph_id}"));
+            }
+            graph_from_rdflib(py, &graph_obj)
+        })
+    }
+
+    /// Best-effort union assembled from `copy_graph` rather than the default
     /// `store()`-streaming impl. A custom `graph_store=` keeps its data in
     /// Python and exposes only an empty scratch oxigraph store, so the default
-    /// would silently union nothing. Routing through `get_graph` (which this
-    /// backend overrides) gives `get_union_graph`/`copy_closure`/`copy_union`
-    /// correct results, including the prefix/imports/declaration transforms
-    /// that run on the returned dataset.
+    /// would silently union nothing. Routing through `copy_graph` (which
+    /// dispatches to the Python store's `copy_graph` when available, else
+    /// `get_graph`) gives `copy_closure`/`copy_union` correct results,
+    /// including the prefix/imports/declaration transforms that run on the
+    /// returned dataset.
     fn union_graph(&self, ids: &[GraphIdentifier]) -> (OxDataset, Vec<FailedImport>) {
         let mut dataset = OxDataset::new();
         let mut failures: Vec<FailedImport> = Vec::new();
@@ -1029,7 +1053,7 @@ impl GraphIO for PythonGraphIO {
                     continue;
                 }
             };
-            match self.get_graph(id) {
+            match self.copy_graph(id) {
                 Ok(graph) => {
                     for triple in graph.iter() {
                         dataset.insert(&Quad::new(
@@ -1626,6 +1650,10 @@ impl PyRdfLibStoreBackend {
         let ids: Vec<GraphIdentifier> = env_rs.ontologies().keys().cloned().collect();
         for id in ids {
             let graph_name = GraphName::NamedNode(NamedNode::from(id.name().into_owned()));
+            // Use get_graph here: bind_env_snapshot is shared by both
+            // get_dataset (view) and the OntoEnvStore-backed copy_dataset path.
+            // The common copy_dataset() path (plain rdflib.Dataset store) routes
+            // through rdflib_store.py's dataset_from_env, which calls env.copy_graph().
             let graph = env_rs.get_graph(&id).map_err(anyhow_to_pyerr)?;
             for triple in graph.iter() {
                 let quad = Quad::new(
@@ -3300,6 +3328,10 @@ impl OntoEnv {
     /// ordered list of ontology IRIs in the resolved closure starting with
     /// `uri`. Set `rewrite_sh_prefixes` or `remove_owl_imports` to control
     /// post-processing of the merged triples.
+    ///
+    /// Works correctly with custom ``graph_store=`` backends: each graph in
+    /// the closure is fetched via the backend's ``get_graph`` rather than the
+    /// internal oxigraph store.
     #[pyo3(signature = (uri, graph=None, rewrite_sh_prefixes=true, remove_owl_imports=true, recursion_depth=-1))]
     fn copy_closure<'a>(
         &self,
@@ -3368,6 +3400,13 @@ impl OntoEnv {
     /// ``owl:imports`` closure. The ``root`` IRI is used for ontology
     /// declaration cleanup and optional SHACL prefix rewriting; it does not
     /// need to be one of the listed graphs.
+    ///
+    /// Use :py:meth:`get_union` for a read-only store-backed view that avoids
+    /// materializing triples.
+    ///
+    /// Works correctly with custom ``graph_store=`` backends: each graph is
+    /// fetched via the backend's ``copy_graph`` when available, otherwise
+    /// ``get_graph``.
     #[pyo3(signature = (uris, root, graph=None, include_closures=false, rewrite_sh_prefixes=true, remove_owl_imports=true, recursion_depth=-1))]
     fn copy_union<'a>(
         &self,
@@ -4138,6 +4177,80 @@ impl OntoEnv {
         Ok((view, names))
     }
 
+    /// Return a read-only merged view over an explicitly listed set of
+    /// ontology graphs, plus the list of ontology IRIs that contribute to
+    /// the view (in the order they were resolved).
+    ///
+    /// The returned ``Graph`` is a :py:class:`ontoenv.ClosureGraphView` —
+    /// triple-pattern lookups dispatch to each underlying named graph and
+    /// de-duplicate, so it behaves like a merged graph without materializing
+    /// one. Mutation raises ``ValueError``; use :py:meth:`copy_union` for a
+    /// mutable in-memory merge.
+    ///
+    /// Set ``include_closures=True`` to expand each listed graph's transitive
+    /// ``owl:imports`` closure into the view. This is the read-only equivalent
+    /// of :py:meth:`copy_union`.
+    #[pyo3(signature = (uris, include_closures = false, recursion_depth = -1))]
+    fn get_union(
+        &self,
+        py: Python<'_>,
+        uris: Vec<String>,
+        include_closures: bool,
+        recursion_depth: i32,
+    ) -> PyResult<(Py<PyAny>, Vec<String>)> {
+        let names = {
+            let graph_iris: Vec<NamedNode> = uris
+                .iter()
+                .map(|uri| {
+                    NamedNode::new(uri.as_str())
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+                })
+                .collect::<PyResult<_>>()?;
+
+            let inner = self.inner.clone();
+            let guard = inner.lock().unwrap();
+            let env = guard.as_ref().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+            })?;
+
+            let mut names: Vec<String> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
+            for iri in &graph_iris {
+                let id = env
+                    .resolve(ResolveTarget::Graph(iri.clone()))
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "No graph with URI: {}",
+                            iri.as_str()
+                        ))
+                    })?;
+                if include_closures {
+                    let closure = env.get_closure(&id, recursion_depth).map_err(anyhow_to_pyerr)?;
+                    for closure_id in closure {
+                        let s = closure_id.to_uri_string();
+                        if seen.insert(s.clone()) {
+                            names.push(s);
+                        }
+                    }
+                } else {
+                    let s = id.to_uri_string();
+                    if seen.insert(s.clone()) {
+                        names.push(s);
+                    }
+                }
+            }
+            names
+        };
+
+        let dataset = self.cached_view_dataset(py)?;
+        let rdflib_store = py.import("ontoenv.rdflib_store")?;
+        let view = rdflib_store
+            .getattr("ClosureGraphView")?
+            .call1((dataset, names.clone()))?
+            .unbind();
+        Ok((view, names))
+    }
+
     /// Deprecated alias for :meth:`get_closure`.
     #[pyo3(signature = (uri, recursion_depth = -1))]
     fn get_closure_view(
@@ -4213,6 +4326,11 @@ impl OntoEnv {
     ///
     /// If `graph` is provided, triples are added to it and the same object is
     /// returned. Otherwise a new ``rdflib.Graph`` is created.
+    ///
+    /// Works correctly with custom ``graph_store=`` backends: triples are
+    /// fetched via the backend's ``get_graph`` method rather than the
+    /// internal oxigraph store, so the returned graph always reflects what
+    /// the Python store holds.
     #[pyo3(signature = (uri, graph = None))]
     fn copy_graph(
         &self,
@@ -4235,7 +4353,7 @@ impl OntoEnv {
                 ))
             })?;
 
-            env.get_graph(&graphid).map_err(anyhow_to_pyerr)?
+            env.copy_graph(&graphid).map_err(anyhow_to_pyerr)?
         };
         let res = match graph {
             Some(graph) => graph.clone(),
@@ -4323,6 +4441,10 @@ impl OntoEnv {
     ///
     /// If `dataset` is provided, quads are added to it and the same object is
     /// returned. Otherwise a new ``rdflib.Dataset`` is created.
+    ///
+    /// Works correctly with custom ``graph_store=`` backends: every named
+    /// graph is materialised via the backend's ``get_graph`` path rather than
+    /// the internal oxigraph store.
     #[pyo3(signature = (dataset = None))]
     fn copy_dataset(
         &self,

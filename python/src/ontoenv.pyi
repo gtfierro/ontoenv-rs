@@ -219,6 +219,10 @@ class OntoEnv:
 
         If *graph* is provided, triples are added to it and the same graph is
         returned. Otherwise a new in-memory graph is returned.
+
+        With a custom ``graph_store=``: if the store implements
+        ``copy_graph(iri)`` that method is called; otherwise falls back to
+        ``get_graph(iri)``.
         """
         ...
 
@@ -307,11 +311,36 @@ class OntoEnv:
         remove_owl_imports: bool = True,
         recursion_depth: int = -1,
     ) -> Tuple[Graph, List[str]]:
-        """Copy the import closure of *uri* into a mutable graph.
+        """Copy the transitive ``owl:imports`` closure of *uri* into a mutable graph.
 
-        Returns a ``(graph, closure_iris)`` tuple. If *graph* is provided the
-        triples are added to it and the same graph is returned; otherwise a
-        new ``rdflib.Graph`` is returned.
+        Returns ``(graph, closure_iris)``. If *graph* is provided the triples
+        are added to it and the same graph is returned; otherwise a new
+        ``rdflib.Graph`` is returned.
+
+        Use :py:meth:`get_closure` for a read-only store-backed view that
+        avoids materializing triples.
+
+        With a custom ``graph_store=``: each graph in the closure is fetched
+        via the store's ``copy_graph`` if available, otherwise ``get_graph``.
+        """
+        ...
+
+    def get_union(
+        self,
+        uris: List[str],
+        include_closures: bool = False,
+        recursion_depth: int = -1,
+    ) -> Tuple[Graph, List[str]]:
+        """Return a read-only merged view over an explicitly listed set of graphs.
+
+        Returns ``(view, graph_iris)`` where ``view`` is a
+        :py:class:`ontoenv.ClosureGraphView` that dispatches triple-pattern
+        lookups across the listed named graphs without materializing a copy.
+        Mutation raises ``ValueError``; use :py:meth:`copy_union` for a
+        mutable in-memory merge.
+
+        Set ``include_closures=True`` to expand each listed graph's
+        transitive ``owl:imports`` closure into the view.
         """
         ...
 
@@ -325,11 +354,19 @@ class OntoEnv:
         remove_owl_imports: bool = True,
         recursion_depth: int = -1,
     ) -> Tuple[Graph, List[str]]:
-        """Copy the union of explicitly enumerated ontology graphs.
+        """Copy the union of explicitly enumerated ontology graphs into a mutable graph.
+
+        Returns ``(graph, graph_iris)``. If *graph* is provided the triples
+        are added to it and the same graph is returned; otherwise a new
+        ``rdflib.Graph`` is returned.
 
         Set ``include_closures=True`` to include each listed graph's
         transitive ``owl:imports`` closure. ``root`` is used for ontology
-        declaration cleanup and optional SHACL prefix rewriting.
+        declaration cleanup and optional SHACL prefix rewriting; it does not
+        need to be one of the listed graphs.
+
+        Use :py:meth:`get_union` for a read-only store-backed view that
+        avoids materializing triples.
         """
         ...
 

@@ -31,18 +31,26 @@ Key methods
 - ``env.add(location, fetch_imports=True)`` — Register an ontology from a file path, URL,
   or an in-memory ``rdflib.Graph`` that contains an ``owl:Ontology`` declaration. Set
   ``fetch_imports=False`` to store only the root graph.
+- ``env.get_graph(name)`` — Return a read-only store-backed ``rdflib.Graph`` view for a
+  single ontology IRI. Mutation raises ``ValueError``; use ``copy_graph`` when you need
+  to add or remove triples locally.
+- ``env.copy_graph(name, graph=None)`` — Materialize a mutable in-memory
+  ``rdflib.Graph`` copy of the named ontology.
 - ``env.get_closure(name, recursion_depth=-1)`` — Return ``(view, closure_names)`` where
-  ``view`` is a read-only merged graph view over the ontology named ``name`` plus all its
-  transitive imports.
+  ``view`` is a read-only ``ClosureGraphView`` over the ontology named ``name`` plus all
+  its transitive imports. No triples are materialized; use ``copy_closure`` for a mutable
+  copy.
 - ``env.copy_closure(name, graph=None, recursion_depth=-1)`` — Copy the ontology named
   ``name`` plus all its transitive imports into a mutable ``rdflib.Graph``. Pass ``graph``
   to merge into an existing graph in place.
-- ``env.get_graph(name)`` — Return a read-only store-backed ``rdflib.Graph`` view for a
-  single ontology IRI. Cheap; useful when you only need one graph and don't intend to
-  mutate it. Mutation raises ``ValueError``.
-- ``env.copy_graph(name, graph=None)`` — Materialize a mutable in-memory
-  ``rdflib.Graph`` copy of the named ontology. Use this when you need to add or remove
-  triples locally without affecting the env.
+- ``env.get_union(uris, include_closures=False, recursion_depth=-1)`` — Return
+  ``(view, graph_iris)`` where ``view`` is a read-only ``ClosureGraphView`` over an
+  explicitly listed set of graphs. Set ``include_closures=True`` to expand each listed
+  graph's transitive ``owl:imports`` closure. No triples are materialized; use
+  ``copy_union`` for a mutable copy.
+- ``env.copy_union(uris, root, graph=None, include_closures=False, …)`` — Materialize the
+  union of explicitly listed graphs into a mutable ``rdflib.Graph``. ``root`` drives
+  ontology-declaration cleanup and optional SHACL prefix rewriting.
 - ``env.get_dataset()`` — Return a read-only ``rdflib.Dataset`` view of the environment.
 - ``env.copy_dataset(dataset=None)`` — Copy the environment into a mutable
   ``rdflib.Dataset``.

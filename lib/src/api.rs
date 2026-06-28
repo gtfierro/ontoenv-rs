@@ -2578,6 +2578,10 @@ impl OntoEnv {
         self.io.get_graph(id)
     }
 
+    pub fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        self.io.copy_graph(id)
+    }
+
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Result<Ontology> {
         // Return a cloned ontology or a user-friendly error.
         self.env

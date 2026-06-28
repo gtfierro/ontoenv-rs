@@ -22,7 +22,7 @@ Pass a ``graph_store=`` object to ``OntoEnv()``. It must implement the following
        <li><code>add_graph(iri: str, graph: Graph, overwrite: bool = False) → None</code>
            — store a graph under the given IRI.</li>
        <li><code>get_graph(iri: str) → Graph</code>
-           — retrieve a previously stored graph by IRI.</li>
+           — retrieve a graph by IRI for read-only access (views, <code>get_*</code> methods).</li>
        <li><code>remove_graph(iri: str) → None</code>
            — delete a graph from the store.</li>
        <li><code>graph_ids() → list[str]</code>
@@ -30,6 +30,13 @@ Pass a ``graph_store=`` object to ``OntoEnv()``. It must implement the following
      </ul>
      <h3>Optional</h3>
      <ul>
+       <li><code>copy_graph(iri: str) → Graph</code>
+           — return a mutable copy of the graph for use by <code>copy_graph</code>,
+           <code>copy_closure</code>, <code>copy_union</code>, and
+           <code>copy_dataset</code>. When absent, those methods fall back to
+           <code>get_graph</code>. Implement this when your store distinguishes
+           between a live view and a detached mutable copy (e.g. a database
+           cursor vs. an in-memory snapshot).</li>
        <li><code>size() → dict[str, int]</code>
            — return <code>{"num_graphs": …, "num_triples": …}</code> for diagnostic use.</li>
      </ul>

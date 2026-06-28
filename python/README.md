@@ -105,12 +105,22 @@ object that implements a small protocol:
 
 ```python
 class GraphStore:
+    # Required
     def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None: ...
-    def get_graph(self, iri: str) -> Graph: ...
+    def get_graph(self, iri: str) -> Graph: ...   # used for read-only views (get_*)
     def remove_graph(self, iri: str) -> None: ...
     def graph_ids(self) -> list[str]: ...
-    def size(self) -> dict[str, int]: ...  # optional, returns {"num_graphs": ..., "num_triples": ...}
+
+    # Optional
+    def copy_graph(self, iri: str) -> Graph: ...  # used for mutable copies (copy_*)
+                                                  # falls back to get_graph when absent
+    def size(self) -> dict[str, int]: ...         # returns {"num_graphs": ..., "num_triples": ...}
 ```
+
+`copy_graph` lets stores distinguish between returning a live view (`get_graph`) and a
+detached mutable copy (`copy_graph`). All `copy_*` methods (`copy_graph`, `copy_closure`,
+`copy_union`, `copy_dataset`) dispatch to `copy_graph` when it is present, and fall back
+to `get_graph` otherwise. The `get_*` methods always use `get_graph`.
 
 Example:
 

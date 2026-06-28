@@ -358,6 +358,16 @@ class TestPythonGraphStoreReadParity(unittest.TestCase):
         self.assertIn(self.BASE, names)
         self.assertIn(self.DEP, names)
 
+    def test_copy_dataset_parity(self) -> None:
+        from rdflib import URIRef
+
+        env = self._env()
+        ds = env.copy_dataset()
+        base_g = ds.graph(URIRef(self.BASE))
+        dep_g = ds.graph(URIRef(self.DEP))
+        self.assertEqual(self._content_values(base_g), {"base-value"})
+        self.assertEqual(self._content_values(dep_g), {"dep-value"})
+
     def test_iter_triples_parity(self) -> None:
         env = self._env()
         values = {
@@ -375,6 +385,207 @@ class TestPythonGraphStoreReadParity(unittest.TestCase):
             if str(p) == self.P
         }
         self.assertEqual(values, {"base-value", "dep-value"})
+
+
+class CopyCapableStore(DictGraphStore):
+    """DictGraphStore that also implements copy_graph.
+
+    copy_graph adds a marker triple so tests can prove the copy path was
+    dispatched rather than the get path.
+    """
+
+    MARKER_P = "http://example.com/copy-marker"
+
+    def copy_graph(self, iri: str) -> Graph:
+        from rdflib import Literal, URIRef
+
+        g = Graph()
+        g += self.graphs[iri]
+        g.add((URIRef(iri), URIRef(self.MARKER_P), Literal(True)))
+        return g
+
+
+def _triples(graph) -> set:
+    return {(str(s), str(p), str(o)) for s, p, o in graph}
+
+
+class TestCopyGetParity(unittest.TestCase):
+    """copy_* and get_* methods return the same content with no copy_graph override.
+
+    Uses DictGraphStore (no copy_graph method) so copy operations fall back to
+    get_graph. The test pinpoints that every copy method returns content
+    identical to its get counterpart — no extra or missing triples.
+    """
+
+    P = "http://example.com/p"
+    DEP = "http://example.com/dep"
+    BASE = "http://example.com/base"
+
+    def _env(self) -> "OntoEnv":
+        from rdflib import Graph as G, Literal, URIRef
+        from rdflib.namespace import OWL, RDF
+
+        store = DictGraphStore()
+
+        dep_g = G()
+        dep_g.add((URIRef(self.DEP), RDF.type, OWL.Ontology))
+        dep_g.add((URIRef(self.DEP), URIRef(self.P), Literal("dep-value")))
+        store.add_graph(self.DEP, dep_g)
+
+        base_g = G()
+        base_g.add((URIRef(self.BASE), RDF.type, OWL.Ontology))
+        base_g.add((URIRef(self.BASE), OWL.imports, URIRef(self.DEP)))
+        base_g.add((URIRef(self.BASE), URIRef(self.P), Literal("base-value")))
+        store.add_graph(self.BASE, base_g)
+
+        return OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+
+    def test_copy_graph_matches_get_graph(self) -> None:
+        env = self._env()
+        self.assertEqual(_triples(env.copy_graph(self.DEP)), _triples(env.get_graph(self.DEP)))
+        self.assertEqual(_triples(env.copy_graph(self.BASE)), _triples(env.get_graph(self.BASE)))
+
+    def test_copy_closure_matches_get_closure(self) -> None:
+        env = self._env()
+        # Disable optional post-processing so copy_closure is as close to the
+        # raw view as possible. copy_closure always calls remove_ontology_declarations
+        # (not controllable via a flag), so the rdf:type owl:Ontology triple
+        # for non-root members is absent from the copy but present in the view.
+        # Compare only application triples (predicate = self.P) to avoid that
+        # structural difference while still proving the copy content is correct.
+        copy_g, copy_names = env.copy_closure(
+            self.BASE, remove_owl_imports=False, rewrite_sh_prefixes=False
+        )
+        get_g, get_names = env.get_closure(self.BASE)
+        copy_content = {t for t in _triples(copy_g) if t[1] == self.P}
+        get_content = {t for t in _triples(get_g) if t[1] == self.P}
+        self.assertEqual(copy_content, get_content)
+        self.assertEqual(set(copy_names), set(get_names))
+
+    def test_copy_union_matches_get_union(self) -> None:
+        env = self._env()
+        # Same comparison strategy as copy_closure / get_closure: compare only
+        # application triples because copy_union normalises ontology declarations.
+        copy_g, copy_names = env.copy_union(
+            [self.BASE, self.DEP],
+            root=self.BASE,
+            remove_owl_imports=False,
+            rewrite_sh_prefixes=False,
+        )
+        get_g, get_names = env.get_union([self.BASE, self.DEP])
+        copy_content = {t for t in _triples(copy_g) if t[1] == self.P}
+        get_content = {t for t in _triples(get_g) if t[1] == self.P}
+        self.assertEqual(copy_content, get_content)
+        self.assertEqual(set(copy_names), set(get_names))
+
+    def test_get_union_with_closures(self) -> None:
+        env = self._env()
+        # With include_closures=True, listing only BASE should pull in DEP too.
+        get_g, names = env.get_union([self.BASE], include_closures=True)
+        content = {str(o) for _, p, o in get_g if str(p) == self.P}
+        self.assertEqual(content, {"base-value", "dep-value"})
+        self.assertIn(self.BASE, names)
+        self.assertIn(self.DEP, names)
+
+    def test_copy_dataset_matches_get_dataset(self) -> None:
+        from rdflib import URIRef
+
+        env = self._env()
+        copy_ds = env.copy_dataset()
+        get_ds = env.get_dataset()
+
+        for uri in [self.BASE, self.DEP]:
+            copy_triples = _triples(copy_ds.graph(URIRef(uri)))
+            get_triples = _triples(get_ds.graph(URIRef(uri)))
+            self.assertEqual(copy_triples, get_triples, f"mismatch for {uri}")
+
+
+class TestCopyDispatch(unittest.TestCase):
+    """copy_* dispatches to the store's copy_graph when available.
+
+    Uses CopyCapableStore, whose copy_graph adds a marker triple. Tests
+    check that the marker appears in copy results and is absent from get
+    results, proving copy and get dispatch to different store methods.
+    """
+
+    DEP = "http://example.com/dep"
+    BASE = "http://example.com/base"
+    P = "http://example.com/p"
+    MARKER_P = CopyCapableStore.MARKER_P
+
+    def _env(self) -> "OntoEnv":
+        from rdflib import Graph as G, Literal, URIRef
+        from rdflib.namespace import OWL, RDF
+
+        store = CopyCapableStore()
+
+        dep_g = G()
+        dep_g.add((URIRef(self.DEP), RDF.type, OWL.Ontology))
+        dep_g.add((URIRef(self.DEP), URIRef(self.P), Literal("dep-value")))
+        store.add_graph(self.DEP, dep_g)
+
+        base_g = G()
+        base_g.add((URIRef(self.BASE), RDF.type, OWL.Ontology))
+        base_g.add((URIRef(self.BASE), OWL.imports, URIRef(self.DEP)))
+        base_g.add((URIRef(self.BASE), URIRef(self.P), Literal("base-value")))
+        store.add_graph(self.BASE, base_g)
+
+        return OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+
+    def _has_marker(self, graph, subject_iri: str) -> bool:
+        from rdflib import Literal, URIRef
+
+        return (URIRef(subject_iri), URIRef(self.MARKER_P), Literal(True)) in graph
+
+    def test_copy_graph_dispatches_to_store_copy_graph(self) -> None:
+        env = self._env()
+        copy_g = env.copy_graph(self.DEP)
+        self.assertTrue(self._has_marker(copy_g, self.DEP))
+
+    def test_get_graph_does_not_use_copy_graph(self) -> None:
+        env = self._env()
+        get_g = env.get_graph(self.DEP)
+        self.assertFalse(self._has_marker(get_g, self.DEP))
+
+    def test_copy_closure_dispatches_to_store_copy_graph(self) -> None:
+        env = self._env()
+        copy_g, _ = env.copy_closure(self.BASE)
+        self.assertTrue(self._has_marker(copy_g, self.BASE))
+        self.assertTrue(self._has_marker(copy_g, self.DEP))
+
+    def test_get_closure_does_not_use_copy_graph(self) -> None:
+        env = self._env()
+        get_g, _ = env.get_closure(self.BASE)
+        self.assertFalse(self._has_marker(get_g, self.BASE))
+        self.assertFalse(self._has_marker(get_g, self.DEP))
+
+    def test_copy_union_dispatches_to_store_copy_graph(self) -> None:
+        env = self._env()
+        copy_g, _ = env.copy_union([self.BASE, self.DEP], root=self.BASE)
+        self.assertTrue(self._has_marker(copy_g, self.BASE))
+        self.assertTrue(self._has_marker(copy_g, self.DEP))
+
+    def test_get_union_does_not_use_copy_graph(self) -> None:
+        env = self._env()
+        get_g, _ = env.get_union([self.BASE, self.DEP])
+        self.assertFalse(self._has_marker(get_g, self.BASE))
+        self.assertFalse(self._has_marker(get_g, self.DEP))
+
+    def test_copy_dataset_dispatches_to_store_copy_graph(self) -> None:
+        from rdflib import URIRef
+
+        env = self._env()
+        ds = env.copy_dataset()
+        self.assertTrue(self._has_marker(ds.graph(URIRef(self.DEP)), self.DEP))
+        self.assertTrue(self._has_marker(ds.graph(URIRef(self.BASE)), self.BASE))
+
+    def test_get_dataset_does_not_use_copy_graph(self) -> None:
+        from rdflib import URIRef
+
+        env = self._env()
+        ds = env.get_dataset()
+        self.assertFalse(self._has_marker(ds.graph(URIRef(self.DEP)), self.DEP))
+        self.assertFalse(self._has_marker(ds.graph(URIRef(self.BASE)), self.BASE))
 
 
 if __name__ == "__main__":
