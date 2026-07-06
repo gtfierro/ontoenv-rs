@@ -56,6 +56,8 @@ pub mod writer;
 pub use reader::{DecodedTerm, GraphRef, IntegrityMode, OpenOptions, R5tuFile};
 #[cfg(feature = "idx")]
 pub use snapshot::{Match, Pattern, Scope, Snapshot};
+#[cfg(feature = "idx")]
+pub use view::View;
 #[cfg(feature = "sparql")]
 pub use sparql::SparqlView;
 pub use update::{replace_graph, replace_graph_with_options};
