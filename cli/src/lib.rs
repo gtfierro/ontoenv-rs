@@ -182,7 +182,7 @@ enum Commands {
         #[clap(long, default_value = "-1")]
         recursion_depth: i32,
         /// The file to write the union to, defaults to 'output.ttl'
-        #[clap(long, short)]
+        #[clap(long = "output")]
         output: Option<String>,
         /// Ontology IRIs to union
         #[clap(value_name = "ONTOLOGY", required = true)]

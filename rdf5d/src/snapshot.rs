@@ -445,3 +445,330 @@ fn count_unique(file: &R5tuFile, gids: &[u64]) -> Result<usize> {
     }
     Ok(triples.len())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Quint, Term, write_file};
+    use std::borrow::Cow;
+    use tempfile::tempdir;
+
+    fn iri(s: &str) -> Term {
+        Term::Iri(s.into())
+    }
+
+    fn literal(s: &str) -> Term {
+        Term::Literal {
+            lex: s.into(),
+            dt: None,
+            lang: None,
+        }
+    }
+
+    /// Two gids sharing one graph name, plus a third gid under a different name.
+    /// g1: (alice, name, "Alice") and (alice, age, "30")
+    /// g2: (bob,   name, "Bob")  and (charlie, name, "Charlie") — under same name
+    /// g3: (dave,  name, "Dave") under a different name
+    fn multi_gid_fixture(path: &Path) {
+        let quints = vec![
+            Quint { id: "d1".into(), s: iri("http://ex/alice"), p: iri("http://ex/name"), o: literal("Alice"), gname: "http://ex/g/shared".into() },
+            Quint { id: "d1".into(), s: iri("http://ex/alice"), p: iri("http://ex/age"),  o: literal("30"),    gname: "http://ex/g/shared".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/bob"),   p: iri("http://ex/name"), o: literal("Bob"),   gname: "http://ex/g/shared".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/charlie"), p: iri("http://ex/name"), o: literal("Charlie"), gname: "http://ex/g/shared".into() },
+            Quint { id: "d3".into(), s: iri("http://ex/dave"),  p: iri("http://ex/name"), o: literal("Dave"),  gname: "http://ex/g/other".into() },
+        ];
+        write_file(path, &quints).expect("multi-gid fixture");
+    }
+
+    fn snap(path: &Path) -> Snapshot {
+        Snapshot::open(path).expect("open snapshot")
+    }
+
+    fn term_id(snap: &Snapshot, iri_str: &str) -> u64 {
+        snap.file()
+            .term_id(&DecodedTerm::Iri(Cow::Borrowed(iri_str)))
+            .unwrap_or_else(|| panic!("term not found: {iri_str}"))
+    }
+
+    fn count_matches(results: &[Result<Match>]) -> usize {
+        results.iter().filter(|r| r.is_ok()).count()
+    }
+
+    #[test]
+    fn empty_snapshot_returns_no_graphs() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("empty.r5tu");
+        write_file(&path, &[]).expect("empty fixture");
+        let s = snap(&path);
+        assert_eq!(s.graph_names().count(), 0);
+        assert!(!s.has_graph("http://ex/g/shared"));
+        assert_eq!(s.gids_for_name("http://ex/g/shared"), None);
+    }
+
+    #[test]
+    fn scan_all_returns_all_triples() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("scan_all.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let results: Vec<_> = s.scan(Pattern::ANY, Scope::All).collect();
+        assert_eq!(count_matches(&results), 5);
+    }
+
+    #[test]
+    fn scan_by_name_single_gid() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("scan_single.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        // "other" has 1 triple under a single gid
+        let results: Vec<_> = s.scan(Pattern::ANY, Scope::ByName("http://ex/g/other")).collect();
+        assert_eq!(count_matches(&results), 1);
+        // Check triple content
+        let m = results[0].as_ref().unwrap();
+        let ns = "http://ex/";
+        let dave_id = term_id(&s, &format!("{ns}dave"));
+        let name_id = term_id(&s, &format!("{ns}name"));
+        assert_eq!(m.s, dave_id);
+        assert_eq!(m.p, name_id);
+    }
+
+    #[test]
+    fn scan_by_name_dedups_across_multi_gid() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("scan_dedup.r5tu");
+        // Write the same triple under two gids sharing one name
+        let quints = vec![
+            Quint { id: "d1".into(), s: iri("http://ex/alice"), p: iri("http://ex/name"), o: literal("Alice"), gname: "http://ex/g/shared".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/alice"), p: iri("http://ex/name"), o: literal("Alice"), gname: "http://ex/g/shared".into() },
+        ];
+        write_file(&path, &quints).expect("dedup fixture");
+        let s = snap(&path);
+        let results: Vec<_> = s.scan(Pattern::ANY, Scope::ByName("http://ex/g/shared")).collect();
+        // Even though 2 physical gids, the dedup-aware view should surface 1 triple
+        assert_eq!(count_matches(&results), 1);
+    }
+
+    #[test]
+    fn scan_by_gids_does_not_dedup() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("scan_gids.r5tu");
+        let quints = vec![
+            Quint { id: "d1".into(), s: iri("http://ex/alice"), p: iri("http://ex/name"), o: literal("Alice"), gname: "http://ex/g/shared".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/alice"), p: iri("http://ex/name"), o: literal("Alice"), gname: "http://ex/g/shared".into() },
+        ];
+        write_file(&path, &quints).expect("gids fixture");
+        let s = snap(&path);
+        // Scope::Gids does NOT deduplicate
+        let gids: Vec<u64> = s.gids_for_name("http://ex/g/shared").unwrap().to_vec();
+        assert_eq!(gids.len(), 2);
+        let results: Vec<_> = s.scan(Pattern::ANY, Scope::Gids(&gids)).collect();
+        assert_eq!(count_matches(&results), 2);
+    }
+
+    #[test]
+    fn scan_bound_pattern_matches() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("scan_bound.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let alice_id = term_id(&s, "http://ex/alice");
+        let name_id = term_id(&s, "http://ex/name");
+
+        // Bind subject + predicate
+        let pat = Pattern { s: Some(alice_id), p: Some(name_id), o: None };
+        let results: Vec<_> = s.scan(pat, Scope::ByName("http://ex/g/shared")).collect();
+        assert_eq!(count_matches(&results), 1, "Alice has one name triple");
+        assert_eq!(results[0].as_ref().unwrap().s, alice_id);
+        assert_eq!(results[0].as_ref().unwrap().p, name_id);
+    }
+
+    #[test]
+    fn scan_overflow_term_id_yields_no_results() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("scan_overflow.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let n_terms = s.file().num_terms();
+        // An overflow id >= num_terms cannot match any stored term
+        let pat = Pattern { s: Some(n_terms + 1), p: None, o: None };
+        let results: Vec<_> = s.scan(pat, Scope::All).collect();
+        assert_eq!(count_matches(&results), 0);
+    }
+
+    #[test]
+    fn scan_nonexistent_graph_name_returns_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("scan_nonexist.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let results: Vec<_> = s.scan(Pattern::ANY, Scope::ByName("http://ex/g/nonexistent")).collect();
+        assert_eq!(count_matches(&results), 0);
+    }
+
+    #[test]
+    fn triple_count_single_gid_eager() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("count_single.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        // "other" has exactly 1 gid with 1 triple
+        let count = s.triple_count(Scope::ByName("http://ex/g/other")).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn triple_count_multi_gid_dedup_lazy() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("count_dedup.r5tu");
+        // Same triple under 2 gids sharing one name
+        let quints = vec![
+            Quint { id: "d1".into(), s: iri("http://ex/alice"), p: iri("http://ex/name"), o: literal("Alice"), gname: "http://ex/g/shared".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/alice"), p: iri("http://ex/name"), o: literal("Alice"), gname: "http://ex/g/shared".into() },
+            Quint { id: "d3".into(), s: iri("http://ex/bob"),   p: iri("http://ex/name"), o: literal("Bob"),   gname: "http://ex/g/shared".into() },
+        ];
+        write_file(&path, &quints).expect("count dedup fixture");
+        let s = snap(&path);
+        // 3 physical triples, but 2 unique: (alice, name, Alice) appears twice
+        let count = s.triple_count(Scope::ByName("http://ex/g/shared")).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn triple_count_all_scope() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("count_all.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        // Scope::All = all gids, no dedup: 5 physical triples
+        let count = s.triple_count(Scope::All).unwrap();
+        assert_eq!(count, 5);
+    }
+
+    #[test]
+    fn triple_count_gids_scope() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("count_gids.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let gids = s.gids_for_name("http://ex/g/shared").unwrap();
+        let count = s.triple_count(Scope::Gids(gids)).unwrap();
+        assert_eq!(count, 4, "shared has 4 physical triples across 2 gids");
+    }
+
+    #[test]
+    fn names_containing_finds_matching_graphs() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("names_containing.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let alice_id = term_id(&s, "http://ex/alice");
+        let pat = Pattern { s: Some(alice_id), p: None, o: None };
+        let mut names = s.names_containing(pat).unwrap();
+        names.sort();
+        assert_eq!(names, vec!["http://ex/g/shared"]);
+    }
+
+    #[test]
+    fn names_containing_nonexistent_term() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("names_containing_none.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let n_terms = s.file().num_terms();
+        let pat = Pattern { s: Some(n_terms + 10), p: None, o: None };
+        let names = s.names_containing(pat).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn has_graph_returns_true_for_known_names() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("has_graph.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        assert!(s.has_graph("http://ex/g/shared"));
+        assert!(s.has_graph("http://ex/g/other"));
+        assert!(!s.has_graph("http://ex/g/missing"));
+    }
+
+    #[test]
+    fn gids_for_name_returns_physical_gids() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gids_for_name.r5tu");
+        multi_gid_fixture(&path);
+        let s = snap(&path);
+        let gids = s.gids_for_name("http://ex/g/shared").unwrap();
+        // Two gids: d1 and d2
+        assert_eq!(gids.len(), 2);
+        // gids are distinct
+        assert_ne!(gids[0], gids[1]);
+        assert_eq!(s.gids_for_name("http://ex/g/missing"), None);
+    }
+
+    #[test]
+    fn closure_forward_reverse_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("closure_snap.r5tu");
+        let subclass = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        let quints = vec![
+            Quint { id: "d1".into(), s: iri("http://ex/A"), p: iri(subclass), o: iri("http://ex/B"), gname: "g".into() },
+            Quint { id: "d2".into(), s: iri("http://ex/B"), p: iri(subclass), o: iri("http://ex/C"), gname: "g".into() },
+        ];
+        write_file(&path, &quints).expect("closure fixture");
+        let s = snap(&path);
+        let p_id = term_id(&s, subclass);
+        let a_id = term_id(&s, "http://ex/A");
+        let c_id = term_id(&s, "http://ex/C");
+
+        // Forward: A subClassOf+ ... should reach C transitively
+        let fwd = s.closure_forward(p_id, a_id);
+        assert!(fwd.is_some(), "A should have forward closure");
+        let mut fwd = fwd.unwrap();
+        fwd.sort();
+        assert!(fwd.contains(&c_id), "A should reach C via B");
+
+        // Reverse: C is reached by A
+        let rev = s.closure_reverse(p_id, c_id);
+        assert!(rev.is_some(), "C should have reverse closure");
+        assert!(rev.unwrap().contains(&a_id), "C should be reachable from A");
+
+        // A has no reverse (nothing subClassOf A)
+        assert!(s.closure_reverse(p_id, a_id).is_none()
+                || s.closure_reverse(p_id, a_id).unwrap().is_empty());
+
+        // Predicate not in index
+        assert!(s.closure_forward(999_999, a_id).is_none());
+    }
+
+    #[test]
+    fn has_closures_true_only_when_index_has_data() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("has_closures.r5tu");
+        // No subClassOf triples — the index will be empty
+        let quints = vec![
+            Quint { id: "d1".into(), s: iri("http://ex/A"), p: iri("http://ex/p"), o: iri("http://ex/B"), gname: "g".into() },
+        ];
+        write_file(&path, &quints).expect("no-closure fixture");
+        let s = snap(&path);
+        assert!(!s.has_closures(), "no closure predicates → has_closures = false");
+    }
+
+    #[test]
+    fn has_closures_true_after_building() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("has_closures_true.r5tu");
+        let subclass = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        let quints = vec![
+            Quint { id: "d1".into(), s: iri("http://ex/A"), p: iri(subclass), o: iri("http://ex/B"), gname: "g".into() },
+        ];
+        write_file(&path, &quints).expect("closure fixture");
+        let s = snap(&path);
+        // Force building the closure index by querying
+        let p_id = term_id(&s, subclass);
+        let a_id = term_id(&s, "http://ex/A");
+        let fwd = s.closure_forward(p_id, a_id);
+        assert!(fwd.is_some());
+        assert!(s.has_closures());
+    }
+}

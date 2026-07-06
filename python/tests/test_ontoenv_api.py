@@ -1252,6 +1252,115 @@ ex:B a owl:Class .
             self.env.copy_closure("http://ex.org/A", rewrite_sh_prefixes=True)
         self.assertIn('Conflicting sh:prefix "ex"', str(ctx.exception))
 
+    def test_add_with_rename_overrides_iri(self) -> None:
+        """env.add(..., rename="new-iri") stores the ontology under the new IRI.
 
-if __name__ == "__main__":
-    unittest.main()
+        After rename, the old IRI should not resolve, the new IRI should
+        resolve, and the stored graph should carry the new IRI as the
+        owl:Ontology subject.
+        """
+        import tempfile
+
+        old_iri = "http://example.com/OldOnt"
+        new_iri = "http://example.com/NewOnt"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".ttl", delete=False) as f:
+            f.write(f'''
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <{old_iri}> a owl:Ontology .
+            ''')
+            ttl_path = f.name
+
+        try:
+            env = OntoEnv(path=self.test_dir, recreate=True)
+            returned_iri = env.add(ttl_path, rename=new_iri)
+            self.assertEqual(returned_iri, new_iri)
+
+            # Old IRI should not resolve
+            self.assertNotIn(old_iri, env)
+
+            # New IRI should resolve
+            self.assertIn(new_iri, env)
+
+            # get_graph on the new IRI should work and contain the ontology declaration
+            g = env.get_graph(new_iri)
+            self.assertEqual(len(g), 2, "expected 2 triples: type + declare")
+
+            # The owl:Ontology declaration should use the new IRI
+            self.assertIn(
+                (URIRef(new_iri), RDF.type, OWL.Ontology),
+                g,
+            )
+
+            # The old IRI should NOT appear as a subject
+            for s, p, o in g:
+                self.assertNotEqual(
+                    str(s), old_iri,
+                    f"old IRI {old_iri} should not appear as subject after rename",
+                )
+        finally:
+            os.unlink(ttl_path)
+
+    def test_add_no_imports_with_rename(self) -> None:
+        """env.add_no_imports(..., rename=...) also renames correctly."""
+        import tempfile
+
+        old_iri = "http://example.com/OldOnt"
+        new_iri = "http://example.com/NewOnt"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".ttl", delete=False) as f:
+            f.write(f'''
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <{old_iri}> a owl:Ontology .
+            ''')
+            ttl_path = f.name
+
+        try:
+            env = OntoEnv(path=self.test_dir, recreate=True)
+            returned_iri = env.add_no_imports(ttl_path, rename=new_iri)
+            self.assertEqual(returned_iri, new_iri)
+            self.assertIn(new_iri, env)
+            self.assertNotIn(old_iri, env)
+
+            g = env.get_graph(new_iri)
+            self.assertIn(
+                (URIRef(new_iri), RDF.type, OWL.Ontology),
+                g,
+            )
+        finally:
+            os.unlink(ttl_path)
+
+    def test_rename_graph_iri_python_api(self) -> None:
+        """env.rename_graph_iri(old_iri, new_iri) renames an already-loaded ontology."""
+        import tempfile
+
+        old_iri = "http://example.com/OldOnt"
+        new_iri = "http://example.com/NewOnt"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".ttl", delete=False) as f:
+            f.write(f'''
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <{old_iri}> a owl:Ontology .
+            ''')
+            ttl_path = f.name
+
+        try:
+            env = OntoEnv(path=self.test_dir, recreate=True)
+            env.add(ttl_path)
+            self.assertIn(old_iri, env)
+
+            returned_iri = env.rename_graph_iri(old_iri, new_iri)
+            self.assertEqual(returned_iri, new_iri)
+
+            self.assertIn(new_iri, env)
+            self.assertNotIn(old_iri, env)
+
+            g = env.get_graph(new_iri)
+            self.assertIn(
+                (URIRef(new_iri), RDF.type, OWL.Ontology),
+                g,
+            )
+        finally:
+            os.unlink(ttl_path)
+
+

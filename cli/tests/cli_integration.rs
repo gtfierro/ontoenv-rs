@@ -486,3 +486,159 @@ fn init_offline_flag_persists_on_existing_env() {
         "offline must be true after `ontoenv init --offline` on existing env"
     );
 }
+
+/// `ontoenv union` takes multiple ontology IRIs and writes a merged file.
+/// With --include-closures, the transitive imports of each listed IRI are
+/// included in the union.
+#[test]
+fn union_command_merges_ontologies_with_closures() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("union-test");
+
+    // Write three chained ontologies: C imports B, B imports A
+    let a_path = root.join("A.ttl");
+    write_ttl(
+        &a_path,
+        "http://example.com/A",
+        "<http://example.com/A> <http://example.com/p> \"a-val\" .",
+    );
+    let b_path = root.join("B.ttl");
+    write_ttl(
+        &b_path,
+        "http://example.com/B",
+        "<http://example.com/B> <http://www.w3.org/2002/07/owl#imports> <http://example.com/A> .\n<http://example.com/B> <http://example.com/p> \"b-val\" .",
+    );
+    let c_path = root.join("C.ttl");
+    write_ttl(
+        &c_path,
+        "http://example.com/C",
+        "<http://example.com/C> <http://www.w3.org/2002/07/owl#imports> <http://example.com/B> .\n<http://example.com/C> <http://example.com/p> \"c-val\" .",
+    );
+
+    // Init the env
+    let init_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg("--offline")
+        .arg(root.to_str().unwrap())
+        .output()
+        .expect("run init");
+    assert!(
+        init_out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init_out.stderr)
+    );
+
+    // Add each ontology explicitly so they're registered under the expected IRIs
+    for path in [&a_path, &b_path, &c_path] {
+        let add_out = Command::new(&exe)
+            .current_dir(&root)
+            .arg("add")
+            .arg(path.to_str().unwrap())
+            .output()
+            .expect("run add");
+        assert!(
+            add_out.status.success(),
+            "add failed for {:?}: {}",
+            path,
+            String::from_utf8_lossy(&add_out.stderr)
+        );
+    }
+
+    // Union just C, with --include-closures, which should pull in B and A
+    let output_path = root.join("union-output.ttl");
+    let union_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("union")
+        .arg("--root")
+        .arg("http://example.com/C")
+        .arg("--include-closures")
+        .arg("--output")
+        .arg(output_path.to_str().unwrap())
+        .arg("http://example.com/C")
+        .output()
+        .expect("run union");
+    assert!(
+        union_out.status.success(),
+        "union failed: {}",
+        String::from_utf8_lossy(&union_out.stderr)
+    );
+
+    // The output file should exist
+    assert!(output_path.exists(), "union output file should exist");
+    let output_content = fs::read_to_string(&output_path).expect("read union output");
+
+    // Should contain triples from all three ontologies
+    assert!(
+        output_content.contains("\"a-val\""),
+        "output should contain A's triple"
+    );
+    assert!(
+        output_content.contains("\"b-val\""),
+        "output should contain B's triple"
+    );
+    assert!(
+        output_content.contains("\"c-val\""),
+        "output should contain C's triple"
+    );
+
+    // owl:imports triples should be removed by default
+    assert!(
+        !output_content.contains("owl:imports"),
+        "owl:imports should be removed by default"
+    );
+}
+
+/// Test the `ontoenv add --rename` flag
+#[test]
+fn add_with_rename_stores_under_new_iri() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("add-rename");
+
+    let old_iri = "http://example.com/OldOnt";
+    let new_iri = "http://example.com/NewOnt";
+    let ttl_path = root.join("ont.ttl");
+    write_ttl(&ttl_path, old_iri, "");
+
+    // Init env with the file location
+    let init_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("init");
+    assert!(init_out.status.success());
+
+    // Add with rename
+    let add_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("add")
+        .arg("--rename")
+        .arg(new_iri)
+        .arg(ttl_path.to_str().unwrap())
+        .output()
+        .expect("add with rename");
+    assert!(
+        add_out.status.success(),
+        "add --rename failed: {}",
+        String::from_utf8_lossy(&add_out.stderr)
+    );
+
+    // Verify the new IRI is in the env and the old is gone
+    let list_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("list")
+        .arg("ontologies")
+        .output()
+        .expect("list");
+    assert!(list_out.status.success());
+    let stdout = String::from_utf8_lossy(&list_out.stdout);
+    assert!(
+        stdout.contains(new_iri),
+        "new IRI should be listed: {stdout}"
+    );
+    assert!(
+        !stdout.contains(old_iri),
+        "old IRI should NOT be listed: {stdout}"
+    );
+}

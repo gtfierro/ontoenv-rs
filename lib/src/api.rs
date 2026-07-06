@@ -2302,7 +2302,6 @@ impl OntoEnv {
         // Merge multiple graphs into a dataset with optional cleanup transforms.
         let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
 
-        // TODO: figure out failed imports
         if graph_ids.is_empty() {
             return Err(anyhow!("No graphs found"));
         }
