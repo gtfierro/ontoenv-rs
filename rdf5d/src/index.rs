@@ -48,8 +48,8 @@ pub enum IdxKind {
 /// `A`/`B` depends on the permutation (see [`build_mem_section`]).
 #[derive(Debug, Default)]
 pub struct Posting {
-    gids: Vec<u32>,
-    blocks: Vec<Vec<(u64, u64)>>,
+    pub(crate) gids: Vec<u32>,
+    pub(crate) blocks: Vec<Vec<(u64, u64)>>,
 }
 
 /// A borrowed view of one key's [`Posting`].
@@ -106,9 +106,9 @@ impl<'a> IdxPosting<'a> {
 /// of the sorted tuple stream already in order).
 #[derive(Debug)]
 pub struct MemSection {
-    kind: IdxKind,
-    keys: Vec<u64>,
-    postings: Vec<Posting>,
+    pub(crate) kind: IdxKind,
+    pub(crate) keys: Vec<u64>,
+    pub(crate) postings: Vec<Posting>,
 }
 
 impl MemSection {
@@ -201,18 +201,18 @@ pub fn build_mem_section(r5tu: &R5tuFile, kind: IdxKind) -> Result<MemSection> {
 
 /// Both directions of the transitive closure for one predicate.
 #[derive(Debug, Default)]
-struct PClosPred {
+pub(crate) struct PClosPred {
     /// subject -> sorted set of reachable objects.
-    forward: HashMap<u64, Vec<u64>>,
+    pub(crate) forward: HashMap<u64, Vec<u64>>,
     /// object -> sorted set of subjects that reach it transitively.
-    reverse: HashMap<u64, Vec<u64>>,
+    pub(crate) reverse: HashMap<u64, Vec<u64>>,
 }
 
 /// An in-memory precomputed transitive-closure index over a configured set of
 /// predicates, built directly from an [`R5tuFile`].
 #[derive(Debug)]
 pub struct MemPClos {
-    preds: HashMap<u64, PClosPred>,
+    pub(crate) preds: HashMap<u64, PClosPred>,
 }
 
 impl MemPClos {

@@ -46,6 +46,8 @@ pub mod reader;
 pub mod index;
 #[cfg(feature = "idx")]
 pub mod snapshot;
+#[cfg(feature = "idx")]
+pub mod view;
 #[cfg(feature = "sparql")]
 pub mod sparql;
 pub mod update;
