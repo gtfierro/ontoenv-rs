@@ -2572,11 +2572,23 @@ impl OntoEnv {
         Ok(graph)
     }
 
+    /// Returns a read-only graph from the IO store for the given identifier.
+    ///
+    /// This is the primary read path and dispatches to the underlying backend
+    /// (`PersistentGraphIO`, `PythonGraphIO`, etc.). The returned graph is a
+    /// snapshot and should not be mutated; use [`Self::copy_graph`] when you
+    /// need a mutable copy.
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         // Delegate graph retrieval to the IO backend.
         self.io.get_graph(id)
     }
 
+    /// Returns a mutable copy of the graph for the given identifier.
+    ///
+    /// Unlike [`Self::get_graph`], this returns a fresh in-memory copy that
+    /// can be freely mutated. Custom `GraphIO` backends can override
+    /// `copy_graph` to distinguish between returning a live view (via
+    /// `get_graph`) and returning a detached copy (via `copy_graph`).
     pub fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         self.io.copy_graph(id)
     }
@@ -2884,10 +2896,20 @@ impl OntoEnv {
         self.config.require_ontology_names = require;
     }
 
+    /// Set the TTL (in seconds) for caching remote ontologies.
+    ///
+    /// Remote ontologies fetched via HTTP are cached locally. When the TTL
+    /// expires the next `update` or `add` triggers a re-fetch. The default
+    /// is 3600 seconds (1 hour).
     pub fn set_remote_cache_ttl_secs(&mut self, ttl_secs: u64) {
         self.config.remote_cache_ttl_secs = ttl_secs;
     }
 
+    /// Set the cache mode for ontology loading.
+    ///
+    /// Controls whether `update` re-loads ontologies from their original
+    /// source (file/URL) or uses cached copies. See [`CacheMode`] for
+    /// available modes.
     pub fn set_use_cached_ontologies(&mut self, mode: crate::options::CacheMode) {
         self.config.use_cached_ontologies = mode;
     }

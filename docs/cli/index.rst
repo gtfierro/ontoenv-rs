@@ -178,7 +178,7 @@ to the renamed copy; re-add or update them as needed.
 Commands: extract graphs
 ------------------------
 
-Two commands export graph data; they differ in scope and how imports are handled:
+Three commands export graph data; they differ in scope and how imports are handled:
 
 .. list-table::
    :header-rows: 1
@@ -196,6 +196,12 @@ Two commands export graph data; they differ in scope and how imports are handled
      - The ontology merged with all transitive ``owl:imports``
      - Full transitive closure resolved and merged
      - ``-o <file>`` (required)
+   * - ``ontoenv union``
+     - An explicitly listed set of ontology IRIs, optionally with
+       transitive imports
+     - ``--include-closures`` to also resolve closures; ``--recursion-depth``
+       to limit depth
+     - ``--output <file>`` (default: ``output.ttl``)
 
 .. code-block:: console
 
@@ -212,6 +218,29 @@ Two commands export graph data; they differ in scope and how imports are handled
    # closure but keep owl:imports statements in the output
    ontoenv closure https://brickschema.org/schema/Brick brick_closure.ttl \
      --keep-owl-imports
+
+   # union of two ontologies (without transitive imports)
+   ontoenv union \
+     --root https://example.org/C \
+     https://example.org/A https://example.org/B \
+     --output merged.ttl
+
+   # union with transitive closure expansion
+   ontoenv union \
+     --root https://example.org/C \
+     --include-closures \
+     https://example.org/A \
+     --output merged_with_deps.ttl
+
+   # union with full options: keep owl:imports, skip sh:prefix rewriting, depth limit
+   ontoenv union \
+     --root https://example.org/C \
+     --include-closures \
+     --keep-owl-imports \
+     --no-rewrite-sh-prefixes \
+     --recursion-depth 2 \
+     https://example.org/A \
+     --output customized_union.ttl
 
 Global flags
 ------------

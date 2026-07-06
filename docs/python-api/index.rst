@@ -28,9 +28,20 @@ Key methods
   ``graph_store``.
 - ``env.update(all=False)`` — Re-run discovery with the configured directories. Pass
   ``all=True`` to force re-fetching of all remote ontologies regardless of cache age.
-- ``env.add(location, fetch_imports=True)`` — Register an ontology from a file path, URL,
-  or an in-memory ``rdflib.Graph`` that contains an ``owl:Ontology`` declaration. Set
-  ``fetch_imports=False`` to store only the root graph.
+- ``env.add(location, fetch_imports=True, rename=None)`` — Register an ontology from a file
+  path, URL, or an in-memory ``rdflib.Graph``.  Set ``fetch_imports=False`` to skip
+  ``owl:imports`` traversal.  Pass ``rename="<new-iri>"`` to override the ontology IRI
+  stored in the environment — the declared IRI in the graph is rewritten to the new value
+  (see :ref:`renaming-on-add` in the CLI docs for what gets rewritten).
+- ``env.add_no_imports(location, rename=None)`` — Same as ``add`` but always skips import
+  traversal.  Also accepts ``rename``.
+- ``env.rename_graph_iri(old_iri, new_iri)`` — Rename an ontology already in the
+  environment.  Reads the stored graph, rewrites all occurrences of ``old_iri`` to
+  ``new_iri`` (subject and object positions, excluding ``owl:versionIRI`` values), and
+  updates the import dependency graph.  Returns the new IRI.
+
+**Read-only views** vs **mutable copies**:
+
 - ``env.get_graph(name)`` — Return a read-only store-backed ``rdflib.Graph`` view for a
   single ontology IRI. Mutation raises ``ValueError``; use ``copy_graph`` when you need
   to add or remove triples locally.
@@ -60,7 +71,28 @@ Key methods
   *not* de-duplicate across named graphs.
 - ``env.import_dependencies(graph, fetch_missing=False)`` — Mutate an ``rdflib.Graph`` in
   place, inserting triples from all ontologies declared in its ``owl:imports`` statements.
-  Set ``fetch_missing=True`` to download any imports not yet in the environment.
+
+**Alias management** — route multiple IRIs to a single canonical ontology:
+
+- ``env.add_alias(alias_iri, canonical_iri)`` — Create an alias that resolves to the same
+  graph as the canonical IRI.  Aliases can only point to canonical IRIs (not other
+  aliases), preventing chains.
+- ``env.remove_alias(alias_iri)`` — Remove a previously registered alias.
+- ``env.resolve_alias(alias_iri)`` — Return the canonical IRI for an alias, or ``None``.
+- ``env.get_aliases_for(canonical_iri)`` — List all aliases that point to a given canonical
+  IRI.
+- ``env.is_canonical_iri(iri)`` — Check whether an IRI is a canonical ontology (not an
+  alias).  Aliases, container/context-manager protocols, and ``get_closure`` all
+  transparently resolve aliases to the canonical graph.
+
+**Configuration** at runtime (these are also available as CLI flags at init time):
+
+- ``env.set_offline(bool)`` / ``env.is_offline()`` — Toggle or query offline mode.
+- ``env.set_strict(bool)`` / ``env.is_strict()`` — Strict mode makes missing imports an
+  error instead of a warning.
+- ``env.set_remote_cache_ttl_secs(secs)`` — Override the remote-ontology cache TTL.
+- ``env.set_use_cached_ontologies(mode)`` — Control whether cached copies or fresh fetches
+  are preferred.
 
 Query indexes (PSO/POS/SPO/OSP posting lists and a transitive-closure table for property
 paths) are built in memory on first use — no setup, no on-disk sidecar. See
