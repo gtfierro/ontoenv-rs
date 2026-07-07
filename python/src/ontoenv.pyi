@@ -6,6 +6,7 @@ from rdflib.store import Store
 
 # Exposed module metadata
 version: str
+is_debug_build: bool
 
 
 class Ontology:

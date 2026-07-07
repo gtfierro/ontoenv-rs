@@ -1225,6 +1225,19 @@ fn run_cli(py: Python<'_>, args: Option<Vec<String>>) -> PyResult<i32> {
     Ok(code)
 }
 
+/// Whether the native extension was compiled in debug mode (unoptimized).
+///
+/// Benchmarking or perf-sensitive use against a debug build is misleading:
+/// the per-triple Rust callbacks (`__next__`, term decoding) run 5-10x
+/// slower than release, so backends that cross the FFI boundary per triple
+/// (e.g. `ontoenv-get`'s `ViewGraph`) appear massively regressed relative
+/// to pure-Python backends (`ontoenv-copy`, `rdflib-memory`) that are
+/// unaffected by the Rust build profile.
+#[pyfunction]
+fn is_debug_build() -> bool {
+    cfg!(debug_assertions)
+}
+
 /// Fallback stub when the CLI feature is disabled at compile time.
 #[pyfunction]
 #[cfg(not(feature = "cli"))]
@@ -5320,6 +5333,7 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOntology>()?;
     m.add_class::<PyRdfLibStoreBackend>()?;
     m.add_function(wrap_pyfunction!(run_cli, m)?)?;
+    m.add_function(wrap_pyfunction!(is_debug_build, m)?)?;
     // add version attribute
     m.add("version", env!("CARGO_PKG_VERSION"))?;
     Ok(())

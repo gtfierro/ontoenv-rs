@@ -51,8 +51,19 @@ def _timed():
     yield lambda: time.perf_counter() - t0
 
 
-def bench(fn, *, repeat=3):
-    """Run ``fn`` ``repeat`` times, return (mean_seconds, stddev_seconds, result_of_last_run)."""
+def bench(fn, *, repeat=3, warmup=True):
+    """Run ``fn`` ``repeat`` times, return (mean_seconds, stddev_seconds, result_of_last_run).
+
+    A single untimed warm-up run is executed first when ``warmup`` is set, so
+    the measured mean is not dominated by one-off first-iteration costs
+    (cold term caches, lazy index builds, etc.). This is also fairer to the
+    read-only ``ontoenv-get`` backend: ``copy_closure``'s equivalent cold
+    cost (materializing the rdflib graph) happens outside the timed region in
+    :func:`run_all`, so timing ``ontoenv-get`` cold would compare apples to
+    oranges. Pass ``warmup=False`` to include the cold run.
+    """
+    if warmup:
+        fn()
     times = []
     result = None
     for _ in range(repeat):
@@ -330,6 +341,24 @@ def main():
     parser.add_argument("--output", type=Path, default=None,
                         help="If set, write a markdown table of results here.")
     args = parser.parse_args()
+
+    try:
+        from ontoenv import is_debug_build
+        debug = bool(is_debug_build())
+    except Exception:
+        debug = False
+    if debug:
+        bar = "=" * 78
+        print(
+            f"\n{bar}\n"
+            "WARNING: ontoenv was built in DEBUG (unoptimized) mode.\n"
+            "Backends that cross the FFI per triple (ontoenv-get's ViewGraph)\n"
+            "run 5-10x slower; pure-Python backends (ontoenv-copy, rdflib-memory)\n"
+            "are unaffected, so the comparison is meaningless. Rebuild with\n"
+            "  uv run maturin develop --release\n"
+            f"before trusting these numbers.\n{bar}\n",
+            file=sys.stderr,
+        )
 
     env_path = Path(args.env_path).resolve()
     print(f"Brick source: {args.brick}")

@@ -1,7 +1,7 @@
 """Python package shim for the ontoenv extension."""
 
 # These symbols come from the Rust extension module built via maturin.
-from ontoenv._native import OntoEnv, Ontology, run_cli, version  # type: ignore[attr-defined]
+from ontoenv._native import OntoEnv, Ontology, is_debug_build, run_cli, version  # type: ignore[attr-defined]
 from ontoenv import _native as _ext  # type: ignore[attr-defined]
 from ontoenv.rdflib_store import (
     OntoEnvStore,
@@ -16,6 +16,7 @@ __all__ = [
     "Ontology",
     "OntoEnvStore",
     "ViewGraph",
+    "is_debug_build",
     "run_cli",
     "version",
 ]
