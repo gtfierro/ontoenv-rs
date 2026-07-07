@@ -123,6 +123,39 @@ Current limits:
 - The store is currently in-memory only.
 - This path does not yet persist into ``rdf5d``.
 
+``ViewGraph`` — read-only scoped views
+--------------------------------------
+
+``env.get_closure(uri)`` and ``env.get_union(uris)`` return a
+:class:`ontoenv.ViewGraph` instead of an ``rdflib.Graph``. A ``ViewGraph`` is a
+lightweight, non-``rdflib.Graph`` view over a fixed set of named graphs in the
+snapshot. It delegates triple-pattern lookups, ``len``, ``in``, and SPARQL
+``query()`` to the Rust backend scoped to the view's graphs, so it behaves like
+a merged graph without materializing a copy.
+
+.. code-block:: python
+
+   view, names = env.get_closure("https://example.com/myOntology")
+   print(len(view))                       # triple count across the closure
+   for s, p, o in view:                    # iterate, de-duplicated across graphs
+       ...
+   subs = list(view.subjects(predicate=RDF.type, object=OWL.Ontology))
+   rows = view.query("SELECT ?s WHERE { ?s a owl:Ontology }")
+
+Supported on ``ViewGraph``:
+
+- ``triples(subject=None, predicate=None, obj=None)`` and iteration over it
+- ``__iter__``, ``__contains__``, ``__len__``, ``__bool__``, ``__repr__``
+- ``subjects`` / ``predicates`` / ``objects`` (pattern-restricted, de-duplicated)
+- ``query(query, init_bindings=None)`` — SPARQL scoped to the view's graphs
+- ``bind`` / ``namespace`` / ``prefix`` / ``namespaces``
+- ``serialize(format="turtle")``
+
+``ViewGraph`` is read-only: ``add``, ``addN``, and ``remove`` raise
+``ValueError``. Use :py:meth:`OntoEnv.copy_closure` / :py:meth:`OntoEnv.copy_union`
+for a mutable merge. ``env.get_graph(uri)`` still returns a plain
+``rdflib.Graph``.
+
 Query behavior
 --------------
 

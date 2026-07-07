@@ -254,7 +254,7 @@ OntoEnv(
 
 | Method | Root identified by | Mutates input? | Returns |
 |---|---|---|---|
-| `get_closure(name, ...)` | IRI string | No | `(Graph, list[str])` read-only view |
+| `get_closure(name, ...)` | IRI string | No | `(ViewGraph, list[str])` read-only view |
 | `copy_closure(name, ...)` | IRI string | No | `(Graph, list[str])` mutable copy |
 | `import_graph(destination_graph, name, ...)` | IRI string | Yes (required) | `None` |
 | `import_dependencies(graph, ...)` | `owl:imports` in caller's graph | Yes | `list[str]` |
@@ -262,7 +262,7 @@ OntoEnv(
 | `list_closure(name, ...)` | IRI string | — | `list[str]` (IRIs only) |
 
 **`get_closure(uri, recursion_depth=-1)`**
-Return a read-only merged view over the full closure by IRI. Use when you want to inspect or query closure triples without materializing a copy.
+Return a read-only `ViewGraph` over the full closure by IRI. Use when you want to inspect or query closure triples without materializing a copy. `ViewGraph` is not an `rdflib.Graph` subclass — it delegates `triples`, `subjects`/`predicates`/`objects`, `len`, `in`, and `query()` to the Rust backend scoped to the view's graphs; mutation raises `ValueError`.
 
 **`copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`**
 Copy the full closure by IRI into a mutable graph. `sh:prefixes` blocks are consolidated onto `uri` and `owl:imports` removed by default. Returns `(merged_graph, closure_iris)`. Use when you want a self-contained graph for reasoning, exchange, or export.
@@ -282,7 +282,7 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 | `add_no_imports(location) -> str` | Same as `add`, but skips import traversal |
 | `get_graph(name) -> Graph` | Read-only store-backed view of a single ontology (no closure expansion). Mutation raises `ValueError` |
 | `copy_graph(name, graph=None) -> Graph` | Mutable in-memory copy of a single ontology |
-| `get_closure(name, recursion_depth=-1) -> (Graph, list[str])` | Read-only merged view over the imports closure (no materialization) |
+| `get_closure(name, recursion_depth=-1) -> (ViewGraph, list[str])` | Read-only merged view over the imports closure (no materialization) |
 | `copy_closure(name, graph=None, ...) -> (Graph, list[str])` | Mutable in-memory copy of the imports closure |
 | `iter_triples(name)` / `iter_closure_triples(name, recursion_depth=-1)` | Streaming triple iterators that skip the rdflib `Graph` wrapper |
 | `get_ontology(name)` | Inspect metadata: imports list, version, namespace map, last-updated |

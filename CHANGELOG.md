@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ### Changed (breaking)
 - `OntoEnv.get_graph(uri)` now returns a **read-only store-backed `rdflib.Graph` view** instead of a mutable in-memory copy. Mutating the returned graph raises `ValueError`. Use the new `OntoEnv.copy_graph(uri)` for the previous behavior (mutable in-memory `rdflib.Graph` copy).
+- `OntoEnv.get_closure(uri)` and `OntoEnv.get_union(uris)` now return a **read-only `ontoenv.ViewGraph`** instead of a `ClosureGraphView`/`rdflib.Graph`. A `ViewGraph` does not subclass `rdflib.Graph`; it delegates triple-pattern lookups (`triples`, `subjects`/`predicates`/`objects`), `len`, `in`, and SPARQL `query()` to the Rust backend scoped to the view's named graphs. It is read-only — `add`/`addN`/`remove` raise `ValueError`; use `copy_closure`/`copy_union` for a mutable merge. `ontoenv.ClosureGraphView` is retained for backwards compatibility but is no longer returned by any public method.
 - `OntoEnv.snapshot_as_dataset(backend=..., store=...)` renamed to `OntoEnv.as_dataset(backend=..., store=...)`. `to_rdflib_dataset` still works (deprecated) and now forwards to `as_dataset`.
 - `GraphIO::union_graph` now returns `(Dataset, Vec<FailedImport>)` — always best-effort: per-id errors (bad graphname, ensure_loaded failure, mid-graph store iteration error) are recorded in the failures list and the offending id is skipped, but the rest of the union is still assembled. The previous behavior silently dropped failures with no signal. `OntoEnv::get_union_graph` consumes the failures list: in **strict** mode any failure becomes an error; in **non-strict** mode the partial union is returned with `UnionGraph.failed_imports` populated so the caller knows what's missing.
 
@@ -16,6 +17,8 @@ All notable changes to this project are documented here. Releases follow [Semant
 - Pythonic container/context-manager protocols on `OntoEnv`: `len(env)`, `uri in env`, `env[uri]` (shorthand for `get_graph`), `for name in env` (iterates ontology URIs), and `with OntoEnv(...) as env:` (calls `close()` on exit). `bool(env)` is always `True` — use `env is None` to detect absence.
 - `OntoEnv.get_closure_view(uri, recursion_depth=-1) -> (Graph, list[str])` — read-only merged view across the imports closure. Triple-pattern lookups dispatch to each underlying named graph and de-duplicate; no materialization. Same return shape as `get_closure` so callers can swap freely.
 - `OntoEnv.iter_triples(uri) -> Iterator[(s, p, o)]` and `OntoEnv.iter_closure_triples(uri, recursion_depth=-1) -> Iterator[(s, p, o)]` — streaming triples as rdflib terms, skipping the rdflib `Graph` wrapper. Closure iteration is not de-duplicated.
+- `ontoenv.ViewGraph` — read-only, non-`rdflib.Graph` view returned by `get_closure` and `get_union`. Exposes `triples`, `subjects`/`predicates`/`objects`, `query` (SPARQL scoped to the view), `len`, `in`, `serialize`, and namespace bindings; mutation raises `ValueError`.
+- `_RdfLibStoreBackend` scoped methods: `iter_triples_scoped`, `triples_scoped`, `subjects_scoped`, `predicates_scoped`, `objects_scoped`, and `query_scoped` — the Rust primitives `ViewGraph` delegates to, scoped to a list of named graphs.
 - `ontoenv.ClosureGraphView` — read-only `rdflib.Graph` subclass returned by `get_closure_view`; exposed for `isinstance` checks.
 - Internal `OntoEnv.get_graph(uri)` Dataset cache: subsequent `get_graph` calls reuse the underlying store; mutating methods (`add`, `add_no_imports`, `update`, `flush`) invalidate it.
 - `OntoEnv.refresh_dataset(dataset)` method — re-snapshot the env into an existing `OntoEnvStore`-backed Dataset. Replaces the top-level `refresh_dataset_from_env(dataset, env)` helper.
@@ -27,6 +30,8 @@ All notable changes to this project are documented here. Releases follow [Semant
 - Top-level re-exports `ontoenv.dataset_from_env` and `ontoenv.refresh_dataset_from_env` — use `env.as_dataset(...)` and `env.refresh_dataset(...)` instead. The functions still exist in `ontoenv.rdflib_store` as the underlying implementation.
 
 ### Fixed
+- `ViewGraph.triples` scoped-pattern branch: `triples_scoped` returns `(triple, contexts)` rows, but the code yielded the whole row — now unpacks to the bare triple.
+- `OntoEnv.add(..., rename=...)` rename test expectation: the minimal `<old> a owl:Ontology .` fixture contains exactly one triple, and `rename_ontology_iri_graph` rewrites the subject to yield one triple; the `test_add_with_rename_overrides_iri` assertion of `len == 2` ("type + declare") was a stale expectation with no matching fixture, corrected to `len == 1`.
 - `add_ids_to_dependency_graph` is now transactional with respect to the in-memory env state: a mid-traversal failure (e.g. a strict-mode unresolved import) no longer leaves `env`, `dependency_graph`, `dependency_graph_index`, and `failed_resolutions` desynced from each other.
 - Dependency-graph construction now resolves imports by `GraphIdentifier` instead of going through `ResolutionPolicy`, so the graph reflects the exact ontology being added rather than whatever the policy maps the name to.
 

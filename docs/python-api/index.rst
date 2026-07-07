@@ -48,16 +48,16 @@ Key methods
 - ``env.copy_graph(name, graph=None)`` — Materialize a mutable in-memory
   ``rdflib.Graph`` copy of the named ontology.
 - ``env.get_closure(name, recursion_depth=-1)`` — Return ``(view, closure_names)`` where
-  ``view`` is a read-only ``ClosureGraphView`` over the ontology named ``name`` plus all
-  its transitive imports. No triples are materialized; use ``copy_closure`` for a mutable
-  copy.
+  ``view`` is a read-only :py:class:`ontoenv.ViewGraph` over the ontology named ``name``
+  plus all its transitive imports. No triples are materialized; use ``copy_closure`` for a
+  mutable copy.
 - ``env.copy_closure(name, graph=None, recursion_depth=-1)`` — Copy the ontology named
   ``name`` plus all its transitive imports into a mutable ``rdflib.Graph``. Pass ``graph``
   to merge into an existing graph in place.
 - ``env.get_union(uris, include_closures=False, recursion_depth=-1)`` — Return
-  ``(view, graph_iris)`` where ``view`` is a read-only ``ClosureGraphView`` over an
-  explicitly listed set of graphs. Set ``include_closures=True`` to expand each listed
-  graph's transitive ``owl:imports`` closure. No triples are materialized; use
+  ``(view, graph_iris)`` where ``view`` is a read-only :py:class:`ontoenv.ViewGraph`
+  over an explicitly listed set of graphs. Set ``include_closures=True`` to expand each
+  listed graph's transitive ``owl:imports`` closure. No triples are materialized; use
   ``copy_union`` for a mutable copy.
 - ``env.copy_union(uris, root, graph=None, include_closures=False, …)`` — Materialize the
   union of explicitly listed graphs into a mutable ``rdflib.Graph``. ``root`` drives

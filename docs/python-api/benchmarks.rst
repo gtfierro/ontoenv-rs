@@ -162,7 +162,7 @@ How to read the results
   now beats Oxigraph on every triple-pattern shape.
 - **Full triple iteration matches in-memory.** 131 ms vs. 135 ms for
   ``rdflib-memory`` on the Brick closure (~237k triples). The all-unbound
-  case in ``ClosureGraphView.triples`` streams directly from the rdf5d
+  case in ``ViewGraph.triples`` streams directly from the rdf5d
   snapshot's term-ID iterator with a u64-keyed cache for Python terms; it
   doesn't build intermediate ``oxrdf::Term`` objects per row. For large
   scans, ``get_*`` is now an equally good choice.
