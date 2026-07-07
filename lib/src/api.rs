@@ -389,11 +389,18 @@ impl OntoEnv {
         }
     }
 
-    /// Ensure file locations are anchored to the OntoEnv root; leave other variants untouched.
+    /// Ensure file locations are anchored to the OntoEnv root and canonicalized;
+    /// leave other variants untouched.
+    ///
+    /// Canonicalization (via [`crate::ontology::canonicalize_file_path`]) is what
+    /// makes a path supplied to `add`/`add_from_bytes` compare equal to the path
+    /// `init`/`update` discovered for the same file. Without it, symlinked roots
+    /// (e.g. macOS `/var` -> `/private/var`) and relative vs absolute forms of
+    /// the same file create duplicate ontology entries keyed by location.
     fn resolve_location(&self, location: OntologyLocation) -> OntologyLocation {
         match location {
-            OntologyLocation::File(p) if p.is_relative() => {
-                OntologyLocation::File(self.resolve_path(&p))
+            OntologyLocation::File(p) => {
+                OntologyLocation::File(crate::ontology::canonicalize_file_path(&p))
             }
             _ => location,
         }
@@ -1929,7 +1936,7 @@ impl OntoEnv {
         };
         let mut files = HashSet::new();
         for location in &self.config.locations {
-            let resolved = self.resolve_path(location);
+            let resolved = crate::ontology::canonicalize_file_path(&self.resolve_path(location));
             // if location does not exist, skip it
             if !resolved.exists() {
                 warn!("Location does not exist: {resolved:?}");
@@ -1943,7 +1950,9 @@ impl OntoEnv {
                     }
                     warn!("Skipping {:?} due to access error: {}", resolved, err);
                 } else {
-                    files.insert(OntologyLocation::File(resolved.clone()));
+                    files.insert(OntologyLocation::File(
+                        crate::ontology::canonicalize_file_path(&resolved),
+                    ));
                 }
                 continue;
             }
@@ -1975,7 +1984,9 @@ impl OntoEnv {
                         );
                         continue;
                     }
-                    files.insert(OntologyLocation::File(entry.path().to_path_buf()));
+                    files.insert(OntologyLocation::File(
+                        crate::ontology::canonicalize_file_path(entry.path()),
+                    ));
                 }
             }
         }

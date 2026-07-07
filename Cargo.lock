@@ -2096,6 +2096,7 @@ dependencies = [
  "chrono",
  "clap",
  "derive_builder",
+ "dunce",
  "env_logger",
  "fs2",
  "globset",

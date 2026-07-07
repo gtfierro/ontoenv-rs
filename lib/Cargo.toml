@@ -22,6 +22,7 @@ globset.workspace = true
 chrono.workspace = true
 petgraph.workspace = true
 clap.workspace = true
+dunce = "1"
 derive_builder.workspace = true
 serde.workspace = true
 oxigraph.workspace = true

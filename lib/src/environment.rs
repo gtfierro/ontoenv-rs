@@ -229,10 +229,13 @@ impl Environment {
         // Take ownership to avoid borrow conflicts while rebuilding indices.
         for (_, mut ontology) in mem::take(&mut self.ontologies) {
             if let Some(OntologyLocation::File(p)) = ontology.location().cloned() {
-                if p.is_relative() {
-                    let abs = root.join(&p);
-                    ontology.set_location(OntologyLocation::File(abs));
-                }
+                let abs = if p.is_relative() { root.join(&p) } else { p };
+                // Canonicalize so persisted locations from older versions (or
+                // symlinked/relative forms) collapse to a single canonical path,
+                // matching what `init`/`update` and `add` now record.
+                ontology.set_location(OntologyLocation::File(
+                    crate::ontology::canonicalize_file_path(&abs),
+                ));
             }
             let id = ontology.id().clone();
             if let Some(loc) = ontology.location() {
