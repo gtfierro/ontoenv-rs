@@ -33,14 +33,14 @@ use std::sync::OnceLock;
 
 use crate::index::{IdxKind, MemPClos, MemSection};
 use crate::reader::{DecodedTerm, Result};
-use crate::snapshot::{Match, Pattern, Snapshot, CLOSURE_PREDICATE_IRIS};
+use crate::snapshot::{CLOSURE_PREDICATE_IRIS, Match, Pattern, Snapshot};
 
 #[cfg(feature = "sparql")]
 use crate::SparqlView;
 #[cfg(feature = "sparql")]
-use spargebra;
-#[cfg(feature = "sparql")]
 use spareval;
+#[cfg(feature = "sparql")]
+use spargebra;
 
 /// A scoped, lazily-indexed view over a subset of a [`Snapshot`]'s named graphs.
 ///
@@ -52,9 +52,13 @@ pub struct View<'a> {
     gids: Vec<u64>,
     // Permutation indexes, built lazily and independently from the view's
     // gids only. `None` inside the cell means the build failed (logged).
+    #[allow(dead_code)]
     mem_pso: OnceLock<Option<MemSection>>,
+    #[allow(dead_code)]
     mem_pos: OnceLock<Option<MemSection>>,
+    #[allow(dead_code)]
     mem_spo: OnceLock<Option<MemSection>>,
+    #[allow(dead_code)]
     mem_osp: OnceLock<Option<MemSection>>,
     // Precomputed transitive closures for CLOSURE_PREDICATE_IRIS, computed
     // over triples in the view's gids only.
@@ -126,11 +130,11 @@ impl<'a> View<'a> {
         let dedup = self.gids.len() > 1;
         let gids = self.gids.clone();
 
-        let base: Box<dyn Iterator<Item = Result<Match>> + 'a> =
-            match self.indexed_iter(pat, gids) {
-                Ok(iter) => iter,
-                Err(gids) => Box::new(self.full_scan(pat, gids)),
-            };
+        let base: Box<dyn Iterator<Item = Result<Match>> + 'a> = match self.indexed_iter(pat, gids)
+        {
+            Ok(iter) => iter,
+            Err(gids) => Box::new(self.full_scan(pat, gids)),
+        };
 
         if dedup {
             Box::new(Dedup {
@@ -153,16 +157,19 @@ impl<'a> View<'a> {
 
     /// Rewrite and evaluate a SPARQL query against this view.
     #[cfg(feature = "sparql")]
-    pub fn query(&'a self, query: &'a mut spargebra::Query) -> std::result::Result<spareval::QueryResults<'a>, spareval::QueryEvaluationError> {
+    pub fn query(
+        &'a self,
+        query: &'a mut spargebra::Query,
+    ) -> std::result::Result<spareval::QueryResults<'a>, spareval::QueryEvaluationError> {
         self.rewrite_query(query);
-        Ok(spareval::QueryEvaluator::new()
+        spareval::QueryEvaluator::new()
             .prepare(query)
-            .execute(self.sparql_view())?)
+            .execute(self.sparql_view())
     }
 
     /// Rewrite `P+`/`P*` property paths using the view's PClos.
     #[cfg(feature = "sparql")]
-    pub fn rewrite_query(&self, query: &mut spargebra::Query) {
+    pub fn rewrite_query(&self, _query: &mut spargebra::Query) {
         // Identical logic to the PClosRewriter in sparql.rs, but delegates
         // to self.mem_pclos() (the view's own closure index) instead of
         // snapshot.mem_pclos(). Requires making PClosRewriter accept an
@@ -194,6 +201,7 @@ impl<'a> View<'a> {
 
     // ── index building (lazy, per-view) ─────────────────────────────────
 
+    #[allow(dead_code)]
     fn mem_section(&self, kind: IdxKind) -> Option<&MemSection> {
         let cell = match kind {
             IdxKind::Pso => &self.mem_pso,
@@ -202,11 +210,13 @@ impl<'a> View<'a> {
             IdxKind::Osp => &self.mem_osp,
             IdxKind::PClos => return None,
         };
-        cell.get_or_init(|| match build_mem_section_for_gids(self.snapshot.file(), kind, &self.gids) {
-            Ok(section) => Some(section),
-            Err(error) => {
-                log::warn!("building {kind:?} index for view failed: {error}");
-                None
+        cell.get_or_init(|| {
+            match build_mem_section_for_gids(self.snapshot.file(), kind, &self.gids) {
+                Ok(section) => Some(section),
+                Err(error) => {
+                    log::warn!("building {kind:?} index for view failed: {error}");
+                    None
+                }
             }
         })
         .as_ref()
@@ -240,7 +250,7 @@ impl<'a> View<'a> {
 
     fn indexed_iter(
         &'a self,
-        pat: Pattern,
+        _pat: Pattern,
         gids: Vec<u64>,
     ) -> std::result::Result<Box<dyn Iterator<Item = Result<Match>> + 'a>, Vec<u64>> {
         // Identical to Snapshot::indexed_iter but uses self.mem_section()
@@ -249,10 +259,14 @@ impl<'a> View<'a> {
         Err(gids)
     }
 
-    fn full_scan(&'a self, pat: Pattern, gids: Vec<u64>) -> impl Iterator<Item = Result<Match>> + 'a {
+    fn full_scan(
+        &'a self,
+        pat: Pattern,
+        gids: Vec<u64>,
+    ) -> impl Iterator<Item = Result<Match>> + 'a {
         let file = self.snapshot.file();
-        gids.into_iter().flat_map(move |gid| {
-            match file.triples_ids(gid) {
+        gids.into_iter()
+            .flat_map(move |gid| match file.triples_ids(gid) {
                 Ok(triples) => {
                     let pat = pat;
                     Box::new(triples.filter_map(move |(s, p, o)| {
@@ -267,8 +281,7 @@ impl<'a> View<'a> {
                     })) as Box<dyn Iterator<Item = Result<Match>> + 'a>
                 }
                 Err(error) => Box::new(once(Err(error))),
-            }
-        })
+            })
     }
 }
 
@@ -290,6 +303,7 @@ fn collect_tuples_for_gids(
 }
 
 /// Build one permutation index from only the given gids.
+#[allow(dead_code)]
 fn build_mem_section_for_gids(
     r5tu: &crate::reader::R5tuFile,
     kind: IdxKind,
@@ -325,10 +339,17 @@ fn build_mem_section_for_gids(
             blocks.push(block);
         }
         keys.push(key);
-        postings.push(crate::index::Posting { gids: gids_vec, blocks });
+        postings.push(crate::index::Posting {
+            gids: gids_vec,
+            blocks,
+        });
     }
 
-    Ok(MemSection { kind, keys, postings })
+    Ok(MemSection {
+        kind,
+        keys,
+        postings,
+    })
 }
 
 /// Build PClos from only the given gids.
@@ -379,9 +400,9 @@ fn build_mem_pclos_for_gids(
 
 /// Non-reflexive BFS closure table. (Duplicated from index.rs; could be
 /// shared via a helper module.)
-fn bfs_closure_table(adj: &std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>>)
-    -> std::collections::BTreeMap<u64, Vec<u64>>
-{
+fn bfs_closure_table(
+    adj: &std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>>,
+) -> std::collections::BTreeMap<u64, Vec<u64>> {
     let mut out = std::collections::BTreeMap::new();
     for start in adj.keys() {
         let mut visited = std::collections::BTreeSet::new();

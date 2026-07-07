@@ -947,6 +947,7 @@ impl TermDict {
         Ok((lex, dt, lang))
     }
 
+    #[allow(clippy::type_complexity)]
     fn decode_component_literal_borrowed<'a>(
         &self,
         data: &'a [u8],

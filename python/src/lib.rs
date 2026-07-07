@@ -22,7 +22,7 @@ use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyDict, PyList, PyString, PyStringMethods, PyTuple},
+    types::{IntoPyDict, PyDict, PyList, PySet, PyString, PyStringMethods, PyTuple},
 };
 use rand::random;
 use rdf5d::{DecodedTerm, Pattern, Scope, Snapshot};
@@ -1358,7 +1358,6 @@ fn collect_graph_triples(env: &OntoEnvRs, id: &GraphIdentifier) -> Result<Vec<Tr
     Ok(out)
 }
 
-
 fn named_or_blank_node_from_graph_name(graph_name: &str) -> Result<NamedOrBlankNode> {
     let graph_name = graph_name_from_string(graph_name)?;
     Ok(match graph_name {
@@ -1649,7 +1648,7 @@ impl PyRdfLibStoreBackend {
         let mut dataset = OxDataset::new();
         let ids: Vec<GraphIdentifier> = env_rs.ontologies().keys().cloned().collect();
         for id in ids {
-            let graph_name = GraphName::NamedNode(NamedNode::from(id.name().into_owned()));
+            let graph_name = GraphName::NamedNode(id.name().into_owned());
             // Use get_graph here: bind_env_snapshot is shared by both
             // get_dataset (view) and the OntoEnvStore-backed copy_dataset path.
             // The common copy_dataset() path (plain rdflib.Dataset store) routes
@@ -1657,9 +1656,9 @@ impl PyRdfLibStoreBackend {
             let graph = env_rs.get_graph(&id).map_err(anyhow_to_pyerr)?;
             for triple in graph.iter() {
                 let quad = Quad::new(
-                    triple.subject.clone(),
-                    triple.predicate.clone(),
-                    triple.object.clone(),
+                    triple.subject,
+                    triple.predicate,
+                    triple.object,
                     graph_name.clone(),
                 );
                 dataset.insert(&quad);
@@ -1836,7 +1835,9 @@ impl PyRdfLibStoreBackend {
                 let predicate_id = predicate
                     .as_ref()
                     .map(|value| snapshot_term_id(snapshot, &Term::NamedNode(value.clone())));
-                let object_id = object.as_ref().map(|value| snapshot_term_id(snapshot, value));
+                let object_id = object
+                    .as_ref()
+                    .map(|value| snapshot_term_id(snapshot, value));
                 let empty_iter = |py: Python<'_>| -> PyResult<Py<PyAny>> {
                     Py::new(
                         py,
@@ -1960,7 +1961,8 @@ impl PyRdfLibStoreBackend {
                     else {
                         return Ok(Vec::new());
                     };
-                    let Some(predicate_id) = snapshot_term_id(snapshot, &Term::NamedNode(predicate))
+                    let Some(predicate_id) =
+                        snapshot_term_id(snapshot, &Term::NamedNode(predicate))
                     else {
                         return Ok(Vec::new());
                     };
@@ -2085,8 +2087,7 @@ impl PyRdfLibStoreBackend {
                         object.as_ref().map(Term::as_ref),
                         Some(gn.as_ref()),
                     ) {
-                        let triple =
-                            Triple::new(quad.subject, quad.predicate, quad.object);
+                        let triple = Triple::new(quad.subject, quad.predicate, quad.object);
                         by_triple
                             .entry(triple)
                             .or_default()
@@ -2210,13 +2211,11 @@ impl PyRdfLibStoreBackend {
                         continue;
                     };
                     let gn = GraphName::NamedNode(nn);
-                    for quad in
-                        dataset.quads_for_pattern(None, None, None, Some(gn.as_ref()))
-                    {
+                    for quad in dataset.quads_for_pattern(None, None, None, Some(gn.as_ref())) {
                         triples.push(Triple::new(
-                            quad.subject.clone(),
-                            quad.predicate.clone(),
-                            quad.object.clone(),
+                            quad.subject,
+                            quad.predicate,
+                            quad.object,
                         ));
                     }
                 }
@@ -2263,9 +2262,7 @@ impl PyRdfLibStoreBackend {
                         Ok(n) => GraphName::NamedNode(n),
                         Err(_) => continue,
                     };
-                    for quad in
-                        dataset.quads_for_pattern(None, None, None, Some(gn.as_ref()))
-                    {
+                    for quad in dataset.quads_for_pattern(None, None, None, Some(gn.as_ref())) {
                         seen.insert(Triple::new(quad.subject, quad.predicate, quad.object));
                     }
                 }
@@ -2293,12 +2290,10 @@ impl PyRdfLibStoreBackend {
         object: &Bound<'_, PyAny>,
         graph_names: Vec<String>,
     ) -> PyResult<bool> {
-        let subject =
-            term_to_subject(term_from_python(subject).map_err(anyhow_to_pyerr)?)
-                .map_err(anyhow_to_pyerr)?;
-        let predicate =
-            term_to_predicate(term_from_python(predicate).map_err(anyhow_to_pyerr)?)
-                .map_err(anyhow_to_pyerr)?;
+        let subject = term_to_subject(term_from_python(subject).map_err(anyhow_to_pyerr)?)
+            .map_err(anyhow_to_pyerr)?;
+        let predicate = term_to_predicate(term_from_python(predicate).map_err(anyhow_to_pyerr)?)
+            .map_err(anyhow_to_pyerr)?;
         let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
 
         let backend = self.backend.lock().unwrap();
@@ -2410,6 +2405,221 @@ impl PyRdfLibStoreBackend {
             }
         }
     }
+
+    /// Stream every triple across a list of named graphs without pattern
+    /// matching or de-duplication. Thin alias for
+    /// :py:meth:`iter_triples_in_graphs` so :py:class:`ontoenv.ViewGraph`
+    /// can name its primitive after the view concept rather than the store
+    /// concept. The argument is the view's scope (a list of graph IRIs).
+    fn iter_triples_scoped(&self, py: Python<'_>, graph_names: Vec<String>) -> PyResult<Py<PyAny>> {
+        self.iter_triples_in_graphs(py, graph_names)
+    }
+
+    /// Pattern-restricted, de-duplicated triple scan across a list of named
+    /// graphs. Returns ``(triple, contexts)`` rows, like
+    /// :py:meth:`triples_in_graphs`, but with the scope argument first to
+    /// match :py:class:`ontoenv.ViewGraph`'s calling convention.
+    fn triples_scoped(
+        &self,
+        py: Python<'_>,
+        graph_names: Vec<String>,
+        subject: Option<&Bound<'_, PyAny>>,
+        predicate: Option<&Bound<'_, PyAny>>,
+        object: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        self.triples_in_graphs(py, subject, predicate, object, graph_names)
+    }
+
+    /// Yield the unique subjects of triples matching ``(predicate, object)``
+    /// across the scope's named graphs. De-duplication is exact (rdflib term
+    /// equality) and reuses the per-backend matching logic from
+    /// :py:meth:`triples_in_graphs`.
+    fn subjects_scoped(
+        &self,
+        py: Python<'_>,
+        graph_names: Vec<String>,
+        predicate: Option<&Bound<'_, PyAny>>,
+        object: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        scoped_unique_terms(self, py, graph_names, None, predicate, object, 0)
+    }
+
+    /// Yield the unique predicates of triples matching ``(subject, object)``
+    /// across the scope's named graphs.
+    fn predicates_scoped(
+        &self,
+        py: Python<'_>,
+        graph_names: Vec<String>,
+        subject: Option<&Bound<'_, PyAny>>,
+        object: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        scoped_unique_terms(self, py, graph_names, subject, None, object, 1)
+    }
+
+    /// Yield the unique objects of triples matching ``(subject, predicate)``
+    /// across the scope's named graphs.
+    fn objects_scoped(
+        &self,
+        py: Python<'_>,
+        graph_names: Vec<String>,
+        subject: Option<&Bound<'_, PyAny>>,
+        predicate: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        scoped_unique_terms(self, py, graph_names, subject, predicate, None, 2)
+    }
+
+    /// Run a SPARQL query scoped to a list of named graphs.
+    ///
+    /// The query's default graph is set to the union of the scope's named
+    /// graphs and ``available_named_graphs`` is restricted to the scope, so
+    /// ``GRAPH`` clauses and the default graph both see only the view's
+    /// graphs. This is the read-only, scoped equivalent of
+    /// :py:meth:`query`.
+    fn query_scoped(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        graph_names: Vec<String>,
+        init_bindings: Option<HashMap<String, Py<PyAny>>>,
+    ) -> PyResult<Py<PyAny>> {
+        let mut parsed = SparqlParser::new()
+            .parse_query(query)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let evaluator = QueryEvaluator::new();
+        let backend = self.backend.lock().unwrap();
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
+                let dataset = (**dataset).clone();
+                let scoped = filter_named_graphs(&dataset_named_graphs(&dataset), &graph_names);
+                let mut prepared = evaluator.prepare(&parsed);
+                prepared
+                    .dataset_mut()
+                    .set_default_graph(scoped.iter().cloned().map(GraphName::from).collect());
+                prepared.dataset_mut().set_available_named_graphs(scoped);
+                if let Some(init_bindings) = init_bindings {
+                    for (variable, term) in init_bindings {
+                        prepared = prepared.substitute_variable(
+                            OxVariable::new(variable)
+                                .map_err(|e| anyhow_to_pyerr(anyhow!(e.to_string())))?,
+                            term_from_python(term.bind(py)).map_err(anyhow_to_pyerr)?,
+                        );
+                    }
+                }
+                let results = prepared
+                    .execute(&dataset)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                query_results_to_python(py, results)
+            }
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+                // Rewrite property-path closures the snapshot knows about into
+                // materialized VALUES blocks before handing the query to spareval.
+                snapshot.rewrite_query(&mut parsed);
+                let named_graphs = snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
+                let scoped = filter_named_graphs(&named_graphs, &graph_names);
+                let mut prepared = evaluator.prepare(&parsed);
+                prepared
+                    .dataset_mut()
+                    .set_default_graph(scoped.iter().cloned().map(GraphName::from).collect());
+                prepared.dataset_mut().set_available_named_graphs(scoped);
+                if let Some(init_bindings) = init_bindings {
+                    for (variable, term) in init_bindings {
+                        prepared = prepared.substitute_variable(
+                            OxVariable::new(variable)
+                                .map_err(|e| anyhow_to_pyerr(anyhow!(e.to_string())))?,
+                            term_from_python(term.bind(py)).map_err(anyhow_to_pyerr)?,
+                        );
+                    }
+                }
+                let view = snapshot.sparql_view();
+                let results = prepared
+                    .execute(view)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                query_results_to_python(py, results)
+            }
+        }
+    }
+}
+
+/// Collect the unique term at position ``index`` (0=subject, 1=predicate,
+/// 2=object) of every de-duplicated triple matching ``(subject, predicate,
+/// object)`` across ``graph_names``.
+///
+/// Reuses :py:meth:`PyRdfLibStoreBackend::triples_in_graphs` (which already
+/// de-duplicates triples per-backend) and collapses to unique terms using a
+/// Python ``set``, so rdflib term equality — including datatype and language
+/// on literals — is respected exactly.
+fn scoped_unique_terms(
+    backend: &PyRdfLibStoreBackend,
+    py: Python<'_>,
+    graph_names: Vec<String>,
+    subject: Option<&Bound<'_, PyAny>>,
+    predicate: Option<&Bound<'_, PyAny>>,
+    object: Option<&Bound<'_, PyAny>>,
+    index: usize,
+) -> PyResult<Py<PyAny>> {
+    let rows = backend.triples_in_graphs(py, subject, predicate, object, graph_names)?;
+    let rows_bound = rows.bind(py);
+    let set = PySet::empty(py)?;
+    for row in rows_bound.try_iter()? {
+        let row = row?;
+        let triple_tuple = row.get_item(0)?;
+        let term = triple_tuple.get_item(index)?;
+        set.add(term)?;
+    }
+    let mut out: Vec<Py<PyAny>> = Vec::new();
+    for item in set.iter() {
+        out.push(item.into_any().unbind());
+    }
+    Ok(PyList::new(py, out)?.into_any().unbind())
+}
+
+/// Filter ``named_graphs`` down to those whose IRI/blank-node id appears in
+/// ``names``, preserving order. Used by :py:meth:`query_scoped` to restrict a
+/// query's default graph and available named graphs to the view's scope.
+fn filter_named_graphs(
+    named_graphs: &[NamedOrBlankNode],
+    names: &[String],
+) -> Vec<NamedOrBlankNode> {
+    let wanted: HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
+    named_graphs
+        .iter()
+        .filter(|n| wanted.contains(named_or_blank_node_str(n)))
+        .cloned()
+        .collect()
+}
+
+/// The IRI or blank-node id of a ``NamedOrBlankNode`` as a ``&str``.
+fn named_or_blank_node_str(node: &NamedOrBlankNode) -> &str {
+    match node {
+        NamedOrBlankNode::NamedNode(n) => n.as_str(),
+        NamedOrBlankNode::BlankNode(n) => n.as_str(),
+    }
+}
+
+/// Construct a :py:class:`ontoenv.ViewGraph` over ``names`` backed by the
+/// Rust backend of ``dataset``'s ``OntoEnvStore``.
+///
+/// ``dataset`` is an ``rdflib.Dataset`` whose ``store`` is an
+/// :py:class:`ontoenv.OntoEnvStore`; its ``_backend`` is the
+/// :py:class:`ontoenv._native._RdfLibStoreBackend` the view delegates to.
+/// The scope (``names``) is passed as a Python ``tuple`` of graph IRI strings.
+fn build_view_graph(py: Python<'_>, dataset: &Py<PyAny>, names: &[String]) -> PyResult<Py<PyAny>> {
+    let rdflib_store = py.import("ontoenv.rdflib_store")?;
+    let backend = dataset
+        .bind(py)
+        .getattr("store")?
+        .getattr("_backend")?
+        .unbind();
+    let scope_items: Vec<Py<PyAny>> = names
+        .iter()
+        .map(|n| PyString::new(py, n).into_any().unbind())
+        .collect();
+    let scope = PyTuple::new(py, scope_items)?.into_any().unbind();
+    let view = rdflib_store
+        .getattr("ViewGraph")?
+        .call1((backend, scope, py.None()))?
+        .unbind();
+    Ok(view)
 }
 
 /// Internal cache for the lazily-built Dataset used by [`OntoEnv::get_graph`].
@@ -2502,6 +2712,7 @@ struct StoreTriplesIter {
 }
 
 impl StoreTriplesIter {
+    #[allow(clippy::wrong_self_convention)]
     fn to_py_term(&mut self, py: Python<'_>, id: u64) -> PyResult<Py<PyAny>> {
         if let Some(cached) = self.term_cache.get(&id) {
             return Ok(cached.clone_ref(py));
@@ -2571,6 +2782,7 @@ struct Rdf5dTripleIdIter {
 }
 
 impl Rdf5dTripleIdIter {
+    #[allow(clippy::wrong_self_convention)]
     fn to_py_term(&mut self, py: Python<'_>, id: u64) -> PyResult<Py<PyAny>> {
         if let Some(cached) = self.term_cache.get(&id) {
             return Ok(cached.clone_ref(py));
@@ -2857,18 +3069,18 @@ impl OntoEnv {
         &self,
         guard: &'a mut std::sync::MutexGuard<'b, Option<OntoEnvRs>>,
     ) -> PyResult<&'a mut OntoEnvRs> {
-        guard.as_mut().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })
+        guard
+            .as_mut()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))
     }
 
     fn get_env_ref<'a, 'b>(
         &self,
         guard: &'a std::sync::MutexGuard<'b, Option<OntoEnvRs>>,
     ) -> PyResult<&'a OntoEnvRs> {
-        guard.as_ref().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
-        })
+        guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))
     }
 }
 
@@ -3408,6 +3620,7 @@ impl OntoEnv {
     /// fetched via the backend's ``copy_graph`` when available, otherwise
     /// ``get_graph``.
     #[pyo3(signature = (uris, root, graph=None, include_closures=false, rewrite_sh_prefixes=true, remove_owl_imports=true, recursion_depth=-1))]
+    #[allow(clippy::too_many_arguments)]
     fn copy_union<'a>(
         &self,
         py: Python<'a>,
@@ -3423,9 +3636,8 @@ impl OntoEnv {
         let graph_iris: Vec<NamedNode> = uris
             .iter()
             .map(|uri| {
-                NamedNode::new(uri.as_str()).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                })
+                NamedNode::new(uri.as_str())
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
             })
             .collect::<PyResult<_>>()?;
         let root_node = NamedNode::new(root)
@@ -3888,8 +4100,15 @@ impl OntoEnv {
         let resolved = ontology_location_from_py(location)?;
         let overwrite_flag: Overwrite = overwrite.into();
         let refresh: RefreshStrategy = force.into();
-        let result =
-            add_resolved_to_env(env, location, resolved, overwrite_flag, refresh, false, rename);
+        let result = add_resolved_to_env(
+            env,
+            location,
+            resolved,
+            overwrite_flag,
+            refresh,
+            false,
+            rename,
+        );
         drop(guard);
         self.bump_generation();
         result
@@ -3913,13 +4132,9 @@ impl OntoEnv {
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let graph_id = env
-            .resolve(ResolveTarget::Graph(old_iri))
-            .ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Ontology not found: {uri}"
-                ))
-            })?;
+        let graph_id = env.resolve(ResolveTarget::Graph(old_iri)).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Ontology not found: {uri}"))
+        })?;
         let new_id = env
             .rename_graph_iri(&graph_id, new_iri_node)
             .map_err(anyhow_to_pyerr)?;
@@ -3948,7 +4163,8 @@ impl OntoEnv {
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let env = self.get_env(&mut guard)?;
-        env.add_alias(alias_iri, canonical_iri).map_err(anyhow_to_pyerr)?;
+        env.add_alias(alias_iri, canonical_iri)
+            .map_err(anyhow_to_pyerr)?;
         Ok(())
     }
 
@@ -4136,11 +4352,12 @@ impl OntoEnv {
     /// closure of *uri*, plus the list of ontology IRIs that contribute to
     /// the view (root first, in BFS order).
     ///
-    /// The returned ``Graph`` is a :py:class:`ontoenv.ClosureGraphView` —
-    /// triple-pattern lookups dispatch to each underlying named graph and
-    /// de-duplicate, so it behaves like a merged graph without materializing
-    /// one. Mutation raises ``ValueError``; use :py:meth:`copy_closure` for a
-    /// mutable in-memory merge.
+    /// The returned object is a :py:class:`ontoenv.ViewGraph` — a lightweight,
+    /// non-``rdflib.Graph`` view that delegates triple-pattern lookups to the
+    /// Rust backend scoped to the closure's named graphs, so it behaves like
+    /// a merged graph without materializing one. Mutation raises
+    /// ``ValueError``; use :py:meth:`copy_closure` for a mutable in-memory
+    /// merge.
     #[pyo3(signature = (uri, recursion_depth = -1))]
     fn get_closure(
         &self,
@@ -4169,11 +4386,7 @@ impl OntoEnv {
         };
 
         let dataset = self.cached_view_dataset(py)?;
-        let rdflib_store = py.import("ontoenv.rdflib_store")?;
-        let view = rdflib_store
-            .getattr("ClosureGraphView")?
-            .call1((dataset, names.clone()))?
-            .unbind();
+        let view = build_view_graph(py, &dataset, &names)?;
         Ok((view, names))
     }
 
@@ -4181,11 +4394,11 @@ impl OntoEnv {
     /// ontology graphs, plus the list of ontology IRIs that contribute to
     /// the view (in the order they were resolved).
     ///
-    /// The returned ``Graph`` is a :py:class:`ontoenv.ClosureGraphView` —
-    /// triple-pattern lookups dispatch to each underlying named graph and
-    /// de-duplicate, so it behaves like a merged graph without materializing
-    /// one. Mutation raises ``ValueError``; use :py:meth:`copy_union` for a
-    /// mutable in-memory merge.
+    /// The returned object is a :py:class:`ontoenv.ViewGraph` — a lightweight,
+    /// non-``rdflib.Graph`` view that delegates triple-pattern lookups to the
+    /// Rust backend scoped to the listed named graphs, so it behaves like a
+    /// merged graph without materializing one. Mutation raises
+    /// ``ValueError``; use :py:meth:`copy_union` for a mutable in-memory merge.
     ///
     /// Set ``include_closures=True`` to expand each listed graph's transitive
     /// ``owl:imports`` closure into the view. This is the read-only equivalent
@@ -4225,7 +4438,9 @@ impl OntoEnv {
                         ))
                     })?;
                 if include_closures {
-                    let closure = env.get_closure(&id, recursion_depth).map_err(anyhow_to_pyerr)?;
+                    let closure = env
+                        .get_closure(&id, recursion_depth)
+                        .map_err(anyhow_to_pyerr)?;
                     for closure_id in closure {
                         let s = closure_id.to_uri_string();
                         if seen.insert(s.clone()) {
@@ -4243,11 +4458,7 @@ impl OntoEnv {
         };
 
         let dataset = self.cached_view_dataset(py)?;
-        let rdflib_store = py.import("ontoenv.rdflib_store")?;
-        let view = rdflib_store
-            .getattr("ClosureGraphView")?
-            .call1((dataset, names.clone()))?
-            .unbind();
+        let view = build_view_graph(py, &dataset, &names)?;
         Ok((view, names))
     }
 
