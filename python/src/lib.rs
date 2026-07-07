@@ -1299,6 +1299,99 @@ fn snapshot_term_id(snapshot: &Snapshot, term: &Term) -> Option<u64> {
     snapshot.file().term_id(&term_to_decoded_term(term))
 }
 
+/// `keep` for an optional closure patch: raw backends (no patch) keep every
+/// triple; closure backends delegate to [`rdf5d::ClosurePatch::keep`].
+#[inline]
+fn keep_opt(patch: Option<&rdf5d::ClosurePatch>, s: u64, p: u64, o: u64) -> bool {
+    patch.is_none_or(|patch| patch.keep(s, p, o))
+}
+
+/// Physical gids backing the given logical graph names.
+fn gids_for_names(snapshot: &Snapshot, graph_names: &[String]) -> Vec<u64> {
+    let mut gids = Vec::new();
+    for name in graph_names {
+        if let Some(g) = snapshot.gids_for_name(name) {
+            gids.extend_from_slice(g);
+        }
+    }
+    gids
+}
+
+/// Every physical gid in the snapshot (across all logical graph names).
+fn all_snapshot_gids(snapshot: &Snapshot) -> Vec<u64> {
+    let names: Vec<String> = snapshot.graph_names().map(str::to_string).collect();
+    gids_for_names(snapshot, &names)
+}
+
+/// The root ontology IRI of a closure patch, resolved from its root term id.
+fn patch_root_iri(patch: &rdf5d::ClosurePatch, snapshot: &Snapshot) -> String {
+    match snapshot.file().externalize_id(patch.root_id()) {
+        Ok(DecodedTerm::Iri(v)) => v.into_owned(),
+        _ => String::new(),
+    }
+}
+
+/// A `(subject, predicate, object)` triple keyed grouping to the graph names
+/// (contexts) each triple appears in, all in on-disk term-id space.
+type GroupedContexts = HashMap<(u64, u64, u64), Vec<String>>;
+
+/// Build the deduped `(triple -> contexts)` grouping for a pattern scan.
+///
+/// For a raw union backend (`patch = None`) the contexts are the graph names
+/// the triple appears in. For a closure backend the view is a single flattened
+/// graph, so surviving triples are collapsed under the root graph name and the
+/// patch's pattern-matching additions are injected.
+fn scan_grouped(
+    snapshot: &Snapshot,
+    patch: Option<&rdf5d::ClosurePatch>,
+    pat: Pattern,
+    graph_names: &[String],
+) -> std::result::Result<GroupedContexts, rdf5d::reader::R5Error> {
+    let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
+    match patch {
+        Some(patch) => {
+            // Single flattened graph: collapse cross-graph duplicates under the
+            // root graph name.
+            let root = patch_root_iri(patch, snapshot);
+            let gids = gids_for_names(snapshot, graph_names);
+            for hit in snapshot.scan(pat, Scope::Gids(&gids)) {
+                let m = hit?;
+                if !patch.keep(m.s, m.p, m.o) {
+                    continue;
+                }
+                grouped
+                    .entry((m.s, m.p, m.o))
+                    .or_insert_with(|| vec![root.clone()]);
+            }
+            // Additions matching the pattern.
+            for &(s, p, o) in patch.additions() {
+                if pat.s.is_none_or(|x| x == s)
+                    && pat.p.is_none_or(|x| x == p)
+                    && pat.o.is_none_or(|x| x == o)
+                {
+                    grouped.entry((s, p, o)).or_insert_with(|| vec![root.clone()]);
+                }
+            }
+        }
+        None => {
+            for name in graph_names {
+                if !snapshot.has_graph(name) {
+                    continue;
+                }
+                for hit in snapshot.scan(pat, Scope::ByName(name.as_str())) {
+                    let m = hit?;
+                    let contexts = grouped.entry((m.s, m.p, m.o)).or_default();
+                    if !contexts.iter().any(|c| c == name) {
+                        contexts.push(name.clone());
+                    }
+                }
+            }
+        }
+    }
+    Ok(grouped)
+}
+
+
 /// The snapshot's logical graphs as rdflib graph-name nodes.
 fn snapshot_named_graphs(snapshot: &Snapshot) -> Result<Vec<NamedOrBlankNode>> {
     let mut values = Vec::new();
@@ -1323,6 +1416,12 @@ enum RdfLibStoreBackend {
         #[allow(dead_code)]
         store_path: PathBuf,
         snapshot: Arc<Snapshot>,
+        /// Optional closure patch (removals + patch-graph additions) applied
+        /// lazily over every read path so the view presents a single flattened,
+        /// de-duplicated graph matching `copy_closure`. Set only on dedicated
+        /// backends built by `get_closure`; `None` for the raw
+        /// `get_graph`/`get_union` paths.
+        patch: Option<Arc<rdf5d::ClosurePatch>>,
     },
 }
 
@@ -1582,6 +1681,12 @@ macro_rules! apply_query_graph_selection {
 #[pyclass(name = "_RdfLibStoreBackend")]
 struct PyRdfLibStoreBackend {
     backend: Arc<Mutex<RdfLibStoreBackend>>,
+    /// Persistent term-id → rdflib-term cache, shared across every `triples()`
+    /// iterator returned by this backend. The first scan over a snapshot
+    /// materializes each distinct term once; later scans skip rdflib's
+    /// expensive `Literal.__new__` / `URIRef.__new__` entirely. Cleared on
+    /// snapshot rebind since term ids are snapshot-specific.
+    term_cache: Arc<Mutex<HashMap<u64, Py<PyAny>>>>,
 }
 
 #[pymethods]
@@ -1590,6 +1695,7 @@ impl PyRdfLibStoreBackend {
     fn new() -> Self {
         Self {
             backend: Arc::new(Mutex::new(RdfLibStoreBackend::default())),
+            term_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -1625,6 +1731,8 @@ impl PyRdfLibStoreBackend {
         *backend = RdfLibStoreBackend::EnvSnapshotMaterialized {
             dataset: Arc::new(dataset),
         };
+        // Term ids are snapshot-specific; a new snapshot invalidates the cache.
+        self.term_cache.lock().unwrap().clear();
         Ok(())
     }
 
@@ -1670,6 +1778,8 @@ impl PyRdfLibStoreBackend {
         *backend = RdfLibStoreBackend::EnvSnapshotMaterialized {
             dataset: Arc::new(dataset),
         };
+        // Term ids are snapshot-specific; a new snapshot invalidates the cache.
+        self.term_cache.lock().unwrap().clear();
         Ok(())
     }
 
@@ -1677,11 +1787,17 @@ impl PyRdfLibStoreBackend {
     /// `store_path` (typically `.ontoenv/store.r5tu`).
     fn bind_rdf5d_snapshot(&self, store_path: &str) -> PyResult<()> {
         let snapshot = Snapshot::open(Path::new(store_path)).map_err(r5error_to_pyerr)?;
+        // Eagerly build permutation indexes so the cost is paid once at bind
+        // time, not billed to the first query of each pattern shape.
+        snapshot.build_indexes();
         let mut backend = self.backend.lock().unwrap();
         *backend = RdfLibStoreBackend::EnvSnapshotRdf5d {
             store_path: PathBuf::from(store_path),
             snapshot: Arc::new(snapshot),
+            patch: None,
         };
+        // Term ids are snapshot-specific; a new snapshot invalidates the cache.
+        self.term_cache.lock().unwrap().clear();
         Ok(())
     }
 
@@ -1824,7 +1940,7 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(py_list.into_any().unbind())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
                 if matches!(graph_name, Some(GraphName::DefaultGraph)) {
                     return Ok(PyList::empty(py).into_any().unbind());
                 }
@@ -1845,10 +1961,10 @@ impl PyRdfLibStoreBackend {
                             snapshot: snapshot.clone(),
                             grouped: HashMap::new().into_iter(),
                             ctors: RdflibCtors::new(py)?,
-                            term_cache: HashMap::new(),
+                            term_cache: self.term_cache.clone(),
                             graph_cache: HashMap::new(),
                             remaining: 0,
-                        },
+                                },
                     )
                     .map(|p| p.into_any())
                 };
@@ -1875,6 +1991,9 @@ impl PyRdfLibStoreBackend {
                     }
                     for hit in snapshot.scan(pat, Scope::ByName(&name)) {
                         let m = hit.map_err(r5error_to_pyerr)?;
+                        if !keep_opt(patch.as_deref(), m.s, m.p, m.o) {
+                            continue;
+                        }
                         grouped
                             .entry((m.s, m.p, m.o))
                             .or_insert_with(|| vec![name.clone()]);
@@ -1883,6 +2002,9 @@ impl PyRdfLibStoreBackend {
                     for name in snapshot.graph_names() {
                         for hit in snapshot.scan(pat, Scope::ByName(name)) {
                             let m = hit.map_err(r5error_to_pyerr)?;
+                            if !keep_opt(patch.as_deref(), m.s, m.p, m.o) {
+                                continue;
+                            }
                             let contexts = grouped.entry((m.s, m.p, m.o)).or_default();
                             if !contexts.iter().any(|c| c == name) {
                                 contexts.push(name.to_string());
@@ -1896,7 +2018,7 @@ impl PyRdfLibStoreBackend {
                     snapshot: snapshot.clone(),
                     grouped: grouped.into_iter(),
                     ctors,
-                    term_cache: HashMap::new(),
+                    term_cache: self.term_cache.clone(),
                     graph_cache: HashMap::new(),
                     remaining: total,
                 };
@@ -2038,13 +2160,16 @@ impl PyRdfLibStoreBackend {
         })
     }
 
-    /// Scan a fixed list of named graphs (the imports closure of an
-    /// ontology) and yield deduplicated ``(triple, contexts)`` rows.
+    /// Pattern-restricted scan over a fixed list of named graphs, yielding
+    /// deduplicated ``(triple, contexts)`` rows. Backs
+    /// :py:meth:`ontoenv.ViewGraph.triples` for bound patterns.
     ///
-    /// Dedup is done at the rdf5d term-ID level — much cheaper than
-    /// hashing rdflib term tuples in Python, which is what
-    /// ``ClosureGraphView.triples`` used to do before pushing this merge
-    /// into Rust.
+    /// Dedup is done at the rdf5d term-ID level (cheaper than hashing rdflib
+    /// term tuples in Python). When the backend carries a closure patch the
+    /// view is a single flattened graph: surviving triples are collapsed
+    /// under the root graph name and the patch's matching additions are
+    /// injected (see [`scan_grouped`]). Raw union backends keep per-graph
+    /// contexts and do not de-duplicate across graphs.
     fn triples_in_graphs(
         &self,
         py: Python<'_>,
@@ -2114,7 +2239,7 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(py_list.into_any().unbind())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
                 let empty_iter = |py: Python<'_>| -> PyResult<Py<PyAny>> {
                     Py::new(
                         py,
@@ -2122,7 +2247,7 @@ impl PyRdfLibStoreBackend {
                             snapshot: snapshot.clone(),
                             grouped: HashMap::new().into_iter(),
                             ctors: RdflibCtors::new(py)?,
-                            term_cache: HashMap::new(),
+                            term_cache: self.term_cache.clone(),
                             graph_cache: HashMap::new(),
                             remaining: 0,
                         },
@@ -2160,25 +2285,14 @@ impl PyRdfLibStoreBackend {
                     o: object_id,
                 };
 
-                let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
-                for name in &graph_names {
-                    if !snapshot.has_graph(name) {
-                        continue;
-                    }
-                    for hit in snapshot.scan(pat, Scope::ByName(name.as_str())) {
-                        let m = hit.map_err(r5error_to_pyerr)?;
-                        let contexts = grouped.entry((m.s, m.p, m.o)).or_default();
-                        if !contexts.iter().any(|c| c == name) {
-                            contexts.push(name.clone());
-                        }
-                    }
-                }
+                let grouped = scan_grouped(snapshot, patch.as_deref(), pat, &graph_names)
+                    .map_err(r5error_to_pyerr)?;
                 let total = grouped.len();
                 let iter = StoreTriplesIter {
                     snapshot: snapshot.clone(),
                     grouped: grouped.into_iter(),
                     ctors,
-                    term_cache: HashMap::new(),
+                    term_cache: self.term_cache.clone(),
                     graph_cache: HashMap::new(),
                     remaining: total,
                 };
@@ -2187,16 +2301,15 @@ impl PyRdfLibStoreBackend {
         }
     }
 
-    /// Stream every triple across a list of named graphs without
-    /// de-duplication or per-row context lists. The right primitive for
-    /// ``ClosureGraphView.triples((None, None, None))`` — when the caller
-    /// doesn't need pattern matching, dedup, or contexts, this skips the
-    /// outer ``HashMap`` and the ``Vec<String>`` per row that
-    /// :py:meth:`triples_in_graphs` builds.
+    /// Stream every triple across a list of named graphs as an id iterator.
+    /// Backs :py:meth:`ontoenv.ViewGraph.triples` for the all-unbound pattern.
     ///
-    /// Returns the same `TripleIter` type used by
-    /// :py:meth:`OntoEnv.iter_closure_triples`, with the same per-iterator
-    /// term cache.
+    /// For a raw union backend this is the fast path: each triple is yielded
+    /// once per graph it appears in (no cross-graph dedup, no per-row context
+    /// lists), skipping the ``HashMap`` + ``Vec<String>`` bookkeeping that
+    /// :py:meth:`triples_in_graphs` builds. For a closure backend it produces
+    /// the single flattened, de-duplicated graph via
+    /// [`rdf5d::ClosureTripleIds`] (removals dropped, patch additions added).
     fn iter_triples_in_graphs(
         &self,
         py: Python<'_>,
@@ -2217,28 +2330,43 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(Py::new(py, TripleIter::new(triples))?.into_any())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
                 // Collect term-ID triples eagerly; defer Term/Py construction
                 // until iteration so the u64-keyed cache amortizes work
                 // across repeated terms (predicates and shared subjects).
-                let file = snapshot.file();
-                let mut ids: Vec<(u64, u64, u64)> = Vec::new();
-                for name in &graph_names {
-                    let Some(gids) = snapshot.gids_for_name(name) else {
-                        continue;
-                    };
-                    for &gid in gids {
-                        for triple_ids in file.triples_ids(gid).map_err(r5error_to_pyerr)? {
-                            ids.push(triple_ids);
-                        }
+                let ids: Vec<(u64, u64, u64)> = match patch {
+                    // Closure view: single flattened, de-duplicated graph with
+                    // the patch (removals + additions) applied.
+                    Some(patch) => {
+                        let gids = gids_for_names(snapshot, &graph_names);
+                        rdf5d::ClosureTripleIds::new(snapshot, patch.clone(), &gids)
+                            .collect::<std::result::Result<Vec<_>, _>>()
+                            .map_err(r5error_to_pyerr)?
                     }
-                }
+                    // Raw union view: every triple in each named graph, no
+                    // cross-graph dedup (matches rdflib merged-graph semantics).
+                    None => {
+                        let file = snapshot.file();
+                        let mut ids: Vec<(u64, u64, u64)> = Vec::new();
+                        for name in &graph_names {
+                            let Some(gids) = snapshot.gids_for_name(name) else {
+                                continue;
+                            };
+                            for &gid in gids {
+                                for triple_ids in file.triples_ids(gid).map_err(r5error_to_pyerr)? {
+                                    ids.push(triple_ids);
+                                }
+                            }
+                        }
+                        ids
+                    }
+                };
                 let remaining = ids.len();
                 let iter = Rdf5dTripleIdIter {
                     snapshot: snapshot.clone(),
                     triples: ids.into_iter(),
                     ctors: RdflibCtors::new(py)?,
-                    term_cache: HashMap::new(),
+                    term_cache: self.term_cache.clone(),
                     remaining,
                 };
                 Ok(Py::new(py, iter)?.into_any())
@@ -2246,8 +2374,13 @@ impl PyRdfLibStoreBackend {
         }
     }
 
-    /// Count unique triples across a list of named graphs. Used by
-    /// ``ClosureGraphView.__len__``.
+    /// Count the triples of a view over a list of named graphs. Backs
+    /// :py:meth:`ontoenv.ViewGraph.__len__`.
+    ///
+    /// A closure backend reports the cardinality of its single flattened,
+    /// de-duplicated graph (removals dropped, patch additions added); a raw
+    /// union backend reports the stored triple count with no cross-graph
+    /// de-duplication, matching its iteration semantics.
     fn len_in_graphs(&self, graph_names: Vec<String>) -> PyResult<usize> {
         let backend = self.backend.lock().unwrap();
         match &*backend {
@@ -2264,16 +2397,30 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(seen.len())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
                 let mut gids: Vec<u64> = Vec::new();
                 for name in &graph_names {
                     if let Some(g) = snapshot.gids_for_name(name) {
                         gids.extend_from_slice(g);
                     }
                 }
-                snapshot
-                    .triple_count(Scope::Gids(&gids))
-                    .map_err(r5error_to_pyerr)
+                match patch {
+                    // Raw union: stored count (no cross-graph dedup, matching
+                    // the raw iteration path).
+                    None => snapshot
+                        .triple_count(Scope::Gids(&gids))
+                        .map_err(r5error_to_pyerr),
+                    // Closure view: cardinality of the single flattened,
+                    // de-duplicated graph (removals dropped, additions added).
+                    Some(patch) => {
+                        let mut n = 0usize;
+                        for t in rdf5d::ClosureTripleIds::new(snapshot, patch.clone(), &gids) {
+                            t.map_err(r5error_to_pyerr)?;
+                            n += 1;
+                        }
+                        Ok(n)
+                    }
+                }
             }
         }
     }
@@ -2315,16 +2462,39 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(false)
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
-                let Some(s_id) = snapshot_term_id(snapshot, &subject_to_term(&subject)) else {
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+                // Resolve terms in the snapshot's id space. When a closure
+                // patch is present, use `intern_decoded` so ids match the
+                // patch's (which may reference overflow ids, e.g. a root IRI
+                // absent from the data dictionary that the patch adds).
+                let resolve = |t: &Term| -> Option<u64> {
+                    if patch.is_some() {
+                        Some(snapshot.file().intern_decoded(&term_to_decoded_term(t)))
+                    } else {
+                        snapshot_term_id(snapshot, t)
+                    }
+                };
+                let Some(s_id) = resolve(&subject_to_term(&subject)) else {
                     return Ok(false);
                 };
-                let Some(p_id) = snapshot_term_id(snapshot, &Term::NamedNode(predicate)) else {
+                let Some(p_id) = resolve(&Term::NamedNode(predicate)) else {
                     return Ok(false);
                 };
-                let Some(o_id) = snapshot_term_id(snapshot, &object) else {
+                let Some(o_id) = resolve(&object) else {
                     return Ok(false);
                 };
+                // Additions (patch graph) are present even though they are not
+                // in the underlying store.
+                if let Some(patch) = patch {
+                    if patch.is_addition(s_id, p_id, o_id) {
+                        return Ok(true);
+                    }
+                    // A stripped/rewritten triple is logically absent from the
+                    // closure view even though it still lives in the store.
+                    if !patch.keep(s_id, p_id, o_id) {
+                        return Ok(false);
+                    }
+                }
                 let pat = Pattern {
                     s: Some(s_id),
                     p: Some(p_id),
@@ -2377,7 +2547,7 @@ impl PyRdfLibStoreBackend {
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
                 snapshot.rewrite_query(&mut parsed);
@@ -2393,10 +2563,20 @@ impl PyRdfLibStoreBackend {
                         );
                     }
                 }
-                let view = snapshot.sparql_view();
-                let results = prepared
-                    .execute(view)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                let results = match patch {
+                    // Closure view: flatten the whole snapshot into one
+                    // de-duplicated graph with the patch applied.
+                    Some(patch) => {
+                        let gids = all_snapshot_gids(snapshot);
+                        prepared.execute(rdf5d::ClosureSparqlView::new(
+                            snapshot,
+                            patch.clone(),
+                            gids,
+                        ))
+                    }
+                    None => prepared.execute(snapshot.sparql_view()),
+                }
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
             }
         }
@@ -2506,17 +2686,11 @@ impl PyRdfLibStoreBackend {
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
                 snapshot.rewrite_query(&mut parsed);
-                let named_graphs = snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
-                let scoped = filter_named_graphs(&named_graphs, &graph_names);
                 let mut prepared = evaluator.prepare(&parsed);
-                prepared
-                    .dataset_mut()
-                    .set_default_graph(scoped.iter().cloned().map(GraphName::from).collect());
-                prepared.dataset_mut().set_available_named_graphs(scoped);
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -2526,10 +2700,37 @@ impl PyRdfLibStoreBackend {
                         );
                     }
                 }
-                let view = snapshot.sparql_view();
-                let results = prepared
-                    .execute(view)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                let results = match patch {
+                    // Closure view: one flattened, de-duplicated graph (the
+                    // root), scoped to the closure's gids. The default graph
+                    // and the single named graph are the root IRI.
+                    Some(patch) => {
+                        let root = NamedNode::new_unchecked(patch_root_iri(patch, snapshot));
+                        prepared.dataset_mut().set_default_graph(vec![GraphName::from(
+                            root.clone(),
+                        )]);
+                        prepared
+                            .dataset_mut()
+                            .set_available_named_graphs(vec![root.into()]);
+                        let gids = gids_for_names(snapshot, &graph_names);
+                        prepared.execute(rdf5d::ClosureSparqlView::new(
+                            snapshot,
+                            patch.clone(),
+                            gids,
+                        ))
+                    }
+                    None => {
+                        let named_graphs =
+                            snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
+                        let scoped = filter_named_graphs(&named_graphs, &graph_names);
+                        prepared.dataset_mut().set_default_graph(
+                            scoped.iter().cloned().map(GraphName::from).collect(),
+                        );
+                        prepared.dataset_mut().set_available_named_graphs(scoped);
+                        prepared.execute(snapshot.sparql_view())
+                    }
+                }
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
             }
         }
@@ -2599,13 +2800,90 @@ fn named_or_blank_node_str(node: &NamedOrBlankNode) -> &str {
 /// :py:class:`ontoenv.OntoEnvStore`; its ``_backend`` is the
 /// :py:class:`ontoenv._native._RdfLibStoreBackend` the view delegates to.
 /// The scope (``names``) is passed as a Python ``tuple`` of graph IRI strings.
-fn build_view_graph(py: Python<'_>, dataset: &Py<PyAny>, names: &[String]) -> PyResult<Py<PyAny>> {
+/// Configuration for the lazy closure patch applied by [`build_view_graph`]
+/// when building a `get_closure` view.
+struct ClosureViewConfig {
+    root_iri: String,
+    closure_iris: Vec<String>,
+    remove_owl_imports: bool,
+    rewrite_sh_prefixes: bool,
+}
+
+impl PyRdfLibStoreBackend {
+    /// Build a fresh backend sharing this backend's rdf5d snapshot but with a
+    /// closure patch attached, for `get_closure`'s read-only view. The raw
+    /// `get_graph`/`get_union` paths keep using the shared (patch = `None`)
+    /// backend, so they are unaffected.
+    ///
+    /// Returns `Some(backend)` for the rdf5d (mmap) backend — a brand-new
+    /// `_RdfLibStoreBackend` whose snapshot is shared via `Arc` (no re-mmap,
+    /// no index rebuild). Returns `None` for the materialized (`copy`) backend
+    /// used by temporary / custom-`graph_store=` envs: the closure patch is
+    /// defined over an rdf5d `Snapshot`, so there the caller falls back to the
+    /// shared backend and `get_closure` yields a raw merged view.
+    fn closure_view_backend(
+        &self,
+        config: &ClosureViewConfig,
+    ) -> PyResult<Option<PyRdfLibStoreBackend>> {
+        let backend = self.backend.lock().unwrap();
+        match &*backend {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot,
+                store_path,
+                ..
+            } => {
+                let patch = rdf5d::ClosurePatch::build(
+                    snapshot,
+                    &config.root_iri,
+                    &config.closure_iris,
+                    config.remove_owl_imports,
+                    config.rewrite_sh_prefixes,
+                )
+                .map_err(r5error_to_pyerr)?;
+                Ok(Some(PyRdfLibStoreBackend {
+                    backend: Arc::new(Mutex::new(RdfLibStoreBackend::EnvSnapshotRdf5d {
+                        store_path: store_path.clone(),
+                        snapshot: snapshot.clone(),
+                        patch: Some(patch),
+                    })),
+                    term_cache: Arc::new(Mutex::new(HashMap::new())),
+                }))
+            }
+            RdfLibStoreBackend::EnvSnapshotMaterialized { .. } => Ok(None),
+        }
+    }
+}
+
+fn build_view_graph(
+    py: Python<'_>,
+    dataset: &Py<PyAny>,
+    names: &[String],
+    config: Option<&ClosureViewConfig>,
+) -> PyResult<Py<PyAny>> {
     let rdflib_store = py.import("ontoenv.rdflib_store")?;
-    let backend = dataset
+    let shared_backend = dataset
         .bind(py)
         .getattr("store")?
         .getattr("_backend")?
         .unbind();
+    // For a closure view over the rdf5d backend, build a dedicated backend
+    // sharing the same mmap snapshot but carrying the closure patch. The
+    // materialized (`copy`) backend has no snapshot to patch, so it falls back
+    // to the shared backend (a raw merged view). `get_union` passes `None` and
+    // always reuses the shared backend.
+    let backend: Py<PyAny> = match config {
+        Some(cfg) => {
+            let shared_ref = shared_backend.extract::<PyRef<PyRdfLibStoreBackend>>(py)?;
+            match shared_ref.closure_view_backend(cfg)? {
+                Some(new_backend) => Py::new(py, new_backend)?.into_any(),
+                None => {
+                    drop(shared_ref);
+                    shared_backend
+                }
+            }
+        }
+        None => shared_backend,
+    };
     let scope_items: Vec<Py<PyAny>> = names
         .iter()
         .map(|n| PyString::new(py, n).into_any().unbind())
@@ -2702,15 +2980,21 @@ struct StoreTriplesIter {
     snapshot: Arc<Snapshot>,
     grouped: std::collections::hash_map::IntoIter<(u64, u64, u64), Vec<String>>,
     ctors: RdflibCtors,
-    term_cache: HashMap<u64, Py<PyAny>>,
+    /// Shared with the owning `_RdfLibStoreBackend`; persists across scans.
+    term_cache: Arc<Mutex<HashMap<u64, Py<PyAny>>>>,
     graph_cache: HashMap<String, Py<PyAny>>,
     remaining: usize,
 }
 
 impl StoreTriplesIter {
     #[allow(clippy::wrong_self_convention)]
-    fn to_py_term(&mut self, py: Python<'_>, id: u64) -> PyResult<Py<PyAny>> {
-        if let Some(cached) = self.term_cache.get(&id) {
+    fn to_py_term(
+        &self,
+        py: Python<'_>,
+        map: &mut HashMap<u64, Py<PyAny>>,
+        id: u64,
+    ) -> PyResult<Py<PyAny>> {
+        if let Some(cached) = map.get(&id) {
             return Ok(cached.clone_ref(py));
         }
         let decoded = self
@@ -2719,7 +3003,7 @@ impl StoreTriplesIter {
             .decoded_term(id)
             .map_err(r5error_to_pyerr)?;
         let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
-        self.term_cache.insert(id, obj.clone_ref(py));
+        map.insert(id, obj.clone_ref(py));
         Ok(obj)
     }
 
@@ -2744,9 +3028,11 @@ impl StoreTriplesIter {
             return Ok(None);
         };
         self.remaining = self.remaining.saturating_sub(1);
-        let s = self.to_py_term(py, s_id)?;
-        let p = self.to_py_term(py, p_id)?;
-        let o = self.to_py_term(py, o_id)?;
+        let mut cache = self.term_cache.lock().unwrap();
+        let s = self.to_py_term(py, &mut cache, s_id)?;
+        let p = self.to_py_term(py, &mut cache, p_id)?;
+        let o = self.to_py_term(py, &mut cache, o_id)?;
+        drop(cache);
         let triple_obj = PyTuple::new(py, [s, p, o])?;
         let ctx_list = PyList::empty(py);
         for name in &contexts {
@@ -2773,14 +3059,23 @@ struct Rdf5dTripleIdIter {
     snapshot: Arc<Snapshot>,
     triples: std::vec::IntoIter<(u64, u64, u64)>,
     ctors: RdflibCtors,
-    term_cache: HashMap<u64, Py<PyAny>>,
+    /// Shared with the owning `_RdfLibStoreBackend` so the cache persists
+    /// across `triples()` calls — the first scan materializes the rdflib
+    /// term objects; subsequent scans reuse them (no `Literal.__new__` /
+    /// `URIRef.__new__` cost). Cleared on snapshot rebind.
+    term_cache: Arc<Mutex<HashMap<u64, Py<PyAny>>>>,
     remaining: usize,
 }
 
 impl Rdf5dTripleIdIter {
     #[allow(clippy::wrong_self_convention)]
-    fn to_py_term(&mut self, py: Python<'_>, id: u64) -> PyResult<Py<PyAny>> {
-        if let Some(cached) = self.term_cache.get(&id) {
+    fn to_py_term(
+        &self,
+        py: Python<'_>,
+        map: &mut HashMap<u64, Py<PyAny>>,
+        id: u64,
+    ) -> PyResult<Py<PyAny>> {
+        if let Some(cached) = map.get(&id) {
             return Ok(cached.clone_ref(py));
         }
         let decoded = self
@@ -2789,7 +3084,7 @@ impl Rdf5dTripleIdIter {
             .decoded_term(id)
             .map_err(r5error_to_pyerr)?;
         let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
-        self.term_cache.insert(id, obj.clone_ref(py));
+        map.insert(id, obj.clone_ref(py));
         Ok(obj)
     }
 }
@@ -2805,9 +3100,13 @@ impl Rdf5dTripleIdIter {
             return Ok(None);
         };
         self.remaining = self.remaining.saturating_sub(1);
-        let s = self.to_py_term(py, s_id)?;
-        let p = self.to_py_term(py, p_id)?;
-        let o = self.to_py_term(py, o_id)?;
+        // One lock per triple; the cache is shared across `triples()` calls
+        // so term construction amortizes to once per distinct term id, ever.
+        let mut cache = self.term_cache.lock().unwrap();
+        let s = self.to_py_term(py, &mut cache, s_id)?;
+        let p = self.to_py_term(py, &mut cache, p_id)?;
+        let o = self.to_py_term(py, &mut cache, o_id)?;
+        drop(cache);
         let tuple = PyTuple::new(py, [s, p, o])?;
         Ok(Some(tuple.unbind()))
     }
@@ -2896,7 +3195,7 @@ fn cached_term_py<'py>(
 impl OntoEnv {
     /// Internal helper that delegates Dataset construction to the Python-side
     /// `ontoenv.rdflib_store.dataset_from_env` factory. Used by
-    /// `as_dataset` and the cached `get_graph` path; not exposed to Python.
+    /// `get_dataset` and the cached `get_graph` path; not exposed to Python.
     fn build_dataset(
         &self,
         py: Python<'_>,
@@ -3609,13 +3908,18 @@ impl OntoEnv {
     /// declaration cleanup and optional SHACL prefix rewriting; it does not
     /// need to be one of the listed graphs.
     ///
+    /// As a *union* (vs :py:meth:`copy_closure`), this defaults to a raw merge
+    /// with no transform applied — matching :py:meth:`get_union`. Pass
+    /// ``remove_owl_imports=True`` / ``rewrite_sh_prefixes=True`` to opt into
+    /// the closure transforms.
+    ///
     /// Use :py:meth:`get_union` for a read-only store-backed view that avoids
     /// materializing triples.
     ///
     /// Works correctly with custom ``graph_store=`` backends: each graph is
     /// fetched via the backend's ``copy_graph`` when available, otherwise
     /// ``get_graph``.
-    #[pyo3(signature = (uris, root, graph=None, include_closures=false, rewrite_sh_prefixes=true, remove_owl_imports=true, recursion_depth=-1))]
+    #[pyo3(signature = (uris, root, graph=None, include_closures=false, rewrite_sh_prefixes=false, remove_owl_imports=false, recursion_depth=-1))]
     #[allow(clippy::too_many_arguments)]
     fn copy_union<'a>(
         &self,
@@ -4354,12 +4658,28 @@ impl OntoEnv {
     /// a merged graph without materializing one. Mutation raises
     /// ``ValueError``; use :py:meth:`copy_closure` for a mutable in-memory
     /// merge.
-    #[pyo3(signature = (uri, recursion_depth = -1))]
+    ///
+    /// As a *closure* view (vs :py:meth:`get_union`), this lazily applies the
+    /// closure transforms over the mmap scan so it returns the **same triple
+    /// set** as :py:meth:`copy_closure` — a single flattened, de-duplicated
+    /// graph — without materializing a copy:
+    ///
+    /// - resolved ``owl:imports`` (targets inside the closure) are stripped,
+    /// - ontology declarations are collapsed onto the root (and the root is
+    ///   declared ``a owl:Ontology`` if it did not declare itself),
+    /// - SHACL ``sh:prefixes`` / ``sh:declare`` are consolidated onto the root.
+    ///
+    /// Set ``remove_owl_imports=False`` to keep resolved ``owl:imports``, or
+    /// ``rewrite_sh_prefixes=False`` to leave SHACL prefixes untouched
+    /// (both matching ``get_union``'s raw semantics).
+    #[pyo3(signature = (uri, recursion_depth = -1, remove_owl_imports = true, rewrite_sh_prefixes = true))]
     fn get_closure(
         &self,
         py: Python<'_>,
         uri: &str,
         recursion_depth: i32,
+        remove_owl_imports: bool,
+        rewrite_sh_prefixes: bool,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
         let names = {
             let iri = NamedNode::new(uri)
@@ -4382,7 +4702,13 @@ impl OntoEnv {
         };
 
         let dataset = self.cached_view_dataset(py)?;
-        let view = build_view_graph(py, &dataset, &names)?;
+        let config = ClosureViewConfig {
+            root_iri: uri.to_string(),
+            closure_iris: names.clone(),
+            remove_owl_imports,
+            rewrite_sh_prefixes,
+        };
+        let view = build_view_graph(py, &dataset, &names, Some(&config))?;
         Ok((view, names))
     }
 
@@ -4395,6 +4721,11 @@ impl OntoEnv {
     /// Rust backend scoped to the listed named graphs, so it behaves like a
     /// merged graph without materializing one. Mutation raises
     /// ``ValueError``; use :py:meth:`copy_union` for a mutable in-memory merge.
+    ///
+    /// This is a **raw** merge: no closure transform is applied and triples
+    /// are not de-duplicated across the named graphs (rdflib merged-graph
+    /// semantics). For the cleaned, flattened imports closure of a single
+    /// ontology, use :py:meth:`get_closure` instead.
     ///
     /// Set ``include_closures=True`` to expand each listed graph's transitive
     /// ``owl:imports`` closure into the view. This is the read-only equivalent
@@ -4454,28 +4785,8 @@ impl OntoEnv {
         };
 
         let dataset = self.cached_view_dataset(py)?;
-        let view = build_view_graph(py, &dataset, &names)?;
+        let view = build_view_graph(py, &dataset, &names, None)?;
         Ok((view, names))
-    }
-
-    /// Deprecated alias for :meth:`get_closure`.
-    #[pyo3(signature = (uri, recursion_depth = -1))]
-    fn get_closure_view(
-        &self,
-        py: Python<'_>,
-        uri: &str,
-        recursion_depth: i32,
-    ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let warnings = py.import("warnings")?;
-        warnings.call_method1(
-            "warn",
-            (
-                "OntoEnv.get_closure_view() is deprecated; use OntoEnv.get_closure()",
-                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                2u32,
-            ),
-        )?;
-        self.get_closure(py, uri, recursion_depth)
     }
 
     /// Stream ``(s, p, o)`` triples for one named graph as rdflib terms,
@@ -4695,31 +5006,6 @@ impl OntoEnv {
                 "OntoEnv.snapshot_as_dataset() is deprecated; use \
                  OntoEnv.get_dataset() for a read-only view or \
                  OntoEnv.copy_dataset() for a mutable copy",
-                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                2u32,
-            ),
-        )?;
-        if backend == "copy" && store.is_none() {
-            self.copy_dataset(py, None)
-        } else {
-            self.build_dataset(py, backend, store)
-        }
-    }
-
-    /// Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-    #[pyo3(signature = (backend = "auto", store = None))]
-    fn as_dataset(
-        &self,
-        py: Python,
-        backend: &str,
-        store: Option<Py<PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let warnings = py.import("warnings")?;
-        warnings.call_method1(
-            "warn",
-            (
-                "OntoEnv.as_dataset() is deprecated; use OntoEnv.get_dataset() \
-                 for a read-only view or OntoEnv.copy_dataset() for a mutable copy",
                 py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
                 2u32,
             ),

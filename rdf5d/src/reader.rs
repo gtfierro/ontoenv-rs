@@ -315,6 +315,14 @@ impl R5tuFile {
     /// Built once on first call by decoding every dictionary term; subsequent
     /// calls are lock-free reads. This is the `O(1)` reverse lookup backing
     /// [`Self::intern_decoded`].
+    /// Eagerly build the reverse term-id index (term -> id). Idempotent and
+    /// lock-free after the first build. Pays the one-time scan of the term
+    /// dictionary up front rather than billing it to the first
+    /// [`Self::term_id`] lookup in a query.
+    pub fn build_term_index(&self) {
+        let _ = self.term_index();
+    }
+
     fn term_index(&self) -> &HashMap<DecodedTerm<'static>, u64> {
         self.term_index.get_or_init(|| {
             let n = self.term_dict.n_terms;

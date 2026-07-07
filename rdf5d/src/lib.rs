@@ -40,6 +40,8 @@
 //!
 //! See `ARCH.md` for details on the layout and terminology.
 
+#[cfg(feature = "idx")]
+pub mod closure;
 pub mod header;
 #[cfg(feature = "idx")]
 pub mod index;
@@ -53,6 +55,10 @@ pub mod update;
 pub mod view;
 pub mod writer;
 
+#[cfg(feature = "idx")]
+pub use closure::{ClosurePatch, ClosureTripleIds};
+#[cfg(all(feature = "idx", feature = "sparql"))]
+pub use closure::ClosureSparqlView;
 pub use reader::{DecodedTerm, GraphRef, IntegrityMode, OpenOptions, R5tuFile};
 #[cfg(feature = "idx")]
 pub use snapshot::{Match, Pattern, Scope, Snapshot};

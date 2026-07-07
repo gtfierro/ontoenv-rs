@@ -151,6 +151,25 @@ impl Snapshot {
         self.by_name.keys().map(String::as_str)
     }
 
+    /// Eagerly build all four permutation indexes (PSO, POS, SPO, OSP) so the
+    /// cost is paid up front at bind time rather than billed to the first
+    /// query of each shape. Each index is built in its own thread. Idempotent:
+    /// already-built indexes are returned from the `OnceLock` unchanged.
+    ///
+    /// Build failures are logged and the index left `None`, matching the
+    /// lazy path's behavior.
+    pub fn build_indexes(&self) {
+        // Build the reverse term-id index first; the permutation builders and
+        // term-id resolution both depend on it.
+        self.file.build_term_index();
+        std::thread::scope(|s| {
+            let _ = s.spawn(|| self.mem_section(IdxKind::Pso));
+            let _ = s.spawn(|| self.mem_section(IdxKind::Pos));
+            let _ = s.spawn(|| self.mem_section(IdxKind::Spo));
+            let _ = s.spawn(|| self.mem_section(IdxKind::Osp));
+        });
+    }
+
     /// Whether a logical graph with this name exists.
     pub fn has_graph(&self, name: &str) -> bool {
         self.by_name.contains_key(name)

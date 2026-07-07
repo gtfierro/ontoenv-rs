@@ -95,14 +95,10 @@ again (or ``env.refresh_dataset(dataset)``) after ``env.flush()`` to pick
 up changes.
 
 Use ``env.copy_dataset()`` when you need a mutable in-memory copy of the environment.
-The deprecated ``env.as_dataset(backend=...)`` alias can still select a storage strategy:
-
-- ``"auto"`` (default) — use ``"rdf5d"`` if ``.ontoenv/store.r5tu`` exists, otherwise
-  fall back to ``"copy"``.
-- ``"rdf5d"`` — zero-copy view backed directly by the on-disk snapshot file. Fastest.
-  Raises ``ValueError`` for temporary envs or envs using a custom ``graph_store=``.
-- ``"copy"`` — materialize the env's quads into an in-memory snapshot. Works for any
-  env kind.
+``env.get_dataset()`` chooses its storage strategy automatically: a zero-copy
+``rdf5d`` view backed directly by the ``.ontoenv/store.r5tu`` snapshot when one exists
+(fastest; not available for temporary envs or envs using a custom ``graph_store=``),
+falling back to an in-memory ``copy`` otherwise.
 
 What is supported
 -----------------

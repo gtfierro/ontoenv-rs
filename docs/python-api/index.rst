@@ -48,20 +48,24 @@ Key methods
 - ``env.copy_graph(name, graph=None)`` — Materialize a mutable in-memory
   ``rdflib.Graph`` copy of the named ontology.
 - ``env.get_closure(name, recursion_depth=-1)`` — Return ``(view, closure_names)`` where
-  ``view`` is a read-only :py:class:`ontoenv.ViewGraph` over the ontology named ``name``
-  plus all its transitive imports. No triples are materialized; use ``copy_closure`` for a
-  mutable copy.
-- ``env.copy_closure(name, graph=None, recursion_depth=-1)`` — Copy the ontology named
-  ``name`` plus all its transitive imports into a mutable ``rdflib.Graph``. Pass ``graph``
-  to merge into an existing graph in place.
+  ``view`` is a read-only, zero-copy :py:class:`ontoenv.ViewGraph` over the ontology named
+  ``name`` plus all its transitive imports. The view presents a single flattened,
+  de-duplicated graph with the **same triple set as** ``copy_closure`` (resolved
+  ``owl:imports`` stripped, ontology declarations collapsed onto the root, SHACL prefixes
+  consolidated) — without materializing a copy.
+- ``env.copy_closure(name, graph=None, recursion_depth=-1)`` — Materialize the same
+  cleaned, flattened closure into a mutable ``rdflib.Graph``. Pass ``graph`` to merge into
+  an existing graph in place.
 - ``env.get_union(uris, include_closures=False, recursion_depth=-1)`` — Return
   ``(view, graph_iris)`` where ``view`` is a read-only :py:class:`ontoenv.ViewGraph`
-  over an explicitly listed set of graphs. Set ``include_closures=True`` to expand each
-  listed graph's transitive ``owl:imports`` closure. No triples are materialized; use
-  ``copy_union`` for a mutable copy.
+  over an explicitly listed set of graphs. Unlike ``get_closure`` this is a **raw** merge:
+  no closure transform is applied and triples are not de-duplicated across graphs. Set
+  ``include_closures=True`` to expand each listed graph's transitive ``owl:imports``
+  closure. No triples are materialized; use ``copy_union`` for a mutable copy.
 - ``env.copy_union(uris, root, graph=None, include_closures=False, …)`` — Materialize the
-  union of explicitly listed graphs into a mutable ``rdflib.Graph``. ``root`` drives
-  ontology-declaration cleanup and optional SHACL prefix rewriting.
+  union of explicitly listed graphs into a mutable ``rdflib.Graph``. Defaults to a raw
+  union; pass ``rewrite_sh_prefixes=True`` / ``remove_owl_imports=True`` to opt into the
+  closure transforms, with ``root`` driving ontology-declaration and SHACL-prefix cleanup.
 - ``env.get_dataset()`` — Return a read-only ``rdflib.Dataset`` view of the environment.
 - ``env.copy_dataset(dataset=None)`` — Copy the environment into a mutable
   ``rdflib.Dataset``.

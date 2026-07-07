@@ -3,11 +3,16 @@
 Loads the Brick 1.4.4 ontology (with its imports closure) and times a handful of
 read operations against four rdflib-compatible backends:
 
-- ``ontoenv-get``   — read-only view returned by ``env.get_closure(...)``,
-                     backed by the rdf5d on-disk store via mmap.
+- ``ontoenv-get``   — read-only, zero-copy view returned by ``env.get_closure(...)``,
+                     served directly from the rdf5d mmap snapshot.
 - ``ontoenv-copy``  — mutable in-memory ``rdflib.Graph`` from ``env.copy_closure(...)``.
-- ``rdflib-memory`` — default rdflib ``Memory`` store loaded from the same closure.
-- ``oxigraph``      — ``oxrdflib`` store (skipped if ``oxrdflib`` isn't installed).
+- ``rdflib-memory`` — default rdflib ``Memory`` store, loaded from the ``copy_closure``
+                     graph so it holds the identical (cleaned, flattened) triple set.
+- ``oxigraph``      — ``oxrdflib`` store, also loaded from ``copy_closure`` (skipped if
+                     ``oxrdflib`` isn't installed).
+
+All four backends therefore hold the same triples: ``get_closure`` now applies
+the same closure transforms as ``copy_closure`` (see ``OntoEnv.get_closure``).
 
 Run from the ``python/`` directory:
 
@@ -83,8 +88,7 @@ BRICK_EQUIPMENT = URIRef("https://brickschema.org/schema/Brick#Equipment")
 
 
 def match_subject_only(graph):
-    # (s, ?, ?): no bound predicate, so the sidecar PSO/POS index can't be
-    # used today; the closure view falls back to scanning every graph.
+    # (s, ?, ?): subject bound, served from the SPO permutation index.
     n = 0
     for _ in graph.triples((BRICK_EQUIPMENT, None, None)):
         n += 1
@@ -92,9 +96,9 @@ def match_subject_only(graph):
 
 
 def match_object_only(graph):
-    # (?, ?, o): same fallback as the subject-only case. owl:Class is a
-    # high-cardinality object (every class declaration), so the full scan
-    # cost dominates regardless of result size.
+    # (?, ?, o): object bound, served from the OSP permutation index. owl:Class
+    # is a high-cardinality object (every class declaration), so result size
+    # dominates the cost.
     n = 0
     for _ in graph.triples((None, None, OWL.Class)):
         n += 1
@@ -143,20 +147,22 @@ def build_env(env_path: Path, brick_source: str) -> OntoEnv:
     return env
 
 
-def make_rdflib_memory_from_view(view) -> Graph:
+def make_rdflib_memory_from(source) -> Graph:
+    """Populate a default rdflib Memory store with the same triples as ``source``."""
     g = Graph()
-    for t in view.triples((None, None, None)):
+    for t in source.triples((None, None, None)):
         g.add(t)
     return g
 
 
-def make_oxigraph_from_view(view):
+def make_oxigraph_from(source):
+    """Populate an oxrdflib store with the same triples as ``source``."""
     try:
         import oxrdflib  # noqa: F401
     except ImportError:
         return None
     g = Graph(store="Oxigraph")
-    for t in view.triples((None, None, None)):
+    for t in source.triples((None, None, None)):
         g.add(t)
     return g
 
@@ -227,18 +233,24 @@ def render_benchcmp(rows, backend_names, baseline):
 def run_all(env, repeat=3):
     print("Building closure views/graphs...")
 
-    # Read-only view backed by rdf5d/mmap
+    # Read-only, zero-copy view backed by the rdf5d mmap snapshot. This is a
+    # closure view: it applies the same closure transforms as copy_closure
+    # (strip resolved owl:imports, collapse ontology declarations onto the
+    # root, consolidate SHACL prefixes) and presents a single flattened,
+    # de-duplicated graph, so its triple set matches the materialized
+    # backends below.
     view, closure_names = env.get_closure(BRICK_IRI)
     print(f"  closure contains {len(closure_names)} graphs")
 
-    # Mutable in-memory copy via ontoenv
+    # Mutable in-memory copy via ontoenv. copy_closure materializes the same
+    # cleaned, flattened closure.
     copy_graph, _ = env.copy_closure(BRICK_IRI)
 
-    # Default rdflib Memory store, populated from the same triples
-    rdflib_memory = make_rdflib_memory_from_view(view)
-
-    # Oxigraph store (optional)
-    oxigraph_graph = make_oxigraph_from_view(view)
+    # Default rdflib Memory and oxigraph stores, populated from the SAME
+    # cleaned closure so all four backends hold identical triples and their
+    # counts match.
+    rdflib_memory = make_rdflib_memory_from(copy_graph)
+    oxigraph_graph = make_oxigraph_from(copy_graph)
 
     backends = [
         ("ontoenv-get",   view),

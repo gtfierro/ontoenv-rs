@@ -303,6 +303,160 @@ class TestOntoEnvAPI(unittest.TestCase):
         with self.assertRaises(ValueError):
             view.add((URIRef("urn:x"), RDF.type, OWL.Ontology))
 
+    def _build_closure_equivalence_fixture(self):
+        """Three ontologies exercising the hard closure-transform cases:
+
+        - root does NOT declare itself ``a owl:Ontology`` (tests the additive
+          root-declaration step),
+        - a triple is duplicated across root and an imported graph (tests
+          cross-graph set dedup),
+        - SHACL ``sh:prefixes`` / ``sh:declare`` on a non-root graph (tests
+          the prefix consolidation rewrite).
+
+        Returns ``(root_iri, [root, mid, leaf] iris)``.
+        """
+        root_path = self.test_dir / "eqroot.ttl"
+        mid_path = self.test_dir / "eqmid.ttl"
+        leaf_path = self.test_dir / "eqleaf.ttl"
+        root_iri = root_path.resolve().as_uri()
+        mid_iri = mid_path.resolve().as_uri()
+        leaf_iri = leaf_path.resolve().as_uri()
+
+        leaf_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.com/leaf#> .
+<{leaf_iri}> a owl:Ontology ;
+    sh:prefixes <{leaf_iri}> .
+<{leaf_iri}> sh:declare [ sh:prefix "leaf" ; sh:namespace "http://example.com/leaf#" ] .
+ex:LeafClass a owl:Class .
+# Duplicated across graphs (also asserted in mid):
+ex:Shared a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        mid_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/leaf#> .
+@prefix exm: <http://example.com/mid#> .
+<{mid_iri}> a owl:Ontology ;
+    owl:imports <{leaf_iri}> .
+exm:MidClass a owl:Class .
+# Same triple as in leaf, to exercise cross-graph dedup:
+ex:Shared a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        # Root deliberately does NOT declare itself an owl:Ontology.
+        root_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix exr: <http://example.com/root#> .
+<{root_iri}> owl:imports <{mid_iri}> .
+exr:RootClass a owl:Class .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(leaf_path))
+        self.env.add(str(mid_path))
+        self.env.add(str(root_path))
+        return root_iri, [root_iri, mid_iri, leaf_iri]
+
+    def test_get_closure_matches_copy_closure_set_semantics(self):
+        """get_closure (zero-copy view) must return the SAME triple set as
+        copy_closure (materialized), including:
+
+        - cross-graph dedup (set, not multiset),
+        - resolved owl:imports stripped,
+        - ontology declarations collapsed onto the root,
+        - the additive root ``a owl:Ontology`` declaration when the root does
+          not declare itself,
+        - sh:prefixes / sh:declare consolidated onto the root.
+        """
+        root_iri, _iris = self._build_closure_equivalence_fixture()
+
+        view, view_names = self.env.get_closure(root_iri)
+        copy_g, copy_names = self.env.copy_closure(root_iri)
+
+        self.assertEqual(set(view_names), set(copy_names))
+
+        view_set = set(view.triples((None, None, None)))
+        copy_set = set(copy_g.triples((None, None, None)))
+
+        missing = copy_set - view_set
+        extra = view_set - copy_set
+        self.assertEqual(
+            missing, set(), f"triples in copy_closure but not in get_closure: {missing}"
+        )
+        self.assertEqual(
+            extra, set(), f"triples in get_closure but not in copy_closure: {extra}"
+        )
+
+        # len(view) is set-cardinality and matches copy_closure exactly.
+        self.assertEqual(len(view), len(copy_g))
+        # ...and matches the deduped iteration length (no multiset leakage).
+        self.assertEqual(len(view), len(view_set))
+
+        # SPARQL COUNT(*) over the view agrees with the set cardinality.
+        result = view.query("SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }")
+        self.assertEqual(int(list(result)[0][0]), len(view_set))
+
+    def test_get_closure_additive_root_declaration(self):
+        """When the root lacks an ``a owl:Ontology`` declaration, the view
+        still reports exactly one ontology declaration: the root."""
+        root_iri, _iris = self._build_closure_equivalence_fixture()
+        view, _ = self.env.get_closure(root_iri)
+
+        decls = list(view.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(decls, [(URIRef(root_iri), RDF.type, OWL.Ontology)])
+        self.assertIn((URIRef(root_iri), RDF.type, OWL.Ontology), view)
+
+    def test_get_closure_strips_resolved_imports(self):
+        """Resolved owl:imports (targets inside the closure) are absent from
+        the view, matching copy_closure."""
+        root_iri, iris = self._build_closure_equivalence_fixture()
+        view, _ = self.env.get_closure(root_iri)
+        imports = list(view.triples((None, OWL.imports, None)))
+        self.assertEqual(imports, [], f"resolved owl:imports leaked: {imports}")
+
+    def test_get_closure_sh_prefixes_consolidated(self):
+        """sh:prefixes objects are rewritten onto the root, and sh:declare
+        moves up to the root — matching copy_closure."""
+        root_iri, _iris = self._build_closure_equivalence_fixture()
+        view, _ = self.env.get_closure(root_iri)
+        copy_g, _ = self.env.copy_closure(root_iri)
+
+        view_prefixes = set(view.triples((None, SH.prefixes, None)))
+        copy_prefixes = set(copy_g.triples((None, SH.prefixes, None)))
+        self.assertEqual(view_prefixes, copy_prefixes)
+
+    def test_view_graph_triples_accepts_rdflib_tuple_convention(self):
+        """ViewGraph.triples accepts both the rdflib single-tuple convention
+        ``triples((s, p, o))`` and the three-arg form ``triples(s, p, o)``."""
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+        view, _names = self.env.get_closure(name, recursion_depth=0)
+
+        # Single-tuple convention (what rdflib.Graph.triples and every rdflib
+        # user expects) must not be misinterpreted as a subject term.
+        tuple_form = list(view.triples((None, None, None)))
+        three_arg_form = list(view.triples(None, None, None))
+        self.assertGreater(len(tuple_form), 0)
+        self.assertEqual(len(tuple_form), len(three_arg_form))
+        self.assertEqual(set(tuple_form), set(three_arg_form))
+
+        # Restricted pattern via the tuple convention.
+        ont_via_tuple = list(view.triples((None, RDF.type, OWL.Ontology)))
+        ont_via_args = list(view.triples(None, RDF.type, OWL.Ontology))
+        self.assertEqual(ont_via_tuple, ont_via_args)
+        self.assertIn((URIRef(name), RDF.type, OWL.Ontology), ont_via_tuple)
+
     def test_view_graph_spo_and_scoped_query(self):
         """ViewGraph subjects/predicates/objects and query are scoped to the view."""
         from ontoenv import ViewGraph

@@ -10,9 +10,10 @@ ontology and its imports closure (15 graphs, ~223k triples) into an
 ``OntoEnv``, then times a handful of operations across four
 ``rdflib``-compatible backends:
 
-- ``ontoenv-get`` — ``env.get_closure(...)``, a read-only view backed by the
-  on-disk rdf5d store via ``mmap``, accelerated by in-memory permutation
-  indexes built on demand (see :ref:`sidecar-index`).
+- ``ontoenv-get`` — ``env.get_closure(...)``, a read-only, zero-copy view
+  backed by the on-disk rdf5d store via ``mmap``, accelerated by in-memory
+  permutation indexes built when the snapshot is bound (see
+  :ref:`sidecar-index`).
 - ``ontoenv-copy`` — ``env.copy_closure(...)``, a mutable in-memory
   ``rdflib.Graph`` materialized from the same closure.
 - ``rdflib-memory`` — default rdflib ``Memory`` store loaded from the same
@@ -211,11 +212,12 @@ scanning every triple of every named graph in the closure.
 
 The indexes are:
 
-- **Built lazily and per-permutation.** Each order is constructed on first
-  use, so a workload only pays for the permutations it actually queries. The
-  build walks the snapshot once and sorts in memory — on the order of tens of
-  milliseconds per permutation for the Brick closure (~237k triples), then
-  free on every subsequent query.
+- **Built eagerly at bind time.** All four permutations (plus the reverse
+  term-id index) are constructed when the snapshot is opened for a view, in
+  parallel threads, so the cost is paid once up front rather than billed to
+  the first query of each pattern shape. Each build walks the snapshot once
+  and sorts in memory — on the order of tens of milliseconds per permutation
+  for the Brick closure (~237k triples), then free on every subsequent query.
 - **Always fresh.** Because an index is built from the snapshot you just
   opened, there is nothing to invalidate — no staleness checks, no sidecar
   files to keep in sync. (Older versions wrote a ``store.r5tu.idx`` sidecar;

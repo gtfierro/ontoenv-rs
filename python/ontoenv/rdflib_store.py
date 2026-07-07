@@ -347,65 +347,6 @@ class OntoEnvStore(Store):
         return None
 
 
-class ClosureGraphView(Graph):
-    """Read-only merged view across a fixed set of named graphs in a Dataset.
-
-    Returned by :py:meth:`ontoenv.OntoEnv.get_closure` and
-    :py:meth:`ontoenv.OntoEnv.get_union`. Triple lookups are dispatched to
-    each underlying named graph and de-duplicated; the underlying store is
-    shared with the dataset, so mutation through this view raises
-    ``ValueError`` from the store layer.
-
-    Construct via ``env.get_closure(...)`` or ``env.get_union(...)`` rather
-    than directly.
-    """
-
-    def __init__(self, dataset: Dataset, identifiers: Iterable[str]) -> None:
-        ids = tuple(identifiers)
-        if not ids:
-            raise ValueError("ClosureGraphView requires at least one identifier")
-        super().__init__(store=dataset.store, identifier=URIRef(ids[0]))
-        self._dataset = dataset
-        self._identifiers = tuple(URIRef(i) for i in ids)
-        # Plain str list for the Rust-side backend method (avoids per-call
-        # str() conversion of N URIRefs).
-        self._identifier_strs = [str(i) for i in ids]
-
-    def _backend(self) -> Any:
-        # OntoEnvStore exposes the Rust backend as `store._backend`.
-        return self._dataset.store._backend
-
-    def triples(self, triple: Any) -> Generator[Any, None, None]:
-        s, p, o = triple
-        if s is None and p is None and o is None:
-            # All-unbound: skip the dedup + per-row context-list bookkeeping
-            # done by ``triples_in_graphs`` and stream directly from the
-            # snapshot's per-graph quad iterators. Each triple is yielded
-            # once per graph it appears in (no cross-graph dedup), matching
-            # ``rdflib.Graph`` semantics for a merged read-only view.
-            yield from self._backend().iter_triples_in_graphs(self._identifier_strs)
-            return
-        # Pattern-restricted path: dedups at the term-ID level and yields
-        # rdflib term tuples lazily.
-        rows = self._backend().triples_in_graphs(s, p, o, self._identifier_strs)
-        for triple_tuple, _contexts in rows:
-            yield triple_tuple
-
-    def __contains__(self, triple: Any) -> bool:
-        s, p, o = triple
-        if s is None or p is None or o is None:
-            # Fall back to the streaming path; the Rust contains_in_graphs
-            # requires all three terms.
-            return any(True for _ in self.triples(triple))
-        return self._backend().contains_in_graphs(s, p, o, self._identifier_strs)
-
-    def __iter__(self) -> Generator[Any, None, None]:
-        return self.triples((None, None, None))
-
-    def __len__(self) -> int:
-        return self._backend().len_in_graphs(self._identifier_strs)
-
-
 try:
     plugin.register("ontoenv", Store, "ontoenv.rdflib_store", "OntoEnvStore")
 except Exception:
@@ -413,12 +354,25 @@ except Exception:
 
 
 class ViewGraph:
-    """Read-only view over one or more named graphs, backed by Rust.
+    """Read-only, zero-copy view over a set of the snapshot's named graphs.
 
     Unlike :class:`rdflib.Graph`, this class does *not* inherit from
-    ``rdflib.Graph``.  It directly delegates to the Rust backend for
-    zero-copy access when backed by an rdf5d snapshot.  Supports
-    scoped queries over an imports-closure or explicit union of graphs.
+    ``rdflib.Graph``. It delegates triple lookups, ``__len__``, ``__contains__``
+    and SPARQL directly to the Rust backend, reading straight from the rdf5d
+    mmap snapshot without materializing a copy.
+
+    Two flavours, distinguished by how the backend is configured:
+
+    - :py:meth:`ontoenv.OntoEnv.get_closure` returns a view whose backend
+      carries a *closure patch*. It presents a **single flattened,
+      de-duplicated graph** with the same triple set as
+      :py:meth:`ontoenv.OntoEnv.copy_closure` (resolved ``owl:imports``
+      stripped, ontology declarations collapsed onto the root, SHACL
+      ``sh:prefixes``/``sh:declare`` consolidated). Cross-graph duplicate
+      triples collapse, and SPARQL sees one graph.
+    - :py:meth:`ontoenv.OntoEnv.get_union` returns a raw merge: every triple
+      of each named graph in scope, with no transform and no cross-graph
+      de-duplication (rdflib merged-graph semantics).
 
     Construct via ``env.get_closure(uri)`` or ``env.get_union(uris)`` rather
     than directly. ``env.get_graph(uri)`` still returns a plain
@@ -426,7 +380,9 @@ class ViewGraph:
 
     Args:
         backend: A :class:`ontoenv._native._RdfLibStoreBackend` instance
-            bound to an env snapshot.
+            bound to an env snapshot. For a closure view this is a dedicated
+            backend sharing the same mmap snapshot with a closure patch
+            attached; for a union view it is the shared (raw) backend.
         scope: Tuple of graph IRIs to scope against, or ``None`` for
             all graphs in the backend.
         namespaces: Optional dict of ``{prefix: namespace}`` bindings.
@@ -447,13 +403,40 @@ class ViewGraph:
 
     # -- Core iteration --
 
+    @staticmethod
+    def _unpack_pattern(
+        subject: Any, predicate: Any, obj: Any
+    ) -> tuple[Any, Any, Any]:
+        """Accept either rdflib's ``triples((s, p, o))`` single-tuple
+        convention or the three-arg ``triples(s, p, o)`` form.
+
+        rdflib terms (URIRef/Literal/BNode/Variable) are never tuples, so a
+        tuple/list of length 3 passed as the first positional arg is
+        unambiguously the single-tuple convention.
+        """
+        if (
+            isinstance(subject, (tuple, list))
+            and len(subject) == 3
+            and predicate is None
+            and obj is None
+        ):
+            s, p, o = subject
+            return s, p, o
+        return subject, predicate, obj
+
     def triples(
         self,
         subject: Any = None,
         predicate: Any = None,
         obj: Any = None,
     ) -> Generator[tuple[Any, Any, Any], None, None]:
-        """Iterate ``(s, p, o)`` triples matching the pattern."""
+        """Iterate ``(s, p, o)`` triples matching the pattern.
+
+        Accepts both the rdflib convention ``triples((s, p, o))`` (a single
+        3-tuple) and the three-arg form ``triples(s, p, o)``. Any term may be
+        ``None`` (unbound).
+        """
+        subject, predicate, obj = self._unpack_pattern(subject, predicate, obj)
         if self._scope:
             scope = list(self._scope)
             if subject is None and predicate is None and obj is None:

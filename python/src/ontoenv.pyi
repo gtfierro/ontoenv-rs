@@ -230,25 +230,22 @@ class OntoEnv:
         self,
         uri: str,
         recursion_depth: int = -1,
+        remove_owl_imports: bool = True,
+        rewrite_sh_prefixes: bool = True,
     ) -> Tuple["ViewGraph", List[str]]:
-        """Return a read-only merged view over the imports closure of *uri*.
+        """Return a read-only, zero-copy view over the imports closure of *uri*.
 
-        Behaves like a merged ``rdflib.Graph`` but routes triple-pattern
-        lookups across the underlying named graphs without materializing
-        a copy. Returns ``(view, closure_names)``; ``view`` is a
-        :py:class:`ontoenv.ViewGraph`. Use :py:meth:`copy_closure` for
-        a mutable in-memory merge.
-        """
-        ...
+        The view presents a single flattened, de-duplicated graph with the
+        same triple set as :py:meth:`copy_closure` (resolved ``owl:imports``
+        stripped, ontology declarations collapsed onto the root, SHACL
+        ``sh:prefixes``/``sh:declare`` consolidated) but without materializing
+        a copy — reads are served directly from the mmap snapshot.
 
-    def get_closure_view(
-        self,
-        uri: str,
-        recursion_depth: int = -1,
-    ) -> Tuple[Graph, List[str]]:
-        """Deprecated alias for :py:meth:`get_closure`.
-
-        Emits ``DeprecationWarning``.
+        Set ``remove_owl_imports=False`` and/or ``rewrite_sh_prefixes=False``
+        to opt out of those transforms (matching :py:meth:`get_union`'s raw
+        semantics). Returns ``(view, closure_names)``; ``view`` is a
+        :py:class:`ontoenv.ViewGraph`. Use :py:meth:`copy_closure` for a
+        mutable in-memory merge.
         """
         ...
 
@@ -317,8 +314,15 @@ class OntoEnv:
         are added to it and the same graph is returned; otherwise a new
         ``rdflib.Graph`` is returned.
 
-        Use :py:meth:`get_closure` for a read-only store-backed view that
-        avoids materializing triples.
+        The result is a single flattened graph: resolved ``owl:imports`` are
+        stripped, ontology declarations are collapsed onto *uri* (which is
+        declared ``a owl:Ontology`` if it did not declare itself), and SHACL
+        ``sh:prefixes``/``sh:declare`` are consolidated onto *uri*. Set
+        ``remove_owl_imports=False`` or ``rewrite_sh_prefixes=False`` to opt
+        out of the respective transform.
+
+        :py:meth:`get_closure` returns a read-only, zero-copy view with the
+        **same triple set** without materializing a copy.
 
         With a custom ``graph_store=``: each graph in the closure is fetched
         via the store's ``copy_graph`` if available, otherwise ``get_graph``.
@@ -339,6 +343,11 @@ class OntoEnv:
         Mutation raises ``ValueError``; use :py:meth:`copy_union` for a
         mutable in-memory merge.
 
+        This is a **raw** merge: no closure transform is applied and triples
+        are not de-duplicated across the named graphs. For the cleaned,
+        flattened imports closure of a single ontology use
+        :py:meth:`get_closure` instead.
+
         Set ``include_closures=True`` to expand each listed graph's
         transitive ``owl:imports`` closure into the view.
         """
@@ -350,8 +359,8 @@ class OntoEnv:
         root: str,
         graph: Optional[Graph] = None,
         include_closures: bool = False,
-        rewrite_sh_prefixes: bool = True,
-        remove_owl_imports: bool = True,
+        rewrite_sh_prefixes: bool = False,
+        remove_owl_imports: bool = False,
         recursion_depth: int = -1,
     ) -> Tuple[Graph, List[str]]:
         """Copy the union of explicitly enumerated ontology graphs into a mutable graph.
@@ -360,10 +369,15 @@ class OntoEnv:
         are added to it and the same graph is returned; otherwise a new
         ``rdflib.Graph`` is returned.
 
+        This defaults to a **raw** union (no transform), matching
+        :py:meth:`get_union`. Pass ``rewrite_sh_prefixes=True`` and/or
+        ``remove_owl_imports=True`` to opt into the closure transforms; when
+        enabled, ``root`` is the ontology onto which declarations and SHACL
+        prefixes are collapsed (it need not be one of the listed graphs).
+        Ontology declarations other than the root's are always collapsed.
+
         Set ``include_closures=True`` to include each listed graph's
-        transitive ``owl:imports`` closure. ``root`` is used for ontology
-        declaration cleanup and optional SHACL prefix rewriting; it does not
-        need to be one of the listed graphs.
+        transitive ``owl:imports`` closure.
 
         Use :py:meth:`get_union` for a read-only store-backed view that
         avoids materializing triples.
@@ -458,19 +472,6 @@ class OntoEnv:
         ...
 
     def snapshot_as_dataset(
-        self,
-        backend: str = "auto",
-        store: Optional[Store] = None,
-    ) -> Dataset:
-        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-
-        Emits ``DeprecationWarning``. ``backend="copy"`` without *store*
-        returns :meth:`copy_dataset`; otherwise this returns a read-only
-        Dataset view using the requested backend.
-        """
-        ...
-
-    def as_dataset(
         self,
         backend: str = "auto",
         store: Optional[Store] = None,
@@ -593,7 +594,10 @@ class ViewGraph:
     ) -> None: ...
     def triples(
         self,
-        subject: Optional[object] = None,
+        subject: Union[
+            Tuple[Optional[object], Optional[object], Optional[object]],
+            Optional[object],
+        ] = None,
         predicate: Optional[object] = None,
         obj: Optional[object] = None,
     ) -> Iterator[Tuple[object, object, object]]: ...
