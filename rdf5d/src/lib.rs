@@ -55,10 +55,10 @@ pub mod update;
 pub mod view;
 pub mod writer;
 
-#[cfg(feature = "idx")]
-pub use closure::{ClosurePatch, ClosureTripleIds};
 #[cfg(all(feature = "idx", feature = "sparql"))]
 pub use closure::ClosureSparqlView;
+#[cfg(feature = "idx")]
+pub use closure::{ClosurePatch, ClosureTripleIds};
 pub use reader::{DecodedTerm, GraphRef, IntegrityMode, OpenOptions, R5tuFile};
 #[cfg(feature = "idx")]
 pub use snapshot::{Match, Pattern, Scope, Snapshot};

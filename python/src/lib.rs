@@ -1382,7 +1382,9 @@ fn scan_grouped(
                     && pat.p.is_none_or(|x| x == p)
                     && pat.o.is_none_or(|x| x == o)
                 {
-                    grouped.entry((s, p, o)).or_insert_with(|| vec![root.clone()]);
+                    grouped
+                        .entry((s, p, o))
+                        .or_insert_with(|| vec![root.clone()]);
                 }
             }
         }
@@ -1403,7 +1405,6 @@ fn scan_grouped(
     }
     Ok(grouped)
 }
-
 
 /// The snapshot's logical graphs as rdflib graph-name nodes.
 fn snapshot_named_graphs(snapshot: &Snapshot) -> Result<Vec<NamedOrBlankNode>> {
@@ -1953,7 +1954,9 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(py_list.into_any().unbind())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot, patch, ..
+            } => {
                 if matches!(graph_name, Some(GraphName::DefaultGraph)) {
                     return Ok(PyList::empty(py).into_any().unbind());
                 }
@@ -1977,7 +1980,7 @@ impl PyRdfLibStoreBackend {
                             term_cache: self.term_cache.clone(),
                             graph_cache: HashMap::new(),
                             remaining: 0,
-                                },
+                        },
                     )
                     .map(|p| p.into_any())
                 };
@@ -2252,7 +2255,9 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(py_list.into_any().unbind())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot, patch, ..
+            } => {
                 let empty_iter = |py: Python<'_>| -> PyResult<Py<PyAny>> {
                     Py::new(
                         py,
@@ -2343,7 +2348,9 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(Py::new(py, TripleIter::new(triples))?.into_any())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot, patch, ..
+            } => {
                 // Collect term-ID triples eagerly; defer Term/Py construction
                 // until iteration so the u64-keyed cache amortizes work
                 // across repeated terms (predicates and shared subjects).
@@ -2410,7 +2417,9 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(seen.len())
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot, patch, ..
+            } => {
                 let mut gids: Vec<u64> = Vec::new();
                 for name in &graph_names {
                     if let Some(g) = snapshot.gids_for_name(name) {
@@ -2475,7 +2484,9 @@ impl PyRdfLibStoreBackend {
                 }
                 Ok(false)
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot, patch, ..
+            } => {
                 // Resolve terms in the snapshot's id space. When a closure
                 // patch is present, use `intern_decoded` so ids match the
                 // patch's (which may reference overflow ids, e.g. a root IRI
@@ -2560,7 +2571,9 @@ impl PyRdfLibStoreBackend {
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot, patch, ..
+            } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
                 snapshot.rewrite_query(&mut parsed);
@@ -2699,7 +2712,9 @@ impl PyRdfLibStoreBackend {
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
             }
-            RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, patch, .. } => {
+            RdfLibStoreBackend::EnvSnapshotRdf5d {
+                snapshot, patch, ..
+            } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
                 snapshot.rewrite_query(&mut parsed);
@@ -2719,9 +2734,9 @@ impl PyRdfLibStoreBackend {
                     // and the single named graph are the root IRI.
                     Some(patch) => {
                         let root = NamedNode::new_unchecked(patch_root_iri(patch, snapshot));
-                        prepared.dataset_mut().set_default_graph(vec![GraphName::from(
-                            root.clone(),
-                        )]);
+                        prepared
+                            .dataset_mut()
+                            .set_default_graph(vec![GraphName::from(root.clone())]);
                         prepared
                             .dataset_mut()
                             .set_available_named_graphs(vec![root.into()]);

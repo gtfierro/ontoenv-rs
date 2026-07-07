@@ -552,7 +552,11 @@ mod tests {
 
     fn all_gids(snapshot: &Snapshot) -> Vec<u64> {
         let mut gids = Vec::new();
-        for name in snapshot.graph_names().map(str::to_string).collect::<Vec<_>>() {
+        for name in snapshot
+            .graph_names()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        {
             if let Some(g) = snapshot.gids_for_name(&name) {
                 gids.extend_from_slice(g);
             }
@@ -570,15 +574,57 @@ mod tests {
         let path = dir.path().join("c.r5tu");
         let quints = vec![
             // root graph: no self-declaration, imports mid
-            Quint { id: root.into(), s: iri(root), p: iri(IMPORTS), o: iri(mid), gname: root.into() },
-            Quint { id: root.into(), s: iri("http://ex/RootClass"), p: iri(TYPE), o: iri(ONT.replace("Ontology","Class").as_str()), gname: root.into() },
+            Quint {
+                id: root.into(),
+                s: iri(root),
+                p: iri(IMPORTS),
+                o: iri(mid),
+                gname: root.into(),
+            },
+            Quint {
+                id: root.into(),
+                s: iri("http://ex/RootClass"),
+                p: iri(TYPE),
+                o: iri(ONT.replace("Ontology", "Class").as_str()),
+                gname: root.into(),
+            },
             // mid graph: declares itself, imports leaf
-            Quint { id: mid.into(), s: iri(mid), p: iri(TYPE), o: iri(ONT), gname: mid.into() },
-            Quint { id: mid.into(), s: iri(mid), p: iri(IMPORTS), o: iri(leaf), gname: mid.into() },
-            Quint { id: mid.into(), s: iri("http://ex/Shared"), p: iri(TYPE), o: iri("http://ex/C"), gname: mid.into() },
+            Quint {
+                id: mid.into(),
+                s: iri(mid),
+                p: iri(TYPE),
+                o: iri(ONT),
+                gname: mid.into(),
+            },
+            Quint {
+                id: mid.into(),
+                s: iri(mid),
+                p: iri(IMPORTS),
+                o: iri(leaf),
+                gname: mid.into(),
+            },
+            Quint {
+                id: mid.into(),
+                s: iri("http://ex/Shared"),
+                p: iri(TYPE),
+                o: iri("http://ex/C"),
+                gname: mid.into(),
+            },
             // leaf graph: declares itself, has the SAME shared triple (cross-graph dup)
-            Quint { id: leaf.into(), s: iri(leaf), p: iri(TYPE), o: iri(ONT), gname: leaf.into() },
-            Quint { id: leaf.into(), s: iri("http://ex/Shared"), p: iri(TYPE), o: iri("http://ex/C"), gname: leaf.into() },
+            Quint {
+                id: leaf.into(),
+                s: iri(leaf),
+                p: iri(TYPE),
+                o: iri(ONT),
+                gname: leaf.into(),
+            },
+            Quint {
+                id: leaf.into(),
+                s: iri("http://ex/Shared"),
+                p: iri(TYPE),
+                o: iri("http://ex/C"),
+                gname: leaf.into(),
+            },
         ];
         let s = snap(&path, &quints);
         let gids = all_gids(&s);
@@ -587,9 +633,15 @@ mod tests {
         let set = closure_set(&s, patch, &gids);
 
         // resolved owl:imports stripped
-        assert!(!set.iter().any(|(_, p, _)| p == IMPORTS), "imports leaked: {set:?}");
+        assert!(
+            !set.iter().any(|(_, p, _)| p == IMPORTS),
+            "imports leaked: {set:?}"
+        );
         // only the root ontology declaration remains
-        let decls: Vec<_> = set.iter().filter(|(_, p, o)| p == TYPE && o == ONT).collect();
+        let decls: Vec<_> = set
+            .iter()
+            .filter(|(_, p, o)| p == TYPE && o == ONT)
+            .collect();
         assert_eq!(decls.len(), 1, "expected 1 ontology decl, got {decls:?}");
         assert_eq!(decls[0].0, root);
         // additive root declaration is present even though root didn't declare itself
@@ -609,14 +661,56 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("p.r5tu");
         let quints = vec![
-            Quint { id: root.into(), s: iri(root), p: iri(TYPE), o: iri(ONT), gname: root.into() },
-            Quint { id: root.into(), s: iri(root), p: iri(IMPORTS), o: iri(leaf), gname: root.into() },
+            Quint {
+                id: root.into(),
+                s: iri(root),
+                p: iri(TYPE),
+                o: iri(ONT),
+                gname: root.into(),
+            },
+            Quint {
+                id: root.into(),
+                s: iri(root),
+                p: iri(IMPORTS),
+                o: iri(leaf),
+                gname: root.into(),
+            },
             // leaf: sh:prefixes leaf ; sh:declare _:d ; _:d sh:prefix "leaf"; sh:namespace "..."
-            Quint { id: leaf.into(), s: iri(leaf), p: iri(TYPE), o: iri(ONT), gname: leaf.into() },
-            Quint { id: leaf.into(), s: iri(leaf), p: iri(PREFIXES), o: iri(leaf), gname: leaf.into() },
-            Quint { id: leaf.into(), s: iri(leaf), p: iri(DECLARE), o: Term::BNode("_:d".into()), gname: leaf.into() },
-            Quint { id: leaf.into(), s: Term::BNode("_:d".into()), p: iri(PREFIX), o: lit("leaf"), gname: leaf.into() },
-            Quint { id: leaf.into(), s: Term::BNode("_:d".into()), p: iri(NS), o: lit("http://ex/leaf#"), gname: leaf.into() },
+            Quint {
+                id: leaf.into(),
+                s: iri(leaf),
+                p: iri(TYPE),
+                o: iri(ONT),
+                gname: leaf.into(),
+            },
+            Quint {
+                id: leaf.into(),
+                s: iri(leaf),
+                p: iri(PREFIXES),
+                o: iri(leaf),
+                gname: leaf.into(),
+            },
+            Quint {
+                id: leaf.into(),
+                s: iri(leaf),
+                p: iri(DECLARE),
+                o: Term::BNode("_:d".into()),
+                gname: leaf.into(),
+            },
+            Quint {
+                id: leaf.into(),
+                s: Term::BNode("_:d".into()),
+                p: iri(PREFIX),
+                o: lit("leaf"),
+                gname: leaf.into(),
+            },
+            Quint {
+                id: leaf.into(),
+                s: Term::BNode("_:d".into()),
+                p: iri(NS),
+                o: lit("http://ex/leaf#"),
+                gname: leaf.into(),
+            },
         ];
         let s = snap(&path, &quints);
         let gids = all_gids(&s);
@@ -639,10 +733,34 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("raw.r5tu");
         let quints = vec![
-            Quint { id: root.into(), s: iri(root), p: iri(TYPE), o: iri(ONT), gname: root.into() },
-            Quint { id: root.into(), s: iri(root), p: iri(IMPORTS), o: iri(leaf), gname: root.into() },
-            Quint { id: leaf.into(), s: iri(leaf), p: iri(TYPE), o: iri(ONT), gname: leaf.into() },
-            Quint { id: leaf.into(), s: iri(leaf), p: iri(PREFIXES), o: iri(leaf), gname: leaf.into() },
+            Quint {
+                id: root.into(),
+                s: iri(root),
+                p: iri(TYPE),
+                o: iri(ONT),
+                gname: root.into(),
+            },
+            Quint {
+                id: root.into(),
+                s: iri(root),
+                p: iri(IMPORTS),
+                o: iri(leaf),
+                gname: root.into(),
+            },
+            Quint {
+                id: leaf.into(),
+                s: iri(leaf),
+                p: iri(TYPE),
+                o: iri(ONT),
+                gname: leaf.into(),
+            },
+            Quint {
+                id: leaf.into(),
+                s: iri(leaf),
+                p: iri(PREFIXES),
+                o: iri(leaf),
+                gname: leaf.into(),
+            },
         ];
         let s = snap(&path, &quints);
         let gids = all_gids(&s);
@@ -656,7 +774,10 @@ mod tests {
         // original sh:prefixes kept (not rewritten)
         assert!(set.contains(&(leaf.to_string(), PREFIXES.to_string(), leaf.to_string())));
         // BUT non-root ontology decls are always collapsed
-        let decls: Vec<_> = set.iter().filter(|(_, p, o)| p == TYPE && o == ONT).collect();
+        let decls: Vec<_> = set
+            .iter()
+            .filter(|(_, p, o)| p == TYPE && o == ONT)
+            .collect();
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].0, root);
     }
