@@ -2279,12 +2279,12 @@ fn rename_rewrites_sh_prefixes_owl_imports_and_version_iri() -> Result<()> {
 
     let has_triple = |s: Option<&str>, p: &str, o: Option<&str>| {
         graph.iter().any(|t| {
-            let subj_ok = s.map_or(true, |expected| match t.subject {
+            let subj_ok = s.is_none_or(|expected| match t.subject {
                 oxigraph::model::NamedOrBlankNodeRef::NamedNode(nn) => nn.as_str() == expected,
                 _ => false,
             });
             let pred_ok = t.predicate.as_str() == p;
-            let obj_ok = o.map_or(true, |expected| match t.object {
+            let obj_ok = o.is_none_or(|expected| match t.object {
                 TermRef::NamedNode(nn) => nn.as_str() == expected,
                 _ => false,
             });
@@ -2416,7 +2416,7 @@ fn rename_middle_node_dep_graph_updated() -> Result<()> {
     );
 
     // B-old's IRI does not appear in any ontology's closure.
-    for (id, _) in env.ontologies() {
+    for id in env.ontologies().keys() {
         let closure = env.get_closure(id, -1).unwrap_or_default();
         assert!(
             !closure.iter().any(|g| g.to_uri_string() == b_iri),

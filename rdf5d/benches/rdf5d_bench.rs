@@ -940,7 +940,6 @@ fn bench_view_subset_scan(c: &mut Criterion) {
 
 #[cfg(feature = "sparql")]
 fn bench_view_sparql(c: &mut Criterion) {
-    use rdf5d::DecodedTerm;
     use spargebra::SparqlParser;
 
     let mut group = c.benchmark_group("view_sparql");
@@ -955,7 +954,7 @@ fn bench_view_sparql(c: &mut Criterion) {
         group.throughput(Throughput::Elements(total));
 
         // SPARQL query against the view
-        let mut query = SparqlParser::new()
+        let query = SparqlParser::new()
             .parse_query(
                 "SELECT (COUNT(?s) AS ?c) WHERE { ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o }",
             )
@@ -964,7 +963,7 @@ fn bench_view_sparql(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("type_count", case.name),
             &(&snap, &query, &view),
-            |b, &(snap, query, view)| {
+            |b, &(_snap, query, view)| {
                 b.iter(|| {
                     // First call against view builds its indexes
                     let mut q = query.clone();
