@@ -192,7 +192,11 @@ pub fn build_mem_section(r5tu: &R5tuFile, kind: IdxKind) -> Result<MemSection> {
         postings.push(Posting { gids, blocks });
     }
 
-    Ok(MemSection { kind, keys, postings })
+    Ok(MemSection {
+        kind,
+        keys,
+        postings,
+    })
 }
 
 // ============================================================================
@@ -327,9 +331,27 @@ mod tests {
         let r5tu = dir.join("store.r5tu");
         let mut quads = Vec::new();
         for (id, gname) in [("d1", "g1"), ("d2", "g2"), ("d3", "g3")] {
-            quads.push(Quint { id: id.into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: gname.into() });
-            quads.push(Quint { id: id.into(), s: iri("http://ex/s2"), p: iri("http://ex/p2"), o: iri("http://ex/o2"), gname: gname.into() });
-            quads.push(Quint { id: id.into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o3"), gname: gname.into() });
+            quads.push(Quint {
+                id: id.into(),
+                s: iri("http://ex/s1"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o1"),
+                gname: gname.into(),
+            });
+            quads.push(Quint {
+                id: id.into(),
+                s: iri("http://ex/s2"),
+                p: iri("http://ex/p2"),
+                o: iri("http://ex/o2"),
+                gname: gname.into(),
+            });
+            quads.push(Quint {
+                id: id.into(),
+                s: iri("http://ex/s1"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o3"),
+                gname: gname.into(),
+            });
         }
         write_file(&r5tu, &quads).unwrap();
         R5tuFile::open(&r5tu).unwrap()
@@ -346,7 +368,10 @@ mod tests {
         let post = pso.lookup(p1).expect("p1 pso posting");
         assert_eq!(post.n_gids(), 3);
         assert_eq!(post.iter_all().count(), 6); // (s1,o1) and (s1,o3) x 3 gids
-        assert_eq!(pos.lookup(p1).expect("p1 pos posting").iter_all().count(), 6);
+        assert_eq!(
+            pos.lookup(p1).expect("p1 pos posting").iter_all().count(),
+            6
+        );
         assert!(pso.lookup(999_999).is_none());
     }
 
@@ -387,9 +412,27 @@ mod tests {
         let dir = tempdir().unwrap();
         let r5tu = dir.path().join("store.r5tu");
         let quads = vec![
-            Quint { id: "d1".into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: "g1".into() },
-            Quint { id: "d1".into(), s: iri("http://ex/s2"), p: iri("http://ex/p1"), o: iri("http://ex/o2"), gname: "g1".into() },
-            Quint { id: "d2".into(), s: iri("http://ex/s3"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: "g2".into() },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/s1"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o1"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/s2"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o2"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d2".into(),
+                s: iri("http://ex/s3"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o1"),
+                gname: "g2".into(),
+            },
         ];
         write_file(&r5tu, &quads).unwrap();
         let f = R5tuFile::open(&r5tu).unwrap();
@@ -412,8 +455,12 @@ mod tests {
         assert_eq!(expected, got);
 
         // POS iter_all yields (gid, o, s); swap back to (gid, s, o).
-        let mut got_pos: Vec<(u64, u64, u64)> =
-            pos.lookup(p1).unwrap().iter_all().map(|(gid, o, s)| (gid, s, o)).collect();
+        let mut got_pos: Vec<(u64, u64, u64)> = pos
+            .lookup(p1)
+            .unwrap()
+            .iter_all()
+            .map(|(gid, o, s)| (gid, s, o))
+            .collect();
         got_pos.sort();
         assert_eq!(expected, got_pos);
     }
@@ -423,8 +470,20 @@ mod tests {
         let dir = tempdir().unwrap();
         let r5tu = dir.path().join("store.r5tu");
         let quads = vec![
-            Quint { id: "d1".into(), s: iri("http://ex/s1"), p: iri("http://ex/p1"), o: iri("http://ex/o1"), gname: "g1".into() },
-            Quint { id: "d2".into(), s: iri("http://ex/s2"), p: iri("http://ex/p1"), o: iri("http://ex/o2"), gname: "g2".into() },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/s1"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o1"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d2".into(),
+                s: iri("http://ex/s2"),
+                p: iri("http://ex/p1"),
+                o: iri("http://ex/o2"),
+                gname: "g2".into(),
+            },
         ];
         write_file(&r5tu, &quads).unwrap();
         let f = R5tuFile::open(&r5tu).unwrap();
@@ -444,7 +503,11 @@ mod tests {
         let r5tu = dir.path().join("store.r5tu");
         let subclass = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
         let edge = |s: &str, o: &str| Quint {
-            id: "d1".into(), s: iri(s), p: iri(subclass), o: iri(o), gname: "g1".into(),
+            id: "d1".into(),
+            s: iri(s),
+            p: iri(subclass),
+            o: iri(o),
+            gname: "g1".into(),
         };
         let quads = vec![
             edge("http://ex/B", "http://ex/A"),
@@ -459,8 +522,12 @@ mod tests {
 
         let id = |s: &str| term_id(&f, s);
         let (id_a, id_b, id_c, id_d, id_e, id_f) = (
-            id("http://ex/A"), id("http://ex/B"), id("http://ex/C"),
-            id("http://ex/D"), id("http://ex/E"), id("http://ex/F"),
+            id("http://ex/A"),
+            id("http://ex/B"),
+            id("http://ex/C"),
+            id("http://ex/D"),
+            id("http://ex/E"),
+            id("http://ex/F"),
         );
 
         // Forward (subject -> reachable objects).
@@ -492,8 +559,20 @@ mod tests {
         let r5tu = dir.path().join("store.r5tu");
         let p = "http://ex/p";
         let quads = vec![
-            Quint { id: "d1".into(), s: iri("http://ex/A"), p: iri(p), o: iri("http://ex/B"), gname: "g1".into() },
-            Quint { id: "d1".into(), s: iri("http://ex/B"), p: iri(p), o: iri("http://ex/A"), gname: "g1".into() },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/A"),
+                p: iri(p),
+                o: iri("http://ex/B"),
+                gname: "g1".into(),
+            },
+            Quint {
+                id: "d1".into(),
+                s: iri("http://ex/B"),
+                p: iri(p),
+                o: iri("http://ex/A"),
+                gname: "g1".into(),
+            },
         ];
         write_file(&r5tu, &quads).unwrap();
         let f = R5tuFile::open(&r5tu).unwrap();

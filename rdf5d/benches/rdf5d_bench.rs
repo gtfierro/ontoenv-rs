@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rdf5d::{
-    IntegrityMode, OpenOptions, Pattern, Quint, R5tuFile, Snapshot, StreamingWriter, Term,
-    View, WriterOptions, write_file_with_options,
+    IntegrityMode, OpenOptions, Pattern, Quint, R5tuFile, Snapshot, StreamingWriter, Term, View,
+    WriterOptions, write_file_with_options,
 };
 use std::env;
 #[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
@@ -847,40 +847,32 @@ fn bench_view_scan(c: &mut Criterion) {
         group.throughput(Throughput::Elements(total));
 
         // All-unbound scan (full scan)
-        group.bench_with_input(
-            BenchmarkId::new("scan_all", case.name),
-            &view,
-            |b, view| {
-                b.iter(|| {
-                    let count: usize = view.scan(Pattern::ANY).filter(|r| r.is_ok()).count();
-                    black_box(count);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scan_all", case.name), &view, |b, view| {
+            b.iter(|| {
+                let count: usize = view.scan(Pattern::ANY).filter(|r| r.is_ok()).count();
+                black_box(count);
+            });
+        });
 
         // Bound-predicate scan (uses PSO index, built on first call)
-        group.bench_with_input(
-            BenchmarkId::new("scan_bp", case.name),
-            &view,
-            |b, view| {
-                // Use predicate "p/0" which exists in every workload
-                let p_id = snap
-                    .file()
-                    .term_id(&rdf5d::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
-                        "http://example.org/p/0",
-                    )))
-                    .unwrap_or(0);
-                let pat = Pattern {
-                    s: None,
-                    p: Some(p_id),
-                    o: None,
-                };
-                b.iter(|| {
-                    let count: usize = view.scan(pat).filter(|r| r.is_ok()).count();
-                    black_box(count);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scan_bp", case.name), &view, |b, view| {
+            // Use predicate "p/0" which exists in every workload
+            let p_id = snap
+                .file()
+                .term_id(&rdf5d::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
+                    "http://example.org/p/0",
+                )))
+                .unwrap_or(0);
+            let pat = Pattern {
+                s: None,
+                p: Some(p_id),
+                o: None,
+            };
+            b.iter(|| {
+                let count: usize = view.scan(pat).filter(|r| r.is_ok()).count();
+                black_box(count);
+            });
+        });
 
         // First scan (triggers index build) vs cached for all-unbound
         group.bench_with_input(

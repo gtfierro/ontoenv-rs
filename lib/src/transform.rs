@@ -3,7 +3,9 @@
 
 use anyhow::{anyhow, Result};
 
-use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, SH_NAMESPACE, SH_PREFIX, TYPE, VERSION_IRI};
+use crate::consts::{
+    DECLARE, IMPORTS, ONTOLOGY, PREFIXES, SH_NAMESPACE, SH_PREFIX, TYPE, VERSION_IRI,
+};
 use oxigraph::model::{
     Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNode, NamedOrBlankNodeRef, Quad, QuadRef,
     Term, TermRef, Triple, TripleRef,
@@ -166,7 +168,11 @@ pub fn rename_ontology_iri_graph(graph: &mut Graph, old_iri: NamedNodeRef, new_i
         } else {
             owned.object.clone()
         };
-        to_add.push(Triple::new(new_subj.clone(), owned.predicate.clone(), new_obj));
+        to_add.push(Triple::new(
+            new_subj.clone(),
+            owned.predicate.clone(),
+            new_obj,
+        ));
         to_remove.push(owned);
     }
 

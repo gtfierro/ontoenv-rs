@@ -556,8 +556,7 @@ fn explicit_union_includes_closures_only_when_requested() -> Result<()> {
     let root = NamedNode::new("http://ex.org/UnionRoot")?;
     let b_class = NamedNodeRef::new_unchecked("http://ex.org/B#Class");
     let c_class = NamedNodeRef::new_unchecked("http://ex.org/C#Class");
-    let rdf_type =
-        NamedNodeRef::new_unchecked("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    let rdf_type = NamedNodeRef::new_unchecked("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
     let owl_ontology = NamedNodeRef::new_unchecked("http://www.w3.org/2002/07/owl#Ontology");
 
     let explicit_only = env.get_explicit_union_graph(
@@ -584,14 +583,8 @@ fn explicit_union_includes_closures_only_when_requested() -> Result<()> {
         "Explicitly listed C should be included"
     );
 
-    let with_closures = env.get_explicit_union_graph(
-        &[a, c],
-        root.as_ref(),
-        true,
-        -1,
-        Some(true),
-        Some(true),
-    )?;
+    let with_closures =
+        env.get_explicit_union_graph(&[a, c], root.as_ref(), true, -1, Some(true), Some(true))?;
     assert_eq!(with_closures.graph_ids.len(), 3);
     assert!(
         with_closures
@@ -2008,14 +2001,16 @@ fn rename_updates_env_and_graph_data() -> Result<()> {
     // The stored graph has the new IRI as the owl:Ontology subject.
     let graph = env.io().get_graph(&new_id)?;
     let rdf_type = NamedNodeRef::new_unchecked("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
-    let owl_ontology_node =
-        NamedNodeRef::new_unchecked("http://www.w3.org/2002/07/owl#Ontology");
+    let owl_ontology_node = NamedNodeRef::new_unchecked("http://www.w3.org/2002/07/owl#Ontology");
 
     let new_iri_as_subject = NamedOrBlankNodeRef::NamedNode(new_iri.as_ref());
     let has_new_declaration = graph
         .triples_for_subject(new_iri_as_subject)
         .any(|t| t.predicate == rdf_type && t.object == TermRef::NamedNode(owl_ontology_node));
-    assert!(has_new_declaration, "graph should declare new IRI as owl:Ontology");
+    assert!(
+        has_new_declaration,
+        "graph should declare new IRI as owl:Ontology"
+    );
 
     let old_iri_node = NamedNode::new("http://example.com/B")?;
     let old_iri_as_subject = NamedOrBlankNodeRef::NamedNode(old_iri_node.as_ref());
@@ -2023,7 +2018,10 @@ fn rename_updates_env_and_graph_data() -> Result<()> {
         .triples_for_subject(old_iri_as_subject)
         .next()
         .is_none();
-    assert!(old_declaration_gone, "old IRI should have no triples as subject");
+    assert!(
+        old_declaration_gone,
+        "old IRI should have no triples as subject"
+    );
 
     Ok(())
 }
@@ -2052,10 +2050,14 @@ fn rename_preserves_downstream_closure() -> Result<()> {
     )?;
 
     let b_id = env
-        .resolve(ResolveTarget::Graph(NamedNode::new("http://example.com/B")?))
+        .resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/B",
+        )?))
         .expect("B should be in env");
     let c_id = env
-        .resolve(ResolveTarget::Graph(NamedNode::new("http://example.com/C")?))
+        .resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/C",
+        )?))
         .expect("C should be in env");
 
     // B's closure before rename: [B, C]
@@ -2069,8 +2071,10 @@ fn rename_preserves_downstream_closure() -> Result<()> {
 
     // Old B gone, B-renamed present.
     assert!(
-        env.resolve(ResolveTarget::Graph(NamedNode::new("http://example.com/B")?))
-            .is_none(),
+        env.resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/B"
+        )?))
+        .is_none(),
         "old B should be gone after rename"
     );
     assert!(
@@ -2160,7 +2164,8 @@ fn add_with_rename_closure_includes_imports() -> Result<()> {
     // Root is registered under the new IRI.
     assert_eq!(a_id.to_uri_string(), new_a_iri);
     assert!(
-        env.resolve(ResolveTarget::Graph(NamedNode::new(new_a_iri)?)).is_some(),
+        env.resolve(ResolveTarget::Graph(NamedNode::new(new_a_iri)?))
+            .is_some(),
         "renamed A should be in env"
     );
 
@@ -2174,8 +2179,14 @@ fn add_with_rename_closure_includes_imports() -> Result<()> {
 
     // Transitive closure of A-canonical contains B and C.
     let closure = env.get_closure(&a_id, -1)?;
-    assert!(closure.contains(&b_id), "B should be in A-canonical's closure");
-    assert!(closure.contains(&c_id), "C should be in A-canonical's closure");
+    assert!(
+        closure.contains(&b_id),
+        "B should be in A-canonical's closure"
+    );
+    assert!(
+        closure.contains(&c_id),
+        "C should be in A-canonical's closure"
+    );
     assert_eq!(closure.len(), 3, "closure should be [A-canonical, B, C]");
 
     teardown(dir);
@@ -2370,18 +2381,24 @@ fn rename_middle_node_dep_graph_updated() -> Result<()> {
 
     // Sanity check: full chain reachable before rename.
     let closure_before = env.get_closure(&a_id, -1)?;
-    assert_eq!(closure_before.len(), 3, "A's closure should be [A, B, C] before rename");
+    assert_eq!(
+        closure_before.len(),
+        3,
+        "A's closure should be [A, B, C] before rename"
+    );
 
     // ── rename B ──────────────────────────────────────────────────────────────
     let b_new_id = env.rename_graph_iri(&b_id, NamedNode::new(b_new_iri)?)?;
 
     // B-old gone, B-new present.
     assert!(
-        env.resolve(ResolveTarget::Graph(NamedNode::new(b_iri)?)).is_none(),
+        env.resolve(ResolveTarget::Graph(NamedNode::new(b_iri)?))
+            .is_none(),
         "B-old should be absent after rename"
     );
     assert!(
-        env.resolve(ResolveTarget::Graph(NamedNode::new(b_new_iri)?)).is_some(),
+        env.resolve(ResolveTarget::Graph(NamedNode::new(b_new_iri)?))
+            .is_some(),
         "B-new should be present after rename"
     );
     assert_eq!(b_new_id.to_uri_string(), b_new_iri);
@@ -2392,7 +2409,11 @@ fn rename_middle_node_dep_graph_updated() -> Result<()> {
         b_new_closure.contains(&c_id),
         "C should still be reachable from B-new"
     );
-    assert_eq!(b_new_closure.len(), 2, "B-new's closure should be [B-new, C]");
+    assert_eq!(
+        b_new_closure.len(),
+        2,
+        "B-new's closure should be [B-new, C]"
+    );
 
     // B-old's IRI does not appear in any ontology's closure.
     for (id, _) in env.ontologies() {
@@ -2437,7 +2458,10 @@ fn alias_routes_to_canonical_graph() -> Result<()> {
         .resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
         .expect("alias should be in env");
 
-    assert_eq!(canonical_id, alias_id, "alias should resolve to same graph as canonical");
+    assert_eq!(
+        canonical_id, alias_id,
+        "alias should resolve to same graph as canonical"
+    );
 
     // get_graph should work with both
     let canonical_graph = env.get_graph(&canonical_id)?;
@@ -2473,7 +2497,8 @@ fn remove_alias_stops_resolving() -> Result<()> {
 
     // Verify alias works
     assert!(
-        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?)).is_some(),
+        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+            .is_some(),
         "alias should resolve before removal"
     );
 
@@ -2482,13 +2507,15 @@ fn remove_alias_stops_resolving() -> Result<()> {
 
     // Alias no longer resolves
     assert!(
-        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?)).is_none(),
+        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+            .is_none(),
         "alias should not resolve after removal"
     );
 
     // Canonical IRI still works
     assert!(
-        env.resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?)).is_some(),
+        env.resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?))
+            .is_some(),
         "canonical IRI should still work"
     );
 
@@ -2518,8 +2545,14 @@ fn get_aliases_for_returns_all_aliases() -> Result<()> {
 
     let aliases = env.get_aliases_for(canonical_iri);
     assert_eq!(aliases.len(), 2, "should have 2 aliases");
-    assert!(aliases.contains(&alias1_iri.to_string()), "should contain alias1");
-    assert!(aliases.contains(&alias2_iri.to_string()), "should contain alias2");
+    assert!(
+        aliases.contains(&alias1_iri.to_string()),
+        "should contain alias1"
+    );
+    assert!(
+        aliases.contains(&alias2_iri.to_string()),
+        "should contain alias2"
+    );
 
     Ok(())
 }
@@ -2541,7 +2574,8 @@ fn resolve_nonexistent_alias_returns_none() -> Result<()> {
 
     // Try to resolve an alias that was never added
     assert!(
-        env.resolve_alias("http://example.com/nonexistent-alias").is_none(),
+        env.resolve_alias("http://example.com/nonexistent-alias")
+            .is_none(),
         "non-existent alias should return None"
     );
 
@@ -2669,8 +2703,11 @@ fn alias_works_with_closure_operations() -> Result<()> {
     let canonical_closure = env.get_closure(&canonical_id, -1)?;
     let alias_closure = env.get_closure(&alias_id, -1)?;
 
-    assert_eq!(canonical_closure.len(), alias_closure.len(),
-        "closure should be same for canonical and alias");
+    assert_eq!(
+        canonical_closure.len(),
+        alias_closure.len(),
+        "closure should be same for canonical and alias"
+    );
 
     Ok(())
 }
@@ -2735,7 +2772,10 @@ fn alias_deduplication_in_closure() -> Result<()> {
     assert_eq!(closure.len(), 3, "closure should be [A, B, C]");
 
     // Verify B appears exactly once in the closure
-    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
     assert_eq!(b_count, 1, "B should appear exactly once in closure");
 
     Ok(())
@@ -2787,7 +2827,10 @@ fn alias_import_via_both_paths_deduplicates() -> Result<()> {
     assert_eq!(closure.len(), 2, "closure should be [A, B]");
 
     // Verify B appears exactly once
-    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
     assert_eq!(b_count, 1, "B should appear exactly once in closure");
 
     Ok(())
@@ -2836,8 +2879,14 @@ fn alias_with_circular_imports() -> Result<()> {
     assert_eq!(closure.len(), 2, "closure should be [A, B]");
 
     // Verify no duplicates
-    let a_count = closure.iter().filter(|id| id.to_uri_string() == ont_a).count();
-    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    let a_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_a)
+        .count();
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
     assert_eq!(a_count, 1, "A should appear exactly once");
     assert_eq!(b_count, 1, "B should appear exactly once");
 
@@ -2847,7 +2896,11 @@ fn alias_with_circular_imports() -> Result<()> {
         .expect("alias should be in env");
     let alias_closure = env.get_closure(&alias_id, -1)?;
 
-    assert_eq!(alias_closure.len(), 2, "closure from alias should be [A, B]");
+    assert_eq!(
+        alias_closure.len(),
+        2,
+        "closure from alias should be [A, B]"
+    );
 
     Ok(())
 }
@@ -2914,7 +2967,11 @@ fn alias_with_recursion_depth_limit() -> Result<()> {
         .expect("alias should be in env");
     let alias_closure_depth_1 = env.get_closure(&alias_id, 1)?;
 
-    assert_eq!(alias_closure_depth_1.len(), 2, "alias depth 1 should include A and B");
+    assert_eq!(
+        alias_closure_depth_1.len(),
+        2,
+        "alias depth 1 should include A and B"
+    );
 
     Ok(())
 }
@@ -2968,7 +3025,10 @@ fn multiple_aliases_to_same_target_deduplicates() -> Result<()> {
     assert_eq!(closure.len(), 2, "closure should be [A, B]");
 
     // Verify B appears exactly once
-    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
     assert_eq!(b_count, 1, "B should appear exactly once in closure");
 
     Ok(())
@@ -3030,7 +3090,10 @@ fn multiple_aliases_to_same_target_deduplicates_with_blank_nodes() -> Result<()>
     assert_eq!(closure.len(), 2, "closure should be [A, B]");
 
     // Verify B appears exactly once
-    let b_count = closure.iter().filter(|id| id.to_uri_string() == ont_b).count();
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
     assert_eq!(b_count, 1, "B should appear exactly once in closure");
 
     // Verify the total number of triples
@@ -3041,7 +3104,10 @@ fn multiple_aliases_to_same_target_deduplicates_with_blank_nodes() -> Result<()>
         .iter()
         .map(|id| env.get_graph(id).unwrap().len())
         .sum();
-    assert_eq!(total_triples, 7, "total triples should be 7 (4 from A + 3 from B)");
+    assert_eq!(
+        total_triples, 7,
+        "total triples should be 7 (4 from A + 3 from B)"
+    );
 
     Ok(())
 }

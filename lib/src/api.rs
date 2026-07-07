@@ -88,8 +88,18 @@ impl PendingImport {
 
     fn meta(&self) -> (&OntologyLocation, bool, usize) {
         match self {
-            Self::FromLocation { location, required, depth, .. }
-            | Self::FromBytes { location, required, depth, .. } => (location, *required, *depth),
+            Self::FromLocation {
+                location,
+                required,
+                depth,
+                ..
+            }
+            | Self::FromBytes {
+                location,
+                required,
+                depth,
+                ..
+            } => (location, *required, *depth),
         }
     }
 }
@@ -2417,12 +2427,7 @@ impl OntoEnv {
             }
         }
 
-        self.get_union_graph(
-            &graph_ids,
-            root,
-            rewrite_sh_prefixes,
-            remove_owl_imports,
-        )
+        self.get_union_graph(&graph_ids, root, rewrite_sh_prefixes, remove_owl_imports)
     }
 
     /// Collect namespace prefixes for a single ontology.
@@ -2485,11 +2490,10 @@ impl OntoEnv {
             let closure = self.get_closure(id, -1)?;
             let mut namespace_map = HashMap::new();
             for graph_id in &closure {
-                let ontology = self
-                    .env
-                    .ontologies()
-                    .get(graph_id)
-                    .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
+                let ontology =
+                    self.env.ontologies().get(graph_id).ok_or_else(|| {
+                        anyhow!("Ontology {} not found", graph_id.to_uri_string())
+                    })?;
                 namespace_map.extend(self.collect_ontology_prefixes(ontology));
             }
             Ok(namespace_map)
@@ -3171,8 +3175,7 @@ mod tests {
         assert_eq!(env.dependency_graph.node_count(), pre_dep_nodes);
         assert_eq!(env.dependency_graph_index.len(), pre_index);
         assert!(
-            !env
-                .failed_resolutions
+            !env.failed_resolutions
                 .contains(&NamedNode::new_unchecked("http://example.com/tx-fail")),
             "failed_resolutions mutation should have rolled back"
         );

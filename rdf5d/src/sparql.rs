@@ -85,16 +85,18 @@ impl<'a> QueryableDataset<'a> for SparqlView<'a> {
                 let graph_id = self.graph_id(&name);
                 // `scan` copies the gids and borrows only the snapshot, so the
                 // returned iterator does not retain `name` — we can stream.
-                Box::new(snapshot.scan(pat, Scope::ByName(name.as_str())).map(
-                    move |hit| {
-                        hit.map(|m| InternalQuad {
-                            subject: m.s,
-                            predicate: m.p,
-                            object: m.o,
-                            graph_name: Some(graph_id),
-                        })
-                    },
-                ))
+                Box::new(
+                    snapshot
+                        .scan(pat, Scope::ByName(name.as_str()))
+                        .map(move |hit| {
+                            hit.map(|m| InternalQuad {
+                                subject: m.s,
+                                predicate: m.p,
+                                object: m.o,
+                                graph_name: Some(graph_id),
+                            })
+                        }),
+                )
             }
             None => Box::new(snapshot.graph_names().flat_map(move |name| {
                 let graph_id = snapshot
@@ -163,7 +165,9 @@ impl Snapshot {
         query: &'a mut Query,
     ) -> Result<QueryResults<'a>, QueryEvaluationError> {
         self.rewrite_query(query);
-        QueryEvaluator::new().prepare(query).execute(self.sparql_view())
+        QueryEvaluator::new()
+            .prepare(query)
+            .execute(self.sparql_view())
     }
 }
 
@@ -304,7 +308,11 @@ impl<'a> PClosRewriter<'a> {
             #[allow(unreachable_patterns)]
             _ => {}
         }
-        if let GraphPattern::Path { subject, path, object } = pat
+        if let GraphPattern::Path {
+            subject,
+            path,
+            object,
+        } = pat
             && let Some(replacement) = self.rewrite_path(subject, path, object)
         {
             *pat = replacement;
@@ -355,7 +363,10 @@ impl<'a> PClosRewriter<'a> {
             // const P+ ?var -> forward closure of const, bind ?var
             (TermPattern::NamedNode(c), TermPattern::Variable(var)) => {
                 let c_id = self.predicate_id(c.as_str())?;
-                let mut answers = self.snapshot.closure_forward(p_id, c_id).unwrap_or_default();
+                let mut answers = self
+                    .snapshot
+                    .closure_forward(p_id, c_id)
+                    .unwrap_or_default();
                 if include_reflexive {
                     answers.push(c_id);
                     answers.sort();
@@ -366,7 +377,10 @@ impl<'a> PClosRewriter<'a> {
             // ?var P+ const -> reverse closure of const, bind ?var
             (TermPattern::Variable(var), TermPattern::NamedNode(c)) => {
                 let c_id = self.predicate_id(c.as_str())?;
-                let mut answers = self.snapshot.closure_reverse(p_id, c_id).unwrap_or_default();
+                let mut answers = self
+                    .snapshot
+                    .closure_reverse(p_id, c_id)
+                    .unwrap_or_default();
                 if include_reflexive {
                     answers.push(c_id);
                     answers.sort();
@@ -378,7 +392,10 @@ impl<'a> PClosRewriter<'a> {
             (TermPattern::NamedNode(s), TermPattern::NamedNode(o)) => {
                 let s_id = self.predicate_id(s.as_str())?;
                 let o_id = self.predicate_id(o.as_str())?;
-                let answers = self.snapshot.closure_forward(p_id, s_id).unwrap_or_default();
+                let answers = self
+                    .snapshot
+                    .closure_forward(p_id, s_id)
+                    .unwrap_or_default();
                 let reachable =
                     answers.binary_search(&o_id).is_ok() || (include_reflexive && s_id == o_id);
                 if reachable {

@@ -198,7 +198,8 @@ impl Environment {
                 let loc_norm = Self::normalize_name(loc_node.as_str());
                 let name_norm = Self::normalize_name(ontology_name.as_str());
                 if loc_norm != name_norm {
-                    self.aliases.insert(loc_norm.to_string(), ontology_id.clone());
+                    self.aliases
+                        .insert(loc_norm.to_string(), ontology_id.clone());
                 } else {
                     self.aliases.remove(loc_norm);
                 }
@@ -250,12 +251,15 @@ impl Environment {
     /// The alias will route to the ontology identified by `canonical_iri`.
     /// Aliases only point to canonical IRIs (not other aliases) to avoid chains.
     pub fn add_alias(&mut self, alias_iri: &str, canonical_iri: &str) -> Result<()> {
-        let canonical_id = self.ontologies
+        let canonical_id = self
+            .ontologies
             .values()
-            .find(|ont| Self::normalize_name(ont.name().as_str()) == Self::normalize_name(canonical_iri))
+            .find(|ont| {
+                Self::normalize_name(ont.name().as_str()) == Self::normalize_name(canonical_iri)
+            })
             .map(|ont| ont.id().clone())
             .ok_or_else(|| anyhow!("Canonical ontology not found: {}", canonical_iri))?;
-        
+
         let alias_norm = Self::normalize_name(alias_iri);
         self.aliases.insert(alias_norm.to_string(), canonical_id);
         Ok(())

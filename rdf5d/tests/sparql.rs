@@ -266,7 +266,10 @@ fn closure_subject_bound_forward() -> Result<(), QueryEvaluationError> {
         )
         .expect("query parses");
     let objects = solution_values(snap.query(&mut query)?, "o");
-    assert_eq!(objects, vec!["<http://example.org/A>", "<http://example.org/B>"]);
+    assert_eq!(
+        objects,
+        vec!["<http://example.org/A>", "<http://example.org/B>"]
+    );
     Ok(())
 }
 
@@ -397,7 +400,10 @@ fn closure_reversed_path() -> Result<(), QueryEvaluationError> {
         .expect("query parses");
     let subjects = solution_values(snap.query(&mut query)?, "s");
     // ?s ^subClassOf+ C  ≡  C subClassOf+ ?s  →  C's ancestors: B, A
-    assert_eq!(subjects, vec!["<http://example.org/A>", "<http://example.org/B>"]);
+    assert_eq!(
+        subjects,
+        vec!["<http://example.org/A>", "<http://example.org/B>"]
+    );
     Ok(())
 }
 
@@ -431,9 +437,9 @@ fn closure_predicate_not_in_index_falls_back() -> Result<(), QueryEvaluationErro
     let snap = Snapshot::open(&path).expect("open fixture");
 
     let mut query = SparqlParser::new()
-        .parse_query(
-            &format!("SELECT ?o WHERE {{ <http://example.org/X> <{custom_pred}>+ ?o }}"),
-        )
+        .parse_query(&format!(
+            "SELECT ?o WHERE {{ <http://example.org/X> <{custom_pred}>+ ?o }}"
+        ))
         .expect("query parses");
     let objects = solution_values(snap.query(&mut query)?, "o");
     assert_eq!(
