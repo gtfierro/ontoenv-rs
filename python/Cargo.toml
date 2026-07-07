@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 doc = false
 
 [dependencies]
-pyo3 = { version = "0.27" }
+pyo3 = { version = "0.27", features = ["extension-module"] }
 ontoenv.workspace = true
 ontoenv-cli = { workspace = true, optional = true }
 anyhow.workspace = true
