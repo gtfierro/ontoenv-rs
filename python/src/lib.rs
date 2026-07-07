@@ -2212,11 +2212,7 @@ impl PyRdfLibStoreBackend {
                     };
                     let gn = GraphName::NamedNode(nn);
                     for quad in dataset.quads_for_pattern(None, None, None, Some(gn.as_ref())) {
-                        triples.push(Triple::new(
-                            quad.subject,
-                            quad.predicate,
-                            quad.object,
-                        ));
+                        triples.push(Triple::new(quad.subject, quad.predicate, quad.object));
                     }
                 }
                 Ok(Py::new(py, TripleIter::new(triples))?.into_any())

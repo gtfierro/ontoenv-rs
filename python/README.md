@@ -37,7 +37,7 @@ print(f"Brick graph has {len(brick_graph)} triples")
 mutable_brick_graph = env.copy_graph(brick_name)
 
 # get a read-only view of the full closure of the ontology, including all of its imports
-# returns a tuple (rdflib.Graph, list[str])
+# returns a tuple (ViewGraph, list[str])
 brick_closure_graph, _ = env.get_closure(brick_name)
 print(f"Brick closure has {len(brick_closure_graph)} triples")
 

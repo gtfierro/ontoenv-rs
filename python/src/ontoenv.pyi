@@ -230,13 +230,13 @@ class OntoEnv:
         self,
         uri: str,
         recursion_depth: int = -1,
-    ) -> Tuple[Graph, List[str]]:
+    ) -> Tuple["ViewGraph", List[str]]:
         """Return a read-only merged view over the imports closure of *uri*.
 
         Behaves like a merged ``rdflib.Graph`` but routes triple-pattern
         lookups across the underlying named graphs without materializing
         a copy. Returns ``(view, closure_names)``; ``view`` is a
-        :py:class:`ontoenv.ClosureGraphView`. Use :py:meth:`copy_closure` for
+        :py:class:`ontoenv.ViewGraph`. Use :py:meth:`copy_closure` for
         a mutable in-memory merge.
         """
         ...
@@ -330,11 +330,11 @@ class OntoEnv:
         uris: List[str],
         include_closures: bool = False,
         recursion_depth: int = -1,
-    ) -> Tuple[Graph, List[str]]:
+    ) -> Tuple["ViewGraph", List[str]]:
         """Return a read-only merged view over an explicitly listed set of graphs.
 
         Returns ``(view, graph_iris)`` where ``view`` is a
-        :py:class:`ontoenv.ClosureGraphView` that dispatches triple-pattern
+        :py:class:`ontoenv.ViewGraph` that dispatches triple-pattern
         lookups across the listed named graphs without materializing a copy.
         Mutation raises ``ValueError``; use :py:meth:`copy_union` for a
         mutable in-memory merge.
@@ -574,3 +574,58 @@ class OntoEnvStore:
     def triples(self, triple_pattern: Tuple[Optional[object], Optional[object], Optional[object]], context: Optional[object] = None) -> object: ...
     def contexts(self, triple: Optional[Tuple[object, object, object]] = None) -> object: ...
     def query(self, query: object, initNs: Dict[str, object], initBindings: Dict[str, object], queryGraph: str, **kwargs: object) -> Result: ...
+
+
+class ViewGraph:
+    """Read-only view over one or more named graphs, backed by the Rust engine.
+
+    Returned by :py:meth:`OntoEnv.get_closure` and :py:meth:`OntoEnv.get_union`.
+    Unlike :py:class:`rdflib.Graph`, this does not subclass it; triple lookups
+    and SPARQL queries delegate to the native backend scoped to the view's
+    graphs. Mutation raises ``ValueError``.
+    """
+
+    def __init__(
+        self,
+        backend: object,
+        scope: Optional[Tuple[str, ...]] = None,
+        namespaces: Optional[Dict[str, str]] = None,
+    ) -> None: ...
+    def triples(
+        self,
+        subject: Optional[object] = None,
+        predicate: Optional[object] = None,
+        obj: Optional[object] = None,
+    ) -> Iterator[Tuple[object, object, object]]: ...
+    def __iter__(self) -> Iterator[Tuple[object, object, object]]: ...
+    def __contains__(self, triple: Tuple[object, object, object]) -> bool: ...
+    def __len__(self) -> int: ...
+    def __bool__(self) -> bool: ...
+    def subjects(
+        self,
+        predicate: Optional[object] = None,
+        object: Optional[object] = None,
+    ) -> Iterator[object]: ...
+    def predicates(
+        self,
+        subject: Optional[object] = None,
+        object: Optional[object] = None,
+    ) -> Iterator[object]: ...
+    def objects(
+        self,
+        subject: Optional[object] = None,
+        predicate: Optional[object] = None,
+    ) -> Iterator[object]: ...
+    def query(
+        self,
+        query: str,
+        init_bindings: Optional[Dict[str, object]] = None,
+    ) -> Result: ...
+    def bind(self, prefix: str, namespace: str, override: bool = True) -> None: ...
+    def namespace(self, prefix: str) -> Optional[str]: ...
+    def prefix(self, namespace: str) -> Optional[str]: ...
+    @property
+    def namespaces(self) -> Dict[str, str]: ...
+    def serialize(self, format: str = "turtle") -> str: ...
+    def add(self, triple: Tuple[object, object, object]) -> None: ...
+    def remove(self, triple: Tuple[object, object, object]) -> None: ...

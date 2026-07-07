@@ -281,7 +281,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
     def test_get_closure(self):
         """get_closure returns a read-only merged view + name list."""
-        from ontoenv import ClosureGraphView
+        from ontoenv import ViewGraph
 
         self.env = OntoEnv(
             path=self.test_dir, recreate=True, search_directories=["brick"]
@@ -290,7 +290,7 @@ class TestOntoEnvAPI(unittest.TestCase):
 
         view, names = self.env.get_closure(name, recursion_depth=0)
 
-        self.assertIsInstance(view, ClosureGraphView)
+        self.assertIsInstance(view, ViewGraph)
         self.assertEqual(names[0], name)
         self.assertGreater(len(view), 0)
         self.assertIn((URIRef(name), RDF.type, OWL.Ontology), view)
@@ -302,6 +302,48 @@ class TestOntoEnvAPI(unittest.TestCase):
         # Read-only.
         with self.assertRaises(ValueError):
             view.add((URIRef("urn:x"), RDF.type, OWL.Ontology))
+
+    def test_view_graph_spo_and_scoped_query(self):
+        """ViewGraph subjects/predicates/objects and query are scoped to the view."""
+        from ontoenv import ViewGraph
+
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+        view, _names = self.env.get_closure(name, recursion_depth=0)
+
+        self.assertIsInstance(view, ViewGraph)
+        # Sanity: the view has triples.
+        self.assertGreater(len(view), 0)
+
+        # SPO accessors return unique terms across the scoped graphs.
+        all_triples = list(view)
+        expected_subjects = {s for s, _, _ in all_triples}
+        expected_predicates = {p for _, p, _ in all_triples}
+        expected_objects = {o for _, _, o in all_triples}
+        self.assertEqual(set(view.subjects()), expected_subjects)
+        self.assertEqual(set(view.predicates()), expected_predicates)
+        self.assertEqual(set(view.objects()), expected_objects)
+
+        # Pattern-restricted SPO accessors filter correctly.
+        ont_subjects = set(view.subjects(predicate=RDF.type, object=OWL.Ontology))
+        self.assertEqual(ont_subjects, {URIRef(name)})
+
+        # Scoped SPARQL query only sees the view's graphs: the ontology
+        # declaration appears in the closure, so a COUNT over the default
+        # graph is non-zero and matches len(view).
+        result = view.query(
+            "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"
+        )
+        count = int(list(result)[0][0])
+        self.assertEqual(count, len(view))
+
+        # Read-only mutation contract.
+        with self.assertRaises(ValueError):
+            view.add((URIRef("urn:x"), RDF.type, OWL.Ontology))
+        with self.assertRaises(ValueError):
+            view.remove((URIRef("urn:x"), RDF.type, OWL.Ontology))
 
     def test_iter_triples_and_iter_closure_triples(self):
         """Streaming iterators yield rdflib-term tuples without an rdflib.Graph."""
@@ -1282,9 +1324,10 @@ ex:B a owl:Class .
             # New IRI should resolve
             self.assertIn(new_iri, env)
 
-            # get_graph on the new IRI should work and contain the ontology declaration
+            # get_graph on the new IRI should work and contain the ontology
+            # declaration (rdf:type owl:Ontology) under the new IRI.
             g = env.get_graph(new_iri)
-            self.assertEqual(len(g), 2, "expected 2 triples: type + declare")
+            self.assertEqual(len(g), 1, "expected 1 triple: the type triple, rewritten to the new IRI")
 
             # The owl:Ontology declaration should use the new IRI
             self.assertIn(

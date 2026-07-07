@@ -410,3 +410,228 @@ try:
     plugin.register("ontoenv", Store, "ontoenv.rdflib_store", "OntoEnvStore")
 except Exception:
     pass
+
+
+class ViewGraph:
+    """Read-only view over one or more named graphs, backed by Rust.
+
+    Unlike :class:`rdflib.Graph`, this class does *not* inherit from
+    ``rdflib.Graph``.  It directly delegates to the Rust backend for
+    zero-copy access when backed by an rdf5d snapshot.  Supports
+    scoped queries over an imports-closure or explicit union of graphs.
+
+    Construct via ``env.get_closure(uri)`` or ``env.get_union(uris)`` rather
+    than directly. ``env.get_graph(uri)`` still returns a plain
+    :class:`rdflib.Graph`.
+
+    Args:
+        backend: A :class:`ontoenv._native._RdfLibStoreBackend` instance
+            bound to an env snapshot.
+        scope: Tuple of graph IRIs to scope against, or ``None`` for
+            all graphs in the backend.
+        namespaces: Optional dict of ``{prefix: namespace}`` bindings.
+    """
+
+    def __init__(
+        self,
+        backend: Any,
+        scope: tuple[str, ...] | None = None,
+        namespaces: dict[str, str] | None = None,
+    ):
+        self._backend = backend
+        self._scope = scope  # None = all graphs
+        self._namespaces = dict(namespaces) if namespaces else {}
+        self._namespaces_rev: dict[str, str] = {}
+        for p, ns in self._namespaces.items():
+            self._namespaces_rev[ns] = p
+
+    # -- Core iteration --
+
+    def triples(
+        self,
+        subject: Any = None,
+        predicate: Any = None,
+        obj: Any = None,
+    ) -> Generator[tuple[Any, Any, Any], None, None]:
+        """Iterate ``(s, p, o)`` triples matching the pattern."""
+        if self._scope:
+            scope = list(self._scope)
+            if subject is None and predicate is None and obj is None:
+                yield from self._backend.iter_triples_scoped(scope)
+            else:
+                for triple, _contexts in self._backend.triples_scoped(
+                    scope, subject, predicate, obj
+                ):
+                    yield triple
+        else:
+            if subject is None and predicate is None and obj is None:
+                for triple, _contexts in self._backend.triples(
+                    None, None, None, None
+                ):
+                    yield triple
+            else:
+                for triple, _contexts in self._backend.triples(
+                    subject, predicate, obj, None
+                ):
+                    yield triple
+
+    def __iter__(self) -> Generator[tuple[Any, Any, Any], None, None]:
+        return self.triples()
+
+    def __contains__(self, triple: tuple[Any, Any, Any]) -> bool:
+        s, p, o = triple
+        if self._scope:
+            if s is None or p is None or o is None:
+                return any(True for _ in self.triples(s, p, o))
+            return self._backend.contains_in_graphs(s, p, o, list(self._scope))
+        if s is None or p is None or o is None:
+            return any(True for _ in self.triples(s, p, o))
+        return any(True for _ in self.triples(s, p, o))
+
+    def __len__(self) -> int:
+        if self._scope:
+            return self._backend.len_in_graphs(list(self._scope))
+        else:
+            return self._backend.len(None)
+
+    def __bool__(self) -> bool:
+        return len(self) > 0
+
+    # -- Read-only contract --
+
+    def add(self, triple: tuple[Any, Any, Any]) -> None:
+        """ViewGraph is read-only; mutate the :class:`ontoenv.OntoEnv` instead."""
+        raise ValueError("ViewGraph is a read-only view; use copy_closure/copy_union for a mutable graph")
+
+    def addN(self, quads: Iterable[tuple[Any, Any, Any, Any]]) -> None:  # noqa: N802
+        """ViewGraph is read-only; mutate the :class:`ontoenv.OntoEnv` instead."""
+        raise ValueError("ViewGraph is a read-only view")
+
+    def remove(self, triple: tuple[Any, Any, Any]) -> None:
+        """ViewGraph is read-only; mutate the :class:`ontoenv.OntoEnv` instead."""
+        raise ValueError("ViewGraph is a read-only view; use copy_closure/copy_union for a mutable graph")
+
+    def __repr__(self) -> str:
+        scope_info = (
+            f"{len(self._scope)} graphs"
+            if self._scope
+            else "all graphs"
+        )
+        try:
+            n = len(self)
+        except Exception:
+            n = -1
+        return f"<ViewGraph: {scope_info}, {n} triples>"
+
+    # -- SPO accessors (Rust-native when scoped) --
+
+    def subjects(
+        self,
+        predicate: Any = None,
+        object: Any = None,
+    ) -> Generator[Any, None, None]:
+        """Yield unique subjects matching the pattern."""
+        if self._scope:
+            for s in self._backend.subjects_scoped(
+                list(self._scope), predicate, object
+            ):
+                yield s
+        else:
+            seen: set = set()
+            for s, _, _ in self.triples(None, predicate, object):
+                if s not in seen:
+                    seen.add(s)
+                    yield s
+
+    def predicates(
+        self,
+        subject: Any = None,
+        object: Any = None,
+    ) -> Generator[Any, None, None]:
+        """Yield unique predicates matching the pattern."""
+        if self._scope:
+            for p in self._backend.predicates_scoped(
+                list(self._scope), subject, object
+            ):
+                yield p
+        else:
+            seen = set()
+            for _, p, _ in self.triples(subject, None, object):
+                if p not in seen:
+                    seen.add(p)
+                    yield p
+
+    def objects(
+        self,
+        subject: Any = None,
+        predicate: Any = None,
+    ) -> Generator[Any, None, None]:
+        """Yield unique objects matching the pattern."""
+        if self._scope:
+            for o in self._backend.objects_scoped(
+                list(self._scope), subject, predicate
+            ):
+                yield o
+        else:
+            seen = set()
+            for _, _, o in self.triples(subject, predicate, None):
+                if o not in seen:
+                    seen.add(o)
+                    yield o
+
+    # -- Query --
+
+    def query(
+        self,
+        query_text: str,
+        init_bindings: dict[str, Any] | None = None,
+    ) -> Any:
+        """Run a SPARQL query scoped to this view's graphs."""
+        if self._scope:
+            return self._backend.query_scoped(
+                query_text, list(self._scope), init_bindings,
+            )
+        return self._backend.query(query_text, init_bindings, None)
+
+    # -- Namespaces --
+
+    @property
+    def namespaces(self) -> dict[str, str]:
+        """``{prefix: namespace}`` bindings."""
+        return dict(self._namespaces)
+
+    def bind(self, prefix: str, namespace: str, override: bool = True) -> None:
+        """Bind a prefix to a namespace."""
+        existing_ns = self._namespaces.get(prefix)
+        existing_prefix = self._namespaces_rev.get(namespace)
+        if override:
+            if existing_prefix is not None:
+                del self._namespaces[existing_prefix]
+            if existing_ns is not None:
+                self._namespaces_rev.pop(existing_ns, None)
+            self._namespaces[prefix] = namespace
+            self._namespaces_rev[namespace] = prefix
+        else:
+            self._namespaces.setdefault(prefix, namespace)
+            self._namespaces_rev.setdefault(namespace, prefix)
+
+    def namespace(self, prefix: str) -> str | None:
+        """Resolve a prefix to a namespace IRI."""
+        return self._namespaces.get(prefix)
+
+    def prefix(self, namespace: str) -> str | None:
+        """Resolve a namespace IRI to a prefix."""
+        return self._namespaces_rev.get(namespace)
+
+    # -- Serialization --
+
+    def serialize(self, format: str = "turtle") -> str:
+        """Serialize triples in this view to a string."""
+        from rdflib import Graph
+        g = Graph()
+        for s, p, o in self:
+            g.add((s, p, o))
+        for prefix, namespace in self._namespaces.items():
+            g.bind(prefix, namespace)
+        return g.serialize(format=format)
+

@@ -31,8 +31,8 @@ def main():
     print(f"dataset backend: {dataset.store._backend.backend_kind()}")
 
     print("\n--- iterate all triples ---")
-    with timed("ClosureGraphView.triples((None,None,None))  [w/ dedup]"):
-        n = sum(1 for _ in view.triples((None, None, None)))
+    with timed("ViewGraph.triples(None,None,None)  [no dedup]"):
+        n = sum(1 for _ in view.triples(None, None, None))
         print(f"    n={n}")
 
     with timed("iter_closure_triples(BRICK_IRI)               [no dedup]"):
@@ -45,7 +45,7 @@ def main():
             n += 1
         print(f"    n={n}")
 
-    # Per-graph triples on the underlying dataset (what ClosureGraphView dispatches to)
+    # Per-graph triples on the underlying dataset (what ViewGraph dispatches to)
     with timed("sum of dataset.graph(id).triples per graph    [no Python dedup]"):
         n = 0
         for ident in [URIRef(x) for x in names]:
@@ -53,8 +53,8 @@ def main():
         print(f"    n={n}")
 
     print("\n--- pattern: ?s owl:imports ?o ---")
-    with timed("ClosureGraphView.triples((None,OWL.imports,None))"):
-        n = sum(1 for _ in view.triples((None, OWL.imports, None)))
+    with timed("ViewGraph.triples(None,OWL.imports,None)"):
+        n = sum(1 for _ in view.triples(None, OWL.imports, None))
         print(f"    n={n}")
 
     with timed("dataset.store.triples((None,OWL.imports,None), None)"):
@@ -70,7 +70,7 @@ def main():
       ?s <http://www.w3.org/2000/01/rdf-schema#subClassOf>* brick:Equipment .
     }
     """
-    with timed("view.query(...)        [via ClosureGraphView]"):
+    with timed("view.query(...)        [via ViewGraph]"):
         rows = list(view.query(Q))
         print(f"    rows={rows}")
 
