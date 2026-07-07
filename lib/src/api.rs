@@ -656,10 +656,16 @@ impl OntoEnv {
     pub fn resolve(&self, target: ResolveTarget) -> Option<GraphIdentifier> {
         // Map a location or graph IRI to the canonical GraphIdentifier.
         match target {
-            ResolveTarget::Location(location) => self
-                .env
-                .get_ontology_by_location(&location)
-                .map(|ont| ont.id().clone()),
+            ResolveTarget::Location(location) => {
+                // Canonicalize file locations so callers can pass paths obtained
+                // from `tempfile` (e.g. macOS `/var` -> `/private/var` symlink)
+                // or other non-canonical forms and still match the canonical
+                // keys recorded by `init`/`update`/`add`.
+                let location = self.resolve_location(location);
+                self.env
+                    .get_ontology_by_location(&location)
+                    .map(|ont| ont.id().clone())
+            }
             ResolveTarget::Graph(iri) => self
                 .env
                 .get_ontology_by_name(iri.as_ref())

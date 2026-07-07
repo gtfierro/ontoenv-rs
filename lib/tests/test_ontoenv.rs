@@ -780,7 +780,12 @@ mod unix_permission_tests {
         let cfg = default_config(&dir);
         let env = OntoEnv::init(cfg, false)?;
         let files = env.find_files()?;
-        let expected = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        // `find_files` canonicalizes discovered paths (resolving symlinks such
+        // as macOS `/var` -> `/private/var`), so the expected entry must be
+        // canonicalized the same way to compare equal.
+        let expected = OntologyLocation::File(
+            ontoenv::ontology::canonicalize_file_path(&dir.path().join("ont1.ttl")),
+        );
         assert!(
             files.contains(&expected),
             "find_files should still collect readable entries"
@@ -816,13 +821,20 @@ mod windows_permission_tests {
         let cfg = default_config(&dir);
         let env = OntoEnv::init(cfg, false)?;
         let files = env.find_files()?;
-        let readable = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        // `find_files` canonicalizes discovered paths (resolving symlinks /
+        // normalizing Windows path forms), so expected entries must be
+        // canonicalized the same way to compare equal.
+        let readable = OntologyLocation::File(
+            ontoenv::ontology::canonicalize_file_path(&dir.path().join("ont1.ttl")),
+        );
         assert!(
             files.contains(&readable),
             "find_files should still collect readable entries"
         );
+        let canonical_locked =
+            ontoenv::ontology::canonicalize_file_path(&locked_path);
         assert!(
-            !files.contains(&OntologyLocation::File(locked_path.clone())),
+            !files.contains(&OntologyLocation::File(canonical_locked)),
             "locked files should be skipped when encountering sharing violations"
         );
 
