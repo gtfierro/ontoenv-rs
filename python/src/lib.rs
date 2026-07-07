@@ -1235,7 +1235,7 @@ fn run_cli(_py: Python<'_>, _args: Option<Vec<String>>) -> PyResult<i32> {
     ))
 }
 
-#[pyclass(name = "Ontology")]
+#[pyclass(name = "Ontology", skip_from_py_object)]
 #[derive(Clone)]
 struct PyOntology {
     inner: OntologyRs,
