@@ -608,13 +608,18 @@ class ViewGraph:
 
     # -- Serialization --
 
-    def serialize(self, format: str = "turtle") -> str:
-        """Serialize triples in this view to a string."""
+    def serialize(
+        self,
+        destination: Any | None = None,
+        format: str = "turtle",
+        **kwargs: Any,
+    ) -> "bytes | str":
+        """Serialize triples in this view, matching rdflib's Graph.serialize signature."""
         from rdflib import Graph
         g = Graph()
         for s, p, o in self:
             g.add((s, p, o))
         for prefix, namespace in self._namespaces.items():
             g.bind(prefix, namespace)
-        return g.serialize(format=format)
+        return g.serialize(destination=destination, format=format, **kwargs)
 
