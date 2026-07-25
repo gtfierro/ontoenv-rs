@@ -1352,8 +1352,8 @@ ex:B a owl:Class .
         self.assertEqual(len(all_named_decls), 1, "named deps graph should have exactly one owl:Ontology declaration")
         self.assertEqual(str(all_named_decls[0][0]), named_uri, "the single declaration should be for graph_name")
 
-    def test_update_all_flag(self):
-        """Test env.update(all=True) forces reloading of all ontologies."""
+    def test_update_force_flag(self):
+        """Test env.update(force=True) forces reloading of all ontologies."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["../brick"])
         # Initial discovery of ontologies
         self.env.update()
@@ -1364,7 +1364,7 @@ ex:B a owl:Class .
         self.assertIsNotNone(ts1)
 
         # Force update of all ontologies
-        self.env.update(all=True)
+        self.env.update(force=True)
 
         ont2 = self.env.get_ontology(self.brick_name)
         ts2 = ont2.last_updated
@@ -1559,4 +1559,3 @@ ex:B a owl:Class .
             )
         finally:
             os.unlink(ttl_path)
-

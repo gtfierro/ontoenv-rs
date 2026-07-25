@@ -58,9 +58,7 @@ fn file_backend_state(path: &Path) -> Result<BackendState> {
         }
         _ => crate::ontology::canonicalize_file_path(path),
     };
-    let identity = identity_path
-        .to_string_lossy()
-        .into_owned();
+    let identity = identity_path.to_string_lossy().into_owned();
     let revision = match std::fs::metadata(path) {
         Ok(metadata) => {
             let modified = metadata

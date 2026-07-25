@@ -6,7 +6,8 @@ Graph Store Interface
    <div class="oe-section-intro">
      OntoEnv can route all graph reads and writes through a caller-provided Python object.
      This is useful when you already manage graph storage — an in-memory dict, a database,
-     or a custom triplestore — and want OntoEnv to slot in without touching the filesystem.
+     or a custom triplestore — and want OntoEnv to use it instead of the built-in graph
+     storage.
    </div>
 
 Protocol
@@ -108,20 +109,34 @@ For a pre-populated temporary store, request the scan explicitly:
    report = env.refresh_from_store(full=True)
    print(report.added)
 
-Persistent stores should use the explicit lifecycle methods:
+Persistent stores should normally use ``connect``:
 
 .. code-block:: python
 
-   with OntoEnv.create("./new-environment", graph_store=store) as env:
-       pass
+   # First use: index existing graphs. Later starts: reuse the saved index and
+   # incorporate identifiable changes.
+   env = OntoEnv.connect("./environment", graph_store=store)
 
-   with OntoEnv.open("./existing-environment", graph_store=store) as env:
-       pass
+``connect(sync="auto")`` reads all graphs only when it first encounters an
+already-populated store. On later connections it does not read graph contents
+unless the store reports a change. If the store can identify the changed
+graphs, OntoEnv reads only those graphs. Otherwise, request ``sync="full"``
+explicitly. This does not check ontology files or URLs; see
+:ref:`refreshing-ontology-sources` for refreshing sources and following their
+imports with ``update()``.
 
-   with OntoEnv.adopt("./adopted-environment", store) as env:
-       pass
+To refresh a known ontology and the dependencies already recorded for it,
+pass its closure as the targeted graph set:
 
-``adopt`` and ``refresh_from_store(full=True)`` are the only operations that
-deliberately scan every stored graph. A normal open trusts ``catalog.r5tu`` and
-never calls ``get_graph``. If ``graph_revisions`` is unavailable, call
-``refresh_from_store(graphs=[...])`` or request ``full=True``.
+.. code-block:: python
+
+   root = "https://example.com/myOntology"
+   report = env.refresh_from_store(graphs=env.list_closure(root))
+
+Targeted store refreshes do not follow new ``owl:imports`` onto the network.
+Use :meth:`~ontoenv.OntoEnv.update` or
+``env.update(source, force=True)`` when the intent is to refresh an ontology
+source file or URL and its imports.
+
+The context manager is optional; see :doc:`lifecycle` for long-lived
+application and webserver patterns.

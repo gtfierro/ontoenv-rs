@@ -10,9 +10,8 @@
 from ontoenv import OntoEnv
 from rdflib import Graph
 
-# Explicitly create a persistent environment. Later processes should reopen it
-# with OntoEnv.open(".") for a graph-free catalog warm start.
-env = OntoEnv.create(".")
+# Connect creates on first use and graph-free warm-opens on later runs.
+env = OntoEnv.connect(".")
 
 # add an ontology from a file path.
 # env.add returns the name of the ontology, which is its URI
@@ -66,7 +65,88 @@ g.parse(data="""
 # this will load all of the owl:imports of the Brick ontology into 'g'
 env.import_dependencies(g)
 print(f"Graph with imported dependencies has {len(g)} triples")
+env.close()
 ```
+
+## Using a persistent environment
+
+For persistent use, OntoEnv saves your settings plus a small index of ontology
+names, imports, aliases, locations, namespaces, and hashes. This lets later
+connections answer dependency questions without rereading every RDF triple.
+
+Use `connect` for normal application code:
+
+```python
+env = OntoEnv.connect("./ontology-env")
+site = env.add("./ontologies/site.ttl")
+```
+
+On the first run, this creates the environment directory, saves its settings,
+and initializes graph storage. On later runs, the same call loads the saved
+ontology index. There is no need to check whether the environment exists
+before connecting.
+
+The context manager is optional. For a long-lived service, connect once during
+startup and keep the object in application state:
+
+```python
+env = OntoEnv.connect("/srv/ontology-env")
+application_state.ontoenv = env
+
+# Reuse application_state.ontoenv in request handlers, then close it from the
+# web framework's shutdown hook.
+application_state.ontoenv.close()
+```
+
+For a short script, `with` performs the same cleanup automatically:
+
+```python
+with OntoEnv.connect("/srv/ontology-env") as env:
+    print(env.get_ontology_names())
+```
+
+For a multi-process server, each read-only worker may open its own
+`OntoEnv.connect(path, read_only=True)`. A persistent environment permits one
+writer, so do not create an independent writable environment in every worker;
+route mutations through one writer and serialize them at the application level.
+
+For custom stores, ``sync="auto"`` reconnects quickly and reads only graphs the
+store can identify as changed. If the store cannot identify those graphs,
+OntoEnv asks for an explicit ``sync="full"`` instead of silently scanning
+everything. This synchronizes direct store changes; it does not check ontology
+files or URLs. Call `env.update()` after connecting when source files, remote
+sources, and their imports should be refreshed.
+
+Most applications never need a different lifecycle method. `create` is useful
+for a setup command that must fail if the environment already exists. `open`
+is useful when deployment must have prepared the environment in advance and
+startup must neither create nor synchronize it. `adopt` explicitly reads every
+graph in a populated custom store once and records the ontology information
+OntoEnv needs; it does not fetch network imports. For tests and notebooks that
+should write no environment files, use `OntoEnv(temporary=True)`.
+
+Refreshing source files and URLs is separate from reconciling a custom graph
+store. `env.update()` checks changed local sources and expired remote sources,
+then follows their imports. `env.update(force=True)` forces every known source
+and its dependencies to be reread. To update one ontology and its imports,
+pass its file or URL directly; its stored graph is replaced automatically:
+
+```python
+env.update(source)
+env.update(source, force=True)  # reread even when the cached copy looks current
+```
+
+When graphs were changed directly in a custom store, use
+`refresh_from_store()` instead. A targeted refresh accepts exact graph IDs. To
+include the dependency closure currently known to OntoEnv:
+
+```python
+report = env.refresh_from_store(graphs=env.list_closure(root))
+```
+
+If the external edit added an entirely new imported graph, use incremental
+refresh with a store that reports per-graph changes, or request
+`refresh_from_store(full=True)`.
 
 ## Namespace prefixes
 
@@ -128,26 +208,19 @@ store = DictGraphStore()
 env = OntoEnv(graph_store=store, temporary=True)
 ```
 
-Persistent lifecycle is explicit:
+For a persistent custom store, use ``connect``:
 
 ```python
-with OntoEnv.create("./new-env", graph_store=store) as env:
-    pass
-
-with OntoEnv.open("./existing-env", graph_store=store, read_only=True) as env:
-    pass
-
-# Import metadata from a pre-populated store. This never fetches network imports.
-with OntoEnv.adopt("./adopted-env", store) as env:
-    pass
+env = OntoEnv.connect("./environment", graph_store=store)
 ```
 
-`store_state()` enables O(1) drift detection on open. `graph_revisions()` enables
-`refresh_from_store()` to reconcile only changed graphs. Without per-graph
-revisions, use `graphs=[...]` or `full=True` explicitly.
+If the store implements the optional change-reporting methods, OntoEnv can
+notice external edits and read only the affected graphs. Otherwise, writes
+through ``env`` remain synchronized automatically, while out-of-band edits
+require ``sync="full"``.
 
-Temporary environments remain catalog-free. To scan a pre-populated temporary
-store without the deprecated `init_from_store` flag:
+Temporary environments save no persistent ontology index. To scan a
+pre-populated temporary store without the deprecated `init_from_store` flag:
 
 ```python
 env = OntoEnv(graph_store=store, temporary=True)

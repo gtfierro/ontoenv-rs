@@ -191,6 +191,20 @@ pub enum SyncMode {
     Full,
 }
 
+/// Policy used by [`OntoEnv::connect`] and
+/// [`OntoEnv::connect_with_graph_io`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectSync {
+    /// Use a graph-free warm open when revisions match and incrementally
+    /// reconcile externally changed graphs when the backend exposes
+    /// `graph_revisions()`.
+    Auto,
+    /// Trust the catalog snapshot and do not inspect graph contents.
+    Catalog,
+    /// Deliberately scan every backend graph and rebuild the catalog.
+    Full,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncReport {
     pub mode: SyncMode,
@@ -457,6 +471,35 @@ impl OntoEnv {
         Self::load_from_directory(root, read_only)
     }
 
+    /// Connect to a built-in persistent backend using a state-driven lifecycle.
+    ///
+    /// A missing catalog creates an empty environment when the store is empty
+    /// and adopts an already-populated store. Existing matching catalogs warm
+    /// open without graph reads. See [`ConnectSync`] for drift behavior.
+    pub fn connect(config: Config, sync: ConnectSync, read_only: bool) -> Result<Self> {
+        let config = Self::connect_config(config)?;
+        let ontoenv_dir = config.root.join(".ontoenv");
+        if read_only && !ontoenv_dir.join(catalog::CATALOG_FILE).exists() {
+            return Err(anyhow!(
+                "OntoEnv catalog not found at {} and read_only=true",
+                ontoenv_dir.join(catalog::CATALOG_FILE).display()
+            ));
+        }
+        let io: Box<dyn GraphIO> = if read_only {
+            Box::new(crate::io::ReadOnlyPersistentGraphIO::new(
+                ontoenv_dir,
+                config.offline,
+            )?)
+        } else {
+            Box::new(crate::io::PersistentGraphIO::new(
+                ontoenv_dir,
+                config.offline,
+                config.strict,
+            )?)
+        };
+        Self::connect_with_graph_io(config, io, sync, read_only)
+    }
+
     /// Deliberately scan an existing graph backend and publish a new catalog.
     /// This method only reads graphs already exposed by the backend and never
     /// follows network imports.
@@ -475,6 +518,166 @@ impl OntoEnv {
         io: Box<dyn GraphIO>,
         _read_only: bool,
     ) -> Result<Self> {
+        Self::load_catalog_with_graph_io(config, io, true)
+    }
+
+    /// Connect to a caller-provided graph backend using a state-driven
+    /// lifecycle and synchronization policy.
+    pub fn connect_with_graph_io(
+        config: Config,
+        io: Box<dyn GraphIO>,
+        sync: ConnectSync,
+        read_only: bool,
+    ) -> Result<Self> {
+        let mut config = Self::connect_config(config)?;
+        if config.temporary {
+            return Err(anyhow!(
+                "OntoEnv::connect requires a persistent environment; use OntoEnv::init for temporary environments"
+            ));
+        }
+        let catalog_path = config.root.join(".ontoenv").join(catalog::CATALOG_FILE);
+        let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
+        if pending_path.exists() {
+            return Err(CatalogRecoveryError {
+                message: format!("interrupted mutation marker at {}", pending_path.display()),
+            }
+            .into());
+        }
+        if !catalog_path.exists() {
+            if read_only {
+                return Err(anyhow!(
+                    "OntoEnv catalog not found at {} and read_only=true",
+                    catalog_path.display()
+                ));
+            }
+            if sync == ConnectSync::Catalog {
+                return Err(anyhow!(
+                    "OntoEnv catalog not found at {}; sync=\"catalog\" requires an existing catalog",
+                    catalog_path.display()
+                ));
+            }
+            let has_graphs = !io.graph_ids()?.is_empty();
+            if sync == ConnectSync::Full || has_graphs {
+                return Self::adopt(config, io);
+            }
+            config.use_cached_ontologies = crate::options::CacheMode::Enabled;
+            return Self::new_with_graph_io(config, io);
+        }
+
+        if sync == ConnectSync::Full {
+            if read_only {
+                return Err(anyhow!(
+                    "sync=\"full\" requires a writable OntoEnv connection"
+                ));
+            }
+            return Self::adopt(config, io);
+        }
+
+        let state_before = io.store_state()?;
+        let (mut env, expected, graph_revisions) = catalog::load(&catalog_path)?;
+        let global_revision_changed =
+            if let (Some(expected), Some(actual)) = (&expected, &state_before) {
+                if expected.id != actual.id {
+                    return Err(ExternalStoreChangedError {
+                        message: format!(
+                            "backend identity changed (catalog {:?}, backend {:?})",
+                            expected.id, actual.id
+                        ),
+                    }
+                    .into());
+                }
+                expected.revision != actual.revision
+            } else {
+                false
+            };
+        let current_graph_revisions =
+            if sync == ConnectSync::Auto && (state_before.is_none() || global_revision_changed) {
+                io.graph_revisions()?
+            } else {
+                None
+            };
+        let graph_revisions_changed = current_graph_revisions
+            .as_ref()
+            .is_some_and(|current| current != &graph_revisions);
+        if io.store_state()? != state_before {
+            return Err(ExternalStoreChangedError {
+                message: "backend changed while loading the catalog".to_string(),
+            }
+            .into());
+        }
+        env.normalize_file_locations(&config.root);
+        let mut result = Self::new(env, io, config)?;
+        result.graph_revisions = graph_revisions;
+        result.backend_state = expected.or_else(|| state_before.clone());
+        result.rebuild_dependency_graph_from_metadata();
+
+        if sync == ConnectSync::Catalog {
+            return Ok(result);
+        }
+
+        if global_revision_changed || graph_revisions_changed {
+            if read_only {
+                return Err(ExternalStoreChangedError {
+                    message:
+                        "backend changed and automatic reconciliation requires a writable connection"
+                            .to_string(),
+                }
+                .into());
+            }
+            let Some(current_revisions) = current_graph_revisions else {
+                return Err(StoreCapabilityError {
+                    message:
+                        "backend changed but does not implement graph_revisions(); reconnect with sync=\"full\""
+                            .to_string(),
+                }
+                .into());
+            };
+            if current_revisions == result.graph_revisions {
+                // The backend's global revision changed without graph-level
+                // changes. Acknowledge it without materializing any graph.
+                result.backend_state = state_before.clone();
+                result.save_to_directory()?;
+                return Ok(result);
+            }
+            result.refresh_from_store(None, false)?;
+            if result.io.store_state()? != state_before {
+                return Err(ExternalStoreChangedError {
+                    message: "backend changed while reconciling the catalog".to_string(),
+                }
+                .into());
+            }
+        }
+        Ok(result)
+    }
+
+    /// Resolve the persisted configuration used by a state-driven connection.
+    ///
+    /// This is public for language bindings that must configure a custom
+    /// `GraphIO` before passing it to [`Self::connect_with_graph_io`].
+    #[doc(hidden)]
+    pub fn connect_config(requested: Config) -> Result<Config> {
+        let path = requested.root.join(".ontoenv").join("ontoenv.json");
+        if !path.exists() {
+            return Ok(requested);
+        }
+        let file = std::fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut persisted: Config = serde_json::from_reader(reader)?;
+        // The caller's path is authoritative so copied/moved environments can
+        // still be connected through their current location. The live custom
+        // backend description likewise comes from the current connection.
+        persisted.root = requested.root;
+        if requested.external_graph_store.is_some() {
+            persisted.external_graph_store = requested.external_graph_store;
+        }
+        Ok(persisted)
+    }
+
+    fn load_catalog_with_graph_io(
+        config: Config,
+        io: Box<dyn GraphIO>,
+        verify_revision: bool,
+    ) -> Result<Self> {
         let catalog_path = config.root.join(".ontoenv").join(catalog::CATALOG_FILE);
         let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
         if pending_path.exists() {
@@ -492,7 +695,8 @@ impl OntoEnv {
         let state_before = io.store_state()?;
         let (mut env, expected, graph_revisions) = catalog::load(&catalog_path)?;
         if let (Some(expected), Some(actual)) = (&expected, &state_before) {
-            if expected != actual {
+            if expected.id != actual.id || (verify_revision && expected.revision != actual.revision)
+            {
                 return Err(ExternalStoreChangedError {
                     message: "backend identity/revision changed; refresh explicitly".to_string(),
                 }
@@ -844,6 +1048,11 @@ impl OntoEnv {
             if targets.is_empty() {
                 let mut unchanged: Vec<_> = revisions.keys().cloned().collect();
                 unchanged.sort();
+                let current_state = self.io.store_state()?;
+                if self.backend_state != current_state {
+                    self.backend_state = current_state;
+                    self.save_to_directory()?;
+                }
                 return Ok(SyncReport {
                     mode: SyncMode::Incremental,
                     added: Vec::new(),
@@ -922,7 +1131,9 @@ impl OntoEnv {
             still_pending.sort();
             still_pending.dedup();
         }
-        if still_pending.is_empty() {
+        if still_pending.is_empty()
+            && (mode == SyncMode::Incremental || current_revisions.is_some())
+        {
             self.backend_state = self.io.store_state()?;
         }
         self.save_to_directory()?;
@@ -3511,6 +3722,44 @@ mod tests {
             assert!(root.join(".ontoenv").is_dir());
             drop(env);
         }
+    }
+
+    #[test]
+    fn connect_creates_then_warm_opens_builtin_store() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("connected");
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .build()
+            .unwrap();
+
+        let environment = OntoEnv::connect(config.clone(), ConnectSync::Auto, false).unwrap();
+        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        drop(environment);
+
+        let reopened = OntoEnv::connect(config, ConnectSync::Auto, true).unwrap();
+        assert!(reopened.ontologies().is_empty());
+    }
+
+    #[test]
+    fn connect_catalog_policy_requires_existing_catalog() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("missing");
+        let config = Config::builder()
+            .root(root)
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .build()
+            .unwrap();
+
+        let error = OntoEnv::connect(config, ConnectSync::Catalog, false).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("sync=\"catalog\" requires an existing catalog"));
     }
 
     #[test]

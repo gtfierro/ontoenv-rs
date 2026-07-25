@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Iterator, Optional, List, Union, Tuple, Dict
+from typing import Iterator, Optional, List, Union, Tuple, Dict, Literal
 from rdflib import Graph, Dataset
 from rdflib.query import Result
 from rdflib.store import Store
@@ -48,6 +48,24 @@ class SyncReport:
 
 class OntoEnv:
     """Ontology environment for managing ontologies and graphs."""
+
+    @classmethod
+    def connect(
+        cls,
+        path: Union[str, Path],
+        graph_store: Optional[object] = None,
+        sync: Literal["auto", "catalog", "full"] = "auto",
+        read_only: bool = False,
+        **options: object,
+    ) -> "OntoEnv":
+        """Connect using create, first-time indexing, warm-open, or reconciliation behavior.
+
+        ``sync="auto"`` reconciles direct graph-store changes when the store
+        can identify them. It does not inspect ontology files or URLs. Call
+        :py:meth:`update` after connecting to refresh sources and their
+        imports.
+        """
+        ...
 
     @classmethod
     def create(
@@ -117,11 +135,25 @@ class OntoEnv:
 
     def __repr__(self) -> str: ...
 
-    def update(self, all: bool = False) -> None:
-        """Refresh the environment from its search directories.
+    def update(
+        self,
+        location: Optional[Union[str, Path, Graph]] = None,
+        *,
+        force: bool = False,
+        all: Optional[bool] = None,
+    ) -> None:
+        """Refresh ontology source files or URLs and follow their imports.
 
-        Pass ``all=True`` to force re-ingestion of every known ontology
-        regardless of whether its source has changed.
+        With no *location*, refresh new and changed files from the configured
+        search directories plus expired remote sources. Pass ``force=True`` to
+        reread every known source regardless of timestamps or cache age.
+
+        With a *location*, update that source and replace its existing stored
+        graph automatically. Pass ``force=True`` to reread it even when its
+        cached copy appears current. In both forms, transitive ``owl:imports``
+        are followed.
+
+        ``all=`` is a deprecated compatibility alias for ``force=``.
         """
         ...
 
@@ -130,7 +162,18 @@ class OntoEnv:
         graphs: Optional[List[str]] = None,
         full: bool = False,
     ) -> SyncReport:
-        """Explicitly reconcile catalog metadata with the graph backend."""
+        """Reconcile ontology information after direct graph-store changes.
+
+        With no arguments, use per-graph revisions to read only changed and
+        added graphs and to remove deleted ones. ``graphs`` targets those exact
+        backend graph IDs; pass ``env.list_closure(root)`` to target a root and
+        its currently known import closure. ``full=True`` deliberately scans
+        every graph and cannot be combined with ``graphs``.
+
+        This method never fetches imports from ontology source URLs. Use
+        ``update(source, force=True)`` to refresh a source file or URL together
+        with its imports.
+        """
         ...
 
     # ------------------------------------------------------------------ #

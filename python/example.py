@@ -1,23 +1,18 @@
-from pathlib import Path
-
 from ontoenv import OntoEnv, version
 from rdflib import Graph
 
 
 print(version)
 
-print("Open the catalog, or create it on the first run.")
-if Path(".ontoenv/catalog.r5tu").exists():
-    # Warm start: this loads catalog metadata without reading ontology graphs.
-    env = OntoEnv.open(".")
-else:
-    env = OntoEnv.create(
-        ".",
-        search_directories=["../brick"],
-        strict=False,
-        offline=False,
-    )
-    env.update(all=True)
+print("Connect: create on first use and graph-free warm-open later.")
+env = OntoEnv.connect(
+    ".",
+    search_directories=["../brick"],
+    strict=False,
+    offline=False,
+)
+if len(env) == 0:
+    env.update(force=True)
 print(env)
 
 # returns fast, read-only closure graph plus the contributing ontology names
@@ -38,7 +33,7 @@ print(f"Added {brick_name} to env")
 env.close()
 
 # Reopening reads catalog metadata and should be fast regardless of triple count.
-env2 = OntoEnv.open(".")
+env2 = OntoEnv.connect(".")
 print(env2.store_path())
 
 print("get brick again from URL")

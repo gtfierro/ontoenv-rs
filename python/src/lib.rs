@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
 use ontoenv::api::{
-    find_ontoenv_root_from, OntoEnv as OntoEnvRs, ResolveTarget, SyncMode, SyncReport,
+    find_ontoenv_root_from, ConnectSync, OntoEnv as OntoEnvRs, ResolveTarget, SyncMode, SyncReport,
 };
 use ontoenv::catalog::BackendState;
 use ontoenv::config;
@@ -25,7 +25,9 @@ use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyDict, PyList, PySet, PyString, PyStringMethods, PyTuple, PyType},
+    types::{
+        IntoPyDict, PyBool, PyDict, PyList, PySet, PyString, PyStringMethods, PyTuple, PyType,
+    },
 };
 use rand::random;
 use rdf5d::{DecodedTerm, Pattern, Scope, Snapshot};
@@ -44,6 +46,7 @@ use std::time::SystemTime;
 
 thread_local! {
     static EXPLICIT_ADOPT: Cell<bool> = const { Cell::new(false) };
+    static CONNECT_SYNC: Cell<Option<ConnectSync>> = const { Cell::new(None) };
 }
 
 pyo3::create_exception!(
@@ -3517,6 +3520,58 @@ impl OntoEnv {
 #[pymethods]
 impl OntoEnv {
     #[classmethod]
+    /// Connect to a persistent environment.
+    ///
+    /// `sync="auto"` reconciles direct graph-store changes when the backend
+    /// can identify them. It does not refresh ontology source files or URLs;
+    /// call `update()` after connecting for source refresh.
+    #[pyo3(signature = (path, graph_store=None, sync="auto", read_only=false, **options))]
+    fn connect(
+        cls: &Bound<'_, PyType>,
+        path: PathBuf,
+        graph_store: Option<Py<PyAny>>,
+        sync: &str,
+        read_only: bool,
+        options: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<OntoEnv>> {
+        let sync = match sync {
+            "auto" => ConnectSync::Auto,
+            "catalog" => ConnectSync::Catalog,
+            "full" => ConnectSync::Full,
+            other => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "invalid sync policy {other:?}; expected 'auto', 'catalog', or 'full'"
+                )))
+            }
+        };
+        let kwargs = PyDict::new(cls.py());
+        if let Some(options) = options {
+            kwargs.update(options.as_mapping())?;
+        }
+        if kwargs
+            .get_item("temporary")?
+            .map(|value| value.extract::<bool>())
+            .transpose()?
+            .unwrap_or(false)
+        {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv.connect() manages persistent environments; use OntoEnv(temporary=True) instead",
+            ));
+        }
+        kwargs.set_item("path", path)?;
+        kwargs.set_item("read_only", read_only)?;
+        if let Some(store) = graph_store {
+            kwargs.set_item("graph_store", store)?;
+        }
+        CONNECT_SYNC.with(|policy| policy.set(Some(sync)));
+        let result = cls.call((), Some(&kwargs));
+        CONNECT_SYNC.with(|policy| policy.set(None));
+        result?
+            .extract::<Py<OntoEnv>>()
+            .map_err(|error| PyErr::new::<pyo3::exceptions::PyTypeError, _>(error.to_string()))
+    }
+
+    #[classmethod]
     #[pyo3(signature = (path, graph_store=None, **options))]
     fn create(
         cls: &Bound<'_, PyType>,
@@ -3715,6 +3770,7 @@ impl OntoEnv {
         let mut cfg = builder
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let connect_sync = CONNECT_SYNC.with(Cell::get);
 
         if let Some(store) = graph_store {
             if recreate || create_or_use_cached {
@@ -3724,6 +3780,9 @@ impl OntoEnv {
             }
             let desc = graph_store_description(_py, store.bind(_py))?;
             cfg.external_graph_store = Some(desc);
+            if connect_sync.is_some() {
+                cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
+            }
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
                 .map_err(anyhow_to_pyerr)?;
             let catalog_exists = cfg
@@ -3732,7 +3791,9 @@ impl OntoEnv {
                 .join(ontoenv::catalog::CATALOG_FILE)
                 .exists();
             let explicit_adopt = EXPLICIT_ADOPT.with(Cell::get);
-            let env = if !cfg.temporary && catalog_exists && !explicit_adopt {
+            let env = if let Some(sync) = connect_sync {
+                OntoEnvRs::connect_with_graph_io(cfg, Box::new(io), sync, read_only)
+            } else if !cfg.temporary && catalog_exists && !explicit_adopt {
                 OntoEnvRs::open_with_graph_io(cfg, Box::new(io), read_only)
             } else if init_from_store {
                 OntoEnvRs::new_with_graph_io_from_existing(cfg, Box::new(io))
@@ -3748,7 +3809,9 @@ impl OntoEnv {
         }
 
         let root_for_lookup = cfg.root.clone();
-        let env = if cfg.temporary {
+        let env = if let Some(sync) = connect_sync {
+            OntoEnvRs::connect(cfg, sync, read_only).map_err(anyhow_to_pyerr)?
+        } else if cfg.temporary {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
@@ -3809,8 +3872,47 @@ impl OntoEnv {
         })
     }
 
-    #[pyo3(signature = (all=false))]
-    fn update(&self, all: bool) -> PyResult<()> {
+    /// Refresh known ontology sources, or one explicit source and its imports.
+    ///
+    /// A provided source replaces its existing stored graph automatically.
+    /// `force=true` bypasses timestamp and cache-age checks. `all` is retained
+    /// as a deprecated compatibility alias for `force`.
+    #[pyo3(signature = (location=None, *, force=false, all=None))]
+    fn update(
+        &self,
+        py: Python<'_>,
+        location: Option<&Bound<'_, PyAny>>,
+        force: bool,
+        all: Option<bool>,
+    ) -> PyResult<()> {
+        let mut location = location;
+        let mut legacy_all = all;
+        if let Some(value) = location {
+            if value.is_instance_of::<PyBool>() {
+                if legacy_all.is_some() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                        "update() received the deprecated all flag twice",
+                    ));
+                }
+                legacy_all = Some(value.extract::<bool>()?);
+                location = None;
+            }
+        }
+        if legacy_all.is_some() {
+            PyErr::warn(
+                py,
+                &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                c"update(all=...) is deprecated; use update(force=...)",
+                1,
+            )?;
+        }
+        if location.is_some() && legacy_all.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "update() cannot combine a location with the deprecated all flag",
+            ));
+        }
+        let force = force || legacy_all.unwrap_or(false);
+        let resolved = location.map(ontology_location_from_py).transpose()?;
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let Some(env) = guard.as_mut() else {
@@ -3818,13 +3920,24 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        // update_all and save_to_directory both touch env state. Even on
-        // failure we may have partially mutated it (e.g. removed missing
-        // ontologies before erroring), so invalidate the cache regardless.
-        let result = env
-            .update_all(all)
-            .and_then(|_| env.save_to_directory())
-            .map_err(anyhow_to_pyerr);
+        // Both update paths may partially mutate state before reporting an
+        // error, so invalidate cached Python views regardless of the result.
+        let result = if let (Some(py_location), Some(resolved)) = (location, resolved) {
+            add_resolved_to_env(
+                env,
+                py_location,
+                resolved,
+                Overwrite::Allow,
+                force.into(),
+                true,
+                None,
+            )
+            .map(|_| ())
+        } else {
+            env.update_all(force)
+                .and_then(|_| env.save_to_directory())
+                .map_err(anyhow_to_pyerr)
+        };
         drop(guard);
         self.bump_generation();
         result

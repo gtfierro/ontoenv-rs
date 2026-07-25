@@ -61,12 +61,16 @@ print(f"Closure has {len(g)} triples")
 
 When initialized, `ontoenv` searches configured directories for ontology declarations, identifies their `owl:imports`, and recursively pulls in dependencies. The central operation is computing the *imports closure*: the set of all ontologies transitively required by a given root, optionally merged into a single flat graph.
 
-**Implementation:** Built in Rust using [oxigraph](https://github.com/oxigraph/oxigraph) as the internal RDF store and [petgraph](https://github.com/petgraph/petgraph) for dependency graph traversal. Python bindings are generated via [PyO3](https://pyo3.rs/). Persistent graph content uses RDF5D at `.ontoenv/store.r5tu`; authoritative environment metadata uses `.ontoenv/catalog.r5tu`. Both are protected by environment-wide single-writer/shared-reader locking.
+In a persistent environment, OntoEnv saves both the graph content and the
+smaller collection of ontology names, imports, aliases, source locations, and
+namespaces needed to navigate it. Later connections can restore dependency
+lookups from that saved information without rereading every graph. The
+environment also coordinates readers and writers so a CLI process, script, or
+long-running service sees a consistent saved state.
 
-**Design goals:**
-- **Lightweight** — usable from a Python library or CLI without a heavyweight GUI
-- **Configurable** — control which files are local vs. remote, which IRIs to include/exclude
-- **Fast** — quickly refresh a workspace after local file changes
+Discovery remains configurable: applications can decide which local files and
+remote IRIs are eligible, work offline, and control when cached remote
+ontologies should be refreshed.
 
 ### Canonical IRIs and Source URLs
 
@@ -229,27 +233,40 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
 ### Persistent Lifecycle
 
-Use explicit lifecycle methods for persistent environments:
+For most persistent applications, use ``connect``:
 
 ```python
 from ontoenv import OntoEnv
 
-# Create a new, empty environment. Fails if one already exists.
-with OntoEnv.create("./my-env") as env:
-    env.add("./ontologies/site.ttl")
+# First run: create the environment directory, save its settings, and
+# initialize graph storage plus an empty ontology index.
+# Later runs: reuse that index without rereading every RDF triple.
+env = OntoEnv.connect("./my-env")
+env.add("./ontologies/site.ttl")
 
-# Reopen from catalog metadata without reading ontology graphs.
-with OntoEnv.open("./my-env", read_only=True) as env:
-    print(env.get_ontology_names())
-
-# Deliberately scan an existing custom graph store once.
-with OntoEnv.adopt("./adopted-env", graph_store) as env:
-    print(env.get_ontology_names())
+# Keep the object in application state and close it during shutdown.
+application_state.ontoenv = env
+application_state.ontoenv.close()
 ```
 
-`OntoEnv.adopt(...)` never fetches network imports. For out-of-band graph-store
-changes, use `refresh_from_store()`, `refresh_from_store(graphs=[...])`, or the
-deliberate full scan `refresh_from_store(full=True)`.
+With ``graph_store=store``, the first connection instead reads graphs already
+in that store and records their ontology names, imports, aliases, locations,
+namespaces, and hashes. Later connections reuse and synchronize that saved
+index.
+
+Use the lower-level methods when you want strict lifecycle control:
+
+```python
+OntoEnv.create("./new-env")  # set up empty state; fail if it already exists
+OntoEnv.open("./existing-env", read_only=True)  # load only; never create or sync
+OntoEnv.adopt("./adopted-env", graph_store)  # index every existing store graph once
+```
+
+``connect(sync="auto")`` never silently falls back to a full scan after drift:
+it incrementally reconciles stores with graph revisions and otherwise asks for
+an explicit ``sync="full"``. It does not refresh ontology files or URLs; call
+``env.update()`` after connecting to refresh changed sources and their
+imports.
 
 ### Constructor
 
@@ -277,6 +294,7 @@ OntoEnv(
 
 **Environment modes:**
 - `temporary=True` — in-memory only, no `.ontoenv/`
+- `OntoEnv.connect(path, sync="auto")` — persistent connection and graph-store synchronization; call `update()` separately for source files and URLs
 - `OntoEnv.create(path)` — create a persistent empty environment
 - `OntoEnv.open(path, read_only=False)` — require and load an existing catalog
 - `OntoEnv.adopt(path, graph_store)` — scan an existing store and create its catalog
@@ -311,7 +329,7 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 
 | Method | Description |
 |---|---|
-| `update(all=False)` | Refresh discovered ontologies |
+| `update(location=None, force=False)` | Refresh changed sources, or one named source, together with their imports |
 | `add(location, fetch_imports=True) -> str` | Add ontology by file path, URL, or `rdflib.Graph`; returns IRI |
 | `add_no_imports(location) -> str` | Same as `add`, but skips import traversal |
 | `get_graph(name) -> Graph` | Read-only store-backed view of a single ontology (no closure expansion). Mutation raises `ValueError` |

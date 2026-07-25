@@ -15,10 +15,15 @@ All notable changes to this project are documented here. Releases follow [Semant
 - `GraphIO::union_graph` now returns `(Dataset, Vec<FailedImport>)` — always best-effort: per-id errors (bad graphname, ensure_loaded failure, mid-graph store iteration error) are recorded in the failures list and the offending id is skipped, but the rest of the union is still assembled. The previous behavior silently dropped failures with no signal. `OntoEnv::get_union_graph` consumes the failures list: in **strict** mode any failure becomes an error; in **non-strict** mode the partial union is returned with `UnionGraph.failed_imports` populated so the caller knows what's missing.
 
 ### Added
+- Python `OntoEnv.update` now accepts an optional source location and always
+  replaces that source's stored graph while following its imports.
+  `update(force=True)` replaces `update(all=True)`; `all=` remains as a
+  deprecated compatibility alias.
 - An authoritative RDF5D metadata catalog at `.ontoenv/catalog.r5tu`, with
   graph-free warm opens, automatic legacy JSON migration, backend drift
   detection, recovery markers, explicit `create`/`open`/`adopt` lifecycle
-  APIs, and incremental/targeted/full graph-store synchronization reports.
+  APIs, a state-driven `connect(sync=...)` entry point, and
+  incremental/targeted/full graph-store synchronization reports.
 - Durable RDF5D snapshot replacement using unique same-directory temporary
   files, file and directory synchronization, and atomic publication.
 - `OntoEnv.copy_graph(uri) -> rdflib.Graph` — materialize a mutable in-memory copy of a single ontology.

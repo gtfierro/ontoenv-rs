@@ -6,7 +6,7 @@ The **ontoenv** Python package exposes the full Rust core through
 `rdflib <https://rdflib.readthedocs.io>`_ graph interop.
 Pre-built wheels are published on PyPI — no Rust toolchain required.
 
-There are two distinct Python integration surfaces:
+There are two Python integration surfaces:
 
 - ``OntoEnv`` for ontology discovery, import resolution, read-only views, and closure copies.
 - ``OntoEnvStore`` for using ontoenv as an ``rdflib`` ``Store`` with Rust-backed SPARQL
@@ -19,15 +19,62 @@ Install
 
    pip install ontoenv   # Python 3.9+
 
+First steps
+-----------
+
+Use ``connect`` for a persistent environment:
+
+.. code-block:: python
+
+   from ontoenv import OntoEnv
+
+   env = OntoEnv.connect("./ontology-env")
+   ontology = env.add("./ontologies/site.ttl")
+
+   graph = env.get_graph(ontology)
+   closure, imported = env.get_closure(ontology)
+
+   env.close()
+
+Use ``OntoEnv(temporary=True)`` when nothing should be saved. See
+:doc:`lifecycle` for scripts, webservers, custom stores, synchronization, and
+the stricter lifecycle methods.
+
+What OntoEnv keeps track of
+---------------------------
+
+As ontologies are added, OntoEnv records their canonical names, source URLs,
+aliases, namespace declarations, and ``owl:imports`` relationships. You can
+therefore ask for one graph, follow its complete imports closure, or find which
+ontologies depend on it without rebuilding those relationships yourself.
+
+Read methods return store-backed views so large graphs do not have to be
+copied. When a caller needs to edit or export an independent graph, the
+corresponding ``copy_*`` method creates a mutable copy. The same API works with
+an in-memory temporary environment, OntoEnv's persistent storage, or a custom
+graph store.
+
+Persistent environments save the ontology information needed for fast
+restarts. If a custom store changes elsewhere, OntoEnv can incorporate the
+affected graphs when the store identifies them, while leaving a full scan as
+an explicit choice.
+
 Key methods
 -----------
 
-- ``OntoEnv(search_directories, includes, offline, …)`` — Create or open an environment.
-  Accepts ``search_directories`` (paths to crawl), ``offline`` (skip network),
-  ``temporary`` (keep everything in memory), glob/regex filters, and a custom
-  ``graph_store``.
-- ``env.update(all=False)`` — Re-run discovery with the configured directories. Pass
-  ``all=True`` to force re-fetching of all remote ontologies regardless of cache age.
+- ``OntoEnv.connect(path, sync="auto", …)`` — Recommended persistent entry point.
+  It handles first use, fast restarts, and direct graph-store changes. It does
+  not refresh ontology files or URLs; see :ref:`refreshing-ontology-sources`.
+- ``OntoEnv.create(path, …)`` — Require a new persistent environment.
+- ``OntoEnv.open(path, read_only=False, …)`` — Load an existing saved environment
+  without scanning ontology graphs.
+- ``OntoEnv.adopt(path, graph_store, …)`` — Deliberately scan a pre-populated custom
+  store and save its first ontology index.
+- ``OntoEnv(..., temporary=True)`` — Keep graphs and ontology information in memory.
+  See :doc:`lifecycle` for API selection, long-lived webserver usage, and cleanup.
+- ``env.update()`` — Refresh changed known sources and follow their imports.
+  Pass a file or URL to update one source, or ``force=True`` to reread sources
+  regardless of timestamps and cache age.
 - ``env.add(location, fetch_imports=True, rename=None)`` — Register an ontology from a file
   path, URL, or an in-memory ``rdflib.Graph``.  Set ``fetch_imports=False`` to skip
   ``owl:imports`` traversal.  Pass ``rename="<new-iri>"`` to override the ontology IRI
@@ -105,22 +152,31 @@ paths) are built in memory on first use — no setup, no on-disk sidecar. See
 Pythonic sugar
 ~~~~~~~~~~~~~~
 
-``OntoEnv`` supports the standard container and context-manager protocols:
+``OntoEnv`` supports the standard container and context-manager protocols.
+The context manager is optional; long-lived applications may retain the object
+and call ``close()`` from their shutdown hook:
 
 - ``len(env)`` — number of ontologies in the environment.
 - ``uri in env`` — ``True`` if *uri* resolves to a known ontology (canonical name, alias, or source URL).
 - ``env[uri]`` — shorthand for ``env.get_graph(uri)``.
 - ``for name in env: ...`` — iterate over the URIs of every ontology in the environment.
-- ``with OntoEnv(...) as env: ...`` — automatically persist (where applicable) and release resources on exit.
+- ``with OntoEnv.open(...) as env: ...`` — automatically close and release resources on exit.
 
 .. code-block:: python
 
-   with OntoEnv(path="./.ontoenv") as env:
+   with OntoEnv.open("./environment") as env:
        env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
 
        print(f"{len(env)} ontologies")
        for name in env:
            print(name, len(env[name]))
+
+.. code-block:: python
+
+   # Equivalent direct lifetime management for a service:
+   env = OntoEnv.connect("./environment")
+   application_state.ontoenv = env
+   # Call application_state.ontoenv.close() during application shutdown.
 
 Example
 -------
@@ -160,6 +216,7 @@ Example
    :maxdepth: 1
 
    ontoenv
+   lifecycle
    rdflib-store
    graph-store
    benchmarks

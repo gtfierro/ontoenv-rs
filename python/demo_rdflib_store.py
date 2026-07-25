@@ -12,7 +12,7 @@ env = OntoEnv.create(
     offline=True,
     search_directories=["../brick"],
 )
-env.update(all=True)
+env.update(force=True)
 print(env)
 
 print("add brick and persist rdf5d store")
