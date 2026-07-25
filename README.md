@@ -491,5 +491,11 @@ This exists because I have both `ontoenv` and `pyontoenv` on PyPI — a mistake 
 ### Version bumping
 
 ```bash
-./version <new-version>   # syncs all Cargo.toml files and Python pyproject.toml
+./version --check         # verify every internal crate requirement is synchronized
+./version <new-version>   # set the workspace version and rebuild package lockfiles
 ```
+
+Every Rust crate inherits its package version from `workspace.package.version`.
+Cargo requires explicit registry versions for publishable path dependencies,
+so the helper derives and validates those requirements from the same workspace
+version. Do not edit the individual crate versions directly.

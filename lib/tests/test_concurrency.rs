@@ -2,6 +2,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use oxigraph::model::NamedNode;
 
@@ -127,6 +129,25 @@ fn worker_rw() {
             assert!(!g.is_empty(), "graph should have triples");
             let ont = env.get_ontology(&id).expect("get_ontology");
             assert_eq!(ont.id().name().as_str(), iri.as_str());
+
+            // The read-write locking test uses marker files to guarantee that
+            // another process attempts to open the environment while this
+            // worker still owns the exclusive lock. Without this handshake,
+            // fast warm opens can complete sequentially and both workers may
+            // legitimately acquire the lock.
+            if let Ok(ready) = env::var("ONTOENV_LOCK_READY") {
+                fs::write(&ready, b"ready").expect("write lock-ready marker");
+                let release =
+                    env::var("ONTOENV_LOCK_RELEASE").expect("ONTOENV_LOCK_RELEASE missing");
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !Path::new(&release).exists() {
+                    assert!(
+                        Instant::now() < deadline,
+                        "timed out waiting for lock-release marker"
+                    );
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
             println!("worker_rw acquired {}", iri);
         }
         Err(e) => {
@@ -198,17 +219,38 @@ fn rust_read_write_locking() {
     let (name_a, name_b) = init_store_with_two_graphs(&root, a_uri, b_uri);
 
     let exe = current_test_exe();
-    let p1 = Command::new(&exe)
+    let ready = root.join("writer.ready");
+    let release = root.join("writer.release");
+    let mut p1 = Command::new(&exe)
         .arg("--exact")
         .arg("worker_rw")
         .arg("--ignored")
         .arg("--nocapture")
         .env("ONTOENV_STORE", root.to_string_lossy().to_string())
         .env("ONTOENV_URI", name_a.clone())
+        .env("ONTOENV_LOCK_READY", &ready)
+        .env("ONTOENV_LOCK_RELEASE", &release)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn p1");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() {
+        if let Some(status) = p1.try_wait().expect("poll p1") {
+            let output = p1.wait_with_output().expect("p1 output after early exit");
+            panic!(
+                "p1 exited before acquiring the lock ({status}): {:?}",
+                output
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for p1 to acquire the writer lock"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
     let p2 = Command::new(&exe)
         .arg("--exact")
         .arg("worker_rw")
@@ -221,8 +263,9 @@ fn rust_read_write_locking() {
         .spawn()
         .expect("spawn p2");
 
-    let o1 = p1.wait_with_output().expect("p1 output");
     let o2 = p2.wait_with_output().expect("p2 output");
+    fs::write(&release, b"release").expect("write lock-release marker");
+    let o1 = p1.wait_with_output().expect("p1 output");
 
     assert!(o1.status.success(), "p1 failed: {:?}", o1);
     assert!(o2.status.success(), "p2 failed: {:?}", o2);
@@ -236,15 +279,15 @@ fn rust_read_write_locking() {
     let lockerror =
         s1.contains("worker_rw lockerror") as usize + s2.contains("worker_rw lockerror") as usize;
 
-    assert!(
-        acquired >= 1,
-        "expected at least one acquisition; stdout1: {}, stdout2: {}",
+    assert_eq!(
+        acquired, 1,
+        "expected exactly one acquisition; stdout1: {}, stdout2: {}",
         s1,
         s2
     );
-    assert!(
-        lockerror >= 1,
-        "expected at least one lock error; stdout1: {}, stdout2: {}",
+    assert_eq!(
+        lockerror, 1,
+        "expected exactly one lock error; stdout1: {}, stdout2: {}",
         s1,
         s2
     );
