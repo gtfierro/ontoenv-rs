@@ -8,6 +8,9 @@ from rdflib.store import Store
 version: str
 is_debug_build: bool
 
+class ExternalStoreChangedError(RuntimeError): ...
+class CatalogRecoveryError(RuntimeError): ...
+class StoreCapabilityError(RuntimeError): ...
 
 class Ontology:
     """Read-only view of ontology metadata."""
@@ -35,9 +38,42 @@ class Ontology:
 
     def __repr__(self) -> str: ...
 
+class SyncReport:
+    mode: str
+    added: List[str]
+    changed: List[str]
+    removed: List[str]
+    unchanged: List[str]
+    still_pending: List[str]
 
 class OntoEnv:
     """Ontology environment for managing ontologies and graphs."""
+
+    @classmethod
+    def create(
+        cls,
+        path: Union[str, Path],
+        graph_store: Optional[object] = None,
+        **options: object,
+    ) -> "OntoEnv": ...
+
+    @classmethod
+    def open(
+        cls,
+        path: Union[str, Path],
+        graph_store: Optional[object] = None,
+        read_only: bool = False,
+        **options: object,
+    ) -> "OntoEnv": ...
+
+    @classmethod
+    def adopt(
+        cls,
+        path: Union[str, Path],
+        graph_store: object,
+        overwrite: bool = False,
+        **options: object,
+    ) -> "OntoEnv": ...
 
     def __init__(
         self,
@@ -67,9 +103,10 @@ class OntoEnv:
         storage to the provided object (which must implement ``add_graph``,
         ``get_graph``, ``remove_graph``, and ``graph_ids``).
 
-        Set ``init_from_store=True`` together with ``graph_store`` to
-        reconstruct the environment's metadata from graphs that are already
-        present in the store, instead of starting from an empty state.
+        ``init_from_store`` is deprecated. Use ``OntoEnv.adopt(path,
+        graph_store)`` for a persistent pre-populated store. For a
+        catalog-free temporary store, construct it normally and call
+        ``refresh_from_store(full=True)`` explicitly.
 
         Query indexes (PSO/POS/SPO/OSP posting lists and a transitive-closure
         table for property paths) are built in memory on first use from the
@@ -88,14 +125,12 @@ class OntoEnv:
         """
         ...
 
-    def refresh_from_store(self) -> None:
-        """Re-read all graphs from the attached graph store and rebuild the
-        environment's ontology metadata and import dependency graph.
-
-        Call this whenever the graph store has been mutated externally and
-        the in-memory view needs to catch up.  Only meaningful when the
-        environment was created with ``graph_store``.
-        """
+    def refresh_from_store(
+        self,
+        graphs: Optional[List[str]] = None,
+        full: bool = False,
+    ) -> SyncReport:
+        """Explicitly reconcile catalog metadata with the graph backend."""
         ...
 
     # ------------------------------------------------------------------ #

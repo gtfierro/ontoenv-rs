@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -24,6 +24,122 @@ const TERM_KIND_IRI: u8 = 0;
 const TERM_KIND_BNODE: u8 = 1;
 const TERM_KIND_LITERAL_INLINE: u8 = 2;
 const TERM_KIND_LITERAL_COMPONENTS: u8 = 3;
+
+#[cfg(not(windows))]
+fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let source: Vec<u16> = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: both paths are valid, NUL-terminated UTF-16 buffers which live
+    // for the duration of the call.
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Durably replace `path` with `bytes` while preserving the previous valid
+/// destination on every failure before the atomic rename.
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_write_before_replace(path, bytes, || Ok(()))
+}
+
+fn atomic_write_before_replace(
+    path: &Path,
+    bytes: &[u8],
+    before_replace: impl FnOnce() -> std::io::Result<()>,
+) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(R5Error::Io)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("rdf5d");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    let mut temporary = None;
+    for attempt in 0..100u32 {
+        let candidate = parent.join(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            nonce + u128::from(attempt)
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                temporary = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(R5Error::Io(error)),
+        }
+    }
+    let (temporary_path, mut temporary_file) = temporary.ok_or_else(|| {
+        R5Error::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not allocate a unique RDF5D temporary file",
+        ))
+    })?;
+
+    let result = (|| {
+        temporary_file.write_all(bytes).map_err(R5Error::Io)?;
+        temporary_file.flush().map_err(R5Error::Io)?;
+        temporary_file.sync_all().map_err(R5Error::Io)?;
+        drop(temporary_file);
+        before_replace().map_err(R5Error::Io)?;
+        atomic_replace(&temporary_path, path).map_err(R5Error::Io)?;
+        #[cfg(unix)]
+        {
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(R5Error::Io)?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    result
+}
 
 #[derive(Debug)]
 struct RawSpoBuild {
@@ -454,11 +570,7 @@ pub fn write_file_with_options<P: AsRef<Path>>(
     file.extend_from_slice(&crc.to_le_bytes());
     file.extend_from_slice(b"R5TU_ENDMARK");
 
-    // Atomic write (best-effort)
-    let tmp_path = path.as_ref().with_extension(".tmp.r5tu");
-    fs::write(&tmp_path, &file).map_err(R5Error::Io)?;
-    fs::rename(&tmp_path, path).map_err(R5Error::Io)?;
-    Ok(())
+    atomic_write(path.as_ref(), &file)
 }
 
 // ---------------- Streaming writer ----------------
@@ -724,10 +836,8 @@ impl StreamingWriter {
         file.extend_from_slice(&crc.to_le_bytes());
         file.extend_from_slice(b"R5TU_ENDMARK");
 
-        // Write
-        let tmp = self.path.with_extension(".tmp.r5tu");
-        fs::write(&tmp, &file).map_err(R5Error::Io)?;
-        fs::rename(&tmp, &self.path).map_err(R5Error::Io)?;
+        // Durably publish the completed snapshot.
+        atomic_write(&self.path, &file)?;
         Ok(self.stats)
     }
 
@@ -1710,4 +1820,33 @@ fn write_pair_index(buf: &mut Vec<u8>, pairs: &[(u32, u32, u64)]) -> Result<Sect
         off: off as u64,
         len: (buf.len() - off) as u64,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::io_other_error)] // Keep compatibility with the workspace's Rust 1.70 MSRV.
+mod atomic_write_tests {
+    use super::*;
+
+    #[test]
+    fn failure_before_replace_preserves_previous_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("catalog.r5tu");
+        fs::write(&destination, b"previous-valid-snapshot").unwrap();
+
+        let result = atomic_write_before_replace(&destination, b"replacement", || {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "injected pre-replace failure",
+            ))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"previous-valid-snapshot");
+        let leftovers: Vec<_> = fs::read_dir(directory.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+    }
 }

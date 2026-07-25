@@ -10,12 +10,9 @@
 from ontoenv import OntoEnv
 from rdflib import Graph
 
-# creates a new environment in the current directory, or loads
-# an existing one. To use a different directory, pass the 'path'
-# argument: OntoEnv(path="/path/to/env")
-# OntoEnv() will discover ontologies in the current directory and
-# its subdirectories
-env = OntoEnv()
+# Explicitly create a persistent environment. Later processes should reopen it
+# with OntoEnv.open(".") for a graph-free catalog warm start.
+env = OntoEnv.create(".")
 
 # add an ontology from a file path.
 # env.add returns the name of the ontology, which is its URI
@@ -115,6 +112,8 @@ class GraphStore:
     def copy_graph(self, iri: str) -> Graph: ...  # used for mutable copies (copy_*)
                                                   # falls back to get_graph when absent
     def size(self) -> dict[str, int]: ...         # returns {"num_graphs": ..., "num_triples": ...}
+    def store_state(self) -> dict[str, str]: ...  # {"id": opaque_id, "revision": opaque_revision}
+    def graph_revisions(self) -> dict[str, str]: ... # opaque revision per graph IRI
 ```
 
 `copy_graph` lets stores distinguish between returning a live view (`get_graph`) and a
@@ -129,7 +128,32 @@ store = DictGraphStore()
 env = OntoEnv(graph_store=store, temporary=True)
 ```
 
-`graph_store` is currently incompatible with `recreate` and `create_or_use_cached`.
+Persistent lifecycle is explicit:
+
+```python
+with OntoEnv.create("./new-env", graph_store=store) as env:
+    pass
+
+with OntoEnv.open("./existing-env", graph_store=store, read_only=True) as env:
+    pass
+
+# Import metadata from a pre-populated store. This never fetches network imports.
+with OntoEnv.adopt("./adopted-env", store) as env:
+    pass
+```
+
+`store_state()` enables O(1) drift detection on open. `graph_revisions()` enables
+`refresh_from_store()` to reconcile only changed graphs. Without per-graph
+revisions, use `graphs=[...]` or `full=True` explicitly.
+
+Temporary environments remain catalog-free. To scan a pre-populated temporary
+store without the deprecated `init_from_store` flag:
+
+```python
+env = OntoEnv(graph_store=store, temporary=True)
+report = env.refresh_from_store(full=True)
+print(report.added)
+```
 
 ## RDFLib store with Rust SPARQL
 

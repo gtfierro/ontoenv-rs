@@ -1,6 +1,7 @@
 //! Defines traits and implementations for handling graph input/output operations.
 //! This includes reading graphs from files and URLs, and interacting with persistent or in-memory stores.
 
+use crate::catalog::BackendState;
 use crate::errors::OfflineRetrievalError;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::options::Overwrite;
@@ -9,7 +10,6 @@ use crate::FailedImport;
 use anyhow::{anyhow, Error, Result};
 use blake3;
 use chrono::prelude::*;
-use fs2::FileExt;
 use log::{error, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{
@@ -21,7 +21,6 @@ use rdf5d::{
     writer::{Quint, StreamingWriter, Term as R5Term, WriterOptions},
 };
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -46,6 +45,39 @@ fn legacy_sidecar_path(r5tu: &Path) -> PathBuf {
     let mut s = r5tu.as_os_str().to_owned();
     s.push(".idx");
     PathBuf::from(s)
+}
+
+fn file_backend_state(path: &Path) -> Result<BackendState> {
+    // The store file does not exist for a newly-created empty environment.
+    // Canonicalize its existing parent so platform aliases such as macOS
+    // `/var` -> `/private/var` still produce the same backend identity before
+    // and after reopening through a differently-spelled path.
+    let identity_path = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(file_name)) => {
+            crate::ontology::canonicalize_file_path(parent).join(file_name)
+        }
+        _ => crate::ontology::canonicalize_file_path(path),
+    };
+    let identity = identity_path
+        .to_string_lossy()
+        .into_owned();
+    let revision = match std::fs::metadata(path) {
+        Ok(metadata) => {
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+            format!("{}:{modified}", metadata.len())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "missing".to_string(),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(BackendState {
+        id: format!("rdf5d:{identity}"),
+        revision,
+    })
 }
 
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
@@ -167,6 +199,17 @@ pub trait GraphIO: Send + Sync {
 
     /// Returns a reference to the underlying store
     fn store(&self) -> &Store;
+
+    /// Return an opaque backend identity and global revision in O(1), when
+    /// supported. The revision must change after every backend mutation.
+    fn store_state(&self) -> Result<Option<BackendState>> {
+        Ok(None)
+    }
+
+    /// Return opaque per-graph revisions, when supported.
+    fn graph_revisions(&self) -> Result<Option<HashMap<String, String>>> {
+        Ok(None)
+    }
 
     /// Returns the identifiers of all graphs currently held in the store.
     fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
@@ -409,8 +452,6 @@ pub struct PersistentGraphIO {
     r5_file: Option<R5tuFile>,
     r5_index: HashMap<String, R5GraphInfo>,
     loaded_graphs: Mutex<HashSet<String>>,
-    // Keep the interprocess lock alive for the lifetime of this IO
-    lock_file: File,
     dirty: bool,
     batch_depth: usize,
 }
@@ -426,26 +467,9 @@ pub const DEFAULT_CLOSURE_PREDICATES: &[&str] = &[
 
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
-        // Create or open a persistent store with an exclusive lock for writers.
-        // Ensure target directory exists before creating/locking files
+        // Locking is owned by the environment/catalog layer so custom and
+        // built-in graph backends share identical concurrency semantics.
         std::fs::create_dir_all(&path)?;
-        // Try to acquire an exclusive lock for writer; if any readers/writers hold the lock, error out immediately
-        let lock_path = path.join("store.lock");
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
-        if let Err(e) = lock_file.try_lock_exclusive() {
-            return Err(anyhow!(
-                "Failed to open OntoEnv store for write: could not acquire exclusive lock on {:?}: {}. If another process has the store open (even read-only), open this instance in read-only mode.",
-                lock_path, e
-            ));
-        }
-        // Small delay to ensure lock contention is observable in concurrent tests/processes.
-        // Keeps the lock held a bit longer so another writer will see it.
-        std::thread::sleep(std::time::Duration::from_millis(75));
         // On-disk file is an RDF5D `.r5tu` file; in-memory store is Oxigraph
         let store_path = path.join("store.r5tu");
         let store = Store::new()?;
@@ -476,39 +500,9 @@ impl PersistentGraphIO {
             r5_file,
             r5_index,
             loaded_graphs: Mutex::new(HashSet::new()),
-            lock_file,
             dirty: false,
             batch_depth: 0,
         })
-    }
-
-    fn load_r5tu_into_store(store: &Store, r5tu_path: &Path) -> Result<()> {
-        // Load the entire RDF5D file into the in-memory Oxigraph store.
-        let file = R5tuFile::open(r5tu_path)?;
-        // Enumerate all logical graphs and load triples into named graphs
-        let mut loader = store.bulk_loader();
-        for gr in file.enumerate_all()? {
-            let gname_str = gr.graphname;
-            let gnn = NamedNode::new(&gname_str)
-                .map_err(|e| anyhow!("Invalid graph name IRI in RDF5D: {}", e))?;
-            let graphname = GraphName::NamedNode(gnn);
-            // Iterate triples as Oxigraph terms (requires rdf5d `oxigraph` feature)
-            let triples = file.oxigraph_triples(gr.gid)?;
-            let mut quads_buf: Vec<Quad> = Vec::with_capacity(gr.n_triples as usize);
-            for res in triples {
-                let t = res.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
-                quads_buf.push(Quad::new(
-                    t.subject,
-                    t.predicate,
-                    t.object,
-                    graphname.clone(),
-                ));
-            }
-            // Bulk load per-graph to reduce overhead and keep ordering deterministic.
-            loader.load_quads(quads_buf)?;
-        }
-        loader.commit()?;
-        Ok(())
     }
 
     fn ensure_graph_loaded(&self, graphname: &str) -> Result<()> {
@@ -677,6 +671,10 @@ impl GraphIO for PersistentGraphIO {
         &self.store
     }
 
+    fn store_state(&self) -> Result<Option<BackendState>> {
+        Ok(Some(file_backend_state(&self.store_path)?))
+    }
+
     fn add_named_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
         let graphname = id.graphname()?;
         self.store.remove_named_graph(id.name())?;
@@ -813,33 +811,76 @@ pub struct ReadOnlyPersistentGraphIO {
     store: Store,
     offline: bool,
     store_path: PathBuf,
-    // Keep the shared interprocess lock alive for the lifetime of this IO
-    lock_file: File,
+    r5_file: Option<R5tuFile>,
+    r5_index: HashMap<String, R5GraphInfo>,
+    loaded_graphs: Mutex<HashSet<String>>,
 }
 
 impl ReadOnlyPersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool) -> Result<Self> {
-        // Open a persistent store in read-only mode with a shared lock.
-        // Acquire shared lock for readers; will block while a writer holds the exclusive lock
-        let lock_path = path.join("store.lock");
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
-        lock_file.lock_shared()?;
         let store_path = path.join("store.r5tu");
         let store = Store::new()?;
-        if store_path.exists() {
-            PersistentGraphIO::load_r5tu_into_store(&store, &store_path)?;
-        }
+        let (r5_file, r5_index) = if store_path.exists() {
+            let file = R5tuFile::open(&store_path)?;
+            let mut index = HashMap::new();
+            for graph in file.enumerate_all()? {
+                index.insert(
+                    graph.graphname.clone(),
+                    R5GraphInfo {
+                        gid: graph.gid,
+                        id: graph.id,
+                        n_triples: graph.n_triples,
+                    },
+                );
+            }
+            (Some(file), index)
+        } else {
+            (None, HashMap::new())
+        };
         Ok(Self {
             store,
             offline,
             store_path,
-            lock_file,
+            r5_file,
+            r5_index,
+            loaded_graphs: Mutex::new(HashSet::new()),
         })
+    }
+
+    fn ensure_graph_loaded(&self, graphname: &str) -> Result<()> {
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if loaded.contains(graphname) {
+            return Ok(());
+        }
+        let Some(info) = self.r5_index.get(graphname) else {
+            return Ok(());
+        };
+        let Some(file) = self.r5_file.as_ref() else {
+            return Ok(());
+        };
+        let graph_name = GraphName::NamedNode(
+            NamedNode::new(graphname)
+                .map_err(|error| anyhow!("Invalid graph name IRI in RDF5D: {error}"))?,
+        );
+        let triples = file.oxigraph_triples(info.gid)?;
+        let mut loader = self.store.bulk_loader();
+        let mut quads = Vec::with_capacity(info.n_triples as usize);
+        for triple in triples {
+            let triple = triple.map_err(|error| anyhow!("RDF5D read error: {error}"))?;
+            quads.push(Quad::new(
+                triple.subject,
+                triple.predicate,
+                triple.object,
+                graph_name.clone(),
+            ));
+        }
+        loader.load_quads(quads)?;
+        loader.commit()?;
+        loaded.insert(graphname.to_string());
+        Ok(())
     }
 }
 
@@ -850,15 +891,6 @@ impl Drop for PersistentGraphIO {
                 error!("Failed to flush RDF5D store on drop: {err}");
             }
         }
-        // Best-effort unlock on drop
-        let _ = self.lock_file.unlock();
-    }
-}
-
-impl Drop for ReadOnlyPersistentGraphIO {
-    fn drop(&mut self) {
-        // Best-effort unlock on drop
-        let _ = self.lock_file.unlock();
     }
 }
 
@@ -881,6 +913,37 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
 
     fn store(&self) -> &Store {
         &self.store
+    }
+
+    fn store_state(&self) -> Result<Option<BackendState>> {
+        Ok(Some(file_backend_state(&self.store_path)?))
+    }
+
+    fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
+        self.r5_index
+            .keys()
+            .map(|id| {
+                NamedNode::new(id)
+                    .map(|name| GraphIdentifier::new(name.as_ref()))
+                    .map_err(|error| anyhow!(error.to_string()))
+            })
+            .collect()
+    }
+
+    fn ensure_loaded(&self, id: &GraphIdentifier) -> Result<()> {
+        self.ensure_graph_loaded(id.name().as_str())
+    }
+
+    fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        self.ensure_graph_loaded(id.name().as_str())?;
+        let mut graph = Graph::new();
+        for quad in
+            self.store
+                .quads_for_pattern(None, None, None, Some(GraphNameRef::NamedNode(id.name())))
+        {
+            graph.insert(quad?.as_ref());
+        }
+        Ok(graph)
     }
 
     fn add_named_graph(&mut self, _id: GraphIdentifier, _graph: Graph) -> Result<()> {

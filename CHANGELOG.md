@@ -15,6 +15,12 @@ All notable changes to this project are documented here. Releases follow [Semant
 - `GraphIO::union_graph` now returns `(Dataset, Vec<FailedImport>)` — always best-effort: per-id errors (bad graphname, ensure_loaded failure, mid-graph store iteration error) are recorded in the failures list and the offending id is skipped, but the rest of the union is still assembled. The previous behavior silently dropped failures with no signal. `OntoEnv::get_union_graph` consumes the failures list: in **strict** mode any failure becomes an error; in **non-strict** mode the partial union is returned with `UnionGraph.failed_imports` populated so the caller knows what's missing.
 
 ### Added
+- An authoritative RDF5D metadata catalog at `.ontoenv/catalog.r5tu`, with
+  graph-free warm opens, automatic legacy JSON migration, backend drift
+  detection, recovery markers, explicit `create`/`open`/`adopt` lifecycle
+  APIs, and incremental/targeted/full graph-store synchronization reports.
+- Durable RDF5D snapshot replacement using unique same-directory temporary
+  files, file and directory synchronization, and atomic publication.
 - `OntoEnv.copy_graph(uri) -> rdflib.Graph` — materialize a mutable in-memory copy of a single ontology.
 - Pythonic container/context-manager protocols on `OntoEnv`: `len(env)`, `uri in env`, `env[uri]` (shorthand for `get_graph`), `for name in env` (iterates ontology URIs), and `with OntoEnv(...) as env:` (calls `close()` on exit). `bool(env)` is always `True` — use `env is None` to detect absence.
 - `OntoEnv.copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1) -> (Graph, list[str])` — materialize the flattened imports closure into a mutable `rdflib.Graph` (the view-returning `get_closure`'s mutable counterpart).

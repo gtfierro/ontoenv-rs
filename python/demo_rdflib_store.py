@@ -5,13 +5,14 @@ from rdflib import Literal, URIRef
 print(version)
 
 print("Make env")
-env = OntoEnv(
-    path=".demo-env",
+env = OntoEnv.create(
+    ".demo-env",
     recreate=True,
     strict=False,
     offline=True,
     search_directories=["../brick"],
 )
+env.update(all=True)
 print(env)
 
 print("add brick and persist rdf5d store")

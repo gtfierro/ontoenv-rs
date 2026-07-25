@@ -32,6 +32,13 @@ class DictGraphStore:
         }
 
 
+def temporary_env_from_store(store: DictGraphStore) -> OntoEnv:
+    """Build a catalog-free environment and deliberately scan the test store."""
+    env = OntoEnv(graph_store=store, temporary=True)
+    env.refresh_from_store(full=True)
+    return env
+
+
 TTL_DEMO = "\n".join(
     [
         "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
@@ -77,14 +84,16 @@ class TestPythonGraphStore(unittest.TestCase):
         store.add_graph(iri, g)
 
         # Creating OntoEnv with init_from_store=True should pick up the pre-existing graph.
-        env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        with self.assertWarnsRegex(DeprecationWarning, "init_from_store is deprecated"):
+            env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
         names = env.get_ontology_names()
         self.assertIn(iri, names, f"expected {iri} in {names}")
 
     def test_init_from_store_empty_store(self) -> None:
         """OntoEnv(init_from_store=True) on an empty store starts with zero ontologies."""
         store = DictGraphStore()
-        env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        with self.assertWarnsRegex(DeprecationWarning, "init_from_store is deprecated"):
+            env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
         self.assertEqual(env.get_ontology_names(), [])
 
     def test_refresh_from_store_reflects_external_changes(self) -> None:
@@ -93,7 +102,7 @@ class TestPythonGraphStore(unittest.TestCase):
         from rdflib.namespace import OWL, RDF
 
         store = DictGraphStore()
-        env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        env = temporary_env_from_store(store)
 
         # Environment starts empty.
         self.assertEqual(env.get_ontology_names(), [])
@@ -123,7 +132,7 @@ class TestPythonGraphStore(unittest.TestCase):
         g.add((URIRef(iri), RDF.type, OWL.Ontology))
         store.add_graph(iri, g)
 
-        env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        env = temporary_env_from_store(store)
         self.assertIn(iri, env.get_ontology_names())
 
         # Remove the graph from the store externally.
@@ -160,7 +169,7 @@ class TestTransientGraphQueries(unittest.TestCase):
         base_g.add((URIRef(base_iri), OWL.imports, URIRef(dep_iri)))
         store.add_graph(base_iri, base_g)
 
-        env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        env = temporary_env_from_store(store)
         return env, base_iri, dep_iri
 
     # ---- list_closure ----
@@ -261,7 +270,7 @@ class TestTransientGraphQueries(unittest.TestCase):
         mid_g.add((URIRef(mid_iri), RDF.type, OWL.Ontology))
         mid_g.add((URIRef(mid_iri), OWL.imports, URIRef(ghost_iri)))
         store_ext.add_graph(mid_iri, mid_g)
-        env2 = OntoEnv(graph_store=store_ext, temporary=True, init_from_store=True)
+        env2 = temporary_env_from_store(store_ext)
 
         # transient imports mid (which imports ghost, which is absent)
         transient = G()
@@ -307,7 +316,7 @@ class TestPythonGraphStoreReadParity(unittest.TestCase):
         base_g.add((URIRef(self.BASE), URIRef(self.P), Literal("base-value")))
         store.add_graph(self.BASE, base_g)
 
-        return OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        return temporary_env_from_store(store)
 
     def _content_values(self, graph):
         from rdflib import URIRef
@@ -438,7 +447,7 @@ class TestCopyGetParity(unittest.TestCase):
         base_g.add((URIRef(self.BASE), URIRef(self.P), Literal("base-value")))
         store.add_graph(self.BASE, base_g)
 
-        return OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        return temporary_env_from_store(store)
 
     def test_copy_graph_matches_get_graph(self) -> None:
         env = self._env()
@@ -530,7 +539,7 @@ class TestCopyDispatch(unittest.TestCase):
         base_g.add((URIRef(self.BASE), URIRef(self.P), Literal("base-value")))
         store.add_graph(self.BASE, base_g)
 
-        return OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        return temporary_env_from_store(store)
 
     def _has_marker(self, graph, subject_iri: str) -> bool:
         from rdflib import Literal, URIRef

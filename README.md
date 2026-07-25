@@ -61,7 +61,7 @@ print(f"Closure has {len(g)} triples")
 
 When initialized, `ontoenv` searches configured directories for ontology declarations, identifies their `owl:imports`, and recursively pulls in dependencies. The central operation is computing the *imports closure*: the set of all ontologies transitively required by a given root, optionally merged into a single flat graph.
 
-**Implementation:** Built in Rust using [oxigraph](https://github.com/oxigraph/oxigraph) as the internal RDF store and [petgraph](https://github.com/petgraph/petgraph) for dependency graph traversal. Python bindings are generated via [PyO3](https://pyo3.rs/). Persistent on-disk state uses a compact binary format (RDF5D) at `.ontoenv/store.r5tu` with single-writer/shared-reader locking.
+**Implementation:** Built in Rust using [oxigraph](https://github.com/oxigraph/oxigraph) as the internal RDF store and [petgraph](https://github.com/petgraph/petgraph) for dependency graph traversal. Python bindings are generated via [PyO3](https://pyo3.rs/). Persistent graph content uses RDF5D at `.ontoenv/store.r5tu`; authoritative environment metadata uses `.ontoenv/catalog.r5tu`. Both are protected by environment-wide single-writer/shared-reader locking.
 
 **Design goals:**
 - **Lightweight** — usable from a Python library or CLI without a heavyweight GUI
@@ -89,7 +89,14 @@ Ontologies fetched from a URL often declare a different (usually versioned) onto
 |---|---|
 | `.ontoenv/` | Environment directory |
 | `.ontoenv/store.r5tu` | RDF5D persistent store |
+| `.ontoenv/catalog.r5tu` | Authoritative, versioned environment metadata catalog |
+| `.ontoenv/catalog.pending` | Recovery marker for an interrupted graph/catalog mutation |
 | `.ontoenv/store.lock` | File lock (single writer, shared readers) |
+
+Warm opens read only `ontoenv.json`, `catalog.r5tu`, and O(1) backend state when
+available. They do not materialize ontology graphs. Legacy `environment.json`
+metadata is migrated automatically when its graph IDs match the backend;
+legacy JSON files are retained but ignored after migration.
 
 Set `ONTOENV_DIR` to override the environment location. Logging is controlled via `ONTOENV_LOG` or `RUST_LOG`.
 
@@ -220,6 +227,30 @@ with tempfile.TemporaryDirectory() as temp_dir:
     print(f"Closure of ontology_b has {len(g)} triples")  # → 2
 ```
 
+### Persistent Lifecycle
+
+Use explicit lifecycle methods for persistent environments:
+
+```python
+from ontoenv import OntoEnv
+
+# Create a new, empty environment. Fails if one already exists.
+with OntoEnv.create("./my-env") as env:
+    env.add("./ontologies/site.ttl")
+
+# Reopen from catalog metadata without reading ontology graphs.
+with OntoEnv.open("./my-env", read_only=True) as env:
+    print(env.get_ontology_names())
+
+# Deliberately scan an existing custom graph store once.
+with OntoEnv.adopt("./adopted-env", graph_store) as env:
+    print(env.get_ontology_names())
+```
+
+`OntoEnv.adopt(...)` never fetches network imports. For out-of-band graph-store
+changes, use `refresh_from_store()`, `refresh_from_store(graphs=[...])`, or the
+deliberate full scan `refresh_from_store(full=True)`.
+
 ### Constructor
 
 ```python
@@ -246,6 +277,9 @@ OntoEnv(
 
 **Environment modes:**
 - `temporary=True` — in-memory only, no `.ontoenv/`
+- `OntoEnv.create(path)` — create a persistent empty environment
+- `OntoEnv.open(path, read_only=False)` — require and load an existing catalog
+- `OntoEnv.adopt(path, graph_store)` — scan an existing store and create its catalog
 - `recreate=True` — explicitly create (or overwrite) at `path`
 - `create_or_use_cached=True` — bootstrap a new environment if none is found, otherwise reuse existing
 - Default — walk up from `path` (or `root`) to find an existing `.ontoenv/`; raise `FileNotFoundError` if not found

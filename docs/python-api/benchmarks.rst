@@ -1,6 +1,21 @@
 Benchmarks
 ==========
 
+Catalog warm starts
+-------------------
+
+``python/bench_catalog_warm_start.py`` adopts synthetic one-graph stores with
+1 and 124,000 triples, then repeatedly opens their catalog-backed environments.
+On an Apple Silicon development machine both averaged about 10 ms per open
+(9.75 ms and 9.95 ms respectively), and neither warm loop invoked
+``get_graph``. This demonstrates that normal open cost follows catalog record
+count rather than ontology triple count.
+
+.. code-block:: bash
+
+   cd python
+   uv run python bench_catalog_warm_start.py
+
 This page compares read-only ``get_*`` views against materialized ``copy_*``
 graphs, with the default rdflib ``Memory`` store and the ``oxrdflib`` Oxigraph
 store as reference points.

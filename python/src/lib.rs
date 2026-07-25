@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Error, Result};
 use chrono::prelude::*;
-use ontoenv::api::{find_ontoenv_root_from, OntoEnv as OntoEnvRs, ResolveTarget};
+use ontoenv::api::{
+    find_ontoenv_root_from, OntoEnv as OntoEnvRs, ResolveTarget, SyncMode, SyncReport,
+};
+use ontoenv::catalog::BackendState;
 use ontoenv::config;
 use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ontoenv::errors::OfflineRetrievalError;
@@ -22,13 +25,14 @@ use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
-    types::{IntoPyDict, PyDict, PyList, PySet, PyString, PyStringMethods, PyTuple},
+    types::{IntoPyDict, PyDict, PyList, PySet, PyString, PyStringMethods, PyTuple, PyType},
 };
 use rand::random;
 use rdf5d::{DecodedTerm, Pattern, Scope, Snapshot};
 use spareval::{QueryEvaluator, QueryResults as SpareQueryResults};
 use spargebra::SparqlParser;
 use std::borrow::{Borrow, Cow};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
@@ -38,8 +42,72 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
+thread_local! {
+    static EXPLICIT_ADOPT: Cell<bool> = const { Cell::new(false) };
+}
+
+pyo3::create_exception!(
+    ontoenv,
+    ExternalStoreChangedError,
+    pyo3::exceptions::PyRuntimeError
+);
+pyo3::create_exception!(
+    ontoenv,
+    CatalogRecoveryError,
+    pyo3::exceptions::PyRuntimeError
+);
+pyo3::create_exception!(
+    ontoenv,
+    StoreCapabilityError,
+    pyo3::exceptions::PyRuntimeError
+);
+
 fn anyhow_to_pyerr(e: Error) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+    let message = e.to_string();
+    if message.contains("ExternalStoreChangedError") {
+        PyErr::new::<ExternalStoreChangedError, _>(message)
+    } else if message.contains("recovery required") {
+        PyErr::new::<CatalogRecoveryError, _>(message)
+    } else if message.contains("does not implement graph_revisions") {
+        PyErr::new::<StoreCapabilityError, _>(message)
+    } else {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(message)
+    }
+}
+
+#[pyclass(name = "SyncReport", module = "ontoenv", skip_from_py_object)]
+#[derive(Clone)]
+struct PySyncReport {
+    #[pyo3(get)]
+    mode: String,
+    #[pyo3(get)]
+    added: Vec<String>,
+    #[pyo3(get)]
+    changed: Vec<String>,
+    #[pyo3(get)]
+    removed: Vec<String>,
+    #[pyo3(get)]
+    unchanged: Vec<String>,
+    #[pyo3(get)]
+    still_pending: Vec<String>,
+}
+
+impl From<SyncReport> for PySyncReport {
+    fn from(report: SyncReport) -> Self {
+        Self {
+            mode: match report.mode {
+                SyncMode::Incremental => "incremental",
+                SyncMode::Targeted => "targeted",
+                SyncMode::Full => "full",
+            }
+            .to_string(),
+            added: report.added,
+            changed: report.changed,
+            removed: report.removed,
+            unchanged: report.unchanged,
+            still_pending: report.still_pending,
+        }
+    }
 }
 
 fn pyerr_to_anyhow(e: PyErr) -> Error {
@@ -935,6 +1003,45 @@ impl GraphIO for PythonGraphIO {
 
     fn store(&self) -> &Store {
         &self.scratch
+    }
+
+    fn store_state(&self) -> Result<Option<BackendState>> {
+        self.with_store(|_py, store| {
+            if !store.hasattr("store_state").map_err(pyerr_to_anyhow)? {
+                return Ok(None);
+            }
+            let value = store.call_method0("store_state").map_err(pyerr_to_anyhow)?;
+            let mapping = value
+                .cast::<PyDict>()
+                .map_err(|error| anyhow!(error.to_string()))?;
+            let id = mapping
+                .get_item("id")
+                .map_err(pyerr_to_anyhow)?
+                .ok_or_else(|| anyhow!("store_state() must return an 'id'"))?;
+            let revision = mapping
+                .get_item("revision")
+                .map_err(pyerr_to_anyhow)?
+                .ok_or_else(|| anyhow!("store_state() must return a 'revision'"))?;
+            Ok(Some(BackendState {
+                id: pyany_to_string(&id).map_err(pyerr_to_anyhow)?,
+                revision: pyany_to_string(&revision).map_err(pyerr_to_anyhow)?,
+            }))
+        })
+    }
+
+    fn graph_revisions(&self) -> Result<Option<HashMap<String, String>>> {
+        self.with_store(|_py, store| {
+            if !store.hasattr("graph_revisions").map_err(pyerr_to_anyhow)? {
+                return Ok(None);
+            }
+            let value = store
+                .call_method0("graph_revisions")
+                .map_err(pyerr_to_anyhow)?;
+            value
+                .extract::<HashMap<String, String>>()
+                .map(Some)
+                .map_err(pyerr_to_anyhow)
+        })
     }
 
     fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
@@ -3409,6 +3516,122 @@ impl OntoEnv {
 
 #[pymethods]
 impl OntoEnv {
+    #[classmethod]
+    #[pyo3(signature = (path, graph_store=None, **options))]
+    fn create(
+        cls: &Bound<'_, PyType>,
+        path: PathBuf,
+        graph_store: Option<Py<PyAny>>,
+        options: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<OntoEnv>> {
+        let kwargs = PyDict::new(cls.py());
+        if let Some(options) = options {
+            kwargs.update(options.as_mapping())?;
+        }
+        let recreate = kwargs
+            .get_item("recreate")?
+            .map(|value| value.extract::<bool>())
+            .transpose()?
+            .unwrap_or(false);
+        let overwrite = kwargs
+            .get_item("overwrite")?
+            .map(|value| value.extract::<bool>())
+            .transpose()?
+            .unwrap_or(false);
+        kwargs.del_item("overwrite").ok();
+        let root = if path.file_name() == Some(OsStr::new(".ontoenv")) {
+            path.parent().unwrap_or(Path::new(".")).to_path_buf()
+        } else {
+            path.clone()
+        };
+        if root.join(".ontoenv").exists() && !(recreate || overwrite) {
+            return Err(PyErr::new::<pyo3::exceptions::PyFileExistsError, _>(
+                format!(
+                    "OntoEnv already exists at {}",
+                    root.join(".ontoenv").display()
+                ),
+            ));
+        }
+        let custom_store = graph_store.is_some();
+        if custom_store && root.join(".ontoenv").exists() && (recreate || overwrite) {
+            std::fs::remove_dir_all(root.join(".ontoenv"))
+                .map_err(|error| anyhow_to_pyerr(error.into()))?;
+        }
+        kwargs.set_item("path", path)?;
+        // The legacy constructor uses recreate=True as its explicit create
+        // path; existence was checked above so this cannot overwrite
+        // accidentally.
+        kwargs.set_item("recreate", !custom_store)?;
+        kwargs.set_item("use_cached_ontologies", true)?;
+        if let Some(store) = graph_store {
+            kwargs.set_item("graph_store", store)?;
+        }
+        cls.call((), Some(&kwargs))?
+            .extract::<Py<OntoEnv>>()
+            .map_err(|error| PyErr::new::<pyo3::exceptions::PyTypeError, _>(error.to_string()))
+    }
+
+    #[classmethod]
+    #[pyo3(signature = (path, graph_store=None, read_only=false, **options))]
+    fn open(
+        cls: &Bound<'_, PyType>,
+        path: PathBuf,
+        graph_store: Option<Py<PyAny>>,
+        read_only: bool,
+        options: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<OntoEnv>> {
+        let kwargs = PyDict::new(cls.py());
+        if let Some(options) = options {
+            kwargs.update(options.as_mapping())?;
+        }
+        kwargs.set_item("path", path)?;
+        kwargs.set_item("read_only", read_only)?;
+        if let Some(store) = graph_store {
+            kwargs.set_item("graph_store", store)?;
+        }
+        cls.call((), Some(&kwargs))?
+            .extract::<Py<OntoEnv>>()
+            .map_err(|error| PyErr::new::<pyo3::exceptions::PyTypeError, _>(error.to_string()))
+    }
+
+    #[classmethod]
+    #[pyo3(signature = (path, graph_store, overwrite=false, **options))]
+    fn adopt(
+        cls: &Bound<'_, PyType>,
+        path: PathBuf,
+        graph_store: Py<PyAny>,
+        overwrite: bool,
+        options: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<OntoEnv>> {
+        let root = if path.file_name() == Some(OsStr::new(".ontoenv")) {
+            path.parent().unwrap_or(Path::new(".")).to_path_buf()
+        } else {
+            path.clone()
+        };
+        let catalog_path = root.join(".ontoenv").join(ontoenv::catalog::CATALOG_FILE);
+        if catalog_path.exists() && !overwrite {
+            return Err(PyErr::new::<pyo3::exceptions::PyFileExistsError, _>(
+                format!(
+                    "OntoEnv catalog already exists at {}",
+                    catalog_path.display()
+                ),
+            ));
+        }
+        let kwargs = PyDict::new(cls.py());
+        if let Some(options) = options {
+            kwargs.update(options.as_mapping())?;
+        }
+        kwargs.set_item("path", path)?;
+        kwargs.set_item("graph_store", graph_store)?;
+        kwargs.set_item("init_from_store", true)?;
+        EXPLICIT_ADOPT.with(|flag| flag.set(true));
+        let result = cls.call((), Some(&kwargs));
+        EXPLICIT_ADOPT.with(|flag| flag.set(false));
+        result?
+            .extract::<Py<OntoEnv>>()
+            .map_err(|error| PyErr::new::<pyo3::exceptions::PyTypeError, _>(error.to_string()))
+    }
+
     #[new]
     #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
     #[allow(clippy::too_many_arguments)]
@@ -3434,6 +3657,14 @@ impl OntoEnv {
         graph_store: Option<Py<PyAny>>,
         init_from_store: bool,
     ) -> PyResult<Self> {
+        if init_from_store && !EXPLICIT_ADOPT.with(Cell::get) {
+            PyErr::warn(
+                _py,
+                &_py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                c"init_from_store is deprecated; use OntoEnv.adopt(...) for first-time adoption",
+                1,
+            )?;
+        }
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
         if root_path
@@ -3495,7 +3726,15 @@ impl OntoEnv {
             cfg.external_graph_store = Some(desc);
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
                 .map_err(anyhow_to_pyerr)?;
-            let env = if init_from_store {
+            let catalog_exists = cfg
+                .root
+                .join(".ontoenv")
+                .join(ontoenv::catalog::CATALOG_FILE)
+                .exists();
+            let explicit_adopt = EXPLICIT_ADOPT.with(Cell::get);
+            let env = if !cfg.temporary && catalog_exists && !explicit_adopt {
+                OntoEnvRs::open_with_graph_io(cfg, Box::new(io), read_only)
+            } else if init_from_store {
                 OntoEnvRs::new_with_graph_io_from_existing(cfg, Box::new(io))
             } else {
                 OntoEnvRs::new_with_graph_io(cfg, Box::new(io))
@@ -3591,15 +3830,21 @@ impl OntoEnv {
         result
     }
 
-    /// Re-reads all graphs from the attached graph store and rebuilds the environment's
-    /// ontology metadata and import dependency graph.  Call this whenever the graph store
-    /// has been mutated externally and you need OntoEnv's view to catch up.
-    fn refresh_from_store(&self) -> PyResult<()> {
+    /// Reconcile catalog metadata with the attached graph store.
+    #[pyo3(signature = (graphs=None, full=false))]
+    fn refresh_from_store(
+        &self,
+        graphs: Option<Vec<String>>,
+        full: bool,
+    ) -> PyResult<PySyncReport> {
         let mut guard = self.inner.lock().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let result = env.refresh_from_graph_io().map_err(anyhow_to_pyerr);
+        let result = env
+            .refresh_from_store(graphs, full)
+            .map(PySyncReport::from)
+            .map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -5345,8 +5590,21 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = env_logger::try_init();
 
     m.add_class::<OntoEnv>()?;
+    m.add_class::<PySyncReport>()?;
     m.add_class::<PyOntology>()?;
     m.add_class::<PyRdfLibStoreBackend>()?;
+    m.add(
+        "ExternalStoreChangedError",
+        m.py().get_type::<ExternalStoreChangedError>(),
+    )?;
+    m.add(
+        "CatalogRecoveryError",
+        m.py().get_type::<CatalogRecoveryError>(),
+    )?;
+    m.add(
+        "StoreCapabilityError",
+        m.py().get_type::<StoreCapabilityError>(),
+    )?;
     m.add_function(wrap_pyfunction!(run_cli, m)?)?;
     m.add_function(wrap_pyfunction!(is_debug_build, m)?)?;
     // add version attribute

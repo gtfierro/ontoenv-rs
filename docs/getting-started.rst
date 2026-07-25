@@ -143,9 +143,8 @@ The Python API exposes the same configuration surface as the CLI:
 
    from ontoenv import OntoEnv
 
-   env = OntoEnv(
-       path=".",                    # look for (or create) .ontoenv here
-       recreate=True,               # create/overwrite metadata
+   env = OntoEnv.create(
+       ".",
        search_directories=["."],    # scan the current project
        includes=["*.ttl", "*.xml"],
        include_ontologies=[r"^https://example\.com/"],
@@ -166,6 +165,31 @@ The Python API exposes the same configuration surface as the CLI:
 
 Pass ``use_cached_ontologies=True`` to start with an empty container that only fills when you
 explicitly call ``add`` or ``update``.
+
+Persistent lifecycle
+--------------------
+
+Use the explicit lifecycle entry points when the environment should survive the
+current process:
+
+.. code-block:: python
+
+   # Create a new catalog. Fails if an environment already exists.
+   with OntoEnv.create("./environment") as env:
+       env.add("./ontologies/site.ttl")
+
+   # Warm open: load catalog metadata without reading ontology graphs.
+   with OntoEnv.open("./environment", read_only=True) as env:
+       print(env.get_ontology_names())
+
+   # Deliberately scan an existing custom graph store exactly once.
+   with OntoEnv.adopt("./adopted-environment", graph_store) as env:
+       print(env.get_ontology_names())
+
+``adopt`` does not fetch network imports. Out-of-band store mutations must be
+reconciled explicitly with ``refresh_from_store()`` (when revisions are
+available), ``refresh_from_store(graphs=[...])``, or
+``refresh_from_store(full=True)``.
 
 Building the docs
 -----------------

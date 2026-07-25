@@ -104,7 +104,7 @@ def test_backend_rdf5d_rejects_temporary_and_graph_store_envs(temporary_env: Ont
         temporary_env.snapshot_as_dataset(backend="rdf5d")
 
     store = DictGraphStore()
-    external_env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+    external_env = OntoEnv(graph_store=store, temporary=True)
     try:
         with pytest.raises(ValueError, match="backend='rdf5d'"):
             external_env.snapshot_as_dataset(backend="rdf5d")

@@ -1,11 +1,23 @@
+from pathlib import Path
+
 from ontoenv import OntoEnv, version
 from rdflib import Graph
 
 
 print(version)
 
-print("Make env. Fetching all ontologies in ../brick and their dependencies, and caching them locally. This may take a minute the first time, but will be fast on subsequent runs.")
-env = OntoEnv(search_directories=["../brick"], strict=False, offline=False, create_or_use_cached=True)
+print("Open the catalog, or create it on the first run.")
+if Path(".ontoenv/catalog.r5tu").exists():
+    # Warm start: this loads catalog metadata without reading ontology graphs.
+    env = OntoEnv.open(".")
+else:
+    env = OntoEnv.create(
+        ".",
+        search_directories=["../brick"],
+        strict=False,
+        offline=False,
+    )
+    env.update(all=True)
 print(env)
 
 # returns fast, read-only closure graph plus the contributing ontology names
@@ -23,10 +35,10 @@ print(f"Brick graph has {len(brick)} triples after importing dependencies")
 # add a new graph to the env
 brick_name = env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
 print(f"Added {brick_name} to env")
-del env
+env.close()
 
-# creating a new ontoenv in this way will try to reuse the cached store if it exists, so this should be fast and have the same content as the previous env
-env2 = OntoEnv(create_or_use_cached=True)
+# Reopening reads catalog metadata and should be fast regardless of triple count.
+env2 = OntoEnv.open(".")
 print(env2.store_path())
 
 print("get brick again from URL")
@@ -56,3 +68,5 @@ print("qudtqk deps", env2.get_importers("http://qudt.org/2.1/vocab/quantitykind"
 ds = env2.get_dataset()
 for graph in list(ds.graphs()):
     print(f"Graph {graph.identifier} has {len(graph)} triples")
+
+env2.close()

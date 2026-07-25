@@ -39,6 +39,11 @@ Pass a ``graph_store=`` object to ``OntoEnv()``. It must implement the following
            cursor vs. an in-memory snapshot).</li>
        <li><code>size() → dict[str, int]</code>
            — return <code>{"num_graphs": …, "num_triples": …}</code> for diagnostic use.</li>
+       <li><code>store_state() → dict[str, str]</code>
+           — return opaque <code>id</code> and <code>revision</code> strings for O(1)
+           identity and external-drift detection.</li>
+       <li><code>graph_revisions() → dict[str, str]</code>
+           — return an opaque revision for each graph, enabling incremental refresh.</li>
      </ul>
    </div>
 
@@ -94,3 +99,29 @@ A minimal in-memory store and how to register it:
 
    env.add("./ontologies/my.ttl")
    print(store.graph_ids())   # ['https://example.com/myOntology']
+
+For a pre-populated temporary store, request the scan explicitly:
+
+.. code-block:: python
+
+   env = OntoEnv(graph_store=store, temporary=True)
+   report = env.refresh_from_store(full=True)
+   print(report.added)
+
+Persistent stores should use the explicit lifecycle methods:
+
+.. code-block:: python
+
+   with OntoEnv.create("./new-environment", graph_store=store) as env:
+       pass
+
+   with OntoEnv.open("./existing-environment", graph_store=store) as env:
+       pass
+
+   with OntoEnv.adopt("./adopted-environment", store) as env:
+       pass
+
+``adopt`` and ``refresh_from_store(full=True)`` are the only operations that
+deliberately scan every stored graph. A normal open trusts ``catalog.r5tu`` and
+never calls ``get_graph``. If ``graph_revisions`` is unavailable, call
+``refresh_from_store(graphs=[...])`` or request ``full=True``.

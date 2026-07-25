@@ -754,12 +754,12 @@ exr:RootClass a owl:Class .
             encoding="utf-8",
         )
 
-        self.env.add(str(a_path))
-        self.env.add(str(b_path))
-        self.env.add(str(c_path))
-        self.env.add(str(d_path))
-        self.env.add(str(e_path))
-        self.env.add(str(f_path))
+        self.env.add(str(a_path), fetch_imports=False)
+        self.env.add(str(b_path), fetch_imports=False)
+        self.env.add(str(c_path), fetch_imports=False)
+        self.env.add(str(d_path), fetch_imports=False)
+        self.env.add(str(e_path), fetch_imports=False)
+        self.env.add(str(f_path), fetch_imports=False)
 
         g = Graph()
         root = URIRef("http://ex.org/A")
@@ -1441,8 +1441,8 @@ ex:B a owl:Class .
             encoding="utf-8",
         )
         self.env = OntoEnv(path=self.test_dir, recreate=True)
-        self.env.add(str(a_path))
-        self.env.add(str(b_path))
+        self.env.add(str(a_path), fetch_imports=False)
+        self.env.add(str(b_path), fetch_imports=False)
 
         with self.assertRaises(ValueError) as ctx:
             self.env.copy_closure("http://ex.org/A", rewrite_sh_prefixes=True)
@@ -1559,5 +1559,4 @@ ex:B a owl:Class .
             )
         finally:
             os.unlink(ttl_path)
-
 

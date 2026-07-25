@@ -72,7 +72,7 @@ Commands: status and inspection
 
    # generate a full dependency graph PDF
    ontoenv dep-graph
-   # limit to one root's subgraph
+   # limit to a single root subgraph
    ontoenv dep-graph https://brickschema.org/schema/Brick -o brick_deps.pdf
 
    # check for environment problems

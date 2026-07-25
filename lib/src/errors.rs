@@ -20,3 +20,42 @@ impl fmt::Display for OfflineRetrievalError {
 }
 
 impl std::error::Error for OfflineRetrievalError {}
+
+#[derive(Debug)]
+pub struct ExternalStoreChangedError {
+    pub message: String,
+}
+
+impl fmt::Display for ExternalStoreChangedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ExternalStoreChangedError: {}", self.message)
+    }
+}
+
+impl std::error::Error for ExternalStoreChangedError {}
+
+#[derive(Debug)]
+pub struct CatalogRecoveryError {
+    pub message: String,
+}
+
+impl fmt::Display for CatalogRecoveryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "OntoEnv recovery required: {}", self.message)
+    }
+}
+
+impl std::error::Error for CatalogRecoveryError {}
+
+#[derive(Debug)]
+pub struct StoreCapabilityError {
+    pub message: String,
+}
+
+impl fmt::Display for StoreCapabilityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Store capability unavailable: {}", self.message)
+    }
+}
+
+impl std::error::Error for StoreCapabilityError {}
