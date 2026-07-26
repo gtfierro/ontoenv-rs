@@ -1713,6 +1713,48 @@ impl OntoEnv {
         self.add_with_options(location, overwrite, refresh, true)
     }
 
+    /// Best-effort variant of [`Self::add`] for resolving an `owl:imports` target.
+    ///
+    /// In non-strict mode, an unavailable root location is returned as `Ok(None)`.
+    /// The surrounding IO batch is still committed, so a tolerated lookup failure
+    /// cannot leave a recovery marker behind. Other failures, and all failures in
+    /// strict mode, are returned as errors.
+    pub fn try_add_import(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+    ) -> Result<Option<GraphIdentifier>> {
+        let location = self.resolve_location(location);
+        let previous_failures = self.failed_resolutions.clone();
+        self.with_io_batch(move |env| {
+            let result =
+                env.add_with_options_inner(location.clone(), overwrite, refresh, true, None);
+
+            // `add_with_seed_inner` resets per-call failures. Import resolution can
+            // make several best-effort attempts in one higher-level operation, so
+            // retain every target that is still unresolved.
+            env.failed_resolutions.extend(previous_failures);
+            env.failed_resolutions
+                .retain(|import| env.env.get_ontology_by_name(import.into()).is_none());
+
+            match result {
+                Ok(id) => Ok(Some(id)),
+                Err(err)
+                    if !env.config.strict
+                        && matches!(&location, OntologyLocation::Url(url) if {
+                            NamedNode::new(url.clone())
+                                .is_ok_and(|node| env.failed_resolutions.contains(&node))
+                        }) =>
+                {
+                    warn!("Could not resolve optional import {location}: {err}");
+                    Ok(None)
+                }
+                Err(err) => Err(err),
+            }
+        })
+    }
+
     /// Add the ontology from the given location to the environment, but do not
     /// explore its owl:imports. It will be added to the dependency graph and
     /// edges will be created if its imports are already present in the environment.
@@ -2584,7 +2626,10 @@ impl OntoEnv {
     /// Returns a list of all imports that could not be resolved.
     pub fn missing_imports(&self) -> Vec<NamedNode> {
         // Report imports that are not resolvable within the current environment.
-        let mut missing = HashSet::new();
+        // Include best-effort targets attempted from transient caller graphs: those
+        // graphs are not catalogued, so their declarations cannot be rediscovered
+        // by scanning ontology metadata below.
+        let mut missing = self.failed_resolutions.clone();
         for ontology in self.env.ontologies().values() {
             for import in &ontology.imports {
                 if self.env.get_ontology_by_name(import.as_ref()).is_none() {

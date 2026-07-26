@@ -340,6 +340,34 @@ def test_brick_style_non_strict_imports_commit_cleanly(tmp_path: Path) -> None:
     reopened.close()
 
 
+def test_import_dependencies_tracks_all_transient_unresolved_imports(
+    tmp_path: Path,
+) -> None:
+    """BuildingMOTIF's import path commits cleanly and gives every miss one type."""
+    store = RevisionStore()
+    root = "https://brickschema.org/schema/Brick"
+    missing = [f"https://example.invalid/brick-import-{index}" for index in range(8)]
+    graph = ontology_graph(root)
+    for imported in missing:
+        graph.add((URIRef(root), OWL.imports, URIRef(imported)))
+
+    environment = OntoEnv.create(
+        tmp_path,
+        graph_store=store,
+        strict=False,
+        offline=True,
+    )
+
+    assert environment.import_dependencies(graph, fetch_missing=True) == []
+    assert not (tmp_path / ".ontoenv" / "catalog.pending").exists()
+    assert set(environment.missing_imports()) == set(missing)
+    for imported in missing:
+        with pytest.raises(UnresolvedImportError, match=imported):
+            environment.copy_graph(imported)
+
+    environment.close()
+
+
 def test_connect_creates_empty_custom_environment(tmp_path: Path) -> None:
     store = RevisionStore()
 

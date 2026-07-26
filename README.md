@@ -94,7 +94,7 @@ Ontologies fetched from a URL often declare a different (usually versioned) onto
 | `.ontoenv/` | Environment directory |
 | `.ontoenv/store.r5tu` | RDF5D persistent store |
 | `.ontoenv/catalog.r5tu` | Authoritative, versioned environment metadata catalog |
-| `.ontoenv/catalog.pending` | Recovery marker for an interrupted graph/catalog mutation |
+| `.ontoenv/catalog.pending` | Recovery marker for an interrupted graph/catalog mutation; successful operations, including tolerated non-strict import misses, remove it |
 | `.ontoenv/store.lock` | File lock (single writer, shared readers) |
 
 Warm opens read only `ontoenv.json`, `catalog.r5tu`, and O(1) backend state when
@@ -320,10 +320,25 @@ Return a read-only `ViewGraph` over the full closure by IRI. Persistent local en
 Copy the full closure by IRI into a mutable graph. `sh:prefixes` blocks are consolidated onto `uri` and `owl:imports` removed by default. Returns `(merged_graph, closure_iris)`. Use when you want a self-contained graph for reasoning, exchange, or export.
 
 **`import_dependencies(graph, fetch_missing=False)`**
-Mutates the provided graph in-place. Reads its `owl:imports` statements, resolves each one transitively, merges all closure triples into the same graph, removes `owl:imports`, and rewrites `sh:prefixes` onto the graph's root. Returns `list[str]` of imported IRIs.
+Mutates the provided graph in-place. Reads its `owl:imports` statements,
+resolves each one transitively, merges all available closure triples into the
+same graph, and rewrites `sh:prefixes` onto the graph's root. Once at least one
+dependency resolves, all `owl:imports` statements are removed from the merged
+graph; if none resolve, the input graph is left unchanged. Returns `list[str]`
+of imported IRIs.
+
+With `fetch_missing=True`, imports not already in the environment are fetched.
+In non-strict mode, unavailable imports are recorded and skipped; completing
+this best-effort operation does not leave `.ontoenv/catalog.pending`, including
+when no target can be fetched. In strict mode, an unavailable import aborts the
+operation with its underlying error.
 
 **`get_dependencies(graph, graph_name=None, fetch_missing=False)`**
-Same closure as `import_dependencies` but never modifies the original graph. Returns a new graph. Without `graph_name`, each ontology retains its own `owl:Ontology` declaration. With `graph_name`, all declarations are collapsed onto that single IRI and `sh:prefixes` are rewritten onto it. Returns `(deps_graph, list[str])`.
+Same best-effort resolution and marker behavior as `import_dependencies` but
+never modifies the original graph. Returns a new graph. Without `graph_name`,
+each ontology retains its own `owl:Ontology` declaration. With `graph_name`,
+all declarations are collapsed onto that single IRI and `sh:prefixes` are
+rewritten onto it. Returns `(deps_graph, list[str])`.
 
 ### Other Methods
 
@@ -333,7 +348,7 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 | `add(location, fetch_imports=True) -> str` | Add ontology by file path, URL, or `rdflib.Graph`; returns IRI |
 | `add_no_imports(location) -> str` | Same as `add`, but skips import traversal |
 | `get_graph(name) -> Graph` | Read-only store-backed view of a single ontology (no closure expansion). Mutation raises `ValueError` |
-| `copy_graph(name, graph=None) -> Graph` | Mutable in-memory copy of a single ontology |
+| `copy_graph(name, graph=None) -> Graph` | Mutable in-memory copy of a single ontology; raises `UnresolvedImportError` for a known unresolved import |
 | `get_closure(name, ...) -> (ViewGraph, list[str])` | Read-only closure view; mmap-backed for persistent local envs, normalized in memory otherwise; same triple set as `copy_closure` |
 | `copy_closure(name, graph=None, ...) -> (Graph, list[str])` | Mutable in-memory copy of the imports closure |
 | `iter_triples(name)` / `iter_closure_triples(name, recursion_depth=-1)` | Streaming triple iterators that skip the rdflib `Graph` wrapper |
@@ -354,7 +369,9 @@ Same closure as `import_dependencies` but never modifies the original graph. Ret
 **`missing_imports(uri=None) -> list[str]`**
 Returns a list of `owl:imports` IRIs that could not be resolved in the environment.
 
-- `uri=None` — scans every ontology in the environment and returns the de-duplicated union of all unresolvable imports.
+- `uri=None` — returns the de-duplicated union of unresolvable imports declared
+  by catalogued ontologies and currently recorded targets encountered by
+  best-effort fetching for transient caller graphs.
 - `uri="http://..."` — walks the full transitive `owl:imports` closure of the given ontology and returns every import IRI that cannot be found, including those declared by transitively-imported ontologies.
 
 ```python
@@ -364,6 +381,11 @@ missing = env.missing_imports()
 # Missing imports reachable from a specific ontology
 missing = env.missing_imports("http://example.org/ont/MyOntology")
 ```
+
+Passing any target reported by `missing_imports()` to `copy_graph()` raises
+`UnresolvedImportError`, a `LookupError` subclass. An arbitrary unknown IRI
+that was never declared or attempted is still a normal lookup `ValueError`;
+parsing and graph-store failures retain their own error types.
 
 ---
 

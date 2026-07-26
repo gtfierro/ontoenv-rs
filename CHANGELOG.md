@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Fixed
+- Non-strict `import_dependencies(..., fetch_missing=True)` and
+  `get_dependencies(..., fetch_missing=True)` now commit tolerated unresolved
+  imports without leaving `catalog.pending`, and every attempted unresolved
+  target retained in the current environment state is classified as
+  `UnresolvedImportError` by `copy_graph`, including targets originating in
+  best-effort fetches for transient caller graphs.
+
 ## [0.6.0] — 2026-07-26
 
 ### Changed (breaking)
@@ -56,8 +64,9 @@ All notable changes to this project are documented here. Releases follow [Semant
 - Top-level re-exports `ontoenv.dataset_from_env` and `ontoenv.refresh_dataset_from_env` — use `env.get_dataset(...)` and `env.refresh_dataset(...)` instead. The functions still exist in `ontoenv.rdflib_store` as the underlying implementation.
 
 ### Fixed
-- Successful non-strict ingestion with unresolved imports no longer leaves a
-  recovery marker; the partial environment remains reopenable.
+- Successful non-strict `add`/`add_from_bytes` ingestion with unresolved
+  imports no longer leaves a recovery marker; the partial environment remains
+  reopenable.
 - Writable persistent stores enumerate graph IDs from their lazy RDF5D
   directory, allowing non-empty 0.5 catalogs to migrate without a false
   backend-mismatch error.

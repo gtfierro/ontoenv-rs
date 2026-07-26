@@ -68,10 +68,20 @@ Recovery scans one stable backend snapshot. If the backend changes or a graph
 cannot be read during the scan, recovery fails and leaves its marker in place
 so it can be retried safely.
 
-Non-strict import loading remains best-effort. A known unresolved
-``owl:imports`` target passed to ``copy_graph`` raises
-``UnresolvedImportError``; other lookup, parsing, and backend errors retain
-their own error paths, so consumers do not need to match message strings.
+Non-strict import loading remains best-effort. Completed
+``import_dependencies(..., fetch_missing=True)`` and
+``get_dependencies(..., fetch_missing=True)`` calls commit their partial
+results and remove ``catalog.pending`` even when imports remain unavailable.
+The recovery marker is reserved for an interrupted or failed commit.
+
+Any known unresolved ``owl:imports`` target passed to ``copy_graph`` raises
+``UnresolvedImportError``. This includes direct and indirect imports declared
+by catalogued ontologies as well as targets attempted while fetching dependencies
+for a transient caller graph and retained in the current environment state.
+Arbitrary never-seen graph IRIs
+remain lookup ``ValueError`` failures, and parsing and backend errors retain
+their own error paths, so consumers do not need to catch ``ValueError``
+broadly for expected missing imports.
 
 Toolchain support
 -----------------

@@ -7,7 +7,7 @@
 ## Usage
 
 ```python
-from ontoenv import OntoEnv
+from ontoenv import OntoEnv, UnresolvedImportError
 from rdflib import Graph
 
 # Connect creates on first use and graph-free warm-opens on later runs.
@@ -54,17 +54,26 @@ in_memory.parse(data="""
 in_memory_name = env.add(in_memory)
 print(f"Added in-memory ontology {in_memory_name}")
 
-# if you have an rdflib.Graph with an owl:Ontology declaration,
+# if you have an rdflib.Graph with an owl:imports declaration,
 # you can transitively import its dependencies into the graph
 g = Graph()
-# this graph just has one triple: the ontology declaration for Brick
 g.parse(data="""
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
-<https://brickschema.org/schema/1.4-rc1/Brick> a owl:Ontology .
-""")
-# this will load all of the owl:imports of the Brick ontology into 'g'
-env.import_dependencies(g)
+<http://example.com/application> a owl:Ontology ;
+    owl:imports <https://brickschema.org/schema/1.4/Brick> .
+""", format="turtle")
+# Fetch imports not already cached and merge the available closure into g.
+# In non-strict mode unavailable imports are skipped without leaving a
+# catalog.pending recovery marker.
+env.import_dependencies(g, fetch_missing=True)
 print(f"Graph with imported dependencies has {len(g)} triples")
+
+# Known unresolved targets have a dedicated exception type.
+for missing in env.missing_imports():
+    try:
+        env.copy_graph(missing)
+    except UnresolvedImportError:
+        print(f"Import is unavailable: {missing}")
 env.close()
 ```
 

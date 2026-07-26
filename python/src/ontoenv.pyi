@@ -13,7 +13,12 @@ class CatalogRecoveryError(RuntimeError):
     """An interrupted mutation requires :meth:`OntoEnv.recover` before opening."""
 
 class UnresolvedImportError(LookupError):
-    """An ``owl:imports`` target could not be resolved or loaded."""
+    """A known ``owl:imports`` target could not be resolved or loaded.
+
+    Raised by :meth:`OntoEnv.copy_graph` for targets declared by a catalogued
+    ontology or attempted during best-effort dependency fetching. Arbitrary
+    unknown graph IRIs continue to raise ``ValueError``.
+    """
 
 class StoreCapabilityError(RuntimeError): ...
 
@@ -321,6 +326,9 @@ class OntoEnv:
         With a custom ``graph_store=``: if the store implements
         ``copy_graph(iri)`` that method is called; otherwise falls back to
         ``get_graph(iri)``.
+
+        Raises :class:`UnresolvedImportError` when *uri* is a currently known
+        unresolved import. An arbitrary unknown graph IRI raises ``ValueError``.
         """
         ...
 
@@ -504,7 +512,9 @@ class OntoEnv:
 
         Returns the list of ontology IRIs that were merged.
         Set ``fetch_missing=True`` to fetch imports that are not yet in the
-        environment.
+        environment. In non-strict mode, unavailable imports are recorded and
+        skipped, and a completed best-effort call does not leave a catalog
+        recovery marker. In strict mode, an unavailable import aborts the call.
         """
         ...
 
@@ -520,7 +530,8 @@ class OntoEnv:
         Similar to ``import_dependencies`` but returns a *new* graph
         containing only the dependencies (the input graph is not modified).
         *graph_name* overrides the ontology IRI used for sh:prefixes
-        rewriting.
+        rewriting. It has the same strict/non-strict fetch and recovery-marker
+        behavior as ``import_dependencies``.
         """
         ...
 
@@ -532,7 +543,9 @@ class OntoEnv:
 
         *uri* may be:
 
-        * ``None`` — scan every ontology in the environment and return the
+        * ``None`` — include unresolved imports from every ontology plus
+          currently recorded best-effort fetch attempts made for transient
+          graphs.
           union of all unresolvable imports (de-duplicated).
         * a **string IRI** of an ontology already in the environment — walk
           its full transitive closure and return every unresolvable import.

@@ -93,7 +93,9 @@ Key methods
   single ontology IRI. Mutation raises ``ValueError``; use ``copy_graph`` when you need
   to add or remove triples locally.
 - ``env.copy_graph(name, graph=None)`` — Materialize a mutable in-memory
-  ``rdflib.Graph`` copy of the named ontology.
+  ``rdflib.Graph`` copy of the named ontology. A currently known unresolved
+  import raises ``UnresolvedImportError``; an arbitrary unknown IRI raises
+  ``ValueError``.
 - ``env.get_closure(name, recursion_depth=-1)`` — Return ``(view, closure_names)`` where
   ``view`` is a read-only :py:class:`ontoenv.ViewGraph` over the ontology named ``name``
   plus all its transitive imports. The view presents a single flattened, de-duplicated
@@ -122,7 +124,12 @@ Key methods
   imports closure. Skip the ``rdflib.Graph`` wrapper entirely; closure iteration does
   *not* de-duplicate across named graphs.
 - ``env.import_dependencies(graph, fetch_missing=False)`` — Mutate an ``rdflib.Graph`` in
-  place, inserting triples from all ontologies declared in its ``owl:imports`` statements.
+  place, inserting triples from available ontologies declared in its ``owl:imports``
+  statements. With ``fetch_missing=True``, non-strict mode records and skips unavailable
+  targets without leaving a recovery marker.
+- ``env.get_dependencies(graph, graph_name=None, fetch_missing=False)`` — Perform the same
+  dependency resolution without modifying the caller's graph. It has the same
+  strict/non-strict and recovery-marker behavior as ``import_dependencies``.
 
 **Alias management** — route multiple IRIs to a single canonical ontology:
 
@@ -148,9 +155,13 @@ Key methods
 - ``OntoEnv.recover(path, graph_store=None)`` — Rebuild the catalog after
   ``CatalogRecoveryError`` without manually deleting OntoEnv-owned files.
 
-An unresolved ``owl:imports`` target passed to ``copy_graph`` raises
-``UnresolvedImportError`` (a ``LookupError``), allowing consumers to distinguish
-an expected missing import from parsing, storage, and other failures.
+A known unresolved ``owl:imports`` target passed to ``copy_graph`` raises
+``UnresolvedImportError`` (a ``LookupError``). Known targets include imports
+declared by catalogued ontologies and currently recorded targets encountered while
+fetching dependencies for a transient graph, including indirect imports. This lets
+consumers catch one type for expected missing imports while parsing, storage, and
+other failures retain their own error paths. An arbitrary unknown graph IRI that
+was never declared or attempted remains a normal lookup ``ValueError``.
 
 PSO/POS/SPO/OSP posting-list indexes are built in memory when an rdf5d snapshot is bound;
 the transitive-closure table for supported property paths is built lazily on first use.

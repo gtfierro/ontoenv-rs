@@ -69,7 +69,7 @@ pyo3::create_exception!(
     ontoenv,
     UnresolvedImportError,
     pyo3::exceptions::PyLookupError,
-    "An owl:imports target could not be resolved or loaded."
+    "A known owl:imports target could not be resolved or loaded."
 );
 pyo3::create_exception!(
     ontoenv,
@@ -4496,8 +4496,11 @@ impl OntoEnv {
     /// Import the dependencies referenced by `owl:imports` triples in `graph`.
     ///
     /// When `fetch_missing` is true, the environment attempts to download unresolved imports
-    /// before computing the closure. After merging the closure triples into `graph`, all
-    /// `owl:imports` statements are removed. The returned list contains the deduplicated ontology
+    /// before computing the closure. In non-strict mode, unavailable imports are recorded and
+    /// skipped, and the completed best-effort operation does not leave a recovery marker. In
+    /// strict mode, an unavailable import aborts the operation. If at least one dependency
+    /// resolves, its closure is merged into `graph` and all `owl:imports` statements are removed;
+    /// if none resolve, `graph` is unchanged. The returned list contains the deduplicated ontology
     /// IRIs that were successfully imported.
     #[pyo3(signature = (graph, recursion_depth=-1, fetch_missing=false))]
     fn import_dependencies<'a>(
@@ -4557,10 +4560,11 @@ impl OntoEnv {
 
             if graphid.is_none() && fetch_missing {
                 let location = OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache) {
-                    Ok(new_id) => {
+                match env.try_add_import(location, Overwrite::Preserve, RefreshStrategy::UseCache) {
+                    Ok(Some(new_id)) => {
                         graphid = Some(new_id);
                     }
+                    Ok(None) => {}
                     Err(e) => {
                         if is_strict {
                             return Err(anyhow_to_pyerr(e));
@@ -4665,7 +4669,9 @@ impl OntoEnv {
     ///         are left distributed and no root is imposed.
     ///     recursion_depth (int): The maximum depth for recursive import resolution. A
     ///         negative value (default) means no limit.
-    ///     fetch_missing (bool): If True, will fetch ontologies that are not in the environment.
+    ///     fetch_missing (bool): If True, fetch ontologies that are not in the environment.
+    ///         In non-strict mode unavailable targets are recorded and skipped without leaving
+    ///         a recovery marker; strict mode returns an error.
     ///
     /// Returns:
     ///     tuple[rdflib.Graph, list[str]]: A tuple containing the populated dependency graph and the sorted list of
@@ -4713,10 +4719,11 @@ impl OntoEnv {
 
             if graphid.is_none() && fetch_missing {
                 let location = OntologyLocation::from_str(uri.as_str()).map_err(anyhow_to_pyerr)?;
-                match env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache) {
-                    Ok(new_id) => {
+                match env.try_add_import(location, Overwrite::Preserve, RefreshStrategy::UseCache) {
+                    Ok(Some(new_id)) => {
                         graphid = Some(new_id);
                     }
+                    Ok(None) => {}
                     Err(e) => {
                         if is_strict {
                             return Err(anyhow_to_pyerr(e));
@@ -5008,8 +5015,8 @@ impl OntoEnv {
     ///
     /// ``uri`` may be:
     ///
-    /// * ``None`` — scans every ontology in the environment and returns the
-    ///   union of all unresolvable imports (de-duplicated).
+    /// * ``None`` — scans every ontology and includes currently recorded
+    ///   best-effort fetch failures for transient caller graphs (de-duplicated).
     /// * a string IRI of an ontology already in the environment — walks its
     ///   full transitive closure and returns every unresolvable import IRI.
     /// * an ``rdflib.Graph`` not yet in the environment — extracts its direct
@@ -5384,6 +5391,10 @@ impl OntoEnv {
     /// fetched via the backend's ``get_graph`` method rather than the
     /// internal oxigraph store, so the returned graph always reflects what
     /// the Python store holds.
+    ///
+    /// Raises ``UnresolvedImportError`` when `uri` is a currently known unresolved
+    /// import. An arbitrary unknown graph IRI raises ``ValueError``; parsing and
+    /// backend failures retain their own error types.
     #[pyo3(signature = (uri, graph = None))]
     fn copy_graph(
         &self,

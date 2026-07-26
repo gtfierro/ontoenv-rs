@@ -224,6 +224,14 @@ to delete OntoEnv-owned files themselves. The backend must remain unchanged
 during the scan; a concurrent mutation or unreadable graph aborts recovery and
 leaves the marker in place for a safe retry.
 
+Normal completed mutations remove the marker as part of their commit. This
+also applies to best-effort dependency loading: in non-strict mode,
+``import_dependencies(..., fetch_missing=True)`` and
+``get_dependencies(..., fetch_missing=True)`` may skip unavailable imports,
+but the completed partial result is committed and does not leave
+``catalog.pending``. A marker left after such a call indicates an actual
+interruption or commit failure, not merely an unresolved import.
+
 Temporary work
 --------------
 
