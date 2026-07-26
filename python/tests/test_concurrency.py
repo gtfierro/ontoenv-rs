@@ -1,6 +1,7 @@
 import unittest
 import shutil
 import multiprocessing
+import os
 from pathlib import Path
 from ontoenv import OntoEnv
 
@@ -131,6 +132,13 @@ class TestOntoEnvReadOnlyConcurrency(unittest.TestCase):
         env.flush()
         env.close()
 
+        # A read-only open must not rewrite metadata on close. Apart from being
+        # unnecessary, replacing the mmap-backed catalog fails on Windows while
+        # another reader still has the original file open.
+        catalog_path = self.test_dir / ".ontoenv" / "catalog.r5tu"
+        fixed_timestamp_ns = 1_000_000_000
+        os.utime(catalog_path, ns=(fixed_timestamp_ns, fixed_timestamp_ns))
+
         # Now, concurrently open the same store as read-only from two processes
         ctx = multiprocessing.get_context("spawn")
         q = ctx.Queue()
@@ -155,6 +163,7 @@ class TestOntoEnvReadOnlyConcurrency(unittest.TestCase):
         results = {r1, r2}
         self.assertIn(("ok", name_a), results)
         self.assertIn(("ok", name_b), results)
+        self.assertEqual(catalog_path.stat().st_mtime_ns, fixed_timestamp_ns)
 
 
 class TestOntoEnvRWConcurrency(unittest.TestCase):

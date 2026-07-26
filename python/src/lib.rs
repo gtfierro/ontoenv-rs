@@ -3140,6 +3140,7 @@ fn snapshot_signature(path: &Path) -> Option<SnapshotSignature> {
 struct OntoEnv {
     inner: Arc<Mutex<Option<OntoEnvRs>>>,
     cache: Arc<Mutex<DatasetCache>>,
+    read_only: bool,
 }
 
 /// Streaming iterator over ``(subject, predicate, object)`` tuples of
@@ -3390,6 +3391,7 @@ impl OntoEnv {
             OntoEnv {
                 inner: self.inner.clone(),
                 cache: self.cache.clone(),
+                read_only: self.read_only,
             },
         )?;
         kwargs.set_item("env", env_obj)?;
@@ -3488,6 +3490,7 @@ impl OntoEnv {
                 OntoEnv {
                     inner: self.inner.clone(),
                     cache: self.cache.clone(),
+                    read_only: self.read_only,
                 },
             )?;
             store.call_method1("refresh_from_env", (env_obj,))?;
@@ -3847,6 +3850,7 @@ impl OntoEnv {
             return Ok(OntoEnv {
                 inner,
                 cache: Arc::new(Mutex::new(DatasetCache::default())),
+                read_only,
             });
         }
 
@@ -3911,6 +3915,7 @@ impl OntoEnv {
         Ok(OntoEnv {
             inner: inner.clone(),
             cache: Arc::new(Mutex::new(DatasetCache::default())),
+            read_only,
         })
     }
 
@@ -5462,6 +5467,7 @@ impl OntoEnv {
             OntoEnv {
                 inner: self.inner.clone(),
                 cache: self.cache.clone(),
+                read_only: self.read_only,
             },
         )?;
         let kwargs = PyDict::new(py);
@@ -5507,6 +5513,7 @@ impl OntoEnv {
             OntoEnv {
                 inner: self.inner.clone(),
                 cache: self.cache.clone(),
+                read_only: self.read_only,
             },
         )?;
         refresh.call1((dataset, env_obj))?;
@@ -5668,7 +5675,9 @@ impl OntoEnv {
             let inner = self.inner.clone();
             let mut guard = inner.lock().unwrap();
             if let Some(env) = guard.as_mut() {
-                env.save_to_directory().map_err(anyhow_to_pyerr)?;
+                if !self.read_only {
+                    env.save_to_directory().map_err(anyhow_to_pyerr)?;
+                }
                 env.flush().map_err(anyhow_to_pyerr)?;
             }
             *guard = None;
