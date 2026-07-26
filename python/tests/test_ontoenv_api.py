@@ -318,9 +318,11 @@ class TestOntoEnvAPI(unittest.TestCase):
         root_path = self.test_dir / "eqroot.ttl"
         mid_path = self.test_dir / "eqmid.ttl"
         leaf_path = self.test_dir / "eqleaf.ttl"
+        unrelated_path = self.test_dir / "equnrelated.ttl"
         root_iri = root_path.resolve().as_uri()
         mid_iri = mid_path.resolve().as_uri()
         leaf_iri = leaf_path.resolve().as_uri()
+        unrelated_iri = unrelated_path.resolve().as_uri()
 
         leaf_path.write_text(
             f"""
@@ -359,11 +361,25 @@ exr:RootClass a owl:Class .
 """,
             encoding="utf-8",
         )
+        unrelated_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+<{unrelated_iri}> a owl:Ontology ;
+    sh:prefixes <{unrelated_iri}> ;
+    sh:declare [
+        sh:prefix "unrelated" ;
+        sh:namespace "http://example.com/unrelated#"
+    ] .
+""",
+            encoding="utf-8",
+        )
 
         self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
         self.env.add(str(leaf_path))
         self.env.add(str(mid_path))
         self.env.add(str(root_path))
+        self.env.add(str(unrelated_path))
         return root_iri, [root_iri, mid_iri, leaf_iri]
 
     def test_get_closure_matches_copy_closure_set_semantics(self):

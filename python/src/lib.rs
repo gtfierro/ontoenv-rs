@@ -1182,6 +1182,41 @@ impl GraphIO for PythonGraphIO {
         (dataset, failures)
     }
 
+    /// Assemble a read-only union through `get_graph`, never `copy_graph`.
+    ///
+    /// This keeps `get_closure` on a custom store faithful to the store's
+    /// read path while still allowing its materialized fallback to apply the
+    /// same closure transforms as the rdf5d-backed view.
+    fn view_union_graph(&self, ids: &[GraphIdentifier]) -> (OxDataset, Vec<FailedImport>) {
+        let mut dataset = OxDataset::new();
+        let mut failures: Vec<FailedImport> = Vec::new();
+        for id in ids {
+            let graph_name = match id.graphname() {
+                Ok(gn) => gn,
+                Err(e) => {
+                    failures.push(FailedImport::new(id.clone(), e.to_string()));
+                    continue;
+                }
+            };
+            match self.get_graph(id) {
+                Ok(graph) => {
+                    for triple in graph.iter() {
+                        dataset.insert(&Quad::new(
+                            triple.subject.into_owned(),
+                            triple.predicate.into_owned(),
+                            triple.object.into_owned(),
+                            graph_name.clone(),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    failures.push(FailedImport::new(id.clone(), e.to_string()));
+                }
+            }
+        }
+        (dataset, failures)
+    }
+
     fn size(&self) -> Result<StoreStats> {
         self.with_store(|py, store| {
             if store.hasattr("size").map_err(pyerr_to_anyhow)? {
@@ -2953,12 +2988,9 @@ impl PyRdfLibStoreBackend {
     /// `get_graph`/`get_union` paths keep using the shared (patch = `None`)
     /// backend, so they are unaffected.
     ///
-    /// Returns `Some(backend)` for the rdf5d (mmap) backend — a brand-new
-    /// `_RdfLibStoreBackend` whose snapshot is shared via `Arc` (no re-mmap,
-    /// no index rebuild). Returns `None` for the materialized (`copy`) backend
-    /// used by temporary / custom-`graph_store=` envs: the closure patch is
-    /// defined over an rdf5d `Snapshot`, so there the caller falls back to the
-    /// shared backend and `get_closure` yields a raw merged view.
+    /// The rdf5d backend shares the mmap snapshot and adds a lazy patch.
+    /// Materialized closure views are constructed directly and never call
+    /// this method.
     fn closure_view_backend(
         &self,
         config: &ClosureViewConfig,
@@ -2987,9 +3019,30 @@ impl PyRdfLibStoreBackend {
                     term_cache: Arc::new(Mutex::new(HashMap::new())),
                 }))
             }
-            RdfLibStoreBackend::EnvSnapshotMaterialized { .. } => Ok(None),
+            RdfLibStoreBackend::EnvSnapshotMaterialized { .. } => {
+                Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                    "rdf5d closure patch requested from a materialized backend",
+                ))
+            }
         }
     }
+}
+
+fn instantiate_view_graph(
+    py: Python<'_>,
+    backend: Py<PyAny>,
+    names: &[String],
+) -> PyResult<Py<PyAny>> {
+    let rdflib_store = py.import("ontoenv.rdflib_store")?;
+    let scope_items: Vec<Py<PyAny>> = names
+        .iter()
+        .map(|n| PyString::new(py, n).into_any().unbind())
+        .collect();
+    let scope = PyTuple::new(py, scope_items)?.into_any().unbind();
+    Ok(rdflib_store
+        .getattr("ViewGraph")?
+        .call1((backend, scope, py.None()))?
+        .unbind())
 }
 
 fn build_view_graph(
@@ -2998,7 +3051,6 @@ fn build_view_graph(
     names: &[String],
     config: Option<&ClosureViewConfig>,
 ) -> PyResult<Py<PyAny>> {
-    let rdflib_store = py.import("ontoenv.rdflib_store")?;
     let shared_backend = dataset
         .bind(py)
         .getattr("store")?
@@ -3006,9 +3058,8 @@ fn build_view_graph(
         .unbind();
     // For a closure view over the rdf5d backend, build a dedicated backend
     // sharing the same mmap snapshot but carrying the closure patch. The
-    // materialized (`copy`) backend has no snapshot to patch, so it falls back
-    // to the shared backend (a raw merged view). `get_union` passes `None` and
-    // always reuses the shared backend.
+    // materialized closure views are built directly without this helper.
+    // `get_union` passes `None` and reuses the shared backend.
     let backend: Py<PyAny> = match config {
         Some(cfg) => {
             let shared_ref = shared_backend.extract::<PyRef<PyRdfLibStoreBackend>>(py)?;
@@ -3022,16 +3073,7 @@ fn build_view_graph(
         }
         None => shared_backend,
     };
-    let scope_items: Vec<Py<PyAny>> = names
-        .iter()
-        .map(|n| PyString::new(py, n).into_any().unbind())
-        .collect();
-    let scope = PyTuple::new(py, scope_items)?.into_any().unbind();
-    let view = rdflib_store
-        .getattr("ViewGraph")?
-        .call1((backend, scope, py.None()))?
-        .unbind();
-    Ok(view)
+    instantiate_view_graph(py, backend, names)
 }
 
 /// Internal cache for the lazily-built Dataset used by [`OntoEnv::get_graph`].
@@ -5041,14 +5083,15 @@ impl OntoEnv {
     /// The returned object is a :py:class:`ontoenv.ViewGraph` — a lightweight,
     /// non-``rdflib.Graph`` view that delegates triple-pattern lookups to the
     /// Rust backend scoped to the closure's named graphs, so it behaves like
-    /// a merged graph without materializing one. Mutation raises
-    /// ``ValueError``; use :py:meth:`copy_closure` for a mutable in-memory
-    /// merge.
+    /// a merged graph. Persistent rdf5d environments apply the transform
+    /// without materializing triples; temporary and custom-store environments
+    /// use a normalized in-memory fallback. Mutation raises ``ValueError``;
+    /// use :py:meth:`copy_closure` for a mutable in-memory merge.
     ///
-    /// As a *closure* view (vs :py:meth:`get_union`), this lazily applies the
-    /// closure transforms over the mmap scan so it returns the **same triple
-    /// set** as :py:meth:`copy_closure` — a single flattened, de-duplicated
-    /// graph — without materializing a copy:
+    /// As a *closure* view (vs :py:meth:`get_union`), this returns the **same
+    /// triple set** as :py:meth:`copy_closure` — a single flattened,
+    /// de-duplicated graph. The persistent rdf5d path applies these transforms
+    /// lazily over the mmap scan:
     ///
     /// - resolved ``owl:imports`` (targets inside the closure) are stripped,
     /// - ontology declarations are collapsed onto the root (and the root is
@@ -5057,7 +5100,7 @@ impl OntoEnv {
     ///
     /// Set ``remove_owl_imports=False`` to keep resolved ``owl:imports``, or
     /// ``rewrite_sh_prefixes=False`` to leave SHACL prefixes untouched
-    /// (both matching ``get_union``'s raw semantics).
+    /// (ontology declarations are still collapsed onto the root).
     #[pyo3(signature = (uri, recursion_depth = -1, remove_owl_imports = true, rewrite_sh_prefixes = true))]
     fn get_closure(
         &self,
@@ -5067,7 +5110,7 @@ impl OntoEnv {
         remove_owl_imports: bool,
         rewrite_sh_prefixes: bool,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let names = {
+        let (requested_root, root_id, closure, names, has_rdf5d_snapshot) = {
             let iri = NamedNode::new(uri)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
@@ -5075,26 +5118,78 @@ impl OntoEnv {
             let env = guard.as_ref().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
-            let graphid = env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("No graph with URI: {uri}"))
-            })?;
+            let graphid = env
+                .resolve(ResolveTarget::Graph(iri.clone()))
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "No graph with URI: {uri}"
+                    ))
+                })?;
             let closure = env
                 .get_closure(&graphid, recursion_depth)
                 .map_err(anyhow_to_pyerr)?;
-            closure
-                .into_iter()
-                .map(|id| id.to_uri_string())
-                .collect::<Vec<_>>()
+            let names = closure
+                .iter()
+                .map(GraphIdentifier::to_uri_string)
+                .collect::<Vec<_>>();
+            let has_rdf5d_snapshot = env.store_path().is_some_and(|path| {
+                path.file_name().is_some_and(|name| name == "store.r5tu") && path.is_file()
+            });
+            (iri, graphid, closure, names, has_rdf5d_snapshot)
         };
 
-        let dataset = self.cached_view_dataset(py)?;
-        let config = ClosureViewConfig {
-            root_iri: uri.to_string(),
-            closure_iris: names.clone(),
-            remove_owl_imports,
-            rewrite_sh_prefixes,
+        if has_rdf5d_snapshot {
+            let dataset = self.cached_view_dataset(py)?;
+            let config = ClosureViewConfig {
+                root_iri: requested_root.as_str().to_string(),
+                closure_iris: names.clone(),
+                remove_owl_imports,
+                rewrite_sh_prefixes,
+            };
+            let view = build_view_graph(py, &dataset, &names, Some(&config))?;
+            return Ok((view, names));
+        }
+
+        // No rdf5d term-ID space is available. Build only the requested
+        // closure (not a full cached environment Dataset), normalize it
+        // through the read path, and expose that snapshot as read-only.
+        let materialized_dataset = {
+            let inner = self.inner.clone();
+            let guard = inner.lock().unwrap();
+            let env = guard.as_ref().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
+            })?;
+            let union = env
+                .get_view_union_graph(
+                    &closure,
+                    requested_root.as_ref(),
+                    Some(rewrite_sh_prefixes),
+                    Some(remove_owl_imports),
+                )
+                .map_err(anyhow_to_pyerr)?;
+            let root_graph = GraphName::NamedNode(root_id.name().into_owned());
+            let mut flattened = OxDataset::new();
+            for quad in union.dataset.iter() {
+                flattened.insert(&Quad::new(
+                    quad.subject.into_owned(),
+                    quad.predicate.into_owned(),
+                    quad.object.into_owned(),
+                    root_graph.clone(),
+                ));
+            }
+            Arc::new(flattened)
         };
-        let view = build_view_graph(py, &dataset, &names, Some(&config))?;
+        let backend = Py::new(
+            py,
+            PyRdfLibStoreBackend {
+                backend: Arc::new(Mutex::new(RdfLibStoreBackend::EnvSnapshotMaterialized {
+                    dataset: materialized_dataset,
+                })),
+                term_cache: Arc::new(Mutex::new(HashMap::new())),
+            },
+        )?
+        .into_any();
+        let view = instantiate_view_graph(py, backend, &names)?;
         Ok((view, names))
     }
 

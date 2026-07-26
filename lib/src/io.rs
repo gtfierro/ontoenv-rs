@@ -355,6 +355,16 @@ pub trait GraphIO: Send + Sync {
         (dataset, failures)
     }
 
+    /// Returns the best-effort union used by read-only view construction.
+    ///
+    /// Most backends have identical read and copy semantics, so the default
+    /// delegates to [`Self::union_graph`]. Backends that distinguish a live
+    /// read view from a detached copy should override this method and assemble
+    /// the union through [`Self::get_graph`].
+    fn view_union_graph(&self, ids: &[GraphIdentifier]) -> (Dataset, Vec<FailedImport>) {
+        self.union_graph(ids)
+    }
+
     fn flush(&mut self) -> Result<()> {
         #[cfg(feature = "rocksdb")]
         return self

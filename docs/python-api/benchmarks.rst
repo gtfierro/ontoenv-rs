@@ -21,7 +21,7 @@ graphs, with the default rdflib ``Memory`` store and the ``oxrdflib`` Oxigraph
 store as reference points.
 
 The benchmark is in ``python/bench_rdflib_store.py``. It loads the Brick 1.4.4
-ontology and its imports closure (15 graphs, ~223k triples) into an
+ontology and its imports closure (15 graphs, ~237k triples) into an
 ``OntoEnv``, then times a handful of operations across four
 ``rdflib``-compatible backends:
 
@@ -48,6 +48,12 @@ Running it
 
    # Or point at a local file for offline runs:
    uv run python bench_rdflib_store.py --brick ../brick/Brick.ttl
+
+The reported workloads measure steady-state reads. Backend construction
+(``get_closure`` view creation, ``copy_closure`` materialization, and loading
+the reference stores) happens before the timed region, and each workload gets
+one untimed warm-up. Use a separate end-to-end measurement when startup or
+one-shot export latency is the question.
 
 Results
 -------
@@ -199,10 +205,12 @@ Rule of thumb
   run return small result sets through SPARQL (``COUNT``, aggregations,
   ``LIMIT`` ed projections), or when you want a read-only graph view that
   *can't* mutate the environment.
-- Reach for ``copy_*`` when you need many small ``triples()`` pattern matches
-  against the same data, run recursive property paths heavily, or mutate the
-  result. The one-time materialization cost pays for itself after a handful
-  of reads.
+- Reach for ``copy_*`` when you need to mutate the result or require an API
+  implemented only by a standard ``rdflib.Graph``. For repeated microsecond-
+  scale ``triples()`` lookups, benchmark your actual patterns before paying
+  the one-time materialization cost.
+- Prefer ``get_*`` for the supported recursive property paths: the closure
+  index is specifically designed to accelerate them.
 - Reach for Oxigraph (``store="Oxigraph"``) when the same data is going to
   serve many SPARQL queries and you can amortize the load cost.
 
@@ -211,9 +219,9 @@ Rule of thumb
 In-memory query indexes
 -----------------------
 
-The first query that needs one triggers the construction of a permutation
-index, held in memory for the life of the snapshot. Nothing is written to
-disk and there is no configuration. Indexes are built in four orders:
+Binding an rdf5d snapshot eagerly constructs its permutation indexes, which
+are held in memory for the life of the snapshot. Nothing is written to disk
+and there is no configuration. Indexes are built in four orders:
 
 - ``predicate → subject → object`` (PSO) and ``predicate → object →
   subject`` (POS) for patterns with a **bound predicate**;
@@ -271,10 +279,11 @@ itself, exactly as before):
 
    from ontoenv import OntoEnv
 
-   # Indexes are built in memory on demand — no setup required.
+   # Permutation indexes are built when the rdf5d snapshot is bound.
    env = OntoEnv(path="./.ontoenv", create_or_use_cached=True)
    env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
    env.flush()
 
-   # The first subClassOf* query builds the closure index; later ones reuse it.
+   # The property-closure index remains lazy: the first supported path query
+   # builds it and later queries reuse it.
    g = env.get_closure("https://brickschema.org/schema/1.4.4/Brick")

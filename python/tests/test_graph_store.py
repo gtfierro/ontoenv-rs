@@ -456,19 +456,9 @@ class TestCopyGetParity(unittest.TestCase):
 
     def test_copy_closure_matches_get_closure(self) -> None:
         env = self._env()
-        # Disable optional post-processing so copy_closure is as close to the
-        # raw view as possible. copy_closure always calls remove_ontology_declarations
-        # (not controllable via a flag), so the rdf:type owl:Ontology triple
-        # for non-root members is absent from the copy but present in the view.
-        # Compare only application triples (predicate = self.P) to avoid that
-        # structural difference while still proving the copy content is correct.
-        copy_g, copy_names = env.copy_closure(
-            self.BASE, remove_owl_imports=False, rewrite_sh_prefixes=False
-        )
+        copy_g, copy_names = env.copy_closure(self.BASE)
         get_g, get_names = env.get_closure(self.BASE)
-        copy_content = {t for t in _triples(copy_g) if t[1] == self.P}
-        get_content = {t for t in _triples(get_g) if t[1] == self.P}
-        self.assertEqual(copy_content, get_content)
+        self.assertEqual(_triples(copy_g), _triples(get_g))
         self.assertEqual(set(copy_names), set(get_names))
 
     def test_copy_union_matches_get_union(self) -> None:

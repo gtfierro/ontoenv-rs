@@ -17,7 +17,7 @@ Install
 
 .. code-block:: bash
 
-   pip install ontoenv   # Python 3.9+
+   pip install ontoenv   # Python 3.11+
 
 First steps
 -----------
@@ -95,11 +95,12 @@ Key methods
 - ``env.copy_graph(name, graph=None)`` — Materialize a mutable in-memory
   ``rdflib.Graph`` copy of the named ontology.
 - ``env.get_closure(name, recursion_depth=-1)`` — Return ``(view, closure_names)`` where
-  ``view`` is a read-only, zero-copy :py:class:`ontoenv.ViewGraph` over the ontology named
-  ``name`` plus all its transitive imports. The view presents a single flattened,
-  de-duplicated graph with the **same triple set as** ``copy_closure`` (resolved
-  ``owl:imports`` stripped, ontology declarations collapsed onto the root, SHACL prefixes
-  consolidated) — without materializing a copy.
+  ``view`` is a read-only :py:class:`ontoenv.ViewGraph` over the ontology named ``name``
+  plus all its transitive imports. The view presents a single flattened, de-duplicated
+  graph with the **same triple set as** ``copy_closure`` (resolved ``owl:imports``
+  stripped, ontology declarations collapsed onto the root, SHACL prefixes consolidated).
+  Persistent local environments use a zero-copy mmap view; temporary and custom-store
+  environments use a normalized in-memory read snapshot.
 - ``env.copy_closure(name, graph=None, recursion_depth=-1)`` — Materialize the same
   cleaned, flattened closure into a mutable ``rdflib.Graph``. Pass ``graph`` to merge into
   an existing graph in place.
@@ -145,8 +146,9 @@ Key methods
 - ``env.set_use_cached_ontologies(mode)`` — Control whether cached copies or fresh fetches
   are preferred.
 
-Query indexes (PSO/POS/SPO/OSP posting lists and a transitive-closure table for property
-paths) are built in memory on first use — no setup, no on-disk sidecar. See
+PSO/POS/SPO/OSP posting-list indexes are built in memory when an rdf5d snapshot is bound;
+the transitive-closure table for supported property paths is built lazily on first use.
+There is no setup and no on-disk sidecar. See
 `Benchmarks <benchmarks.html#in-memory-query-indexes>`_.
 
 Pythonic sugar

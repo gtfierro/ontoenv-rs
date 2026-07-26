@@ -3022,8 +3022,51 @@ impl OntoEnv {
     where
         I: IntoIterator<Item = &'a GraphIdentifier>,
     {
-        // Merge multiple graphs into a dataset with optional cleanup transforms.
         let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
+        self.build_union_graph(
+            graph_ids,
+            root,
+            rewrite_sh_prefixes,
+            remove_owl_imports,
+            false,
+        )
+    }
+
+    /// Build a normalized union through each backend's read-only graph path.
+    ///
+    /// This differs from [`Self::get_union_graph`] only for backends that
+    /// intentionally distinguish `get_graph` from `copy_graph`, such as a
+    /// Python custom graph store. It is used to materialize a semantically
+    /// correct read-only closure view when no rdf5d snapshot is available.
+    pub fn get_view_union_graph<'a, I>(
+        &self,
+        graph_ids: I,
+        root: NamedNodeRef,
+        rewrite_sh_prefixes: Option<bool>,
+        remove_owl_imports: Option<bool>,
+    ) -> Result<UnionGraph>
+    where
+        I: IntoIterator<Item = &'a GraphIdentifier>,
+    {
+        let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
+        self.build_union_graph(
+            graph_ids,
+            root,
+            rewrite_sh_prefixes,
+            remove_owl_imports,
+            true,
+        )
+    }
+
+    fn build_union_graph(
+        &self,
+        graph_ids: Vec<GraphIdentifier>,
+        root: NamedNodeRef,
+        rewrite_sh_prefixes: Option<bool>,
+        remove_owl_imports: Option<bool>,
+        read_only: bool,
+    ) -> Result<UnionGraph> {
+        // Merge multiple graphs into a dataset with optional cleanup transforms.
 
         if graph_ids.is_empty() {
             return Err(anyhow!("No graphs found"));
@@ -3034,7 +3077,11 @@ impl OntoEnv {
         // Strict mode promotes any failure to an error here; non-strict mode
         // returns the partial union with `failed_imports` populated so the
         // caller knows what's missing.
-        let (mut dataset, failures) = self.io.union_graph(&graph_ids);
+        let (mut dataset, failures) = if read_only {
+            self.io.view_union_graph(&graph_ids)
+        } else {
+            self.io.union_graph(&graph_ids)
+        };
         if self.config.strict && !failures.is_empty() {
             return Err(anyhow!(
                 "union_graph: {} graph(s) failed to load: {}",

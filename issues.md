@@ -1,52 +1,42 @@
-# Remaining Performance Issues
+# Remaining Performance Tradeoffs
 
-## 1. `Rdf5dSnapshot::open()` still scales with total dataset size
+## 1. Binding an rdf5d snapshot eagerly builds permutation indexes
 
-The zero-copy `rdf5d` path avoids materializing the full dataset into Oxigraph, but snapshot creation is still doing a full triple scan up front.
+`Snapshot::open()` now groups physical graph IDs without precomputing unique
+triple counts, and reverse term lookup uses an in-memory term index. Binding
+the snapshot to the Python read backend deliberately calls `build_indexes()`,
+which builds the PSO, POS, SPO, and OSP indexes in parallel.
 
-Current behavior in [python/src/lib.rs](/Users/gabe/src/ontoenv-rs/python/src/lib.rs):
+Consequences:
 
-- `Rdf5dSnapshot::open()` opens `store.r5tu` with `R5tuFile::open_mmap(...)`
-- it calls `enumerate_all()` to group physical gids by graph name
-- for every logical graph, it calls `count_unique_triples_for_gids(...)`
-- `count_unique_triples_for_gids(...)` scans all triples in the grouped gids and inserts `(s_id, p_id, o_id)` into a `HashSet` to precompute `triple_count`
+- first `get_dataset()`, `get_graph()`, or `get_closure()` access scales with
+  the total snapshot size;
+- the four indexes use several times the on-disk snapshot size in RAM;
+- later bound-term scans and SPARQL queries avoid full graph scans.
 
-Why this matters:
+This is currently an intentional cold-start versus steady-state-query
+tradeoff. Benchmarks should report view construction separately from warmed
+query execution.
 
-- dataset open latency is still proportional to total triples in the file
-- large stores pay a full-store scan before the first query
-- this undercuts the intended "fast open, explicit refresh" snapshot model
+The property-path closure index remains lazy and is built on the first
+supported recursive path query.
 
-Related issue:
+## 2. Temporary and custom-store closure views require materialization
 
-- `find_term_id()` still calls `find_decoded_term(...)`, so reverse term lookup is also not using the planned indexed path yet
+Persistent local environments can apply closure normalization as a small patch
+over the mmap snapshot. Temporary environments and external `graph_store=`
+backends have no rdf5d term-ID space, so `get_closure()` instead builds a
+dedicated normalized in-memory `OxDataset`.
 
-Likely fix direction:
+The fallback now:
 
-- stop eagerly computing per-logical-graph unique triple counts during snapshot open
-- either compute counts lazily on first `len(...)` access or store the needed aggregate/index data in `rdf5d`
-- add the planned reverse lookup index so `find_term_id()` is no longer a linear scan
+- reads each graph through the backend's `get_graph` path;
+- performs the import, ontology-declaration, and SHACL-prefix transforms in
+  Rust;
+- stores the flattened result once as a read-only snapshot;
+- returns the same triple set as `copy_closure()`.
 
-## 2. Copy fallback still does two Python-side materialization passes
-
-The fallback path for temporary envs and external `graph_store=` envs is still heavier than it needs to be.
-
-Current behavior in [python/ontoenv/rdflib_store.py](/Users/gabe/src/ontoenv-rs/python/ontoenv/rdflib_store.py) and [python/src/lib.rs](/Users/gabe/src/ontoenv-rs/python/src/lib.rs):
-
-- `_copy_env_into_store()` builds an rdflib `Dataset`
-- it copies every env graph into that rdflib dataset
-- it then iterates every quad back out of rdflib
-- `bind_materialized_snapshot(...)` converts all of those Python terms back into Rust/Oxigraph terms and inserts them into an `OxDataset`
-
-Why this matters:
-
-- the fallback path does two full passes through Python objects
-- every quad is allocated and decoded twice on the Python side
-- the final Rust snapshot is correct, but the path is much more expensive than necessary
-- `mode="auto"` hits this path for temporary envs and external-store-backed envs, so this is not just an obscure edge case
-
-Likely fix direction:
-
-- build the materialized fallback snapshot directly from the env/store into Rust, without round-tripping through an rdflib `Dataset`
-- keep rdflib as the consumer-facing API, not the staging area for snapshot construction
-- if Python must stay involved, pass a simpler quad stream once rather than materializing into rdflib and then re-reading it
+It no longer stages through an rdflib `Dataset` and then reads every Python
+quad back into Rust. It still necessarily materializes the requested closure,
+so callers that need true zero-copy traversal should use a persistent local
+rdf5d-backed environment.

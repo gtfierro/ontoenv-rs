@@ -126,10 +126,10 @@ class OntoEnv:
         catalog-free temporary store, construct it normally and call
         ``refresh_from_store(full=True)`` explicitly.
 
-        Query indexes (PSO/POS/SPO/OSP posting lists and a transitive-closure
-        table for property paths) are built in memory on first use from the
-        persistent ``.r5tu`` store; nothing is written to disk and no
-        configuration is required.
+        PSO/POS/SPO/OSP posting-list indexes are built in memory when a
+        persistent ``.r5tu`` snapshot is first bound. The transitive-closure
+        table for supported property paths is built lazily on first use.
+        Nothing is written to disk and no configuration is required.
         """
         ...
 
@@ -312,17 +312,19 @@ class OntoEnv:
         remove_owl_imports: bool = True,
         rewrite_sh_prefixes: bool = True,
     ) -> Tuple["ViewGraph", List[str]]:
-        """Return a read-only, zero-copy view over the imports closure of *uri*.
+        """Return a read-only view over the imports closure of *uri*.
 
         The view presents a single flattened, de-duplicated graph with the
         same triple set as :py:meth:`copy_closure` (resolved ``owl:imports``
         stripped, ontology declarations collapsed onto the root, SHACL
-        ``sh:prefixes``/``sh:declare`` consolidated) but without materializing
-        a copy — reads are served directly from the mmap snapshot.
+        ``sh:prefixes``/``sh:declare`` consolidated). Persistent local
+        environments serve reads directly from the mmap snapshot without
+        materializing the closure. Temporary and custom-store environments
+        use a normalized in-memory read snapshot.
 
         Set ``remove_owl_imports=False`` and/or ``rewrite_sh_prefixes=False``
-        to opt out of those transforms (matching :py:meth:`get_union`'s raw
-        semantics). Returns ``(view, closure_names)``; ``view`` is a
+        to opt out of those transforms. Ontology declarations are still
+        collapsed onto the root. Returns ``(view, closure_names)``; ``view`` is a
         :py:class:`ontoenv.ViewGraph`. Use :py:meth:`copy_closure` for a
         mutable in-memory merge.
         """
@@ -400,8 +402,9 @@ class OntoEnv:
         ``remove_owl_imports=False`` or ``rewrite_sh_prefixes=False`` to opt
         out of the respective transform.
 
-        :py:meth:`get_closure` returns a read-only, zero-copy view with the
-        **same triple set** without materializing a copy.
+        :py:meth:`get_closure` returns a read-only view with the **same triple
+        set**. Persistent local environments avoid materializing the closure;
+        temporary and custom-store environments use an in-memory fallback.
 
         With a custom ``graph_store=``: each graph in the closure is fetched
         via the store's ``copy_graph`` if available, otherwise ``get_graph``.
@@ -537,8 +540,10 @@ class OntoEnv:
     def get_dataset(self) -> Dataset:
         """Return a read-only store-backed ``rdflib.Dataset`` view.
 
-        Mutation raises ``ValueError``. The returned dataset is cached and
-        refreshed automatically after environment mutations.
+        Mutation raises ``ValueError``. Calls are cached until the environment
+        changes; after a mutation, call ``get_dataset()`` again for a fresh
+        snapshot. An already-returned Dataset remains point-in-time unless
+        passed to :py:meth:`refresh_dataset`.
         """
         ...
 

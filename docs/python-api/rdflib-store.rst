@@ -10,7 +10,8 @@ RDFLib Store
      <a href="https://crates.io/crates/spargebra"><code>spargebra</code></a> and evaluation
      through <code>spareval</code> — and reading triples directly from the
      <a href="https://crates.io/crates/rdf5d"><code>rdf5d</code></a> on-disk format via
-     <code>mmap</code> for zero-copy traversal. The <code>get_*</code> accessors
+     <code>mmap</code> for zero-copy traversal in persistent local environments.
+     The <code>get_*</code> accessors
      (<code>get_graph</code>, <code>get_closure</code>, <code>get_union</code>,
      <code>get_dataset</code>, …) return read-only views over that storage and are
      significantly faster for queries and iteration; the <code>copy_*</code> variants
@@ -26,8 +27,7 @@ Use ``OntoEnvStore`` when you want:
 
 - ``rdflib.Graph.query(...)`` and ``rdflib.Dataset.query(...)`` to execute through the Rust
   backend instead of rdflib's Python query engine.
-- Normal rdflib graph APIs such as ``add``, ``remove``, ``triples``, ``contexts``, and
-  namespace bindings.
+- Normal read APIs such as ``triples``, ``contexts``, queries, and namespace bindings.
 - A lightweight in-memory dataset for scripting, testing, or embedding.
 
 The store is also registered as the rdflib plugin name ``"ontoenv"`` once the
@@ -105,8 +105,6 @@ What is supported
 
 ``OntoEnvStore`` currently supports:
 
-- ``add`` / ``addN``
-- ``remove``
 - ``triples``
 - ``contexts``
 - ``len(graph)``
@@ -115,9 +113,9 @@ What is supported
 
 Current limits:
 
+- The exposed store is a read-only snapshot; ``add``, ``addN``, and ``remove``
+  raise ``ValueError``. Mutate the ``OntoEnv`` and obtain or refresh a snapshot.
 - SPARQL Update is not implemented.
-- The store is currently in-memory only.
-- This path does not yet persist into ``rdf5d``.
 
 ``ViewGraph`` — read-only scoped views
 --------------------------------------
@@ -126,8 +124,9 @@ Current limits:
 :class:`ontoenv.ViewGraph` instead of an ``rdflib.Graph``. A ``ViewGraph`` is a
 lightweight, non-``rdflib.Graph`` view over a fixed set of named graphs in the
 snapshot. It delegates triple-pattern lookups, ``len``, ``in``, and SPARQL
-``query()`` to the Rust backend scoped to the view's graphs, so it behaves like
-a merged graph without materializing a copy.
+``query()`` to the Rust backend scoped to the view's graphs. Persistent local
+environments read closures directly from rdf5d; temporary and custom-store
+environments normalize the closure into a private in-memory read snapshot.
 
 .. code-block:: python
 

@@ -103,6 +103,18 @@ impl ClosurePatch {
         let sh_namespace_id = intern(SH_NAMESPACE);
         let root_id = intern(root_iri);
 
+        // Every transform decision must be made from the requested closure,
+        // not from unrelated graphs that happen to share the same snapshot.
+        // The resulting patch is later applied to this same gid scope.
+        let mut closure_gids = Vec::new();
+        for iri in closure_iris {
+            if let Some(gids) = snapshot.gids_for_name(iri) {
+                closure_gids.extend_from_slice(gids);
+            }
+        }
+        closure_gids.sort_unstable();
+        closure_gids.dedup();
+
         let imports_targets: HashSet<u64> = if remove_owl_imports {
             closure_iris
                 .iter()
@@ -122,7 +134,8 @@ impl ClosurePatch {
             p: Some(type_id),
             o: Some(ontology_id),
         };
-        let root_declares_itself = match snapshot.scan(decl_pat, Scope::All).next() {
+        let root_declares_itself = match snapshot.scan(decl_pat, Scope::Gids(&closure_gids)).next()
+        {
             Some(Ok(_)) => true,
             Some(Err(e)) => return Err(e),
             None => false,
@@ -141,7 +154,7 @@ impl ClosurePatch {
                 p: Some(prefixes_id),
                 o: None,
             };
-            for hit in snapshot.scan(prefixes_pat, Scope::All) {
+            for hit in snapshot.scan(prefixes_pat, Scope::Gids(&closure_gids)) {
                 let m = hit?;
                 if prefixes_subjects.insert(m.s) {
                     additions.push((m.s, prefixes_id, root_id));
@@ -158,23 +171,25 @@ impl ClosurePatch {
                 o: None,
             };
             // First pass: record the root's own declarations.
-            for hit in snapshot.scan(declare_pat, Scope::All) {
+            for hit in snapshot.scan(declare_pat, Scope::Gids(&closure_gids)) {
                 let m = hit?;
                 if m.s != root_id {
                     continue;
                 }
-                if let Some(key) = decl_key(snapshot, m.o, sh_prefix_id, sh_namespace_id)? {
+                if let Some(key) =
+                    decl_key(snapshot, &closure_gids, m.o, sh_prefix_id, sh_namespace_id)?
+                {
                     seen.insert(key);
                 }
             }
             // Second pass: relocate non-root declarations, deduping.
-            for hit in snapshot.scan(declare_pat, Scope::All) {
+            for hit in snapshot.scan(declare_pat, Scope::Gids(&closure_gids)) {
                 let m = hit?;
                 if m.s == root_id {
                     continue;
                 }
                 declare_subjects_moved.insert(m.s);
-                match decl_key(snapshot, m.o, sh_prefix_id, sh_namespace_id)? {
+                match decl_key(snapshot, &closure_gids, m.o, sh_prefix_id, sh_namespace_id)? {
                     Some(key) => {
                         if seen.insert(key) {
                             additions.push((root_id, declare_id, m.o));
@@ -255,6 +270,7 @@ impl ClosurePatch {
 /// component is absent (or not a literal/IRI), signalling "can't dedup".
 fn decl_key(
     snapshot: &Snapshot,
+    closure_gids: &[u64],
     decl_node: u64,
     sh_prefix_id: u64,
     sh_namespace_id: u64,
@@ -267,7 +283,7 @@ fn decl_key(
         p: None,
         o: None,
     };
-    for hit in snapshot.scan(pat, Scope::All) {
+    for hit in snapshot.scan(pat, Scope::Gids(closure_gids)) {
         let m = hit?;
         if m.p == sh_prefix_id {
             if let DecodedTerm::Literal { lex, .. } = file.decoded_term(m.o)? {
@@ -564,6 +580,14 @@ mod tests {
         gids
     }
 
+    fn gids_for(snapshot: &Snapshot, names: &[&str]) -> Vec<u64> {
+        let mut gids = Vec::new();
+        for name in names {
+            gids.extend_from_slice(snapshot.gids_for_name(name).unwrap());
+        }
+        gids
+    }
+
     #[test]
     fn strips_imports_collapses_decls_and_adds_root() {
         // root imports mid; mid imports leaf. Root does NOT declare itself.
@@ -658,6 +682,7 @@ mod tests {
     fn rewrites_sh_prefixes_onto_root() {
         let root = "http://ex/root";
         let leaf = "http://ex/leaf";
+        let unrelated = "http://ex/unrelated";
         let dir = tempdir().unwrap();
         let path = dir.path().join("p.r5tu");
         let quints = vec![
@@ -711,9 +736,39 @@ mod tests {
                 o: lit("http://ex/leaf#"),
                 gname: leaf.into(),
             },
+            // This graph shares the snapshot but is not in the requested
+            // closure. Its prefix metadata must not leak into the patch.
+            Quint {
+                id: unrelated.into(),
+                s: iri(unrelated),
+                p: iri(PREFIXES),
+                o: iri(unrelated),
+                gname: unrelated.into(),
+            },
+            Quint {
+                id: unrelated.into(),
+                s: iri(unrelated),
+                p: iri(DECLARE),
+                o: Term::BNode("_:unrelated-decl".into()),
+                gname: unrelated.into(),
+            },
+            Quint {
+                id: unrelated.into(),
+                s: Term::BNode("_:unrelated-decl".into()),
+                p: iri(PREFIX),
+                o: lit("unrelated"),
+                gname: unrelated.into(),
+            },
+            Quint {
+                id: unrelated.into(),
+                s: Term::BNode("_:unrelated-decl".into()),
+                p: iri(NS),
+                o: lit("http://ex/unrelated#"),
+                gname: unrelated.into(),
+            },
         ];
         let s = snap(&path, &quints);
-        let gids = all_gids(&s);
+        let gids = gids_for(&s, &[root, leaf]);
         let closure_iris = vec![root.to_string(), leaf.to_string()];
         let patch = ClosurePatch::build(&s, root, &closure_iris, true, true).unwrap();
         let set = closure_set(&s, patch, &gids);
@@ -724,6 +779,14 @@ mod tests {
         // sh:declare relocated onto the root.
         assert!(set.iter().any(|(sub, p, _)| sub == root && p == DECLARE));
         assert!(!set.iter().any(|(sub, p, _)| sub == leaf && p == DECLARE));
+        assert!(
+            !set.iter().any(|(s, _, o)| s == unrelated || o == unrelated),
+            "unrelated prefix metadata leaked into closure: {set:?}"
+        );
+        assert!(
+            !set.iter().any(|(_, _, o)| o == "_:unrelated-decl"),
+            "unrelated declaration leaked into closure: {set:?}"
+        );
     }
 
     #[test]
