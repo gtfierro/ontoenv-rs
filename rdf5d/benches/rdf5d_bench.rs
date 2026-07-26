@@ -653,8 +653,9 @@ fn load_brick_quints(path: &Path, id: &str, graph_name: &str) -> Vec<Quint> {
 }
 
 #[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
-fn count_rdf5d_solutions(file: &R5tuFile, query: &spargebra::Query) -> usize {
-    match file.query(query).unwrap() {
+fn count_rdf5d_solutions(snapshot: &Snapshot, query: &spargebra::Query) -> usize {
+    let mut query = query.clone();
+    match snapshot.query(&mut query).unwrap() {
         R5QueryResults::Solutions(solutions) => solutions.count(),
         R5QueryResults::Boolean(value) => usize::from(value),
         R5QueryResults::Graph(triples) => triples.count(),
@@ -687,7 +688,7 @@ fn bench_sparql_backends(c: &mut Criterion) {
     let total = quints.len() as u64;
     let file_handle = NamedTempFile::new().unwrap();
     write_file_with_options(file_handle.path(), &quints, opts_plain()).unwrap();
-    let file = R5tuFile::open(file_handle.path()).unwrap();
+    let snapshot = Snapshot::open(file_handle.path()).unwrap();
     let (_rocks_dir, store) = build_rocksdb_store(&quints);
 
     let graph_query = SparqlParser::new()
@@ -712,9 +713,9 @@ fn bench_sparql_backends(c: &mut Criterion) {
     group.throughput(Throughput::Elements(total));
     group.bench_with_input(
         BenchmarkId::from_parameter("rdf5d_graph_brick"),
-        &file,
-        |b, file| {
-            b.iter(|| black_box(count_rdf5d_solutions(file, &graph_query)));
+        &snapshot,
+        |b, snapshot| {
+            b.iter(|| black_box(count_rdf5d_solutions(snapshot, &graph_query)));
         },
     );
     group.bench_with_input(
@@ -726,9 +727,9 @@ fn bench_sparql_backends(c: &mut Criterion) {
     );
     group.bench_with_input(
         BenchmarkId::from_parameter("rdf5d_scan_brick"),
-        &file,
-        |b, file| {
-            b.iter(|| black_box(count_rdf5d_solutions(file, &scan_query)));
+        &snapshot,
+        |b, snapshot| {
+            b.iter(|| black_box(count_rdf5d_solutions(snapshot, &scan_query)));
         },
     );
     group.bench_with_input(
