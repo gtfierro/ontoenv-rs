@@ -447,8 +447,8 @@ impl OntoEnv {
             .write(true)
             .open(&path)?;
         if read_only {
-            file.lock_shared()?;
-        } else if let Err(error) = file.try_lock_exclusive() {
+            FileExt::lock_shared(&file)?;
+        } else if let Err(error) = FileExt::try_lock_exclusive(&file) {
             return Err(anyhow!(
                 "Failed to open OntoEnv for write: could not acquire exclusive lock on {}: {}. If another process has it open, use read_only=true.",
                 path.display(),
@@ -500,14 +500,53 @@ impl OntoEnv {
         Self::connect_with_graph_io(config, io, sync, read_only)
     }
 
+    /// Recover from an interrupted backend/catalog mutation.
+    ///
+    /// Recovery deliberately scans the authoritative graph backend, rebuilds
+    /// the catalog, and removes the pending marker only after the replacement
+    /// catalog has been published successfully.
+    pub fn recover(config: Config) -> Result<Self> {
+        let config = Self::connect_config(config)?;
+        let ontoenv_dir = config.root.join(".ontoenv");
+        let io: Box<dyn GraphIO> = Box::new(crate::io::PersistentGraphIO::new(
+            ontoenv_dir,
+            config.offline,
+            config.strict,
+        )?);
+        Self::recover_with_graph_io(config, io)
+    }
+
+    /// Recover using a caller-provided authoritative graph backend.
+    pub fn recover_with_graph_io(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
+        let config = Self::connect_config(config)?;
+        let environment = Self::adopt(config, io)?;
+        environment.remove_pending_marker()?;
+        Ok(environment)
+    }
+
     /// Deliberately scan an existing graph backend and publish a new catalog.
     /// This method only reads graphs already exposed by the backend and never
     /// follows network imports.
     pub fn adopt(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
+        // A catalog represents one coherent backend snapshot. Capture both
+        // revision mechanisms because custom stores may implement either one.
+        let state_before = io.store_state()?;
+        let revisions_before = io.graph_revisions()?;
         let mut environment = Self::new(Environment::new(), io, config)?;
         environment.init_from_graph_io()?;
-        environment.backend_state = environment.io.store_state()?;
-        environment.graph_revisions = environment.io.graph_revisions()?.unwrap_or_default();
+        let state_after = environment.io.store_state()?;
+        let revisions_after = environment.io.graph_revisions()?;
+        let global_changed = state_before.is_some() && state_before != state_after;
+        let graphs_changed = revisions_before.is_some() && revisions_before != revisions_after;
+        if global_changed || graphs_changed {
+            return Err(ExternalStoreChangedError {
+                message: "backend changed while rebuilding the catalog; retry the operation"
+                    .to_string(),
+            }
+            .into());
+        }
+        environment.backend_state = state_after;
+        environment.graph_revisions = revisions_after.unwrap_or_default();
         environment.save_to_directory()?;
         Ok(environment)
     }
@@ -539,7 +578,10 @@ impl OntoEnv {
         let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
         if pending_path.exists() {
             return Err(CatalogRecoveryError {
-                message: format!("interrupted mutation marker at {}", pending_path.display()),
+                message: format!(
+                    "interrupted mutation marker at {}; call OntoEnv::recover to rebuild the catalog",
+                    pending_path.display()
+                ),
             }
             .into());
         }
@@ -682,7 +724,10 @@ impl OntoEnv {
         let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
         if pending_path.exists() {
             return Err(CatalogRecoveryError {
-                message: format!("interrupted mutation marker at {}", pending_path.display()),
+                message: format!(
+                    "interrupted mutation marker at {}; call OntoEnv::recover to rebuild the catalog",
+                    pending_path.display()
+                ),
             }
             .into());
         }
@@ -979,7 +1024,6 @@ impl OntoEnv {
             .collect();
 
         if full {
-            self.env = Environment::new();
             self.init_from_graph_io()?;
             let current: HashSet<_> = self
                 .env
@@ -1175,19 +1219,16 @@ impl OntoEnv {
     /// registers them in the environment together with a freshly-built dependency graph.
     fn init_from_graph_io(&mut self) -> Result<()> {
         let ids = self.io.graph_ids()?;
-        if ids.is_empty() {
-            return Ok(());
-        }
         let strict = self.config.strict;
         let mut ontologies = Vec::with_capacity(ids.len());
         for id in &ids {
-            let graph = match self.io.get_graph(id) {
-                Ok(g) => g,
-                Err(e) => {
-                    warn!("init_from_graph_io: could not read graph {id}: {e}");
-                    continue;
-                }
-            };
+            // Adoption and recovery must be all-or-nothing: silently skipping
+            // a graph would publish a catalog that does not describe its
+            // authoritative backend.
+            let graph = self
+                .io
+                .get_graph(id)
+                .map_err(|error| anyhow!("could not read graph {id}: {error}"))?;
             // Copy the graph's triples into a temporary store under the correct named graph
             // so that Ontology::from_store can locate the right graph context.
             let tmp_store = Store::new()?;
@@ -1203,17 +1244,21 @@ impl OntoEnv {
             let mut loader = tmp_store.bulk_loader();
             loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
             loader.commit().map_err(|e| anyhow!(e.to_string()))?;
-            match Ontology::from_store(&tmp_store, id, strict) {
-                Ok(ont) => ontologies.push(ont),
-                Err(e) => warn!("init_from_graph_io: could not parse ontology from {id}: {e}"),
-            }
+            let ontology = Ontology::from_store(&tmp_store, id, strict)
+                .map_err(|error| anyhow!("could not parse ontology from {id}: {error}"))?;
+            ontologies.push(ontology);
         }
         let filters = self.ontology_filters()?;
+        let mut rebuilt = Environment::new();
         for ontology in ontologies {
             if filters.allow(ontology.id()) {
-                self.env.add_ontology(ontology)?;
+                rebuilt.add_ontology(ontology)?;
             }
         }
+        // Publish the rebuilt in-memory catalog only after every graph has
+        // been read and parsed. A failed scan therefore leaves the caller's
+        // current environment usable and its on-disk catalog untouched.
+        self.env = rebuilt;
         self.rebuild_dependency_graph_from_metadata();
         Ok(())
     }
@@ -1378,7 +1423,7 @@ impl OntoEnv {
             let details = std::fs::read_to_string(&pending_path).unwrap_or_default();
             return Err(CatalogRecoveryError {
                 message: format!(
-                    "{} records an interrupted backend/catalog mutation ({}). Run refresh_from_store(graphs=[...]) for the listed graphs or refresh_from_store(full=true)",
+                    "{} records an interrupted backend/catalog mutation ({}). Run OntoEnv::recover to rebuild the catalog from the graph store",
                     pending_path.display(),
                     details
                 ),
@@ -3836,6 +3881,35 @@ mod tests {
     }
 
     #[test]
+    fn recover_rebuilds_catalog_and_removes_pending_marker() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config.clone(), false).unwrap();
+        drop(environment);
+
+        let pending = root.join(".ontoenv").join(catalog::PENDING_FILE);
+        std::fs::write(
+            &pending,
+            r#"{"mutation_id":"test","graphs":["https://example.org/o"]}"#,
+        )
+        .unwrap();
+
+        let recovered = OntoEnv::recover(config).unwrap();
+        assert!(recovered.ontologies().is_empty());
+        assert!(!pending.exists());
+        drop(recovered);
+        OntoEnv::load_from_directory(root, false).unwrap();
+    }
+
+    #[test]
     fn legacy_environment_migrates_without_removing_rollback_files() {
         let temporary = tempdir().unwrap();
         let root = temporary.path().join("env");
@@ -3856,6 +3930,39 @@ mod tests {
 
         let migrated = OntoEnv::load_from_directory(root.clone(), false).unwrap();
         assert!(migrated.ontologies().is_empty());
+        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        assert!(legacy_path.exists());
+    }
+
+    #[test]
+    fn legacy_environment_with_graphs_migrates_from_lazy_store() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        std::fs::create_dir_all(&root).unwrap();
+        let ontology_path = root.join("ontology.ttl");
+        std::fs::write(
+            &ontology_path,
+            "<https://example.org/legacy> a <http://www.w3.org/2002/07/owl#Ontology> .",
+        )
+        .unwrap();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![root.clone()])
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config, false).unwrap();
+        let legacy_path = root.join(".ontoenv").join("environment.json");
+        write_json_file(&legacy_path, &environment.env).unwrap();
+        drop(environment);
+        std::fs::remove_file(root.join(".ontoenv").join(catalog::CATALOG_FILE)).unwrap();
+
+        let migrated = OntoEnv::load_from_directory(root.clone(), false).unwrap();
+        assert!(migrated
+            .ontologies()
+            .keys()
+            .any(|id| id.name().as_str() == "https://example.org/legacy"));
         assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
         assert!(legacy_path.exists());
     }

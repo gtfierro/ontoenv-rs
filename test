@@ -21,10 +21,10 @@ echo "+ uv run maturin develop (python/)"
   uv run --group dev maturin develop
 )
 
-echo "+ uv run python -m unittest discover -s tests (python/)"
+echo "+ uv run --group dev pytest -q (python/)"
 (
   cd "$ROOT/python"
-  uv run python -m unittest discover -s tests
+  uv run --group dev pytest -q
 )
 
 echo "+ uv run python -m unittest discover -s tests (pyontoenv-shim/)"

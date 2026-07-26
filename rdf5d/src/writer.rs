@@ -1823,7 +1823,7 @@ fn write_pair_index(buf: &mut Vec<u8>, pairs: &[(u32, u32, u64)]) -> Result<Sect
 }
 
 #[cfg(test)]
-#[allow(clippy::io_other_error)] // Keep compatibility with the workspace's Rust 1.70 MSRV.
+#[allow(clippy::io_other_error)] // Kept explicit for readable failure-injection tests.
 mod atomic_write_tests {
     use super::*;
 

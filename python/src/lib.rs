@@ -6,7 +6,11 @@ use ontoenv::api::{
 use ontoenv::catalog::BackendState;
 use ontoenv::config;
 use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
-use ontoenv::errors::OfflineRetrievalError;
+use ontoenv::errors::{
+    CatalogRecoveryError as CatalogRecoveryErrorRs,
+    ExternalStoreChangedError as ExternalStoreChangedErrorRs, OfflineRetrievalError,
+    StoreCapabilityError as StoreCapabilityErrorRs,
+};
 use ontoenv::io::{GraphIO, StoreStats};
 use ontoenv::ontology::{GraphIdentifier, Ontology as OntologyRs, OntologyLocation};
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
@@ -47,6 +51,7 @@ use std::time::SystemTime;
 thread_local! {
     static EXPLICIT_ADOPT: Cell<bool> = const { Cell::new(false) };
     static CONNECT_SYNC: Cell<Option<ConnectSync>> = const { Cell::new(None) };
+    static RECOVER: Cell<bool> = const { Cell::new(false) };
 }
 
 pyo3::create_exception!(
@@ -57,7 +62,14 @@ pyo3::create_exception!(
 pyo3::create_exception!(
     ontoenv,
     CatalogRecoveryError,
-    pyo3::exceptions::PyRuntimeError
+    pyo3::exceptions::PyRuntimeError,
+    "The catalog cannot be opened because an interrupted mutation requires OntoEnv.recover()."
+);
+pyo3::create_exception!(
+    ontoenv,
+    UnresolvedImportError,
+    pyo3::exceptions::PyLookupError,
+    "An owl:imports target could not be resolved or loaded."
 );
 pyo3::create_exception!(
     ontoenv,
@@ -67,11 +79,11 @@ pyo3::create_exception!(
 
 fn anyhow_to_pyerr(e: Error) -> PyErr {
     let message = e.to_string();
-    if message.contains("ExternalStoreChangedError") {
+    if e.downcast_ref::<ExternalStoreChangedErrorRs>().is_some() {
         PyErr::new::<ExternalStoreChangedError, _>(message)
-    } else if message.contains("recovery required") {
+    } else if e.downcast_ref::<CatalogRecoveryErrorRs>().is_some() {
         PyErr::new::<CatalogRecoveryError, _>(message)
-    } else if message.contains("does not implement graph_revisions") {
+    } else if e.downcast_ref::<StoreCapabilityErrorRs>().is_some() {
         PyErr::new::<StoreCapabilityError, _>(message)
     } else {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(message)
@@ -3695,6 +3707,35 @@ impl OntoEnv {
     }
 
     #[classmethod]
+    /// Rebuild a catalog after an interrupted mutation.
+    ///
+    /// The attached graph store is authoritative. The recovery marker is
+    /// removed only after every graph has been scanned and the new catalog
+    /// has been published successfully.
+    #[pyo3(signature = (path, graph_store=None, **options))]
+    fn recover(
+        cls: &Bound<'_, PyType>,
+        path: PathBuf,
+        graph_store: Option<Py<PyAny>>,
+        options: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<OntoEnv>> {
+        let kwargs = PyDict::new(cls.py());
+        if let Some(options) = options {
+            kwargs.update(options.as_mapping())?;
+        }
+        kwargs.set_item("path", path)?;
+        if let Some(store) = graph_store {
+            kwargs.set_item("graph_store", store)?;
+        }
+        RECOVER.with(|flag| flag.set(true));
+        let result = cls.call((), Some(&kwargs));
+        RECOVER.with(|flag| flag.set(false));
+        result?
+            .extract::<Py<OntoEnv>>()
+            .map_err(|error| PyErr::new::<pyo3::exceptions::PyTypeError, _>(error.to_string()))
+    }
+
+    #[classmethod]
     #[pyo3(signature = (path, graph_store, overwrite=false, **options))]
     fn adopt(
         cls: &Bound<'_, PyType>,
@@ -3816,6 +3857,7 @@ impl OntoEnv {
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let connect_sync = CONNECT_SYNC.with(Cell::get);
+        let recover = RECOVER.with(Cell::get);
 
         if let Some(store) = graph_store {
             if recreate || create_or_use_cached {
@@ -3825,7 +3867,7 @@ impl OntoEnv {
             }
             let desc = graph_store_description(_py, store.bind(_py))?;
             cfg.external_graph_store = Some(desc);
-            if connect_sync.is_some() {
+            if connect_sync.is_some() || recover {
                 cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
             }
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
@@ -3836,7 +3878,9 @@ impl OntoEnv {
                 .join(ontoenv::catalog::CATALOG_FILE)
                 .exists();
             let explicit_adopt = EXPLICIT_ADOPT.with(Cell::get);
-            let env = if let Some(sync) = connect_sync {
+            let env = if recover {
+                OntoEnvRs::recover_with_graph_io(cfg, Box::new(io))
+            } else if let Some(sync) = connect_sync {
                 OntoEnvRs::connect_with_graph_io(cfg, Box::new(io), sync, read_only)
             } else if !cfg.temporary && catalog_exists && !explicit_adopt {
                 OntoEnvRs::open_with_graph_io(cfg, Box::new(io), read_only)
@@ -3854,8 +3898,13 @@ impl OntoEnv {
             });
         }
 
+        if recover {
+            cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
+        }
         let root_for_lookup = cfg.root.clone();
-        let env = if let Some(sync) = connect_sync {
+        let env = if recover {
+            OntoEnvRs::recover(cfg).map_err(anyhow_to_pyerr)?
+        } else if let Some(sync) = connect_sync {
             OntoEnvRs::connect(cfg, sync, read_only).map_err(anyhow_to_pyerr)?
         } else if cfg.temporary {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
@@ -5343,7 +5392,8 @@ impl OntoEnv {
         graph: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let rdflib = py.import("rdflib")?;
-        let iri = NamedNode::new(pystring_to_string(uri)?)
+        let uri_string = pystring_to_string(uri)?;
+        let iri = NamedNode::new(&uri_string)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let source_graph = {
             let inner = self.inner.clone();
@@ -5352,9 +5402,19 @@ impl OntoEnv {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
             let graphid = env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Failed to resolve graph for URI: {uri}"
-                ))
+                if env
+                    .missing_imports()
+                    .iter()
+                    .any(|missing| missing.as_str() == uri_string)
+                {
+                    PyErr::new::<UnresolvedImportError, _>(format!(
+                        "Unresolved owl:imports target: {uri_string}"
+                    ))
+                } else {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to resolve graph for URI: {uri_string}"
+                    ))
+                }
             })?;
 
             env.copy_graph(&graphid).map_err(anyhow_to_pyerr)?
@@ -5817,6 +5877,10 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "CatalogRecoveryError",
         m.py().get_type::<CatalogRecoveryError>(),
+    )?;
+    m.add(
+        "UnresolvedImportError",
+        m.py().get_type::<UnresolvedImportError>(),
     )?;
     m.add(
         "StoreCapabilityError",

@@ -201,7 +201,7 @@ Supported formats: `turtle` (default), `ntriples`, `rdfxml`, `jsonld`.
 pip install ontoenv   # Python 3.11+; prebuilt wheels for common platforms
 ```
 
-Building from source requires a Rust toolchain (MSRV 1.70).
+Building from source requires a Rust toolchain (MSRV 1.88).
 
 ### Basic Usage
 
@@ -373,10 +373,10 @@ missing = env.missing_imports("http://example.org/ont/MyOntology")
 
 ```toml
 [dependencies]
-ontoenv = "0.5"
+ontoenv = "0.6"
 ```
 
-Requires Rust 1.70+.
+Requires Rust 1.88+.
 
 ### Basic Usage
 
@@ -458,7 +458,7 @@ fs::remove_dir_all(&test_dir)?;
 
 ## Building From Source
 
-**Prerequisites:** Rust 1.70+, Python 3.11+ (for Python bindings)
+**Prerequisites:** Rust 1.88+, Python 3.11+ (for Python bindings)
 
 ### Rust workspace
 
@@ -473,7 +473,7 @@ cargo test --workspace               # all Rust tests
 ```bash
 cd python
 uv run --group dev maturin develop              # editable dev install
-uv run python -m unittest discover -s tests     # run Python tests
+uv run --group dev pytest -q                    # run Python tests
 uv run --group dev maturin build --release      # wheels → python/target/wheels/
 ```
 

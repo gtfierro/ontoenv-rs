@@ -44,6 +44,14 @@ jobs:
         shell: bash
         run: echo "PYO3_PYTHON=$(uv python find)" >> "$GITHUB_ENV"
 
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        env:
+          PYO3_PYTHON: ${{ env.PYO3_PYTHON }}
+
       - name: Install system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
@@ -68,7 +76,7 @@ jobs:
 
       - name: Test Python package
         working-directory: python
-        run: uv run python -m unittest discover -s tests
+        run: uv run --group dev pytest -q
 
       - name: Run pyontoenv unit tests
         working-directory: pyontoenv-shim
@@ -83,3 +91,87 @@ jobs:
         shell: bash
         working-directory: pyontoenv-shim
         run: uv run python scripts/test_pyontoenv.py
+
+  msrv:
+    name: Rust 1.88 MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@1.88
+      - name: Check workspace at the documented MSRV
+        run: cargo check --workspace --locked
+
+  python-compat:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - name: Build and install bindings
+        working-directory: python
+        run: uv run --group dev maturin develop --release
+      - name: Run Python tests
+        working-directory: python
+        run: uv run --group dev pytest -q
+
+  upgrade:
+    name: Upgrade from ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["0.5.5", "0.6.0a6", "0.6.0a8"]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Create environment with released version
+        shell: bash
+        run: |
+          uv venv .upgrade-venv
+          uv pip install --python .upgrade-venv/bin/python "ontoenv==${{ matrix.version }}"
+          .upgrade-venv/bin/python python/scripts/test_release_upgrade.py create .upgrade-fixture
+      - name: Install current source into the same environment
+        shell: bash
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.upgrade-venv
+        run: uv tool run maturin develop --release -m python/Cargo.toml
+      - name: Verify migration
+        run: .upgrade-venv/bin/python python/scripts/test_release_upgrade.py verify .upgrade-fixture
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Build documentation with warnings as errors
+        working-directory: docs
+        run: uv run sphinx-build -W --keep-going -b html . _build/html
+      - name: Build llms.txt
+        working-directory: docs
+        run: SPHINXBUILD='uv run sphinx-build' make llms
+      - name: Verify recovery documentation is included
+        run: grep -q "OntoEnv.recover" docs/_build/llms.txt

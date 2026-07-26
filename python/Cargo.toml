@@ -2,6 +2,7 @@
 name = "ontoenv-python"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Command line tool to manage ontologies and their imports in a local environment"

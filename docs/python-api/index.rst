@@ -145,6 +145,12 @@ Key methods
 - ``env.set_remote_cache_ttl_secs(secs)`` — Override the remote-ontology cache TTL.
 - ``env.set_use_cached_ontologies(mode)`` — Control whether cached copies or fresh fetches
   are preferred.
+- ``OntoEnv.recover(path, graph_store=None)`` — Rebuild the catalog after
+  ``CatalogRecoveryError`` without manually deleting OntoEnv-owned files.
+
+An unresolved ``owl:imports`` target passed to ``copy_graph`` raises
+``UnresolvedImportError`` (a ``LookupError``), allowing consumers to distinguish
+an expected missing import from parsing, storage, and other failures.
 
 PSO/POS/SPO/OSP posting-list indexes are built in memory when an rdf5d snapshot is bound;
 the transitive-closure table for supported property paths is built lazily on first use.

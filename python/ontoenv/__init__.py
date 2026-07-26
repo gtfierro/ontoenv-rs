@@ -3,6 +3,7 @@
 # These symbols come from the Rust extension module built via maturin.
 from ontoenv._native import (  # type: ignore[attr-defined]
     CatalogRecoveryError,
+    UnresolvedImportError,
     ExternalStoreChangedError,
     OntoEnv,
     Ontology,
@@ -27,6 +28,7 @@ __all__ = [
     "SyncReport",
     "ExternalStoreChangedError",
     "CatalogRecoveryError",
+    "UnresolvedImportError",
     "StoreCapabilityError",
     "OntoEnvStore",
     "ViewGraph",

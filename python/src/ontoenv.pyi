@@ -9,7 +9,12 @@ version: str
 is_debug_build: bool
 
 class ExternalStoreChangedError(RuntimeError): ...
-class CatalogRecoveryError(RuntimeError): ...
+class CatalogRecoveryError(RuntimeError):
+    """An interrupted mutation requires :meth:`OntoEnv.recover` before opening."""
+
+class UnresolvedImportError(LookupError):
+    """An ``owl:imports`` target could not be resolved or loaded."""
+
 class StoreCapabilityError(RuntimeError): ...
 
 class Ontology:
@@ -83,6 +88,20 @@ class OntoEnv:
         read_only: bool = False,
         **options: object,
     ) -> "OntoEnv": ...
+
+    @classmethod
+    def recover(
+        cls,
+        path: Union[str, Path],
+        graph_store: Optional[object] = None,
+        **options: object,
+    ) -> "OntoEnv":
+        """Rebuild the catalog from the authoritative graph store.
+
+        Use this after :class:`CatalogRecoveryError`. The pending recovery
+        marker is removed only after the replacement catalog is published.
+        """
+        ...
 
     @classmethod
     def adopt(

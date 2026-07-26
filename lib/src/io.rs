@@ -683,6 +683,20 @@ impl GraphIO for PersistentGraphIO {
         Ok(Some(file_backend_state(&self.store_path)?))
     }
 
+    fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
+        // Persistent graphs are loaded lazily, so the in-memory Oxigraph store
+        // is not authoritative until a graph is first read. Use the RDF5D
+        // directory populated at open time instead.
+        self.r5_index
+            .keys()
+            .map(|id| {
+                NamedNode::new(id)
+                    .map(|name| GraphIdentifier::new(name.as_ref()))
+                    .map_err(|error| anyhow!(error.to_string()))
+            })
+            .collect()
+    }
+
     fn add_named_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
         let graphname = id.graphname()?;
         self.store.remove_named_graph(id.name())?;

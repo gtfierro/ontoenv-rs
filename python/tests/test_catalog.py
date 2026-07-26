@@ -4,7 +4,13 @@ import pytest
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF
 
-from ontoenv import ExternalStoreChangedError, OntoEnv, StoreCapabilityError
+from ontoenv import (
+    CatalogRecoveryError,
+    ExternalStoreChangedError,
+    OntoEnv,
+    StoreCapabilityError,
+    UnresolvedImportError,
+)
 
 
 class RevisionStore:
@@ -63,6 +69,42 @@ class StateOnlyStore:
 
     def store_state(self) -> dict[str, str]:
         return {"id": "state-only-store", "revision": str(self.revision)}
+
+
+class MutatingReadStore(RevisionStore):
+    """Store that changes its revision during the first catalog scan."""
+
+    def get_graph(self, iri: str) -> Graph:
+        graph = super().get_graph(iri)
+        if self.get_calls == 1:
+            self.revision += 1
+            self.revisions[iri] = self.revision
+        return graph
+
+
+class FailingReadStore(RevisionStore):
+    """Store that exposes an ID but cannot read its graph."""
+
+    def get_graph(self, iri: str) -> Graph:
+        raise RuntimeError(f"simulated read failure for {iri}")
+
+
+class ToggleFailStore(RevisionStore):
+    """Store whose reads can fail after a successful initial adoption."""
+
+    fail_reads = False
+
+    def get_graph(self, iri: str) -> Graph:
+        if self.fail_reads:
+            raise RuntimeError(f"simulated read failure for {iri}")
+        return super().get_graph(iri)
+
+
+class MisleadingErrorStore(RevisionStore):
+    """Store error text that resembles a typed OntoEnv error."""
+
+    def graph_ids(self) -> list[str]:
+        raise RuntimeError("ExternalStoreChangedError is merely backend text")
 
 
 def ontology_graph(iri: str) -> Graph:
@@ -182,6 +224,120 @@ def test_adopt_does_not_fetch_missing_imports(tmp_path: Path) -> None:
     assert environment.get_ontology_names() == [iri]
     assert store.get_calls == 1
     environment.close()
+
+
+def test_copy_graph_distinguishes_unresolved_import(tmp_path: Path) -> None:
+    store = RevisionStore()
+    iri = "https://example.org/root"
+    missing = "https://example.invalid/missing-import"
+    graph = ontology_graph(iri)
+    graph.add((URIRef(iri), OWL.imports, URIRef(missing)))
+    store.add_graph(iri, graph)
+
+    environment = OntoEnv.adopt(tmp_path, store)
+    with pytest.raises(UnresolvedImportError, match=missing):
+        environment.copy_graph(missing)
+    with pytest.raises(ValueError, match="Failed to resolve graph"):
+        environment.copy_graph("https://example.invalid/not-an-import")
+    environment.close()
+
+
+def test_recover_rebuilds_catalog_without_manual_file_deletion(tmp_path: Path) -> None:
+    store = RevisionStore()
+    iri = "https://example.org/root"
+    store.add_graph(iri, ontology_graph(iri))
+    environment = OntoEnv.adopt(tmp_path, store)
+    environment.close()
+
+    pending = tmp_path / ".ontoenv" / "catalog.pending"
+    pending.write_text('{"mutation_id":"test","graphs":[]}')
+    with pytest.raises(CatalogRecoveryError):
+        OntoEnv.open(tmp_path, graph_store=store)
+
+    recovered = OntoEnv.recover(tmp_path, graph_store=store)
+    assert recovered.get_ontology_names() == [iri]
+    assert not pending.exists()
+    assert CatalogRecoveryError.__doc__
+    recovered.close()
+
+
+def test_recover_failure_retains_marker_and_old_catalog(tmp_path: Path) -> None:
+    store = FailingReadStore()
+    iri = "https://example.org/root"
+    # Populate without calling the overridden reader.
+    RevisionStore.add_graph(store, iri, ontology_graph(iri))
+    good_store = RevisionStore()
+    good_store.graphs = store.graphs
+    good_store.revisions = store.revisions
+    good_store.revision = store.revision
+    environment = OntoEnv.adopt(tmp_path, good_store)
+    environment.close()
+    original_catalog = (tmp_path / ".ontoenv" / "catalog.r5tu").read_bytes()
+
+    pending = tmp_path / ".ontoenv" / "catalog.pending"
+    pending.write_text('{"mutation_id":"test","graphs":[]}')
+    with pytest.raises(ValueError, match="simulated read failure"):
+        OntoEnv.recover(tmp_path, graph_store=store)
+
+    assert pending.exists(), "failed recovery must remain retryable"
+    assert (tmp_path / ".ontoenv" / "catalog.r5tu").read_bytes() == original_catalog
+
+
+def test_failed_full_refresh_preserves_live_and_saved_catalog(tmp_path: Path) -> None:
+    store = ToggleFailStore()
+    iri = "https://example.org/root"
+    store.add_graph(iri, ontology_graph(iri))
+    environment = OntoEnv.adopt(tmp_path, store)
+    original_catalog = (tmp_path / ".ontoenv" / "catalog.r5tu").read_bytes()
+
+    store.fail_reads = True
+    with pytest.raises(ValueError, match="simulated read failure"):
+        environment.refresh_from_store(full=True)
+
+    assert environment.get_ontology_names() == [iri]
+    assert (tmp_path / ".ontoenv" / "catalog.r5tu").read_bytes() == original_catalog
+    environment.close()
+
+
+def test_adopt_rejects_backend_mutation_during_scan(tmp_path: Path) -> None:
+    store = MutatingReadStore()
+    iri = "https://example.org/root"
+    store.add_graph(iri, ontology_graph(iri))
+
+    with pytest.raises(ExternalStoreChangedError, match="changed while rebuilding"):
+        OntoEnv.adopt(tmp_path, store)
+    assert not (tmp_path / ".ontoenv" / "catalog.r5tu").exists()
+
+
+def test_error_types_are_not_selected_from_message_text(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="merely backend text"):
+        OntoEnv.adopt(tmp_path, MisleadingErrorStore())
+
+
+def test_brick_style_non_strict_imports_commit_cleanly(tmp_path: Path) -> None:
+    """Exercise the consumer path with eight intentionally unavailable imports."""
+    store = RevisionStore()
+    root = "https://brickschema.org/schema/Brick"
+    missing = [f"https://example.invalid/brick-import-{index}" for index in range(8)]
+    graph = ontology_graph(root)
+    for imported in missing:
+        graph.add((URIRef(root), OWL.imports, URIRef(imported)))
+
+    environment = OntoEnv.create(
+        tmp_path,
+        graph_store=store,
+        strict=False,
+        offline=True,
+    )
+    assert environment.add(graph) == root
+    assert set(environment.missing_imports(root)) == set(missing)
+    assert not (tmp_path / ".ontoenv" / "catalog.pending").exists()
+    environment.close()
+
+    reopened = OntoEnv.connect(tmp_path, graph_store=store)
+    assert reopened.get_ontology_names() == [root]
+    assert set(reopened.missing_imports(root)) == set(missing)
+    reopened.close()
 
 
 def test_connect_creates_empty_custom_environment(tmp_path: Path) -> None:

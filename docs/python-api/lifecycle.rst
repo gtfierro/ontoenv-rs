@@ -207,6 +207,23 @@ and reconstruct it from every graph currently in the store:
 
 Use ``graphs=[...]`` or ``full=True``, but not both.
 
+Recovering an interrupted mutation
+----------------------------------
+
+If startup raises :class:`ontoenv.CatalogRecoveryError`, rebuild the catalog
+from the authoritative graph store:
+
+.. code-block:: python
+
+   env = OntoEnv.recover("./project", graph_store=store)
+
+For the built-in persistent store, omit ``graph_store``. Recovery scans every
+stored graph and publishes a replacement catalog. The ``catalog.pending``
+marker is removed only after that publication succeeds, so callers never need
+to delete OntoEnv-owned files themselves. The backend must remain unchanged
+during the scan; a concurrent mutation or unreadable graph aborts recovery and
+leaves the marker in place for a safe retry.
+
 Temporary work
 --------------
 

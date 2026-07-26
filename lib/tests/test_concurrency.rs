@@ -282,14 +282,12 @@ fn rust_read_write_locking() {
     assert_eq!(
         acquired, 1,
         "expected exactly one acquisition; stdout1: {}, stdout2: {}",
-        s1,
-        s2
+        s1, s2
     );
     assert_eq!(
         lockerror, 1,
         "expected exactly one lock error; stdout1: {}, stdout2: {}",
-        s1,
-        s2
+        s1, s2
     );
 
     // cleanup

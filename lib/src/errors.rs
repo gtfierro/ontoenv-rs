@@ -35,6 +35,10 @@ impl fmt::Display for ExternalStoreChangedError {
 impl std::error::Error for ExternalStoreChangedError {}
 
 #[derive(Debug)]
+/// Indicates that an interrupted mutation marker prevents a normal catalog open.
+///
+/// Call `OntoEnv::recover` (or the corresponding language-binding API) to
+/// rebuild the catalog from the authoritative graph store.
 pub struct CatalogRecoveryError {
     pub message: String,
 }

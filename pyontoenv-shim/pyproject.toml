@@ -8,7 +8,7 @@ license = { text = "BSD-3-Clause" }
 authors = [
     { name = "Gabe Fierro", email = "gtfierro@mines.edu" },
 ]
-dependencies = ["ontoenv"]
+dependencies = ["ontoenv>=0.6,<0.7"]
 
 [project.urls]
 Homepage = "https://github.com/gtfierro/ontoenv-rs"

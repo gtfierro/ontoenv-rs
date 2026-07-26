@@ -783,9 +783,9 @@ mod unix_permission_tests {
         // `find_files` canonicalizes discovered paths (resolving symlinks such
         // as macOS `/var` -> `/private/var`), so the expected entry must be
         // canonicalized the same way to compare equal.
-        let expected = OntologyLocation::File(
-            ontoenv::ontology::canonicalize_file_path(&dir.path().join("ont1.ttl")),
-        );
+        let expected = OntologyLocation::File(ontoenv::ontology::canonicalize_file_path(
+            &dir.path().join("ont1.ttl"),
+        ));
         assert!(
             files.contains(&expected),
             "find_files should still collect readable entries"
@@ -824,15 +824,14 @@ mod windows_permission_tests {
         // `find_files` canonicalizes discovered paths (resolving symlinks /
         // normalizing Windows path forms), so expected entries must be
         // canonicalized the same way to compare equal.
-        let readable = OntologyLocation::File(
-            ontoenv::ontology::canonicalize_file_path(&dir.path().join("ont1.ttl")),
-        );
+        let readable = OntologyLocation::File(ontoenv::ontology::canonicalize_file_path(
+            &dir.path().join("ont1.ttl"),
+        ));
         assert!(
             files.contains(&readable),
             "find_files should still collect readable entries"
         );
-        let canonical_locked =
-            ontoenv::ontology::canonicalize_file_path(&locked_path);
+        let canonical_locked = ontoenv::ontology::canonicalize_file_path(&locked_path);
         assert!(
             !files.contains(&OntologyLocation::File(canonical_locked)),
             "locked files should be skipped when encountering sharing violations"
@@ -1330,7 +1329,7 @@ fn test_add_from_bytes_non_strict_skips_missing_import() -> Result<()> {
         .locations(vec![])
         .strict(false)
         .offline(true)
-        .temporary(true)
+        .temporary(false)
         .build()?;
     let mut env = OntoEnv::init(cfg, true)?;
 
@@ -1352,6 +1351,21 @@ fn test_add_from_bytes_non_strict_skips_missing_import() -> Result<()> {
             .count(),
         1,
         "missing import should be tracked"
+    );
+    let pending = dir
+        .path()
+        .join(".ontoenv")
+        .join(ontoenv::catalog::PENDING_FILE);
+    assert!(
+        !pending.exists(),
+        "a tolerated non-strict import failure must not leave a recovery marker"
+    );
+    drop(env);
+    let reopened = OntoEnv::load_from_directory(dir.path().to_path_buf(), false)?;
+    assert_eq!(
+        reopened.get_closure(&root_id, -1)?.len(),
+        1,
+        "the successfully committed partial environment should reopen normally"
     );
 
     teardown(dir);
