@@ -5,6 +5,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
 export UV_SYSTEM_RESOLVE="${UV_SYSTEM_RESOLVE:-0}"
 
+echo "+ uv sync --group dev (python/)"
+(
+  cd "$ROOT/python"
+  uv sync --group dev
+)
+export PYO3_PYTHON="$ROOT/python/.venv/bin/python"
+
 echo "+ cargo test --workspace"
 cargo test --workspace
 
@@ -14,10 +21,10 @@ echo "+ uv run maturin develop (python/)"
   uv run --group dev maturin develop
 )
 
-echo "+ uv run python -m unittest discover -s tests (python/)"
+echo "+ uv run --group dev pytest -q (python/)"
 (
   cd "$ROOT/python"
-  uv run python -m unittest discover -s tests
+  uv run --group dev pytest -q
 )
 
 echo "+ uv run python -m unittest discover -s tests (pyontoenv-shim/)"

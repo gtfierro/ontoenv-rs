@@ -39,7 +39,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         original_cwd = Path.cwd()
         os.chdir(self.test_dir)
         try:
-            bootstrap = OntoEnv(create_or_use_cached=True)
+            bootstrap = OntoEnv.connect(".")
             bootstrap.close()
             self.env = OntoEnv()
             self.assertIn("OntoEnv", repr(self.env))
@@ -238,7 +238,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         base_name = self.env.add(str(base_path))
 
         destination = Graph()
-        closure_graph, closure_names = self.env.get_closure(base_name, destination_graph=destination)
+        closure_graph, closure_names = self.env.copy_closure(base_name, graph=destination)
 
         self.assertIs(destination, closure_graph)
         self.assertGreater(len(closure_graph), 0)
@@ -253,17 +253,330 @@ class TestOntoEnvAPI(unittest.TestCase):
         self.assertIsInstance(g, Graph)
         self.assertGreater(len(g), 0)
         self.assertIn((URIRef(self.brick_name), RDF.type, OWL.Ontology), g)
+        with self.assertRaises(ValueError):
+            g.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
+
+        materialized = self.env.copy_graph(name)
+        self.assertIsInstance(materialized, Graph)
+        materialized.add((URIRef("urn:test"), RDF.type, OWL.Ontology))
+        self.assertIn((URIRef("urn:test"), RDF.type, OWL.Ontology), materialized)
+
+    def test_get_graph_visible_without_explicit_flush(self):
+        """After add() without an explicit flush(), get_graph still sees the new ontology.
+
+        Earlier the cached Dataset was rebuilt against the stale on-disk rdf5d
+        snapshot under backend='auto'; the cache rebuild now flushes first.
+        """
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        name = self.env.add(str(self.brick_file_path))
+        # No env.flush() here — the cache miss should trigger one for us.
+        g = self.env.get_graph(name)
+        self.assertGreater(len(g), 0)
+
+    def test_get_graph_unknown_uri_raises(self):
+        """get_graph on an unknown URI raises ValueError, not an empty Graph."""
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        with self.assertRaises(ValueError):
+            self.env.get_graph("http://example.com/does-not-exist")
 
     def test_get_closure(self):
-        """Test env.get_closure()."""
+        """get_closure returns a read-only merged view + name list."""
+        from ontoenv import ViewGraph
+
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+
+        view, names = self.env.get_closure(name, recursion_depth=0)
+
+        self.assertIsInstance(view, ViewGraph)
+        self.assertEqual(names[0], name)
+        self.assertGreater(len(view), 0)
+        self.assertIn((URIRef(name), RDF.type, OWL.Ontology), view)
+
+        # Same shape as get_closure for trivial swap-ability.
+        closure_g, closure_names = self.env.copy_closure(name, recursion_depth=0)
+        self.assertEqual(set(names), set(closure_names))
+
+        # Read-only.
+        with self.assertRaises(ValueError):
+            view.add((URIRef("urn:x"), RDF.type, OWL.Ontology))
+
+    def _build_closure_equivalence_fixture(self):
+        """Three ontologies exercising the hard closure-transform cases:
+
+        - root does NOT declare itself ``a owl:Ontology`` (tests the additive
+          root-declaration step),
+        - a triple is duplicated across root and an imported graph (tests
+          cross-graph set dedup),
+        - SHACL ``sh:prefixes`` / ``sh:declare`` on a non-root graph (tests
+          the prefix consolidation rewrite).
+
+        Returns ``(root_iri, [root, mid, leaf] iris)``.
+        """
+        root_path = self.test_dir / "eqroot.ttl"
+        mid_path = self.test_dir / "eqmid.ttl"
+        leaf_path = self.test_dir / "eqleaf.ttl"
+        unrelated_path = self.test_dir / "equnrelated.ttl"
+        root_iri = root_path.resolve().as_uri()
+        mid_iri = mid_path.resolve().as_uri()
+        leaf_iri = leaf_path.resolve().as_uri()
+        unrelated_iri = unrelated_path.resolve().as_uri()
+
+        leaf_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.com/leaf#> .
+<{leaf_iri}> a owl:Ontology ;
+    sh:prefixes <{leaf_iri}> .
+<{leaf_iri}> sh:declare [ sh:prefix "leaf" ; sh:namespace "http://example.com/leaf#" ] .
+ex:LeafClass a owl:Class .
+# Duplicated across graphs (also asserted in mid):
+ex:Shared a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        mid_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix ex: <http://example.com/leaf#> .
+@prefix exm: <http://example.com/mid#> .
+<{mid_iri}> a owl:Ontology ;
+    owl:imports <{leaf_iri}> .
+exm:MidClass a owl:Class .
+# Same triple as in leaf, to exercise cross-graph dedup:
+ex:Shared a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        # Root deliberately does NOT declare itself an owl:Ontology.
+        root_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix exr: <http://example.com/root#> .
+<{root_iri}> owl:imports <{mid_iri}> .
+exr:RootClass a owl:Class .
+""",
+            encoding="utf-8",
+        )
+        unrelated_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+<{unrelated_iri}> a owl:Ontology ;
+    sh:prefixes <{unrelated_iri}> ;
+    sh:declare [
+        sh:prefix "unrelated" ;
+        sh:namespace "http://example.com/unrelated#"
+    ] .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(leaf_path))
+        self.env.add(str(mid_path))
+        self.env.add(str(root_path))
+        self.env.add(str(unrelated_path))
+        return root_iri, [root_iri, mid_iri, leaf_iri]
+
+    def test_get_closure_matches_copy_closure_set_semantics(self):
+        """get_closure (zero-copy view) must return the SAME triple set as
+        copy_closure (materialized), including:
+
+        - cross-graph dedup (set, not multiset),
+        - resolved owl:imports stripped,
+        - ontology declarations collapsed onto the root,
+        - the additive root ``a owl:Ontology`` declaration when the root does
+          not declare itself,
+        - sh:prefixes / sh:declare consolidated onto the root.
+        """
+        root_iri, _iris = self._build_closure_equivalence_fixture()
+
+        view, view_names = self.env.get_closure(root_iri)
+        copy_g, copy_names = self.env.copy_closure(root_iri)
+
+        self.assertEqual(set(view_names), set(copy_names))
+
+        view_set = set(view.triples((None, None, None)))
+        copy_set = set(copy_g.triples((None, None, None)))
+
+        missing = copy_set - view_set
+        extra = view_set - copy_set
+        self.assertEqual(
+            missing, set(), f"triples in copy_closure but not in get_closure: {missing}"
+        )
+        self.assertEqual(
+            extra, set(), f"triples in get_closure but not in copy_closure: {extra}"
+        )
+
+        # len(view) is set-cardinality and matches copy_closure exactly.
+        self.assertEqual(len(view), len(copy_g))
+        # ...and matches the deduped iteration length (no multiset leakage).
+        self.assertEqual(len(view), len(view_set))
+
+        # SPARQL COUNT(*) over the view agrees with the set cardinality.
+        result = view.query("SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }")
+        self.assertEqual(int(list(result)[0][0]), len(view_set))
+
+    def test_get_closure_additive_root_declaration(self):
+        """When the root lacks an ``a owl:Ontology`` declaration, the view
+        still reports exactly one ontology declaration: the root."""
+        root_iri, _iris = self._build_closure_equivalence_fixture()
+        view, _ = self.env.get_closure(root_iri)
+
+        decls = list(view.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(decls, [(URIRef(root_iri), RDF.type, OWL.Ontology)])
+        self.assertIn((URIRef(root_iri), RDF.type, OWL.Ontology), view)
+
+    def test_get_closure_strips_resolved_imports(self):
+        """Resolved owl:imports (targets inside the closure) are absent from
+        the view, matching copy_closure."""
+        root_iri, iris = self._build_closure_equivalence_fixture()
+        view, _ = self.env.get_closure(root_iri)
+        imports = list(view.triples((None, OWL.imports, None)))
+        self.assertEqual(imports, [], f"resolved owl:imports leaked: {imports}")
+
+    def test_get_closure_sh_prefixes_consolidated(self):
+        """sh:prefixes objects are rewritten onto the root, and sh:declare
+        moves up to the root — matching copy_closure."""
+        root_iri, _iris = self._build_closure_equivalence_fixture()
+        view, _ = self.env.get_closure(root_iri)
+        copy_g, _ = self.env.copy_closure(root_iri)
+
+        view_prefixes = set(view.triples((None, SH.prefixes, None)))
+        copy_prefixes = set(copy_g.triples((None, SH.prefixes, None)))
+        self.assertEqual(view_prefixes, copy_prefixes)
+
+    def test_view_graph_triples_accepts_rdflib_tuple_convention(self):
+        """ViewGraph.triples accepts both the rdflib single-tuple convention
+        ``triples((s, p, o))`` and the three-arg form ``triples(s, p, o)``."""
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+        view, _names = self.env.get_closure(name, recursion_depth=0)
+
+        # Single-tuple convention (what rdflib.Graph.triples and every rdflib
+        # user expects) must not be misinterpreted as a subject term.
+        tuple_form = list(view.triples((None, None, None)))
+        three_arg_form = list(view.triples(None, None, None))
+        self.assertGreater(len(tuple_form), 0)
+        self.assertEqual(len(tuple_form), len(three_arg_form))
+        self.assertEqual(set(tuple_form), set(three_arg_form))
+
+        # Restricted pattern via the tuple convention.
+        ont_via_tuple = list(view.triples((None, RDF.type, OWL.Ontology)))
+        ont_via_args = list(view.triples(None, RDF.type, OWL.Ontology))
+        self.assertEqual(ont_via_tuple, ont_via_args)
+        self.assertIn((URIRef(name), RDF.type, OWL.Ontology), ont_via_tuple)
+
+    def test_view_graph_spo_and_scoped_query(self):
+        """ViewGraph subjects/predicates/objects and query are scoped to the view."""
+        from ontoenv import ViewGraph
+
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+        view, _names = self.env.get_closure(name, recursion_depth=0)
+
+        self.assertIsInstance(view, ViewGraph)
+        # Sanity: the view has triples.
+        self.assertGreater(len(view), 0)
+
+        # SPO accessors return unique terms across the scoped graphs.
+        all_triples = list(view)
+        expected_subjects = {s for s, _, _ in all_triples}
+        expected_predicates = {p for _, p, _ in all_triples}
+        expected_objects = {o for _, _, o in all_triples}
+        self.assertEqual(set(view.subjects()), expected_subjects)
+        self.assertEqual(set(view.predicates()), expected_predicates)
+        self.assertEqual(set(view.objects()), expected_objects)
+
+        # Pattern-restricted SPO accessors filter correctly.
+        ont_subjects = set(view.subjects(predicate=RDF.type, object=OWL.Ontology))
+        self.assertEqual(ont_subjects, {URIRef(name)})
+
+        # Scoped SPARQL query only sees the view's graphs: the ontology
+        # declaration appears in the closure, so a COUNT over the default
+        # graph is non-zero and matches len(view).
+        result = view.query(
+            "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"
+        )
+        count = int(list(result)[0][0])
+        self.assertEqual(count, len(view))
+
+        # Read-only mutation contract.
+        with self.assertRaises(ValueError):
+            view.add((URIRef("urn:x"), RDF.type, OWL.Ontology))
+        with self.assertRaises(ValueError):
+            view.remove((URIRef("urn:x"), RDF.type, OWL.Ontology))
+
+    def test_iter_triples_and_iter_closure_triples(self):
+        """Streaming iterators yield rdflib-term tuples without an rdflib.Graph."""
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, search_directories=["brick"]
+        )
+        name = self.env.add(str(self.brick_file_path))
+
+        single = list(self.env.iter_triples(name))
+        self.assertGreater(len(single), 0)
+        s, p, o = single[0]
+        self.assertTrue(hasattr(s, "n3"))  # rdflib Identifier
+
+        # Closure stream should include at least as many triples as the
+        # single-graph stream (root is always in the closure).
+        closure = list(self.env.iter_closure_triples(name, recursion_depth=0))
+        self.assertGreaterEqual(len(closure), len(single))
+
+    def test_get_graph_caches_dataset_across_calls(self):
+        """Repeated get_graph calls reuse the same underlying Dataset/Store."""
+        self.env = OntoEnv(path=self.test_dir, recreate=True)
+        name = self.env.add(str(self.brick_file_path))
+
+        first = self.env.get_graph(name)
+        second = self.env.get_graph(name)
+        self.assertIs(first.store, second.store)
+
+        # flush rebinds the cached store in place so existing Graph views and
+        # subsequent get_graph calls share the same refreshed store.
+        self.env.flush()
+        after_flush = self.env.get_graph(name)
+        self.assertIs(after_flush.store, first.store)
+
+    def test_dunder_sugar(self):
+        """len(env), uri in env, env[uri], iter(env), and context manager."""
+        with OntoEnv(path=self.test_dir, recreate=True) as env:
+            name = env.add(str(self.brick_file_path))
+
+            self.assertGreater(len(env), 0)
+            self.assertIn(name, env)
+            self.assertNotIn("urn:does-not-exist", env)
+            self.assertFalse("not a uri" in env)
+
+            self.assertIn(name, list(iter(env)))
+
+            graph_via_getitem = env[name]
+            self.assertIsInstance(graph_via_getitem, Graph)
+            self.assertGreater(len(graph_via_getitem), 0)
+
+        # context manager exit calls close(); subsequent calls raise
+        with self.assertRaises(ValueError):
+            len(env)
+
+    def test_copy_closure(self):
+        """Test env.copy_closure()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
         name = self.env.add(str(self.brick_file_path))
         g = self.env.get_graph(name)
-        closure_g, imported_graphs = self.env.get_closure(name, recursion_depth=0)
+        closure_g, imported_graphs = self.env.copy_closure(name, recursion_depth=0)
         self.assertIsInstance(closure_g, Graph)
         self.assertEqual(len(imported_graphs), 1)
 
-        closure_g, imported_graphs = self.env.get_closure(name)
+        closure_g, imported_graphs = self.env.copy_closure(name)
         self.assertIsInstance(closure_g, Graph)
         self.assertGreater(len(imported_graphs), 1)
         self.assertGreater(len(closure_g), len(g))
@@ -457,12 +770,12 @@ class TestOntoEnvAPI(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.env.add(str(a_path))
-        self.env.add(str(b_path))
-        self.env.add(str(c_path))
-        self.env.add(str(d_path))
-        self.env.add(str(e_path))
-        self.env.add(str(f_path))
+        self.env.add(str(a_path), fetch_imports=False)
+        self.env.add(str(b_path), fetch_imports=False)
+        self.env.add(str(c_path), fetch_imports=False)
+        self.env.add(str(d_path), fetch_imports=False)
+        self.env.add(str(e_path), fetch_imports=False)
+        self.env.add(str(f_path), fetch_imports=False)
 
         g = Graph()
         root = URIRef("http://ex.org/A")
@@ -752,6 +1065,71 @@ ex:BaseClass a owl:Class .
         self.assertTrue(any("BaseClass" in str(t) for t in dest))
         self.assertTrue(any("ImpClass" in str(t) for t in dest))
 
+    def test_copy_union_explicit_and_with_closures(self):
+        """copy_union unions an explicit set, optionally expanding each closure."""
+        a_path = self.test_dir / "a.ttl"
+        b_path = self.test_dir / "b.ttl"
+        c_path = self.test_dir / "c.ttl"
+        a_iri = a_path.resolve().as_uri()
+        b_iri = b_path.resolve().as_uri()
+        c_iri = c_path.resolve().as_uri()
+        root_iri = "http://example.com/union-root"
+
+        b_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{b_iri}> a owl:Ontology .
+<{b_iri}#Class> a <http://example.com/Marker> .
+""",
+            encoding="utf-8",
+        )
+        a_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{a_iri}> a owl:Ontology ;
+    owl:imports <{b_iri}> .
+<{a_iri}#Class> a <http://example.com/Marker> .
+""",
+            encoding="utf-8",
+        )
+        c_path.write_text(
+            f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<{c_iri}> a owl:Ontology .
+<{c_iri}#Class> a <http://example.com/Marker> .
+""",
+            encoding="utf-8",
+        )
+
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True)
+        self.env.add(str(b_path))
+        self.env.add(str(a_path))
+        self.env.add(str(c_path))
+
+        explicit_graph, explicit_names = self.env.copy_union([a_iri, c_iri], root_iri)
+        self.assertEqual(set(explicit_names), {a_iri, c_iri})
+        self.assertNotIn(
+            (URIRef(f"{b_iri}#Class"), RDF.type, URIRef("http://example.com/Marker")),
+            explicit_graph,
+        )
+        self.assertIn(
+            (URIRef(f"{c_iri}#Class"), RDF.type, URIRef("http://example.com/Marker")),
+            explicit_graph,
+        )
+
+        closure_graph, closure_names = self.env.copy_union(
+            [a_iri, c_iri],
+            root_iri,
+            include_closures=True,
+        )
+        self.assertEqual(set(closure_names), {a_iri, b_iri, c_iri})
+        self.assertIn(
+            (URIRef(f"{b_iri}#Class"), RDF.type, URIRef("http://example.com/Marker")),
+            closure_graph,
+        )
+        declarations = list(closure_graph.triples((None, RDF.type, OWL.Ontology)))
+        self.assertEqual(declarations, [(URIRef(root_iri), RDF.type, OWL.Ontology)])
+
     def test_import_graph_handles_cycles(self):
         """import_graph should handle cycles (A imports B imports A) without duplicating imports."""
         a_path = self.test_dir / "A.ttl"
@@ -864,14 +1242,14 @@ ex:B a owl:Class .
             {b_iri, c_iri},
         )
 
-    def test_snapshot_as_dataset(self):
-        """Test env.snapshot_as_dataset()."""
+    def test_get_dataset(self):
+        """Test env.get_dataset()."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["brick"])
         self.env.add(str(self.brick_file_path))
         self.env.update()  # need to run update to find all dependencies
         self.env.flush()
 
-        ds = self.env.snapshot_as_dataset()
+        ds = self.env.get_dataset()
         # count graphs
         num_graphs = len(list(ds.graphs()))
         # there should be many graphs: brick + all imports
@@ -990,8 +1368,8 @@ ex:B a owl:Class .
         self.assertEqual(len(all_named_decls), 1, "named deps graph should have exactly one owl:Ontology declaration")
         self.assertEqual(str(all_named_decls[0][0]), named_uri, "the single declaration should be for graph_name")
 
-    def test_update_all_flag(self):
-        """Test env.update(all=True) forces reloading of all ontologies."""
+    def test_update_force_flag(self):
+        """Test env.update(force=True) forces reloading of all ontologies."""
         self.env = OntoEnv(path=self.test_dir, recreate=True, search_directories=["../brick"])
         # Initial discovery of ontologies
         self.env.update()
@@ -1002,7 +1380,7 @@ ex:B a owl:Class .
         self.assertIsNotNone(ts1)
 
         # Force update of all ontologies
-        self.env.update(all=True)
+        self.env.update(force=True)
 
         ont2 = self.env.get_ontology(self.brick_name)
         ts2 = ont2.last_updated
@@ -1079,13 +1457,121 @@ ex:B a owl:Class .
             encoding="utf-8",
         )
         self.env = OntoEnv(path=self.test_dir, recreate=True)
-        self.env.add(str(a_path))
-        self.env.add(str(b_path))
+        self.env.add(str(a_path), fetch_imports=False)
+        self.env.add(str(b_path), fetch_imports=False)
 
         with self.assertRaises(ValueError) as ctx:
-            self.env.get_closure("http://ex.org/A", rewrite_sh_prefixes=True)
+            self.env.copy_closure("http://ex.org/A", rewrite_sh_prefixes=True)
         self.assertIn('Conflicting sh:prefix "ex"', str(ctx.exception))
 
+    def test_add_with_rename_overrides_iri(self) -> None:
+        """env.add(..., rename="new-iri") stores the ontology under the new IRI.
 
-if __name__ == "__main__":
-    unittest.main()
+        After rename, the old IRI should not resolve, the new IRI should
+        resolve, and the stored graph should carry the new IRI as the
+        owl:Ontology subject.
+        """
+        import tempfile
+
+        old_iri = "http://example.com/OldOnt"
+        new_iri = "http://example.com/NewOnt"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".ttl", delete=False) as f:
+            f.write(f'''
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <{old_iri}> a owl:Ontology .
+            ''')
+            ttl_path = f.name
+
+        try:
+            env = OntoEnv(path=self.test_dir, recreate=True)
+            returned_iri = env.add(ttl_path, rename=new_iri)
+            self.assertEqual(returned_iri, new_iri)
+
+            # Old IRI should not resolve
+            self.assertNotIn(old_iri, env)
+
+            # New IRI should resolve
+            self.assertIn(new_iri, env)
+
+            # get_graph on the new IRI should work and contain the ontology
+            # declaration (rdf:type owl:Ontology) under the new IRI.
+            g = env.get_graph(new_iri)
+            self.assertEqual(len(g), 1, "expected 1 triple: the type triple, rewritten to the new IRI")
+
+            # The owl:Ontology declaration should use the new IRI
+            self.assertIn(
+                (URIRef(new_iri), RDF.type, OWL.Ontology),
+                g,
+            )
+
+            # The old IRI should NOT appear as a subject
+            for s, p, o in g:
+                self.assertNotEqual(
+                    str(s), old_iri,
+                    f"old IRI {old_iri} should not appear as subject after rename",
+                )
+        finally:
+            os.unlink(ttl_path)
+
+    def test_add_no_imports_with_rename(self) -> None:
+        """env.add_no_imports(..., rename=...) also renames correctly."""
+        import tempfile
+
+        old_iri = "http://example.com/OldOnt"
+        new_iri = "http://example.com/NewOnt"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".ttl", delete=False) as f:
+            f.write(f'''
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <{old_iri}> a owl:Ontology .
+            ''')
+            ttl_path = f.name
+
+        try:
+            env = OntoEnv(path=self.test_dir, recreate=True)
+            returned_iri = env.add_no_imports(ttl_path, rename=new_iri)
+            self.assertEqual(returned_iri, new_iri)
+            self.assertIn(new_iri, env)
+            self.assertNotIn(old_iri, env)
+
+            g = env.get_graph(new_iri)
+            self.assertIn(
+                (URIRef(new_iri), RDF.type, OWL.Ontology),
+                g,
+            )
+        finally:
+            os.unlink(ttl_path)
+
+    def test_rename_graph_iri_python_api(self) -> None:
+        """env.rename_graph_iri(old_iri, new_iri) renames an already-loaded ontology."""
+        import tempfile
+
+        old_iri = "http://example.com/OldOnt"
+        new_iri = "http://example.com/NewOnt"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".ttl", delete=False) as f:
+            f.write(f'''
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <{old_iri}> a owl:Ontology .
+            ''')
+            ttl_path = f.name
+
+        try:
+            env = OntoEnv(path=self.test_dir, recreate=True)
+            env.add(ttl_path)
+            self.assertIn(old_iri, env)
+
+            returned_iri = env.rename_graph_iri(old_iri, new_iri)
+            self.assertEqual(returned_iri, new_iri)
+
+            self.assertIn(new_iri, env)
+            self.assertNotIn(old_iri, env)
+
+            g = env.get_graph(new_iri)
+            self.assertIn(
+                (URIRef(new_iri), RDF.type, OWL.Ontology),
+                g,
+            )
+        finally:
+            os.unlink(ttl_path)

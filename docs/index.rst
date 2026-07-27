@@ -53,13 +53,14 @@ Quick start
        includes=["*.ttl"],
    )
 
-   # Get a merged rdflib graph of an ontology and all its imports
-   g = env.get_closure("https://example.com/myOntology")
+   # Copy an ontology and all its imports into a mutable rdflib graph
+   g, closure_names = env.copy_closure("https://example.com/myOntology")
 
 Explore the docs
 ----------------
 
 - `Getting Started <getting-started.html>`__ — Installation, first workspace, filters, and the Python quickstart.
+- `Migrating to 0.6 <migration-0.6.html>`__ — Required API and lifecycle changes from 0.5.
 - `Python API <python-api/index.html>`__ — Full reference for the ``ontoenv`` Python package.
 - `CLI Reference <cli/index.html>`__ — All subcommands, flags, and configuration options.
 - `Rust API <https://docs.rs/ontoenv>`__ — Auto-generated crate docs on docs.rs.
@@ -70,6 +71,7 @@ Explore the docs
    :maxdepth: 2
 
    getting-started
+   migration-0.6
    python-api/index
    cli/index
    Rust API (docs.rs) <https://docs.rs/ontoenv>

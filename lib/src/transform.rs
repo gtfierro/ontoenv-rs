@@ -3,9 +3,12 @@
 
 use anyhow::{anyhow, Result};
 
-use crate::consts::{DECLARE, IMPORTS, ONTOLOGY, PREFIXES, SH_NAMESPACE, SH_PREFIX, TYPE};
+use crate::consts::{
+    DECLARE, IMPORTS, ONTOLOGY, PREFIXES, SH_NAMESPACE, SH_PREFIX, TYPE, VERSION_IRI,
+};
 use oxigraph::model::{
-    Dataset, Graph, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef, TermRef, Triple, TripleRef,
+    Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNode, NamedOrBlankNodeRef, Quad, QuadRef,
+    Term, TermRef, Triple, TripleRef,
 };
 use std::collections::HashMap;
 
@@ -137,6 +140,65 @@ pub fn remove_owl_imports_graph(graph: &mut Graph, ontologies_to_remove: Option<
     // Remove the collected triples
     for triple in to_remove {
         graph.remove(triple.as_ref());
+    }
+}
+
+/// Rewrites every occurrence of `old_iri` in `graph` to `new_iri`, covering:
+/// - triples where `old_iri` is the **subject** (owl:Ontology declaration, metadata, sh:declare links)
+/// - triples where `old_iri` is the **object** (sh:prefixes targets, self-referential owl:imports, etc.)
+///
+/// Predicate rewriting is intentionally omitted because ontology IRIs never appear as predicates.
+pub fn rename_ontology_iri_graph(graph: &mut Graph, old_iri: NamedNodeRef, new_iri: NamedNodeRef) {
+    let new_iri_owned: NamedNode = new_iri.into();
+    let new_subj: NamedOrBlankNode = new_iri_owned.clone().into();
+    let new_term: Term = new_iri_owned.clone().into();
+    let old_subject = NamedOrBlankNodeRef::NamedNode(old_iri);
+    let old_term = TermRef::NamedNode(old_iri);
+    let old_term_owned: Term = NamedNode::from(old_iri).into();
+
+    let mut to_remove: Vec<Triple> = Vec::new();
+    let mut to_add: Vec<Triple> = Vec::new();
+
+    // Triples where old_iri is the subject.
+    for triple_ref in graph.triples_for_subject(old_subject) {
+        let owned: Triple = triple_ref.into();
+        // owl:versionIRI values are stable identifiers; leave the object as-is.
+        let new_obj = if owned.object == old_term_owned && owned.predicate != VERSION_IRI {
+            new_term.clone()
+        } else {
+            owned.object.clone()
+        };
+        to_add.push(Triple::new(
+            new_subj.clone(),
+            owned.predicate.clone(),
+            new_obj,
+        ));
+        to_remove.push(owned);
+    }
+
+    // Triples where old_iri is the object (skip those already handled as subject,
+    // and skip owl:versionIRI — version identifiers must not be silently changed).
+    for triple_ref in graph.triples_for_object(old_term) {
+        if triple_ref.subject == old_subject {
+            continue; // already rewritten above
+        }
+        if triple_ref.predicate == VERSION_IRI {
+            continue; // version IRI is a stable identifier; do not rewrite
+        }
+        let owned: Triple = triple_ref.into();
+        to_add.push(Triple::new(
+            owned.subject.clone(),
+            owned.predicate.clone(),
+            new_term.clone(),
+        ));
+        to_remove.push(owned);
+    }
+
+    for triple in &to_remove {
+        graph.remove(triple.as_ref());
+    }
+    for triple in &to_add {
+        graph.insert(triple.as_ref());
     }
 }
 

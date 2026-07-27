@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
-use ontoenv::config::Config;
+use ontoenv::config::{Config, ConfigOverrides};
 use ontoenv::consts::IMPORTS;
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
@@ -526,6 +526,89 @@ exc:shape sh:prefixes <http://ex.org/C> .
 }
 
 #[test]
+fn explicit_union_includes_closures_only_when_requested() -> Result<()> {
+    let dir = new_tempdir("ontoenv-explicit-union")?;
+
+    let a_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+<http://ex.org/A> a owl:Ontology ;
+  owl:imports <http://ex.org/B> .
+<http://ex.org/A#Class> a <http://ex.org/Marker> .
+"#;
+    let b_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://ex.org/B> a owl:Ontology .
+<http://ex.org/B#Class> a <http://ex.org/Marker> .
+"#;
+    let c_ttl = r#"@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://ex.org/C> a owl:Ontology .
+<http://ex.org/C#Class> a <http://ex.org/Marker> .
+"#;
+    fs::write(dir.path().join("A.ttl"), a_ttl)?;
+    fs::write(dir.path().join("B.ttl"), b_ttl)?;
+    fs::write(dir.path().join("C.ttl"), c_ttl)?;
+
+    let cfg = default_config(&dir);
+    let mut env = OntoEnv::init(cfg, false)?;
+    env.update_all(false)?;
+
+    let a = NamedNode::new("http://ex.org/A")?;
+    let c = NamedNode::new("http://ex.org/C")?;
+    let root = NamedNode::new("http://ex.org/UnionRoot")?;
+    let b_class = NamedNodeRef::new_unchecked("http://ex.org/B#Class");
+    let c_class = NamedNodeRef::new_unchecked("http://ex.org/C#Class");
+    let rdf_type = NamedNodeRef::new_unchecked("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    let owl_ontology = NamedNodeRef::new_unchecked("http://www.w3.org/2002/07/owl#Ontology");
+
+    let explicit_only = env.get_explicit_union_graph(
+        &[a.clone(), c.clone()],
+        root.as_ref(),
+        false,
+        -1,
+        Some(true),
+        Some(true),
+    )?;
+    assert_eq!(explicit_only.graph_ids.len(), 2);
+    assert!(
+        explicit_only
+            .dataset
+            .iter()
+            .all(|q| q.subject != NamedOrBlankNodeRef::NamedNode(b_class)),
+        "B should not be included without closure expansion"
+    );
+    assert!(
+        explicit_only
+            .dataset
+            .iter()
+            .any(|q| q.subject == NamedOrBlankNodeRef::NamedNode(c_class)),
+        "Explicitly listed C should be included"
+    );
+
+    let with_closures =
+        env.get_explicit_union_graph(&[a, c], root.as_ref(), true, -1, Some(true), Some(true))?;
+    assert_eq!(with_closures.graph_ids.len(), 3);
+    assert!(
+        with_closures
+            .dataset
+            .iter()
+            .any(|q| q.subject == NamedOrBlankNodeRef::NamedNode(b_class)),
+        "B should be included through A's closure"
+    );
+    let declarations: Vec<_> = with_closures
+        .dataset
+        .iter()
+        .filter(|q| q.predicate == rdf_type && q.object == TermRef::NamedNode(owl_ontology))
+        .collect();
+    assert_eq!(declarations.len(), 1);
+    assert_eq!(
+        declarations[0].subject,
+        NamedOrBlankNodeRef::NamedNode(root.as_ref())
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+#[test]
 fn union_graph_errors_on_conflicting_sh_prefix() -> Result<()> {
     let dir = new_tempdir("ontoenv-prefix-conflict")?;
 
@@ -697,7 +780,12 @@ mod unix_permission_tests {
         let cfg = default_config(&dir);
         let env = OntoEnv::init(cfg, false)?;
         let files = env.find_files()?;
-        let expected = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        // `find_files` canonicalizes discovered paths (resolving symlinks such
+        // as macOS `/var` -> `/private/var`), so the expected entry must be
+        // canonicalized the same way to compare equal.
+        let expected = OntologyLocation::File(ontoenv::ontology::canonicalize_file_path(
+            &dir.path().join("ont1.ttl"),
+        ));
         assert!(
             files.contains(&expected),
             "find_files should still collect readable entries"
@@ -733,13 +821,19 @@ mod windows_permission_tests {
         let cfg = default_config(&dir);
         let env = OntoEnv::init(cfg, false)?;
         let files = env.find_files()?;
-        let readable = OntologyLocation::File(dir.path().join("ont1.ttl"));
+        // `find_files` canonicalizes discovered paths (resolving symlinks /
+        // normalizing Windows path forms), so expected entries must be
+        // canonicalized the same way to compare equal.
+        let readable = OntologyLocation::File(ontoenv::ontology::canonicalize_file_path(
+            &dir.path().join("ont1.ttl"),
+        ));
         assert!(
             files.contains(&readable),
             "find_files should still collect readable entries"
         );
+        let canonical_locked = ontoenv::ontology::canonicalize_file_path(&locked_path);
         assert!(
-            !files.contains(&OntologyLocation::File(locked_path.clone())),
+            !files.contains(&OntologyLocation::File(canonical_locked)),
             "locked files should be skipped when encountering sharing violations"
         );
 
@@ -1235,7 +1329,7 @@ fn test_add_from_bytes_non_strict_skips_missing_import() -> Result<()> {
         .locations(vec![])
         .strict(false)
         .offline(true)
-        .temporary(true)
+        .temporary(false)
         .build()?;
     let mut env = OntoEnv::init(cfg, true)?;
 
@@ -1257,6 +1351,21 @@ fn test_add_from_bytes_non_strict_skips_missing_import() -> Result<()> {
             .count(),
         1,
         "missing import should be tracked"
+    );
+    let pending = dir
+        .path()
+        .join(".ontoenv")
+        .join(ontoenv::catalog::PENDING_FILE);
+    assert!(
+        !pending.exists(),
+        "a tolerated non-strict import failure must not leave a recovery marker"
+    );
+    drop(env);
+    let reopened = OntoEnv::load_from_directory(dir.path().to_path_buf(), false)?;
+    assert_eq!(
+        reopened.get_closure(&root_id, -1)?.len(),
+        1,
+        "the successfully committed partial environment should reopen normally"
     );
 
     teardown(dir);
@@ -1849,6 +1958,1337 @@ fn test_cached_add_force_refreshes() -> Result<()> {
     assert!(forced_updated > first_updated);
 
     drop(env);
+    teardown(dir);
+    Ok(())
+}
+
+// ── rename tests ─────────────────────────────────────────────────────────────
+
+fn in_memory_env() -> Result<OntoEnv> {
+    let root = std::env::current_dir()?;
+    let cfg = Config::builder()
+        .root(root)
+        .locations(vec![])
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    OntoEnv::init(cfg, true)
+}
+
+fn add_bytes(
+    env: &mut OntoEnv,
+    id: &str,
+    turtle: &str,
+) -> Result<ontoenv::ontology::GraphIdentifier> {
+    env.add_from_bytes(
+        OntologyLocation::InMemory {
+            identifier: id.to_string(),
+        },
+        turtle.as_bytes().to_vec(),
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::UseCache,
+    )
+}
+
+/// After rename the new IRI resolves in the env, the old IRI does not,
+/// and the stored graph data carries the new IRI as the `owl:Ontology` subject.
+#[test]
+fn rename_updates_env_and_graph_data() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         <http://example.com/B> a owl:Ontology .\n",
+    )?;
+
+    let old_iri = NamedNode::new("http://example.com/B")?;
+    let b_id = env
+        .resolve(ResolveTarget::Graph(old_iri.clone()))
+        .expect("B should be in env before rename");
+
+    let new_iri = NamedNode::new("http://example.com/B-renamed")?;
+    let new_id = env.rename_graph_iri(&b_id, new_iri.clone())?;
+
+    // Old IRI removed, new IRI present.
+    assert!(
+        env.resolve(ResolveTarget::Graph(old_iri)).is_none(),
+        "old IRI should be gone after rename"
+    );
+    assert!(
+        env.resolve(ResolveTarget::Graph(new_iri.clone())).is_some(),
+        "new IRI should be in env after rename"
+    );
+    assert_eq!(new_id.to_uri_string(), new_iri.as_str());
+
+    // The stored graph has the new IRI as the owl:Ontology subject.
+    let graph = env.io().get_graph(&new_id)?;
+    let rdf_type = NamedNodeRef::new_unchecked("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    let owl_ontology_node = NamedNodeRef::new_unchecked("http://www.w3.org/2002/07/owl#Ontology");
+
+    let new_iri_as_subject = NamedOrBlankNodeRef::NamedNode(new_iri.as_ref());
+    let has_new_declaration = graph
+        .triples_for_subject(new_iri_as_subject)
+        .any(|t| t.predicate == rdf_type && t.object == TermRef::NamedNode(owl_ontology_node));
+    assert!(
+        has_new_declaration,
+        "graph should declare new IRI as owl:Ontology"
+    );
+
+    let old_iri_node = NamedNode::new("http://example.com/B")?;
+    let old_iri_as_subject = NamedOrBlankNodeRef::NamedNode(old_iri_node.as_ref());
+    let old_declaration_gone = graph
+        .triples_for_subject(old_iri_as_subject)
+        .next()
+        .is_none();
+    assert!(
+        old_declaration_gone,
+        "old IRI should have no triples as subject"
+    );
+
+    Ok(())
+}
+
+/// Renaming a node with downstream imports keeps those imports reachable in
+/// the renamed node's own transitive closure.
+#[test]
+fn rename_preserves_downstream_closure() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    // C: standalone leaf
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         <http://example.com/C> a owl:Ontology .\n",
+    )?;
+
+    // B imports C
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         <http://example.com/B> a owl:Ontology ;\n\
+           owl:imports <http://example.com/C> .\n",
+    )?;
+
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/B",
+        )?))
+        .expect("B should be in env");
+    let c_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/C",
+        )?))
+        .expect("C should be in env");
+
+    // B's closure before rename: [B, C]
+    let closure_before = env.get_closure(&b_id, -1)?;
+    assert_eq!(closure_before.len(), 2);
+    assert!(closure_before.contains(&c_id));
+
+    // Rename B → B-renamed
+    let new_b_iri = NamedNode::new("http://example.com/B-renamed")?;
+    let b_new_id = env.rename_graph_iri(&b_id, new_b_iri)?;
+
+    // Old B gone, B-renamed present.
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/B"
+        )?))
+        .is_none(),
+        "old B should be gone after rename"
+    );
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(
+            "http://example.com/B-renamed"
+        )?))
+        .is_some(),
+        "B-renamed should be in env"
+    );
+
+    // B-renamed's closure still includes C, and does not include old B.
+    let closure_after = env.get_closure(&b_new_id, -1)?;
+    assert!(
+        closure_after.contains(&c_id),
+        "C should still be in B-renamed's closure"
+    );
+    assert!(
+        !closure_after.contains(&b_id),
+        "old B should not appear in B-renamed's closure"
+    );
+    assert_eq!(closure_after.len(), 2, "closure should be [B-renamed, C]");
+
+    Ok(())
+}
+
+/// add_with_rename loads the root and its transitive imports. The returned
+/// identifier carries the renamed IRI; imported ontologies are reachable
+/// from the renamed root's closure.
+#[test]
+fn add_with_rename_closure_includes_imports() -> Result<()> {
+    let dir = new_tempdir("ontoenv_add_with_rename_closure")?;
+
+    // C: standalone leaf identified by its file URL
+    let c_path = dir.path().join("C.ttl");
+    let c_iri = url::Url::from_file_path(&c_path).unwrap().to_string();
+    fs::write(
+        &c_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{c}> a owl:Ontology .\n",
+            c = c_iri
+        ),
+    )?;
+
+    // B imports C (both identified by their file URLs)
+    let b_path = dir.path().join("B.ttl");
+    let b_iri = url::Url::from_file_path(&b_path).unwrap().to_string();
+    fs::write(
+        &b_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{b}> a owl:Ontology ; owl:imports <{c}> .\n",
+            b = b_iri,
+            c = c_iri,
+        ),
+    )?;
+
+    // A imports B (also identified by file URL)
+    let a_path = dir.path().join("A.ttl");
+    let a_iri = url::Url::from_file_path(&a_path).unwrap().to_string();
+    fs::write(
+        &a_path,
+        format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{a}> a owl:Ontology ; owl:imports <{b}> .\n",
+            a = a_iri,
+            b = b_iri,
+        ),
+    )?;
+
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![])
+        .strict(false)
+        .offline(true)
+        .temporary(true)
+        .build()?;
+    let mut env = OntoEnv::init(cfg, true)?;
+
+    let new_a_iri = "http://example.com/A-canonical";
+    let a_id = env.add_with_rename(
+        OntologyLocation::File(a_path),
+        Overwrite::Allow,
+        RefreshStrategy::Force,
+        NamedNode::new(new_a_iri)?,
+    )?;
+
+    // Root is registered under the new IRI.
+    assert_eq!(a_id.to_uri_string(), new_a_iri);
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(new_a_iri)?))
+            .is_some(),
+        "renamed A should be in env"
+    );
+
+    // B and C were loaded as transitive dependencies.
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(&b_iri)?))
+        .expect("B should be in env as import of A");
+    let c_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(&c_iri)?))
+        .expect("C should be in env as transitive import");
+
+    // Transitive closure of A-canonical contains B and C.
+    let closure = env.get_closure(&a_id, -1)?;
+    assert!(
+        closure.contains(&b_id),
+        "B should be in A-canonical's closure"
+    );
+    assert!(
+        closure.contains(&c_id),
+        "C should be in A-canonical's closure"
+    );
+    assert_eq!(closure.len(), 3, "closure should be [A-canonical, B, C]");
+
+    teardown(dir);
+    Ok(())
+}
+
+/// Rename rewrites every occurrence of the old IRI inside the graph:
+///
+/// - subject position: `<old> rdf:type owl:Ontology`, `<old> owl:imports <C>`,
+///   `<old> sh:prefixes <old>`, `<old> sh:declare _:decl`,
+///   `<old> owl:versionIRI <old>`
+/// - object position: `<NamedShape> sh:prefixes <old>` (subject is NOT old IRI),
+///   self-referential `owl:versionIRI` and `sh:prefixes`
+///
+/// After rename none of the old IRI must appear anywhere in the graph.
+#[test]
+fn rename_rewrites_sh_prefixes_owl_imports_and_version_iri() -> Result<()> {
+    let old_iri = "http://example.com/B";
+    let new_iri = "http://example.com/B-new";
+    let c_iri = "http://example.com/C";
+    let shape_iri = "http://example.com/MyShape";
+
+    // Construct a rich turtle document that exercises every rewrite position:
+    //
+    //   old:B  rdf:type            owl:Ontology
+    //   old:B  owl:versionIRI      old:B          ← self-referential (subject + object)
+    //   old:B  owl:imports         C              ← subject rewrite; C object preserved
+    //   old:B  sh:prefixes         old:B          ← self-referential (subject + object)
+    //   old:B  sh:declare          _:decl         ← subject rewrite; blank-node object unchanged
+    //   shape  sh:prefixes         old:B          ← object-only rewrite (subject ≠ old)
+    let turtle = format!(
+        "@prefix owl:  <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix sh:   <http://www.w3.org/ns/shacl#> .\n\
+         @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
+         \n\
+         <{old}> a owl:Ontology ;\n\
+             owl:versionIRI <{old}> ;\n\
+             owl:imports <{c}> ;\n\
+             sh:prefixes <{old}> ;\n\
+             sh:declare [ sh:prefix \"ex\" ; sh:namespace <http://example.com/> ] .\n\
+         \n\
+         <{shape}> sh:prefixes <{old}> .\n",
+        old = old_iri,
+        c = c_iri,
+        shape = shape_iri,
+    );
+
+    let mut env = in_memory_env()?;
+    add_bytes(&mut env, "urn:test:B-rich", &turtle)?;
+
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(old_iri)?))
+        .expect("B should be loaded");
+    env.rename_graph_iri(&b_id, NamedNode::new(new_iri)?)?;
+
+    let new_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(new_iri)?))
+        .expect("B-new should be in env after rename");
+    let graph = env.io().get_graph(&new_id)?;
+
+    // Old IRI must not appear as a subject or as the object of any predicate
+    // other than owl:versionIRI (version identifiers are intentionally preserved).
+    let owl_version_iri_pred = "http://www.w3.org/2002/07/owl#versionIRI";
+    for t in graph.iter() {
+        if let oxigraph::model::NamedOrBlankNodeRef::NamedNode(nn) = t.subject {
+            assert_ne!(
+                nn.as_str(),
+                old_iri,
+                "old IRI must not appear as subject: {t}"
+            );
+        }
+        if t.predicate.as_str() != owl_version_iri_pred {
+            if let TermRef::NamedNode(nn) = t.object {
+                assert_ne!(
+                    nn.as_str(),
+                    old_iri,
+                    "old IRI must not appear as object (predicate={}): {t}",
+                    t.predicate
+                );
+            }
+        }
+    }
+
+    // New IRI must appear in every expected position.
+    let rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    let owl_ontology = "http://www.w3.org/2002/07/owl#Ontology";
+    let owl_version_iri = "http://www.w3.org/2002/07/owl#versionIRI";
+    let owl_imports = "http://www.w3.org/2002/07/owl#imports";
+    let sh_prefixes = "http://www.w3.org/ns/shacl#prefixes";
+
+    let has_triple = |s: Option<&str>, p: &str, o: Option<&str>| {
+        graph.iter().any(|t| {
+            let subj_ok = s.is_none_or(|expected| match t.subject {
+                oxigraph::model::NamedOrBlankNodeRef::NamedNode(nn) => nn.as_str() == expected,
+                _ => false,
+            });
+            let pred_ok = t.predicate.as_str() == p;
+            let obj_ok = o.is_none_or(|expected| match t.object {
+                TermRef::NamedNode(nn) => nn.as_str() == expected,
+                _ => false,
+            });
+            subj_ok && pred_ok && obj_ok
+        })
+    };
+
+    assert!(
+        has_triple(Some(new_iri), rdf_type, Some(owl_ontology)),
+        "<new> rdf:type owl:Ontology should be present"
+    );
+    assert!(
+        has_triple(Some(new_iri), owl_version_iri, Some(old_iri)),
+        "<new> owl:versionIRI <old> should be present (subject rewritten, version value preserved)"
+    );
+    assert!(
+        !has_triple(Some(new_iri), owl_version_iri, Some(new_iri)),
+        "<new> owl:versionIRI <new> must NOT appear — version IRI is not rewritten"
+    );
+    assert!(
+        has_triple(Some(new_iri), owl_imports, Some(c_iri)),
+        "<new> owl:imports <C> should be present (C object preserved)"
+    );
+    assert!(
+        has_triple(Some(new_iri), sh_prefixes, Some(new_iri)),
+        "<new> sh:prefixes <new> should be present (self-ref rewritten on both sides)"
+    );
+    assert!(
+        has_triple(Some(shape_iri), sh_prefixes, Some(new_iri)),
+        "<Shape> sh:prefixes <new> should be present (object-only rewrite)"
+    );
+
+    // C must NOT have been rewritten (it is a different named node).
+    assert!(
+        has_triple(Some(new_iri), owl_imports, Some(c_iri)),
+        "owl:imports target <C> must remain unchanged"
+    );
+
+    Ok(())
+}
+
+/// Three-node chain A → B → C built with in-memory ontologies.
+/// After renaming the middle node (B → B-new):
+///  - B-old is absent from the environment.
+///  - B-new is present, and its own closure still reaches C.
+///  - No closure of any remaining ontology contains B-old's IRI.
+#[test]
+fn rename_middle_node_dep_graph_updated() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let a_iri = "http://example.com/A";
+    let b_iri = "http://example.com/B";
+    let c_iri = "http://example.com/C";
+    let b_new_iri = "http://example.com/B-new";
+
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{c}> a owl:Ontology .\n",
+            c = c_iri
+        ),
+    )?;
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{b}> a owl:Ontology ; owl:imports <{c}> .\n",
+            b = b_iri,
+            c = c_iri,
+        ),
+    )?;
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{a}> a owl:Ontology ; owl:imports <{b}> .\n",
+            a = a_iri,
+            b = b_iri,
+        ),
+    )?;
+
+    let b_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(b_iri)?))
+        .expect("B should be in env before rename");
+    let c_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(c_iri)?))
+        .expect("C should be in env");
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(a_iri)?))
+        .expect("A should be in env");
+
+    // Sanity check: full chain reachable before rename.
+    let closure_before = env.get_closure(&a_id, -1)?;
+    assert_eq!(
+        closure_before.len(),
+        3,
+        "A's closure should be [A, B, C] before rename"
+    );
+
+    // ── rename B ──────────────────────────────────────────────────────────────
+    let b_new_id = env.rename_graph_iri(&b_id, NamedNode::new(b_new_iri)?)?;
+
+    // B-old gone, B-new present.
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(b_iri)?))
+            .is_none(),
+        "B-old should be absent after rename"
+    );
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(b_new_iri)?))
+            .is_some(),
+        "B-new should be present after rename"
+    );
+    assert_eq!(b_new_id.to_uri_string(), b_new_iri);
+
+    // B-new still reaches C through its own imports.
+    let b_new_closure = env.get_closure(&b_new_id, -1)?;
+    assert!(
+        b_new_closure.contains(&c_id),
+        "C should still be reachable from B-new"
+    );
+    assert_eq!(
+        b_new_closure.len(),
+        2,
+        "B-new's closure should be [B-new, C]"
+    );
+
+    // B-old's IRI does not appear in any ontology's closure.
+    for id in env.ontologies().keys() {
+        let closure = env.get_closure(id, -1).unwrap_or_default();
+        assert!(
+            !closure.iter().any(|g| g.to_uri_string() == b_iri),
+            "B-old IRI ({b_iri}) should not appear in closure of {}",
+            id.to_uri_string()
+        );
+    }
+
+    Ok(())
+}
+
+// ── alias tests ──────────────────────────────────────────────────────────────
+
+/// Add an alias and verify it resolves to the same graph as the canonical IRI.
+#[test]
+fn alias_routes_to_canonical_graph() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Add alias
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // Both IRI and alias resolve to the same graph
+    let canonical_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?))
+        .expect("canonical IRI should be in env");
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+        .expect("alias should be in env");
+
+    assert_eq!(
+        canonical_id, alias_id,
+        "alias should resolve to same graph as canonical"
+    );
+
+    // get_graph should work with both
+    let canonical_graph = env.get_graph(&canonical_id)?;
+    let alias_graph = env.get_graph(&alias_id)?;
+
+    assert_eq!(
+        canonical_graph.iter().count(),
+        alias_graph.iter().count(),
+        "both should return same number of triples"
+    );
+
+    Ok(())
+}
+
+/// Remove an alias and verify it no longer resolves.
+#[test]
+fn remove_alias_stops_resolving() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // Verify alias works
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+            .is_some(),
+        "alias should resolve before removal"
+    );
+
+    // Remove alias
+    env.remove_alias(alias_iri)?;
+
+    // Alias no longer resolves
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+            .is_none(),
+        "alias should not resolve after removal"
+    );
+
+    // Canonical IRI still works
+    assert!(
+        env.resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?))
+            .is_some(),
+        "canonical IRI should still work"
+    );
+
+    Ok(())
+}
+
+/// get_aliases_for returns all aliases for a canonical IRI.
+#[test]
+fn get_aliases_for_returns_all_aliases() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias1_iri = "http://example.com/ont-alias1";
+    let alias2_iri = "http://example.com/ont-alias2";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    env.add_alias(alias1_iri, canonical_iri)?;
+    env.add_alias(alias2_iri, canonical_iri)?;
+
+    let aliases = env.get_aliases_for(canonical_iri);
+    assert_eq!(aliases.len(), 2, "should have 2 aliases");
+    assert!(
+        aliases.contains(&alias1_iri.to_string()),
+        "should contain alias1"
+    );
+    assert!(
+        aliases.contains(&alias2_iri.to_string()),
+        "should contain alias2"
+    );
+
+    Ok(())
+}
+
+/// Resolving a non-existent alias returns None.
+#[test]
+fn resolve_nonexistent_alias_returns_none() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Try to resolve an alias that was never added
+    assert!(
+        env.resolve_alias("http://example.com/nonexistent-alias")
+            .is_none(),
+        "non-existent alias should return None"
+    );
+
+    Ok(())
+}
+
+/// Aliases only point to canonical IRIs, not other aliases.
+#[test]
+fn aliases_point_only_to_canonical_no_chains() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias1_iri = "http://example.com/ont-alias1";
+    let alias2_iri = "http://example.com/ont-alias2";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Add alias1 pointing to canonical
+    env.add_alias(alias1_iri, canonical_iri)?;
+
+    // Try to add alias2 pointing to alias1 (should fail - alias1 is not canonical)
+    let result = env.add_alias(alias2_iri, alias1_iri);
+    assert!(result.is_err(), "alias chain should be rejected");
+
+    // Verify alias2 was not added
+    assert!(
+        env.resolve_alias(alias2_iri).is_none(),
+        "alias chain should not be created"
+    );
+
+    Ok(())
+}
+
+/// is_canonical_iri correctly identifies canonical IRIs vs aliases.
+#[test]
+fn is_canonical_iri_works_correctly() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            canonical_iri
+        ),
+    )?;
+
+    // Before adding alias
+    assert!(
+        env.is_canonical_iri(canonical_iri),
+        "canonical IRI should be canonical"
+    );
+    assert!(
+        !env.is_canonical_iri(alias_iri),
+        "non-existent alias should not be canonical"
+    );
+
+    // Add alias
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // After adding alias
+    assert!(
+        env.is_canonical_iri(canonical_iri),
+        "canonical IRI should still be canonical"
+    );
+    assert!(
+        !env.is_canonical_iri(alias_iri),
+        "alias should not be canonical"
+    );
+
+    Ok(())
+}
+
+/// Aliases work with get_closure and other operations.
+#[test]
+fn alias_works_with_closure_operations() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let canonical_iri = "http://example.com/ont";
+    let alias_iri = "http://example.com/ont-alias";
+    let imported_iri = "http://example.com/imported";
+
+    // Add imported ontology
+    add_bytes(
+        &mut env,
+        "urn:test:imported",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<{}> a owl:Ontology .\n",
+            imported_iri
+        ),
+    )?;
+
+    // Add ontology that imports the imported one
+    add_bytes(
+        &mut env,
+        "urn:test:ont",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            canonical_iri, imported_iri
+        ),
+    )?;
+
+    // Add alias
+    env.add_alias(alias_iri, canonical_iri)?;
+
+    // get_closure should work with both canonical and alias
+    let canonical_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(canonical_iri)?))
+        .expect("canonical IRI should be in env");
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(alias_iri)?))
+        .expect("alias should be in env");
+
+    let canonical_closure = env.get_closure(&canonical_id, -1)?;
+    let alias_closure = env.get_closure(&alias_id, -1)?;
+
+    assert_eq!(
+        canonical_closure.len(),
+        alias_closure.len(),
+        "closure should be same for canonical and alias"
+    );
+
+    Ok(())
+}
+
+/// Test that aliases don't cause duplicates when computing closure.
+/// When an ontology is reached via both its canonical IRI and an alias,
+/// it should only appear once in the closure.
+#[test]
+fn alias_deduplication_in_closure() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias = "http://example.com/B-alias";
+    let ont_c = "http://example.com/C";
+
+    // A imports B and C
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> ; owl:imports <{}> .\n",
+            ont_a, ont_b, ont_c
+        ),
+    )?;
+
+    // B imports C
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_b, ont_c
+        ),
+    )?;
+
+    // C is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_c
+        ),
+    )?;
+
+    // Add alias for B
+    env.add_alias(ont_b_alias, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B, C (3 unique ontologies)
+    // Even though B is imported directly by A and B has an alias,
+    // B should only appear once
+    assert_eq!(closure.len(), 3, "closure should be [A, B, C]");
+
+    // Verify B appears exactly once in the closure
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    Ok(())
+}
+
+/// Test alias deduplication when the same ontology is imported via alias and canonical.
+#[test]
+fn alias_import_via_both_paths_deduplicates() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias = "http://example.com/B-alias";
+
+    // A imports B via canonical IRI and also via alias
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> ; owl:imports <{}> .\n",
+            ont_a, ont_b, ont_b_alias
+        ),
+    )?;
+
+    // B is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_b
+        ),
+    )?;
+
+    // Add alias for B
+    env.add_alias(ont_b_alias, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B (2 unique ontologies)
+    // Even though B is imported twice (once via canonical, once via alias),
+    // B should only appear once
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify B appears exactly once
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    Ok(())
+}
+
+/// Test that aliases work correctly with circular imports.
+#[test]
+fn alias_with_circular_imports() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_a_alias = "http://example.com/A-alias";
+    let ont_b = "http://example.com/B";
+
+    // A imports B, B imports A (circular)
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_a, ont_b
+        ),
+    )?;
+
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_b, ont_a
+        ),
+    )?;
+
+    // Add alias for A
+    env.add_alias(ont_a_alias, ont_a)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B (2 unique ontologies, circular but no duplicates)
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify no duplicates
+    let a_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_a)
+        .count();
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
+    assert_eq!(a_count, 1, "A should appear exactly once");
+    assert_eq!(b_count, 1, "B should appear exactly once");
+
+    // Compute closure from alias - should give same result
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a_alias)?))
+        .expect("alias should be in env");
+    let alias_closure = env.get_closure(&alias_id, -1)?;
+
+    assert_eq!(
+        alias_closure.len(),
+        2,
+        "closure from alias should be [A, B]"
+    );
+
+    Ok(())
+}
+
+/// Test that aliases are properly excluded when computing closure with depth limit.
+#[test]
+fn alias_with_recursion_depth_limit() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_a_alias = "http://example.com/A-alias";
+    let ont_b = "http://example.com/B";
+    let ont_c = "http://example.com/C";
+
+    // A imports B, B imports C
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_a, ont_b
+        ),
+    )?;
+
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> .\n",
+            ont_b, ont_c
+        ),
+    )?;
+
+    // C is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:C",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_c
+        ),
+    )?;
+
+    // Add alias for A
+    env.add_alias(ont_a_alias, ont_a)?;
+
+    // Compute closure with depth 0 (only root)
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure_depth_0 = env.get_closure(&a_id, 0)?;
+    assert_eq!(closure_depth_0.len(), 1, "depth 0 should only include A");
+
+    // Compute closure with depth 1 (root + direct imports)
+    let closure_depth_1 = env.get_closure(&a_id, 1)?;
+    assert_eq!(closure_depth_1.len(), 2, "depth 1 should include A and B");
+
+    // Compute closure from alias with depth 1
+    let alias_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a_alias)?))
+        .expect("alias should be in env");
+    let alias_closure_depth_1 = env.get_closure(&alias_id, 1)?;
+
+    assert_eq!(
+        alias_closure_depth_1.len(),
+        2,
+        "alias depth 1 should include A and B"
+    );
+
+    Ok(())
+}
+
+/// Test that aliases don't create duplicate references when the same ontology
+/// is imported multiple times via different aliases pointing to the same target.
+#[test]
+fn multiple_aliases_to_same_target_deduplicates() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias1 = "http://example.com/B-alias1";
+    let ont_b_alias2 = "http://example.com/B-alias2";
+
+    // A imports B multiple times via different aliases
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ; owl:imports <{}> ; owl:imports <{}> ; owl:imports <{}> .\n",
+            ont_a, ont_b, ont_b_alias1, ont_b_alias2
+        ),
+    )?;
+
+    // B is standalone
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology .\n",
+            ont_b
+        ),
+    )?;
+
+    // Add multiple aliases for B
+    env.add_alias(ont_b_alias1, ont_b)?;
+    env.add_alias(ont_b_alias2, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // Expected: A, B (2 unique ontologies)
+    // Even though B is imported 3 times (direct + 2 aliases),
+    // B should only appear once
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify B appears exactly once
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    Ok(())
+}
+
+/// Test that blank nodes in the ontology graph don't cause issues with
+/// alias deduplication. The key is that blank nodes can't be compared for
+/// equality, so if the code tries to use them as keys in deduplication,
+/// it would fail or create duplicates.
+#[test]
+fn multiple_aliases_to_same_target_deduplicates_with_blank_nodes() -> Result<()> {
+    let mut env = in_memory_env()?;
+
+    let ont_a = "http://example.com/A";
+    let ont_b = "http://example.com/B";
+    let ont_b_alias1 = "http://example.com/B-alias1";
+    let ont_b_alias2 = "http://example.com/B-alias2";
+
+    // A imports B multiple times via different aliases
+    add_bytes(
+        &mut env,
+        "urn:test:A",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <{}> a owl:Ontology ;\n\
+             owl:imports <{}> ;\n\
+             owl:imports <{}> ;\n\
+             owl:imports <{}> .\n",
+            ont_a, ont_b, ont_b_alias1, ont_b_alias2
+        ),
+    )?;
+
+    // B contains blank nodes that can't be compared
+    add_bytes(
+        &mut env,
+        "urn:test:B",
+        &format!(
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+            <{}> a owl:Ontology .\n\
+            _:b0 <http://example.com/prop> \"value\" .\n\
+            _:b1 <http://example.com/other> \"data\" .\n",
+            ont_b
+        ),
+    )?;
+
+    // Add multiple aliases for B
+    env.add_alias(ont_b_alias1, ont_b)?;
+    env.add_alias(ont_b_alias2, ont_b)?;
+
+    // Compute closure from A
+    let a_id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new(ont_a)?))
+        .expect("A should be in env");
+    let closure = env.get_closure(&a_id, -1)?;
+
+    // We should have exactly 2 ontologies: A and B
+    // Even though B is imported 3 times (direct + 2 aliases),
+    // blank nodes in B's graph shouldn't cause issues with deduplication
+    assert_eq!(closure.len(), 2, "closure should be [A, B]");
+
+    // Verify B appears exactly once
+    let b_count = closure
+        .iter()
+        .filter(|id| id.to_uri_string() == ont_b)
+        .count();
+    assert_eq!(b_count, 1, "B should appear exactly once in closure");
+
+    // Verify the total number of triples
+    // A has: 1 ontology declaration + 3 owl:imports = 4 triples
+    // B has: 1 ontology declaration + 2 triples with blank nodes = 3 triples
+    // Total should be 7 triples
+    let total_triples: usize = closure
+        .iter()
+        .map(|id| env.get_graph(id).unwrap().len())
+        .sum();
+    assert_eq!(
+        total_triples, 7,
+        "total triples should be 7 (4 from A + 3 from B)"
+    );
+
+    Ok(())
+}
+
+// ── Config persistence tests ──────────────────────────────────────────────────
+
+/// Scalar flags written during `init` must survive a full save→reload cycle.
+#[test]
+fn config_flags_persist_across_reload() -> Result<()> {
+    let dir = new_tempdir("ontoenv-cfg-persist")?;
+    let cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .offline(true)
+        .strict(true)
+        .require_ontology_names(true)
+        .remote_cache_ttl_secs(3600)
+        .build()?;
+
+    let env = OntoEnv::init(cfg, false)?;
+    drop(env);
+
+    let reloaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(reloaded.is_offline(), "offline should survive reload");
+    assert!(reloaded.is_strict(), "strict should survive reload");
+    assert!(
+        reloaded.requires_ontology_names(),
+        "require_ontology_names should survive reload"
+    );
+
+    teardown(dir);
+    Ok(())
+}
+
+/// Reopening preserves persisted configuration unless an override is explicit.
+#[test]
+fn open_or_init_uses_explicit_overrides_on_existing_env() -> Result<()> {
+    let dir = new_tempdir("ontoenv-open-or-init-flags")?;
+
+    // Create an env with offline=false (the default).
+    let online_cfg = Config::builder()
+        .root(dir.path().into())
+        .locations(vec![dir.path().into()])
+        .offline(false)
+        .build()?;
+    let env = OntoEnv::init(online_cfg, false)?;
+    assert!(!env.is_offline());
+    drop(env);
+
+    // Values on the initialization config are not treated as reopen
+    // overrides, because Config itself cannot distinguish defaults.
+    let offline_cfg = Config::builder()
+        .root(dir.path().into())
+        .offline(true)
+        .build()?;
+    let env2 = OntoEnv::open_or_init(offline_cfg.clone(), false)?;
+    assert!(!env2.is_offline(), "omitted override should preserve false");
+    drop(env2);
+
+    let overrides = ConfigOverrides {
+        offline: Some(true),
+        strict: Some(true),
+        require_ontology_names: Some(true),
+        remote_cache_ttl_secs: Some(17),
+        use_cached_ontologies: Some(CacheMode::Enabled),
+        resolution_policy: Some("latest".to_string()),
+        locations: Some(Vec::new()),
+        includes: Some(Vec::new()),
+        excludes: Some(vec!["ignored/**".to_string()]),
+        include_ontologies: Some(vec!["example".to_string()]),
+        exclude_ontologies: Some(Vec::new()),
+    };
+    let env2 = OntoEnv::open_or_init_with_overrides(offline_cfg, false, overrides)?;
+    assert!(env2.is_offline());
+    assert!(env2.is_strict());
+    assert!(env2.requires_ontology_names());
+    assert_eq!(env2.remote_cache_ttl_secs(), 17);
+    assert!(env2.uses_cached_ontologies());
+    assert_eq!(env2.resolution_policy(), "latest");
+    drop(env2);
+
+    // Explicit overrides persist, while a subsequent plain load is inert.
+    let env3 = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(env3.is_offline());
+    assert!(env3.is_strict());
+    assert!(env3.requires_ontology_names());
+    assert_eq!(env3.remote_cache_ttl_secs(), 17);
+    assert!(env3.uses_cached_ontologies());
+    assert_eq!(env3.resolution_policy(), "latest");
+
+    teardown(dir);
+    Ok(())
+}
+
+/// The mechanism used by `new_offline`: loading an online env, switching the
+/// offline flag, and saving must persist so the next load honours it.
+#[test]
+fn new_offline_mechanism_persists_flag() -> Result<()> {
+    let dir = new_tempdir("ontoenv-new-offline")?;
+
+    // Start online.
+    let online_cfg = Config::builder()
+        .root(dir.path().into())
+        .offline(false)
+        .build()?;
+    let env = OntoEnv::init(online_cfg, false)?;
+    assert!(!env.is_offline());
+    drop(env);
+
+    // Simulate what new_offline() does when it finds an existing env.
+    let mut loaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(!loaded.is_offline());
+    if !loaded.is_offline() {
+        loaded.set_offline(true);
+        loaded.save_to_directory()?;
+    }
+    assert!(loaded.is_offline());
+    drop(loaded);
+
+    // The flag must survive a fresh load.
+    let reloaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(reloaded.is_offline(), "offline=true must be persisted");
+
+    teardown(dir);
+    Ok(())
+}
+
+/// The mechanism used by `new_online`: loading an offline env, clearing the
+/// offline flag, and saving must persist so the next load honours it.
+#[test]
+fn new_online_mechanism_persists_flag() -> Result<()> {
+    let dir = new_tempdir("ontoenv-new-online")?;
+
+    // Start offline.
+    let offline_cfg = Config::builder()
+        .root(dir.path().into())
+        .offline(true)
+        .build()?;
+    let env = OntoEnv::init(offline_cfg, false)?;
+    assert!(env.is_offline());
+    drop(env);
+
+    // Simulate what new_online() does when it finds an existing env.
+    let mut loaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(loaded.is_offline());
+    if loaded.is_offline() {
+        loaded.set_offline(false);
+        loaded.save_to_directory()?;
+    }
+    assert!(!loaded.is_offline());
+    drop(loaded);
+
+    let reloaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
+    assert!(!reloaded.is_offline(), "offline=false must be persisted");
+
     teardown(dir);
     Ok(())
 }

@@ -40,17 +40,33 @@
 //!
 //! See `ARCH.md` for details on the layout and terminology.
 
+#[cfg(feature = "idx")]
+pub mod closure;
 pub mod header;
+#[cfg(feature = "idx")]
+pub mod index;
 pub mod reader;
+#[cfg(feature = "idx")]
+pub mod snapshot;
 #[cfg(feature = "sparql")]
 pub mod sparql;
 pub mod update;
+#[cfg(feature = "idx")]
+pub mod view;
 pub mod writer;
 
+#[cfg(all(feature = "idx", feature = "sparql"))]
+pub use closure::ClosureSparqlView;
+#[cfg(feature = "idx")]
+pub use closure::{ClosurePatch, ClosureTripleIds};
 pub use reader::{DecodedTerm, GraphRef, IntegrityMode, OpenOptions, R5tuFile};
+#[cfg(feature = "idx")]
+pub use snapshot::{Match, Pattern, Scope, Snapshot};
 #[cfg(feature = "sparql")]
-pub use sparql::SparqlDatasetView;
+pub use sparql::SparqlView;
 pub use update::{replace_graph, replace_graph_with_options};
+#[cfg(feature = "idx")]
+pub use view::View;
 pub use writer::{
     Quint, SpillPolicy, StreamingWriteStats, StreamingWriter, StreamingWriterOptions, Term,
     WriterOptions, write_file, write_file_with_options,

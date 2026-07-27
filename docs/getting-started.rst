@@ -137,32 +137,64 @@ Remote ontologies are stored on disk. Two knobs control how aggressively they ar
 Python quickstart
 -----------------
 
-The Python API exposes the same configuration surface as the CLI:
+Create or reconnect to a persistent environment, add an ontology, and ask for
+its imports closure:
 
 .. code-block:: python
 
    from ontoenv import OntoEnv
 
-   env = OntoEnv(
-       path=".",                    # look for (or create) .ontoenv here
-       recreate=True,               # create/overwrite metadata
-       search_directories=["."],    # scan the current project
+   env = OntoEnv.connect("./ontology-env")
+   site = env.add("./ontologies/site.ttl")
+
+   # Retrieve a read-only ViewGraph of an ontology and all its transitive imports
+   g, imported = env.get_closure(site)
+   print(f"Read {len(imported)} graphs, {len(g)} triples total")
+
+   # Use copy_closure when you need a mutable materialized graph
+   mutable_g, imported = env.copy_closure(site)
+
+   env.close()
+
+The next ``connect`` reuses the saved environment without scanning every RDF
+triple. For a scratch environment that stays entirely in memory, use
+``OntoEnv(temporary=True)`` instead.
+
+Directory discovery and filters are also available:
+
+.. code-block:: python
+
+   env = OntoEnv.connect(
+       "./ontology-env",
+       search_directories=["./ontologies"],
        includes=["*.ttl", "*.xml"],
-       include_ontologies=[r"^https://example\.com/"],
        exclude_ontologies=[r"experimental"],
        offline=True,
-       use_cached_ontologies=False,
-       remote_cache_ttl_secs=86400,
    )
+   env.update()
 
-   env.update(all=True)
+Persistent lifecycle
+--------------------
 
-   # Retrieve a merged graph of an ontology and all its transitive imports
-   g, imported = env.get_closure("https://example.com/myOntology")
-   print(f"Merged {imported} imports, {len(g)} triples total")
+Use ``connect`` for the normal persistent lifecycle:
 
-Pass ``use_cached_ontologies=True`` to start with an empty container that only fills when you
-explicitly call ``add`` or ``update``.
+.. code-block:: python
+
+   # First run: create. Later runs: reconnect quickly.
+   env = OntoEnv.connect("./environment")
+   print(env.get_ontology_names())
+   env.close()
+
+With a custom graph store, the same call reads and indexes existing graphs on
+first use, then incorporates identifiable external changes on later
+connections. If OntoEnv cannot tell what changed, it asks for ``sync="full"``
+rather than silently scanning everything.
+
+The ``with`` statement is optional. It is convenient for scripts and calls
+``close()`` automatically. A webserver can instead retain
+``OntoEnv.connect(...)`` in application state and call ``close()`` from its
+shutdown hook. See :doc:`python-api/lifecycle` for a guided explanation of
+long-lived services, custom-store synchronization, and multi-worker use.
 
 Building the docs
 -----------------

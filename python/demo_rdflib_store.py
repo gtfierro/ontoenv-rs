@@ -1,17 +1,18 @@
-from ontoenv import OntoEnv, refresh_dataset_from_env, version
+from ontoenv import OntoEnv, version
 from rdflib import Literal, URIRef
 
 
 print(version)
 
 print("Make env")
-env = OntoEnv(
-    path=".demo-env",
+env = OntoEnv.create(
+    ".demo-env",
     recreate=True,
     strict=False,
     offline=True,
     search_directories=["../brick"],
 )
+env.update(force=True)
 print(env)
 
 print("add brick and persist rdf5d store")
@@ -19,8 +20,9 @@ brick_name = env.add("../brick/Brick.ttl")
 env.update()
 env.flush()
 
-# Build an rdflib.Dataset backed directly by .ontoenv/store.r5tu when possible.
-dataset = env.snapshot_as_dataset(backend="rdf5d")
+# Build a read-only rdflib.Dataset view backed directly by .ontoenv/store.r5tu
+# when possible.
+dataset = env.get_dataset()
 print("dataset backend", dataset.store._backend.backend_kind())
 
 print("graphs in dataset")
@@ -45,6 +47,6 @@ print(len(brick_graph))
 
 # Snapshot datasets stay stable until you explicitly refresh them.
 # Note that this is *separate* from updating the environment.
-refresh_dataset_from_env(dataset, env)
+env.refresh_dataset(dataset)
 
 env.close()

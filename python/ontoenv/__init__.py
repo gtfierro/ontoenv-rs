@@ -1,9 +1,23 @@
 """Python package shim for the ontoenv extension."""
 
 # These symbols come from the Rust extension module built via maturin.
-from ontoenv._native import OntoEnv, Ontology, run_cli, version  # type: ignore[attr-defined]
+from ontoenv._native import (  # type: ignore[attr-defined]
+    CatalogRecoveryError,
+    UnresolvedImportError,
+    ExternalStoreChangedError,
+    OntoEnv,
+    Ontology,
+    StoreCapabilityError,
+    SyncReport,
+    is_debug_build,
+    run_cli,
+    version,
+)
 from ontoenv import _native as _ext  # type: ignore[attr-defined]
-from ontoenv.rdflib_store import OntoEnvStore, dataset_from_env, refresh_dataset_from_env
+from ontoenv.rdflib_store import (
+    OntoEnvStore,
+    ViewGraph,
+)
 
 __doc__ = getattr(_ext, "__doc__", None)  # type: ignore[assignment]
 
@@ -11,9 +25,14 @@ __doc__ = getattr(_ext, "__doc__", None)  # type: ignore[assignment]
 __all__ = [
     "OntoEnv",
     "Ontology",
+    "SyncReport",
+    "ExternalStoreChangedError",
+    "CatalogRecoveryError",
+    "UnresolvedImportError",
+    "StoreCapabilityError",
     "OntoEnvStore",
-    "dataset_from_env",
-    "refresh_dataset_from_env",
+    "ViewGraph",
+    "is_debug_build",
     "run_cli",
     "version",
 ]

@@ -1,20 +1,24 @@
 //! Defines the main OntoEnv API struct and its methods for managing the ontology environment.
 //! This includes loading, saving, updating, and querying the environment.
 
-use crate::config::Config;
-use crate::consts::IMPORTS;
+use crate::catalog;
+use crate::config::{Config, ConfigOverrides};
+use crate::consts::{IMPORTS, ONTOLOGY, TYPE};
 use crate::doctor::{
     ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
 };
 use crate::environment::Environment;
+use crate::errors::{CatalogRecoveryError, ExternalStoreChangedError, StoreCapabilityError};
 use crate::options::{Overwrite, RefreshStrategy};
 use crate::transform;
 use crate::ToUriString;
 use crate::{EnvironmentStatus, FailedImport};
 use chrono::prelude::*;
+use fs2::FileExt;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
-    Dataset, Graph, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, Quad, TripleRef,
+    Dataset, Graph, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef,
+    TermRef, TripleRef,
 };
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
@@ -180,6 +184,37 @@ pub struct Stats {
     pub num_ontologies: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncMode {
+    Incremental,
+    Targeted,
+    Full,
+}
+
+/// Policy used by [`OntoEnv::connect`] and
+/// [`OntoEnv::connect_with_graph_io`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectSync {
+    /// Use a graph-free warm open when revisions match and incrementally
+    /// reconcile externally changed graphs when the backend exposes
+    /// `graph_revisions()`.
+    Auto,
+    /// Trust the catalog snapshot and do not inspect graph contents.
+    Catalog,
+    /// Deliberately scan every backend graph and rebuild the catalog.
+    Full,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncReport {
+    pub mode: SyncMode,
+    pub added: Vec<String>,
+    pub changed: Vec<String>,
+    pub removed: Vec<String>,
+    pub unchanged: Vec<String>,
+    pub still_pending: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum ImportPaths {
     Present(Vec<Vec<GraphIdentifier>>),
@@ -218,6 +253,7 @@ impl BatchState {
 struct BatchScope<'a> {
     env: &'a mut OntoEnv,
     completed: bool,
+    outermost: bool,
 }
 
 #[derive(Default)]
@@ -230,35 +266,51 @@ impl OntologyFilters {
     fn allow(&self, id: &GraphIdentifier) -> bool {
         let iri = id.to_uri_string();
         if self.exclude.iter().any(|re| re.is_match(&iri)) {
-            return false;
+            false
+        } else if self.include.is_empty() {
+            true
+        } else {
+            self.include.iter().any(|re| re.is_match(&iri))
         }
-        if self.include.is_empty() {
-            return true;
-        }
-        self.include.iter().any(|re| re.is_match(&iri))
     }
 }
 
 impl<'a> BatchScope<'a> {
     fn enter(env: &'a mut OntoEnv) -> Result<Self> {
+        let outermost = env.batch_state.depth == 0;
+        if outermost {
+            env.write_pending_marker()?;
+        }
         env.batch_state.begin();
         if let Err(err) = env.io.begin_batch() {
             env.batch_state.end();
+            if outermost {
+                let _ = env.remove_pending_marker();
+            }
             return Err(err);
         }
         Ok(Self {
             env,
             completed: false,
+            outermost,
         })
     }
 
     fn run<T>(mut self, f: impl FnOnce(&mut OntoEnv) -> Result<T>) -> Result<T> {
         let result = f(self.env);
-        let end_result = self.env.io.end_batch();
+        let end_result = self.env.io.end_batch().and_then(|_| self.env.io.flush());
         self.env.batch_state.end();
         self.completed = true;
         match (result, end_result) {
-            (Ok(value), Ok(())) => Ok(value),
+            (Ok(value), Ok(())) => {
+                if self.outermost {
+                    self.env.backend_state = self.env.io.store_state()?;
+                    self.env.graph_revisions = self.env.io.graph_revisions()?.unwrap_or_default();
+                    self.env.save_to_directory()?;
+                    self.env.remove_pending_marker()?;
+                }
+                Ok(value)
+            }
             (Ok(_), Err(err)) => Err(err),
             (Err(err), Ok(())) => Err(err),
             (Err(err), Err(end_err)) => {
@@ -286,13 +338,59 @@ enum FetchOutcome {
     Loaded(Box<Ontology>),
 }
 
+/// Snapshot of the four mutable fields of [`OntoEnv`] that together form the
+/// in-memory ontology environment state. Used by [`OntoEnv::with_env_transaction`]
+/// to give callers atomic begin/commit/rollback semantics around operations
+/// that can fail partway through (e.g. dependency-graph construction that
+/// hits a strict-mode unresolved import after several successful adds).
+///
+/// Not transactional with respect to `self.io` writes (rdf5d/oxigraph store
+/// mutations). A rollback may leave the IO store with orphan named graphs;
+/// see the note above [`OntoEnv::add_ids_to_dependency_graph`].
+pub(crate) struct EnvTransaction {
+    env: Environment,
+    dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
+    dependency_graph_index: HashMap<GraphIdentifier, NodeIndex>,
+    failed_resolutions: HashSet<NamedNode>,
+}
+
+impl EnvTransaction {
+    /// Snapshot the mutable in-memory state of `target` so it can be restored
+    /// later via [`Self::restore`].
+    pub(crate) fn snapshot(target: &OntoEnv) -> Self {
+        Self {
+            env: target.env.clone(),
+            dependency_graph: target.dependency_graph.clone(),
+            dependency_graph_index: target.dependency_graph_index.clone(),
+            failed_resolutions: target.failed_resolutions.clone(),
+        }
+    }
+
+    /// Move the snapshotted state back into `target`, discarding any in-flight
+    /// mutations made since [`Self::snapshot`] was called.
+    pub(crate) fn restore(self, target: &mut OntoEnv) {
+        target.env = self.env;
+        target.dependency_graph = self.dependency_graph;
+        target.dependency_graph_index = self.dependency_graph_index;
+        target.failed_resolutions = self.failed_resolutions;
+    }
+}
+
 pub struct OntoEnv {
     env: Environment,
     io: Box<dyn GraphIO>,
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
+    /// Maps GraphIdentifier to its NodeIndex in `dependency_graph`. Kept in sync
+    /// with the graph so that traversals (closure, importers, paths) avoid a
+    /// linear scan of `node_indices()` per lookup.
+    dependency_graph_index: HashMap<GraphIdentifier, NodeIndex>,
     config: Config,
     failed_resolutions: HashSet<NamedNode>,
     batch_state: BatchState,
+    graph_revisions: HashMap<String, String>,
+    backend_state: Option<catalog::BackendState>,
+    // Environment-wide lock also protects catalog operations for custom stores.
+    _lock_file: Option<File>,
 }
 
 impl std::fmt::Debug for OntoEnv {
@@ -317,15 +415,429 @@ fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
 
 impl OntoEnv {
     // Constructors
-    fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Self {
-        Self {
+    fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Result<Self> {
+        let backend_state = io.store_state().ok().flatten();
+        let read_only = io.io_type() == "read-only";
+        let lock_file = Self::acquire_environment_lock(&config, read_only)?;
+        let mut result = Self {
             env,
             io,
             config,
             dependency_graph: DiGraph::new(),
+            dependency_graph_index: HashMap::new(),
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
+            graph_revisions: HashMap::new(),
+            backend_state,
+            _lock_file: lock_file,
+        };
+        result.sync_runtime_config()?;
+        Ok(result)
+    }
+
+    fn sync_runtime_config(&mut self) -> Result<()> {
+        self.env
+            .set_default_policy(&self.config.resolution_policy)?;
+        self.io.set_offline(self.config.offline);
+        self.io.set_strict(self.config.strict);
+        self.io
+            .set_require_ontology_names(self.config.require_ontology_names);
+        Ok(())
+    }
+
+    fn acquire_environment_lock(config: &Config, read_only: bool) -> Result<Option<File>> {
+        if config.temporary {
+            return Ok(None);
         }
+        let directory = config.root.join(".ontoenv");
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join("store.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        if read_only {
+            FileExt::lock_shared(&file)?;
+        } else if let Err(error) = FileExt::try_lock_exclusive(&file) {
+            return Err(anyhow!(
+                "Failed to open OntoEnv for write: could not acquire exclusive lock on {}: {}. If another process has it open, use read_only=true.",
+                path.display(),
+                error
+            ));
+        }
+        Ok(Some(file))
+    }
+
+    /// Create a new empty environment, failing if one already exists unless
+    /// `recreate` is explicitly true.
+    pub fn create(mut config: Config, recreate: bool) -> Result<Self> {
+        config.use_cached_ontologies = crate::options::CacheMode::Enabled;
+        Self::init(config, recreate)
+    }
+
+    /// Open an existing catalog-backed environment without inspecting
+    /// ontology graph contents.
+    pub fn open(root: PathBuf, read_only: bool) -> Result<Self> {
+        Self::load_from_directory(root, read_only)
+    }
+
+    /// Connect to a built-in persistent backend using a state-driven lifecycle.
+    ///
+    /// A missing catalog creates an empty environment when the store is empty
+    /// and adopts an already-populated store. Existing matching catalogs warm
+    /// open without graph reads. See [`ConnectSync`] for drift behavior.
+    pub fn connect(config: Config, sync: ConnectSync, read_only: bool) -> Result<Self> {
+        Self::connect_with_overrides(config, sync, read_only, ConfigOverrides::default())
+    }
+
+    /// Connect while applying explicit overrides to persisted configuration.
+    ///
+    /// Used by language bindings that distinguish an omitted option from an
+    /// explicit `false`. Writable connections persist an explicit override;
+    /// read-only connections apply it only for the returned session.
+    pub fn connect_with_overrides(
+        config: Config,
+        sync: ConnectSync,
+        read_only: bool,
+        overrides: ConfigOverrides,
+    ) -> Result<Self> {
+        let mut config = Self::connect_config(config)?;
+        let config_changed = config.apply_overrides(&overrides)?;
+        let ontoenv_dir = config.root.join(".ontoenv");
+        if read_only && !ontoenv_dir.join(catalog::CATALOG_FILE).exists() {
+            return Err(anyhow!(
+                "OntoEnv catalog not found at {} and read_only=true",
+                ontoenv_dir.join(catalog::CATALOG_FILE).display()
+            ));
+        }
+        let io: Box<dyn GraphIO> = if read_only {
+            Box::new(crate::io::ReadOnlyPersistentGraphIO::new(
+                ontoenv_dir,
+                config.offline,
+            )?)
+        } else {
+            Box::new(crate::io::PersistentGraphIO::new(
+                ontoenv_dir,
+                config.offline,
+                config.strict,
+            )?)
+        };
+        let environment = Self::connect_with_graph_io_resolved(config, io, sync, read_only)?;
+        if config_changed && !read_only {
+            environment.save_to_directory()?;
+        }
+        Ok(environment)
+    }
+
+    /// Recover from an interrupted backend/catalog mutation.
+    ///
+    /// Recovery deliberately scans the authoritative graph backend, rebuilds
+    /// the catalog, and removes the pending marker only after the replacement
+    /// catalog has been published successfully.
+    pub fn recover(config: Config) -> Result<Self> {
+        let config = Self::connect_config(config)?;
+        let ontoenv_dir = config.root.join(".ontoenv");
+        let io: Box<dyn GraphIO> = Box::new(crate::io::PersistentGraphIO::new(
+            ontoenv_dir,
+            config.offline,
+            config.strict,
+        )?);
+        Self::recover_with_graph_io(config, io)
+    }
+
+    /// Recover using a caller-provided authoritative graph backend.
+    pub fn recover_with_graph_io(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
+        let config = Self::connect_config(config)?;
+        let environment = Self::adopt(config, io)?;
+        environment.remove_pending_marker()?;
+        Ok(environment)
+    }
+
+    /// Deliberately scan an existing graph backend and publish a new catalog.
+    /// This method only reads graphs already exposed by the backend and never
+    /// follows network imports.
+    pub fn adopt(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
+        // A catalog represents one coherent backend snapshot. Capture both
+        // revision mechanisms because custom stores may implement either one.
+        let state_before = io.store_state()?;
+        let revisions_before = io.graph_revisions()?;
+        let mut environment = Self::new(Environment::new(), io, config)?;
+        environment.init_from_graph_io()?;
+        let state_after = environment.io.store_state()?;
+        let revisions_after = environment.io.graph_revisions()?;
+        let global_changed = state_before.is_some() && state_before != state_after;
+        let graphs_changed = revisions_before.is_some() && revisions_before != revisions_after;
+        if global_changed || graphs_changed {
+            return Err(ExternalStoreChangedError {
+                message: "backend changed while rebuilding the catalog; retry the operation"
+                    .to_string(),
+            }
+            .into());
+        }
+        environment.backend_state = state_after;
+        environment.graph_revisions = revisions_after.unwrap_or_default();
+        environment.save_to_directory()?;
+        Ok(environment)
+    }
+
+    /// Open a catalog while using a caller-provided graph backend.
+    pub fn open_with_graph_io(
+        config: Config,
+        io: Box<dyn GraphIO>,
+        _read_only: bool,
+    ) -> Result<Self> {
+        Self::load_catalog_with_graph_io(config, io, true)
+    }
+
+    /// Connect to a caller-provided graph backend using a state-driven
+    /// lifecycle and synchronization policy.
+    pub fn connect_with_graph_io(
+        config: Config,
+        io: Box<dyn GraphIO>,
+        sync: ConnectSync,
+        read_only: bool,
+    ) -> Result<Self> {
+        Self::connect_with_graph_io_and_overrides(
+            config,
+            io,
+            sync,
+            read_only,
+            ConfigOverrides::default(),
+        )
+    }
+
+    /// Connect to a caller-provided backend with explicit configuration
+    /// overrides.
+    pub fn connect_with_graph_io_and_overrides(
+        config: Config,
+        io: Box<dyn GraphIO>,
+        sync: ConnectSync,
+        read_only: bool,
+        overrides: ConfigOverrides,
+    ) -> Result<Self> {
+        let mut config = Self::connect_config(config)?;
+        let config_changed = config.apply_overrides(&overrides)?;
+        let environment = Self::connect_with_graph_io_resolved(config, io, sync, read_only)?;
+        if config_changed && !read_only {
+            environment.save_to_directory()?;
+        }
+        Ok(environment)
+    }
+
+    /// Connect with configuration that has already been merged with persisted
+    /// settings and explicit caller overrides.
+    #[doc(hidden)]
+    pub fn connect_with_graph_io_resolved(
+        mut config: Config,
+        io: Box<dyn GraphIO>,
+        sync: ConnectSync,
+        read_only: bool,
+    ) -> Result<Self> {
+        if config.temporary {
+            return Err(anyhow!(
+                "OntoEnv::connect requires a persistent environment; use OntoEnv::init for temporary environments"
+            ));
+        }
+        let catalog_path = config.root.join(".ontoenv").join(catalog::CATALOG_FILE);
+        let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
+        if pending_path.exists() {
+            return Err(CatalogRecoveryError {
+                message: format!(
+                    "interrupted mutation marker at {}; run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog",
+                    pending_path.display()
+                ),
+            }
+            .into());
+        }
+        if !catalog_path.exists() {
+            if read_only {
+                return Err(anyhow!(
+                    "OntoEnv catalog not found at {} and read_only=true",
+                    catalog_path.display()
+                ));
+            }
+            if sync == ConnectSync::Catalog {
+                return Err(anyhow!(
+                    "OntoEnv catalog not found at {}; sync=\"catalog\" requires an existing catalog",
+                    catalog_path.display()
+                ));
+            }
+            let has_graphs = !io.graph_ids()?.is_empty();
+            if sync == ConnectSync::Full || has_graphs {
+                return Self::adopt(config, io);
+            }
+            config.use_cached_ontologies = crate::options::CacheMode::Enabled;
+            return Self::new_with_graph_io(config, io);
+        }
+
+        if sync == ConnectSync::Full {
+            if read_only {
+                return Err(anyhow!(
+                    "sync=\"full\" requires a writable OntoEnv connection"
+                ));
+            }
+            return Self::adopt(config, io);
+        }
+
+        let state_before = io.store_state()?;
+        let (mut env, expected, graph_revisions) = catalog::load(&catalog_path)?;
+        let global_revision_changed =
+            if let (Some(expected), Some(actual)) = (&expected, &state_before) {
+                if expected.id != actual.id {
+                    return Err(ExternalStoreChangedError {
+                        message: format!(
+                            "backend identity changed (catalog {:?}, backend {:?})",
+                            expected.id, actual.id
+                        ),
+                    }
+                    .into());
+                }
+                expected.revision != actual.revision
+            } else {
+                false
+            };
+        let current_graph_revisions =
+            if sync == ConnectSync::Auto && (state_before.is_none() || global_revision_changed) {
+                io.graph_revisions()?
+            } else {
+                None
+            };
+        let graph_revisions_changed = current_graph_revisions
+            .as_ref()
+            .is_some_and(|current| current != &graph_revisions);
+        if io.store_state()? != state_before {
+            return Err(ExternalStoreChangedError {
+                message: "backend changed while loading the catalog".to_string(),
+            }
+            .into());
+        }
+        env.normalize_file_locations(&config.root);
+        let mut result = Self::new(env, io, config)?;
+        result.graph_revisions = graph_revisions;
+        result.backend_state = expected.or_else(|| state_before.clone());
+        result.rebuild_dependency_graph_from_metadata();
+
+        if sync == ConnectSync::Catalog {
+            return Ok(result);
+        }
+
+        if global_revision_changed || graph_revisions_changed {
+            if read_only {
+                return Err(ExternalStoreChangedError {
+                    message:
+                        "backend changed and automatic reconciliation requires a writable connection"
+                            .to_string(),
+                }
+                .into());
+            }
+            let Some(current_revisions) = current_graph_revisions else {
+                return Err(StoreCapabilityError {
+                    message:
+                        "backend changed but does not implement graph_revisions(); reconnect with sync=\"full\""
+                            .to_string(),
+                }
+                .into());
+            };
+            if current_revisions == result.graph_revisions {
+                // The backend's global revision changed without graph-level
+                // changes. Acknowledge it without materializing any graph.
+                result.backend_state = state_before.clone();
+                result.save_to_directory()?;
+                return Ok(result);
+            }
+            result.refresh_from_store(None, false)?;
+            if result.io.store_state()? != state_before {
+                return Err(ExternalStoreChangedError {
+                    message: "backend changed while reconciling the catalog".to_string(),
+                }
+                .into());
+            }
+        }
+        Ok(result)
+    }
+
+    /// Resolve the persisted configuration used by a state-driven connection.
+    ///
+    /// This is public for language bindings that must configure a custom
+    /// `GraphIO` before passing it to [`Self::connect_with_graph_io`].
+    #[doc(hidden)]
+    pub fn connect_config(requested: Config) -> Result<Config> {
+        let path = requested.root.join(".ontoenv").join("ontoenv.json");
+        if !path.exists() {
+            return Ok(requested);
+        }
+        let file = std::fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut persisted: Config = serde_json::from_reader(reader)?;
+        // The caller's path is authoritative so copied/moved environments can
+        // still be connected through their current location. The live custom
+        // backend description likewise comes from the current connection.
+        persisted.root = requested.root;
+        if requested.external_graph_store.is_some() {
+            persisted.external_graph_store = requested.external_graph_store;
+        }
+        Ok(persisted)
+    }
+
+    /// Apply explicit configuration changes to a live environment.
+    ///
+    /// This updates runtime collaborators immediately but does not scan,
+    /// refresh, or re-ingest ontology sources.
+    pub fn apply_config_overrides(&mut self, overrides: &ConfigOverrides) -> Result<bool> {
+        let changed = self.config.apply_overrides(overrides)?;
+        if changed {
+            self.sync_runtime_config()?;
+        }
+        Ok(changed)
+    }
+
+    fn load_catalog_with_graph_io(
+        config: Config,
+        io: Box<dyn GraphIO>,
+        verify_revision: bool,
+    ) -> Result<Self> {
+        let catalog_path = config.root.join(".ontoenv").join(catalog::CATALOG_FILE);
+        let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
+        if pending_path.exists() {
+            return Err(CatalogRecoveryError {
+                message: format!(
+                    "interrupted mutation marker at {}; run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog",
+                    pending_path.display()
+                ),
+            }
+            .into());
+        }
+        if !catalog_path.exists() {
+            return Err(anyhow!(
+                "OntoEnv catalog not found at {}",
+                catalog_path.display()
+            ));
+        }
+        let state_before = io.store_state()?;
+        let (mut env, expected, graph_revisions) = catalog::load(&catalog_path)?;
+        if let (Some(expected), Some(actual)) = (&expected, &state_before) {
+            if expected.id != actual.id || (verify_revision && expected.revision != actual.revision)
+            {
+                return Err(ExternalStoreChangedError {
+                    message: "backend identity/revision changed; refresh explicitly".to_string(),
+                }
+                .into());
+            }
+        }
+        if io.store_state()? != state_before {
+            return Err(ExternalStoreChangedError {
+                message: "backend changed while loading the catalog".to_string(),
+            }
+            .into());
+        }
+        env.normalize_file_locations(&config.root);
+        let mut result = Self::new(env, io, config)?;
+        result.graph_revisions = graph_revisions;
+        result.backend_state = expected.or(state_before);
+        result.rebuild_dependency_graph_from_metadata();
+        Ok(result)
     }
 
     /// Resolve a path relative to the configured OntoEnv root if it is not already absolute.
@@ -345,11 +857,18 @@ impl OntoEnv {
         }
     }
 
-    /// Ensure file locations are anchored to the OntoEnv root; leave other variants untouched.
+    /// Ensure file locations are anchored to the OntoEnv root and canonicalized;
+    /// leave other variants untouched.
+    ///
+    /// Canonicalization (via [`crate::ontology::canonicalize_file_path`]) is what
+    /// makes a path supplied to `add`/`add_from_bytes` compare equal to the path
+    /// `init`/`update` discovered for the same file. Without it, symlinked roots
+    /// (e.g. macOS `/var` -> `/private/var`) and relative vs absolute forms of
+    /// the same file create duplicate ontology entries keyed by location.
     fn resolve_location(&self, location: OntologyLocation) -> OntologyLocation {
         match location {
-            OntologyLocation::File(p) if p.is_relative() => {
-                OntologyLocation::File(self.resolve_path(&p))
+            OntologyLocation::File(p) => {
+                OntologyLocation::File(crate::ontology::canonicalize_file_path(&p))
             }
             _ => location,
         }
@@ -358,6 +877,17 @@ impl OntoEnv {
     /// Opens an existing environment rooted at `config.root`, or initializes a new one using
     /// the provided configuration when none exists yet.
     pub fn open_or_init(config: Config, read_only: bool) -> Result<Self> {
+        Self::open_or_init_with_overrides(config, read_only, ConfigOverrides::default())
+    }
+
+    /// Open an existing environment with explicit overrides, or initialize a
+    /// missing environment from `config`.
+    pub fn open_or_init_with_overrides(
+        mut config: Config,
+        read_only: bool,
+        overrides: ConfigOverrides,
+    ) -> Result<Self> {
+        config.apply_overrides(&overrides)?;
         // Reuse an existing environment if present; otherwise initialize a new one.
         if config.temporary {
             return Self::init(config, false);
@@ -365,18 +895,28 @@ impl OntoEnv {
 
         let root = config.root.clone();
 
-        if let Some(found_root) = find_ontoenv_root_from(&root) {
-            let ontoenv_dir = found_root.join(".ontoenv");
-            if ontoenv_dir.exists() {
-                return Self::load_from_directory(found_root, read_only);
+        let existing_root = if let Some(found_root) = find_ontoenv_root_from(&root) {
+            if found_root.join(".ontoenv").exists() {
+                Some(found_root)
+            } else {
+                None
             }
+        } else if root.join(".ontoenv").exists() {
+            Some(root.clone())
+        } else {
+            None
+        };
+
+        if let Some(load_root) = existing_root {
+            let mut env = Self::load_from_directory(load_root, read_only)?;
+            let changed = env.apply_config_overrides(&overrides)?;
+            if !read_only && changed {
+                env.save_to_directory()?;
+            }
+            return Ok(env);
         }
 
         let ontoenv_dir = root.join(".ontoenv");
-        if ontoenv_dir.exists() {
-            return Self::load_from_directory(root, read_only);
-        }
-
         if read_only {
             return Err(anyhow::anyhow!(
                 "OntoEnv directory not found at {} and read_only=true",
@@ -393,8 +933,12 @@ impl OntoEnv {
     pub fn new_online() -> Result<Self> {
         // Convenience ctor for local dev: scan cwd and allow network fetches.
         if let Some(root) = find_ontoenv_root() {
-            // Don't load as read_only
-            Self::load_from_directory(root, false)
+            let mut env = Self::load_from_directory(root, false)?;
+            if env.is_offline() {
+                env.set_offline(false);
+                env.save_to_directory()?;
+            }
+            Ok(env)
         } else {
             let root = std::env::current_dir()?;
             let locations = vec![root.clone()];
@@ -406,7 +950,6 @@ impl OntoEnv {
                 .temporary(false)
                 .locations(locations)
                 .build()?;
-            // overwrite should be false, but init will create it.
             Self::init(config, false)
         }
     }
@@ -417,8 +960,12 @@ impl OntoEnv {
     pub fn new_offline() -> Result<Self> {
         // Convenience ctor for local dev without network access.
         if let Some(root) = find_ontoenv_root() {
-            // Don't load as read_only
-            Self::load_from_directory(root, false)
+            let mut env = Self::load_from_directory(root, false)?;
+            if !env.is_offline() {
+                env.set_offline(true);
+                env.save_to_directory()?;
+            }
+            Ok(env)
         } else {
             let root = std::env::current_dir()?;
             let locations = vec![root.clone()];
@@ -430,7 +977,6 @@ impl OntoEnv {
                 .temporary(false)
                 .locations(locations)
                 .build()?;
-            // overwrite should be false, but init will create it.
             Self::init(config, false)
         }
     }
@@ -441,8 +987,12 @@ impl OntoEnv {
     pub fn new_offline_no_search() -> Result<Self> {
         // Offline mode with no search paths to avoid filesystem scans.
         if let Some(root) = find_ontoenv_root() {
-            // Don't load as read_only
-            Self::load_from_directory(root, false)
+            let mut env = Self::load_from_directory(root, false)?;
+            if !env.is_offline() {
+                env.set_offline(true);
+                env.save_to_directory()?;
+            }
+            Ok(env)
         } else {
             let root = std::env::current_dir()?;
             let config = Config::builder()
@@ -453,7 +1003,6 @@ impl OntoEnv {
                 .temporary(false)
                 .locations(vec![])
                 .build()?;
-            // overwrite should be false, but init will create it.
             Self::init(config, false)
         }
     }
@@ -504,7 +1053,7 @@ impl OntoEnv {
             .locations(locations)
             .build()?;
 
-        let mut ontoenv = Self::new(Environment::new(), io, config);
+        let mut ontoenv = Self::new(Environment::new(), io, config)?;
         let _ = ontoenv.update_all(false)?;
         Ok(ontoenv)
     }
@@ -512,9 +1061,15 @@ impl OntoEnv {
     /// Creates a new OntoEnv using a caller-provided GraphIO implementation.
     /// This is useful for embedding OntoEnv into applications with custom graph storage.
     pub fn new_with_graph_io(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
-        // Plug in a custom GraphIO implementation and run initial update pass.
-        let mut ontoenv = Self::new(Environment::new(), io, config);
-        let _ = ontoenv.update_all(false)?;
+        // Plug in a custom GraphIO implementation and follow the same
+        // cache/bootstrap behavior as the built-in backend.
+        let mut ontoenv = Self::new(Environment::new(), io, config)?;
+        if !ontoenv.config.use_cached_ontologies.is_enabled() {
+            let _ = ontoenv.update_all(false)?;
+        }
+        ontoenv.backend_state = ontoenv.io.store_state()?;
+        ontoenv.graph_revisions = ontoenv.io.graph_revisions()?.unwrap_or_default();
+        ontoenv.save_to_directory()?;
         Ok(ontoenv)
     }
 
@@ -522,37 +1077,244 @@ impl OntoEnv {
     /// GraphIO store.  Ontology metadata and the import dependency graph are reconstructed
     /// from the store contents; no filesystem discovery or network fetching is performed.
     pub fn new_with_graph_io_from_existing(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
-        let mut ontoenv = Self::new(Environment::new(), io, config);
-        ontoenv.init_from_graph_io()?;
-        Ok(ontoenv)
+        Self::adopt(config, io)
     }
 
     /// Re-synchronizes the environment with the current contents of the underlying GraphIO
     /// store.  Use this when the store has been mutated externally and the in-memory
     /// environment state (ontology metadata, import graph) needs to be brought up to date.
     pub fn refresh_from_graph_io(&mut self) -> Result<()> {
-        self.env = Environment::new();
-        self.dependency_graph = DiGraph::new();
-        self.init_from_graph_io()
+        self.refresh_from_store(None, true).map(|_| ())
+    }
+
+    /// Explicitly reconcile catalog metadata with the graph backend.
+    pub fn refresh_from_store(
+        &mut self,
+        graphs: Option<Vec<String>>,
+        full: bool,
+    ) -> Result<SyncReport> {
+        if full && graphs.is_some() {
+            return Err(anyhow!("graphs cannot be combined with full=true"));
+        }
+
+        let old: HashMap<String, Option<String>> = self
+            .env
+            .ontologies()
+            .values()
+            .map(|ontology| {
+                (
+                    ontology.id().name().as_str().to_string(),
+                    ontology.content_hash().map(str::to_string),
+                )
+            })
+            .collect();
+
+        if full {
+            self.init_from_graph_io()?;
+            let current: HashSet<_> = self
+                .env
+                .ontologies()
+                .keys()
+                .map(|id| id.name().as_str().to_string())
+                .collect();
+            let mut report = SyncReport {
+                mode: SyncMode::Full,
+                added: current
+                    .iter()
+                    .filter(|id| !old.contains_key(*id))
+                    .cloned()
+                    .collect(),
+                changed: current
+                    .iter()
+                    .filter(|id| old.contains_key(*id))
+                    .cloned()
+                    .collect(),
+                removed: old
+                    .keys()
+                    .filter(|id| !current.contains(*id))
+                    .cloned()
+                    .collect(),
+                unchanged: Vec::new(),
+                still_pending: Vec::new(),
+            };
+            report.added.sort();
+            report.changed.sort();
+            report.removed.sort();
+            self.backend_state = self.io.store_state()?;
+            self.graph_revisions = self.io.graph_revisions()?.unwrap_or_default();
+            self.save_to_directory()?;
+            self.remove_pending_marker()?;
+            return Ok(report);
+        }
+
+        let current_revisions = self.io.graph_revisions()?;
+        let (mode, targets) = if let Some(graphs) = graphs {
+            (SyncMode::Targeted, graphs)
+        } else {
+            let Some(revisions) = current_revisions.as_ref() else {
+                // Temporary environments have no authoritative catalog to
+                // protect, so retain the historical explicit rescan behavior.
+                if self.config.temporary {
+                    return self.refresh_from_store(None, true);
+                }
+                return Err(StoreCapabilityError {
+                    message:
+                        "graph backend does not implement graph_revisions(); use graphs=[...] or full=true"
+                            .to_string(),
+                }
+                .into());
+            };
+            let mut targets: HashSet<String> = revisions
+                .iter()
+                .filter(|(id, revision)| self.graph_revisions.get(*id) != Some(*revision))
+                .map(|(id, _)| id.clone())
+                .collect();
+            targets.extend(
+                self.graph_revisions
+                    .keys()
+                    .filter(|id| !revisions.contains_key(*id))
+                    .cloned(),
+            );
+            if targets.is_empty() {
+                let mut unchanged: Vec<_> = revisions.keys().cloned().collect();
+                unchanged.sort();
+                let current_state = self.io.store_state()?;
+                if self.backend_state != current_state {
+                    self.backend_state = current_state;
+                    self.save_to_directory()?;
+                }
+                return Ok(SyncReport {
+                    mode: SyncMode::Incremental,
+                    added: Vec::new(),
+                    changed: Vec::new(),
+                    removed: Vec::new(),
+                    unchanged,
+                    still_pending: Vec::new(),
+                });
+            }
+            (SyncMode::Incremental, targets.into_iter().collect())
+        };
+
+        let backend_ids: HashMap<String, GraphIdentifier> = self
+            .io
+            .graph_ids()?
+            .into_iter()
+            .map(|id| (id.name().as_str().to_string(), id))
+            .collect();
+        let mut added = Vec::new();
+        let mut changed = Vec::new();
+        let mut removed = Vec::new();
+        let mut unchanged = Vec::new();
+        for graph in &targets {
+            let existing = self
+                .env
+                .ontologies()
+                .keys()
+                .find(|id| id.name().as_str() == graph)
+                .cloned();
+            let Some(backend_id) = backend_ids.get(graph) else {
+                if let Some(existing) = existing {
+                    self.env.remove_ontology(&existing)?;
+                    removed.push(graph.clone());
+                } else {
+                    unchanged.push(graph.clone());
+                }
+                self.graph_revisions.remove(graph);
+                continue;
+            };
+            let id = existing
+                .as_ref()
+                .map(|known| {
+                    GraphIdentifier::new_with_location(backend_id.name(), known.location().clone())
+                })
+                .unwrap_or_else(|| backend_id.clone());
+            let ontology = self.ontology_metadata_from_backend(&id)?;
+            if let Some(existing) = existing {
+                self.env.remove_ontology(&existing)?;
+                changed.push(graph.clone());
+            } else {
+                added.push(graph.clone());
+            }
+            self.env.add_ontology(ontology)?;
+            if let Some(revisions) = &current_revisions {
+                if let Some(revision) = revisions.get(graph) {
+                    self.graph_revisions.insert(graph.clone(), revision.clone());
+                }
+            }
+        }
+        self.rebuild_dependency_graph_from_metadata();
+
+        let mut still_pending = Vec::new();
+        if let Some(revisions) = &current_revisions {
+            still_pending.extend(
+                revisions
+                    .iter()
+                    .filter(|(id, revision)| self.graph_revisions.get(*id) != Some(*revision))
+                    .map(|(id, _)| id.clone()),
+            );
+            still_pending.extend(
+                self.graph_revisions
+                    .keys()
+                    .filter(|id| !revisions.contains_key(*id))
+                    .cloned(),
+            );
+            still_pending.sort();
+            still_pending.dedup();
+        }
+        if still_pending.is_empty()
+            && (mode == SyncMode::Incremental || current_revisions.is_some())
+        {
+            self.backend_state = self.io.store_state()?;
+        }
+        self.save_to_directory()?;
+        added.sort();
+        changed.sort();
+        removed.sort();
+        unchanged.sort();
+        Ok(SyncReport {
+            mode,
+            added,
+            changed,
+            removed,
+            unchanged,
+            still_pending,
+        })
+    }
+
+    fn ontology_metadata_from_backend(&self, id: &GraphIdentifier) -> Result<Ontology> {
+        let graph = self.io.get_graph(id)?;
+        let tmp_store = Store::new()?;
+        let graphname = id.graphname()?;
+        let quads = graph.iter().map(|triple| {
+            Ok::<_, oxigraph::store::StorageError>(Quad::new(
+                triple.subject.into_owned(),
+                triple.predicate.into_owned(),
+                triple.object.into_owned(),
+                graphname.clone(),
+            ))
+        });
+        let mut loader = tmp_store.bulk_loader();
+        loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
+        loader
+            .commit()
+            .map_err(|error| anyhow!(error.to_string()))?;
+        Ontology::from_store(&tmp_store, id, self.config.require_ontology_names)
     }
 
     /// Reads all graphs from the IO layer, derives `Ontology` metadata from each one, and
     /// registers them in the environment together with a freshly-built dependency graph.
     fn init_from_graph_io(&mut self) -> Result<()> {
         let ids = self.io.graph_ids()?;
-        if ids.is_empty() {
-            return Ok(());
-        }
-        let strict = self.config.strict;
+        let require_ontology_names = self.config.require_ontology_names;
         let mut ontologies = Vec::with_capacity(ids.len());
         for id in &ids {
-            let graph = match self.io.get_graph(id) {
-                Ok(g) => g,
-                Err(e) => {
-                    warn!("init_from_graph_io: could not read graph {id}: {e}");
-                    continue;
-                }
-            };
+            // Adoption and recovery must be all-or-nothing: silently skipping
+            // a graph would publish a catalog that does not describe its
+            // authoritative backend.
+            let graph = self
+                .io
+                .get_graph(id)
+                .map_err(|error| anyhow!("could not read graph {id}: {error}"))?;
             // Copy the graph's triples into a temporary store under the correct named graph
             // so that Ontology::from_store can locate the right graph context.
             let tmp_store = Store::new()?;
@@ -568,13 +1330,23 @@ impl OntoEnv {
             let mut loader = tmp_store.bulk_loader();
             loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
             loader.commit().map_err(|e| anyhow!(e.to_string()))?;
-            match Ontology::from_store(&tmp_store, id, strict) {
-                Ok(ont) => ontologies.push(ont),
-                Err(e) => warn!("init_from_graph_io: could not parse ontology from {id}: {e}"),
-            }
+            let ontology = Ontology::from_store(&tmp_store, id, require_ontology_names)
+                .map_err(|error| anyhow!("could not parse ontology from {id}: {error}"))?;
+            ontologies.push(ontology);
         }
         let filters = self.ontology_filters()?;
-        self.register_ontologies(ontologies, true, &filters)?;
+        let mut rebuilt = Environment::new();
+        rebuilt.set_default_policy(&self.config.resolution_policy)?;
+        for ontology in ontologies {
+            if filters.allow(ontology.id()) {
+                rebuilt.add_ontology(ontology)?;
+            }
+        }
+        // Publish the rebuilt in-memory catalog only after every graph has
+        // been read and parsed. A failed scan therefore leaves the caller's
+        // current environment usable and its on-disk catalog untouched.
+        self.env = rebuilt;
+        self.rebuild_dependency_graph_from_metadata();
         Ok(())
     }
 
@@ -582,10 +1354,16 @@ impl OntoEnv {
     pub fn resolve(&self, target: ResolveTarget) -> Option<GraphIdentifier> {
         // Map a location or graph IRI to the canonical GraphIdentifier.
         match target {
-            ResolveTarget::Location(location) => self
-                .env
-                .get_ontology_by_location(&location)
-                .map(|ont| ont.id().clone()),
+            ResolveTarget::Location(location) => {
+                // Canonicalize file locations so callers can pass paths obtained
+                // from `tempfile` (e.g. macOS `/var` -> `/private/var` symlink)
+                // or other non-canonical forms and still match the canonical
+                // keys recorded by `init`/`update`/`add`.
+                let location = self.resolve_location(location);
+                self.env
+                    .get_ontology_by_location(&location)
+                    .map(|ont| ont.id().clone())
+            }
             ResolveTarget::Graph(iri) => self
                 .env
                 .get_ontology_by_name(iri.as_ref())
@@ -604,13 +1382,58 @@ impl OntoEnv {
         std::fs::create_dir_all(&ontoenv_dir)?;
 
         write_json_file(&ontoenv_dir.join("ontoenv.json"), &self.config)?;
-        write_json_file(&ontoenv_dir.join("environment.json"), &self.env)?;
-        write_json_file(
-            &ontoenv_dir.join("dependency_graph.json"),
-            &self.dependency_graph,
+        catalog::save(
+            &ontoenv_dir.join(catalog::CATALOG_FILE),
+            &self.env,
+            self.backend_state.clone(),
+            self.graph_revisions.clone(),
         )?;
 
         Ok(())
+    }
+
+    fn write_pending_marker(&self) -> Result<()> {
+        if self.config.temporary {
+            return Ok(());
+        }
+        let directory = self.config.root.join(".ontoenv");
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join(catalog::PENDING_FILE);
+        let graphs: Vec<_> = self
+            .env
+            .ontologies()
+            .keys()
+            .map(|id| id.name().as_str().to_string())
+            .collect();
+        let marker = serde_json::json!({
+            "mutation_id": format!("{}-{}", std::process::id(), Utc::now().timestamp_nanos_opt().unwrap_or_default()),
+            "graphs": graphs,
+        });
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)?;
+        file.write_all(serde_json::to_string(&marker)?.as_bytes())?;
+        file.flush()?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    fn remove_pending_marker(&self) -> Result<()> {
+        if self.config.temporary {
+            return Ok(());
+        }
+        let path = self
+            .config
+            .root
+            .join(".ontoenv")
+            .join(catalog::PENDING_FILE);
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub fn new_temporary(&self) -> Result<Self> {
@@ -619,7 +1442,9 @@ impl OntoEnv {
             self.config.offline,
             self.config.strict,
         )?);
-        Ok(Self::new(self.env.clone(), io, self.config.clone()))
+        let mut config = self.config.clone();
+        config.temporary = true;
+        Self::new(self.env.clone(), io, config)
     }
 
     fn ontology_filters(&self) -> Result<OntologyFilters> {
@@ -659,7 +1484,8 @@ impl OntoEnv {
 
     /// Loads the environment from the .ontoenv directory.
     pub fn load_from_directory(root: PathBuf, read_only: bool) -> Result<Self> {
-        // Load persisted config, environment, and dependency graph from disk.
+        // Load configuration and the authoritative metadata catalog. Ontology
+        // graph contents are deliberately not touched on this path.
         let ontoenv_dir = root.join(".ontoenv");
         if !ontoenv_dir.exists() {
             return Err(anyhow::anyhow!(
@@ -679,56 +1505,102 @@ impl OntoEnv {
             );
         }
 
-        // Load the dependency graph
-        let graph_path = ontoenv_dir.join("dependency_graph.json");
-        let file = std::fs::File::open(graph_path)?;
-        let reader = BufReader::new(file);
-        let dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed> =
-            serde_json::from_reader(reader)?;
+        let pending_path = ontoenv_dir.join(catalog::PENDING_FILE);
+        if pending_path.exists() {
+            let details = std::fs::read_to_string(&pending_path).unwrap_or_default();
+            return Err(CatalogRecoveryError {
+                message: format!(
+                    "{} records an interrupted backend/catalog mutation ({}). Run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog from the graph store",
+                    pending_path.display(),
+                    details
+                ),
+            }
+            .into());
+        }
 
-        // Load the environment
-        let env_path = ontoenv_dir.join("environment.json");
-        let file = std::fs::File::open(env_path)?;
-        let reader = BufReader::new(file);
-        let mut env: Environment = serde_json::from_reader(reader)?;
-        env.normalize_file_locations(&config.root);
-
-        // Initialize the IO to the persistent graph type. We know that it exists because we
-        // are loading from a directory
-        let mut io: Box<dyn GraphIO> = match read_only {
+        let lock_file = Self::acquire_environment_lock(&config, read_only)?;
+        let io: Box<dyn GraphIO> = match read_only {
             true => Box::new(crate::io::ReadOnlyPersistentGraphIO::new(
-                ontoenv_dir,
+                ontoenv_dir.clone(),
                 config.offline,
             )?),
             false => Box::new(crate::io::PersistentGraphIO::new(
-                ontoenv_dir,
+                ontoenv_dir.clone(),
                 config.offline,
                 config.strict,
             )?),
         };
+        let state_before = io.store_state()?;
 
-        // copy the graphs from the persistent store to the memory store if we are a 'temporary'
-        // environment
-        if config.temporary {
-            let mut new_io = Box::new(crate::io::MemoryGraphIO::new(
-                config.offline,
-                config.strict,
-            )?);
-            for ontology in env.ontologies().values() {
-                let graph = io.get_graph(ontology.id())?;
-                new_io.add_graph(ontology.id().clone(), graph)?;
+        let catalog_path = ontoenv_dir.join(catalog::CATALOG_FILE);
+        let (mut env, expected_state, graph_revisions, migrated) = if catalog_path.exists() {
+            let (env, state, revisions) = catalog::load(&catalog_path)?;
+            (env, state, revisions, false)
+        } else {
+            let legacy_path = ontoenv_dir.join("environment.json");
+            if !legacy_path.exists() {
+                return Err(anyhow!(
+                    "OntoEnv catalog not found at {}",
+                    catalog_path.display()
+                ));
             }
-            io = new_io;
+            let file = std::fs::File::open(&legacy_path)?;
+            let reader = BufReader::new(file);
+            let env: Environment = serde_json::from_reader(reader)?;
+            let metadata_ids: HashSet<_> = env
+                .ontologies()
+                .keys()
+                .map(|id| id.name().as_str().to_string())
+                .collect();
+            let backend_ids: HashSet<_> = io
+                .graph_ids()?
+                .into_iter()
+                .map(|id| id.name().as_str().to_string())
+                .collect();
+            if metadata_ids != backend_ids {
+                return Err(anyhow!(
+                    "legacy metadata does not match backend graph IDs; use a targeted refresh or refresh_from_store(full=true)"
+                ));
+            }
+            (env, state_before.clone(), HashMap::new(), true)
+        };
+        env.normalize_file_locations(&config.root);
+        if let (Some(expected), Some(actual)) = (&expected_state, &state_before) {
+            if expected != actual {
+                return Err(ExternalStoreChangedError {
+                    message: format!(
+                        "backend identity/revision changed (catalog {:?}, backend {:?}); refresh explicitly",
+                        expected, actual
+                    ),
+                }
+                .into());
+            }
+        }
+        let state_after = io.store_state()?;
+        if state_before != state_after {
+            return Err(ExternalStoreChangedError {
+                message: "backend changed while the catalog was being loaded".to_string(),
+            }
+            .into());
         }
 
         let mut ontoenv = OntoEnv {
             env,
             io,
             config,
-            dependency_graph,
+            dependency_graph: DiGraph::new(),
+            dependency_graph_index: HashMap::new(),
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
+            graph_revisions,
+            backend_state: expected_state.or(state_before),
+            _lock_file: lock_file,
         };
+        ontoenv.sync_runtime_config()?;
+        ontoenv.rebuild_dependency_graph_from_metadata();
+        if migrated && !read_only {
+            ontoenv.save_to_directory()?;
+        }
 
         let filters = ontoenv.ontology_filters()?;
         // Avoid writing when read_only; prune in-memory only for read-only or temporary envs.
@@ -774,8 +1646,6 @@ impl OntoEnv {
 
     /// Calculates and returns the environment status
     pub fn status(&self) -> Result<EnvironmentStatus> {
-        // Compute on-disk status for CLI/diagnostic output.
-        // get time modified of the self.store_path() directory
         let ontoenv_dir = self.config.root.join(".ontoenv");
         let ontoenv_path = fs::canonicalize(&ontoenv_dir).unwrap_or_else(|_| ontoenv_dir.clone());
         let last_updated: DateTime<Utc> = std::fs::metadata(&ontoenv_dir)?.modified()?.into();
@@ -859,6 +1729,7 @@ impl OntoEnv {
         if !config.temporary {
             std::fs::create_dir_all(&ontoenv_dir)?;
         }
+        let lock_file = Self::acquire_environment_lock(&config, false)?;
 
         let env = Environment::new();
         let io: Box<dyn GraphIO> = match config.temporary {
@@ -877,14 +1748,27 @@ impl OntoEnv {
             env,
             io,
             dependency_graph: DiGraph::new(),
+            dependency_graph_index: HashMap::new(),
             config,
             failed_resolutions: HashSet::new(),
             batch_state: BatchState::default(),
+            graph_revisions: HashMap::new(),
+            backend_state: None,
+            _lock_file: lock_file,
         };
+        ontoenv.sync_runtime_config()?;
 
         if !ontoenv.config.use_cached_ontologies.is_enabled() {
             let _ = ontoenv.update_all(false)?;
         }
+        ontoenv.backend_state = ontoenv.io.store_state()?;
+        ontoenv.graph_revisions = ontoenv.io.graph_revisions()?.unwrap_or_default();
+
+        // Always persist the config so flags like `offline` survive across sessions.
+        // `update_all` writes via `register_ontologies`, but that path is skipped when
+        // `use_cached_ontologies` is enabled or when no ontologies are discovered, so
+        // we call it explicitly here as the authoritative write.
+        ontoenv.save_to_directory()?;
 
         Ok(ontoenv)
     }
@@ -918,6 +1802,48 @@ impl OntoEnv {
         self.add_with_options(location, overwrite, refresh, true)
     }
 
+    /// Best-effort variant of [`Self::add`] for resolving an `owl:imports` target.
+    ///
+    /// In non-strict mode, an unavailable root location is returned as `Ok(None)`.
+    /// The surrounding IO batch is still committed, so a tolerated lookup failure
+    /// cannot leave a recovery marker behind. Other failures, and all failures in
+    /// strict mode, are returned as errors.
+    pub fn try_add_import(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+    ) -> Result<Option<GraphIdentifier>> {
+        let location = self.resolve_location(location);
+        let previous_failures = self.failed_resolutions.clone();
+        self.with_io_batch(move |env| {
+            let result =
+                env.add_with_options_inner(location.clone(), overwrite, refresh, true, None);
+
+            // `add_with_seed_inner` resets per-call failures. Import resolution can
+            // make several best-effort attempts in one higher-level operation, so
+            // retain every target that is still unresolved.
+            env.failed_resolutions.extend(previous_failures);
+            env.failed_resolutions
+                .retain(|import| env.env.get_ontology_by_name(import.into()).is_none());
+
+            match result {
+                Ok(id) => Ok(Some(id)),
+                Err(err)
+                    if !env.config.strict
+                        && matches!(&location, OntologyLocation::Url(url) if {
+                            NamedNode::new(url.clone())
+                                .is_ok_and(|node| env.failed_resolutions.contains(&node))
+                        }) =>
+                {
+                    warn!("Could not resolve optional import {location}: {err}");
+                    Ok(None)
+                }
+                Err(err) => Err(err),
+            }
+        })
+    }
+
     /// Add the ontology from the given location to the environment, but do not
     /// explore its owl:imports. It will be added to the dependency graph and
     /// edges will be created if its imports are already present in the environment.
@@ -930,6 +1856,121 @@ impl OntoEnv {
     ) -> Result<GraphIdentifier> {
         // Add a single ontology without traversing its imports.
         self.add_with_options(location, overwrite, refresh, false)
+    }
+
+    /// Add the ontology from the given location, rename its declared IRI to `rename`, then
+    /// traverse its `owl:imports`.  All occurrences of the original IRI inside the graph
+    /// (subject and object positions) are rewritten to `rename` before the graph is stored.
+    pub fn add_with_rename(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        rename: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        let old_id = self.add(location, overwrite, refresh)?;
+        self.apply_graph_rename(&old_id, rename)
+    }
+
+    /// Like [`Self::add_with_rename`] but does not traverse `owl:imports`.
+    pub fn add_no_imports_with_rename(
+        &mut self,
+        location: OntologyLocation,
+        overwrite: Overwrite,
+        refresh: RefreshStrategy,
+        rename: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        let old_id = self.add_no_imports(location, overwrite, refresh)?;
+        self.apply_graph_rename(&old_id, rename)
+    }
+
+    /// Rename the graph IRI of an already-loaded ontology.
+    ///
+    /// Reads the graph from the IO store, rewrites every occurrence of the old IRI to
+    /// `new_iri` (subject and object positions), writes it back under the new name,
+    /// removes the old named graph, and updates the in-memory environment and dependency
+    /// graph to reflect the change.
+    pub fn rename_graph_iri(
+        &mut self,
+        id: &GraphIdentifier,
+        new_iri: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        self.apply_graph_rename(id, new_iri)
+    }
+
+    fn apply_graph_rename(
+        &mut self,
+        old_id: &GraphIdentifier,
+        new_iri: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        let old_id = old_id.clone();
+        self.with_io_batch(move |environment| {
+            environment.apply_graph_rename_inner(&old_id, new_iri)
+        })
+    }
+
+    fn apply_graph_rename_inner(
+        &mut self,
+        old_id: &GraphIdentifier,
+        new_iri: NamedNode,
+    ) -> Result<GraphIdentifier> {
+        if old_id.name() == new_iri.as_ref() {
+            return Ok(old_id.clone());
+        }
+
+        // Read graph, apply rename transform, write back under new name.
+        let mut graph = self.io.get_graph(old_id)?;
+        transform::rename_ontology_iri_graph(&mut graph, old_id.name(), new_iri.as_ref());
+        let new_id =
+            GraphIdentifier::new_with_location(new_iri.as_ref(), old_id.location().clone());
+        self.io.remove(old_id)?;
+        self.io.add_named_graph(new_id.clone(), graph)?;
+
+        // Update in-memory environment: remove old entry, re-insert under new IRI.
+        if let Some(mut ont) = self.env.remove_ontology(old_id)? {
+            ont.set_iri(new_iri);
+            self.env.add_ontology(ont)?;
+        }
+
+        // Rebuild so dependency graph edges reflect the new identifier.
+        self.rebuild_dependency_graph_from_metadata();
+        Ok(new_id)
+    }
+
+    /// Add an alias for a canonical ontology IRI.
+    ///
+    /// The alias will route to the same graph as the canonical IRI.
+    /// Aliases only point to canonical IRIs (not other aliases) to avoid chains.
+    pub fn add_alias(&mut self, alias_iri: &str, canonical_iri: &str) -> Result<()> {
+        self.env.add_alias(alias_iri, canonical_iri)?;
+        self.save_to_directory()?;
+        Ok(())
+    }
+
+    /// Remove an alias.
+    pub fn remove_alias(&mut self, alias_iri: &str) -> Result<()> {
+        if self.env.remove_alias(alias_iri)?.is_some() {
+            self.save_to_directory()?;
+        }
+        Ok(())
+    }
+
+    /// Get the canonical GraphIdentifier for an alias.
+    ///
+    /// Returns None if the IRI is not an alias.
+    pub fn resolve_alias(&self, alias_iri: &str) -> Option<GraphIdentifier> {
+        let alias_norm = Environment::normalize_name(alias_iri).to_string();
+        self.env.aliases().get(&alias_norm).cloned()
+    }
+
+    /// List all aliases that point to a given canonical IRI.
+    pub fn get_aliases_for(&self, canonical_iri: &str) -> Vec<String> {
+        self.env.get_aliases_for(canonical_iri)
+    }
+
+    /// Check if an IRI is a canonical ontology (not an alias).
+    pub fn is_canonical_iri(&self, iri: &str) -> bool {
+        self.env.is_canonical_iri(iri)
     }
 
     /// Add an ontology from in-memory bytes and traverse its imports.
@@ -1110,7 +2151,6 @@ impl OntoEnv {
             self.add_ids_to_dependency_graph(ids.clone())?;
         }
 
-        self.save_to_directory()?;
         Ok(ids)
     }
     fn add_with_options_inner(
@@ -1675,7 +2715,10 @@ impl OntoEnv {
     /// Returns a list of all imports that could not be resolved.
     pub fn missing_imports(&self) -> Vec<NamedNode> {
         // Report imports that are not resolvable within the current environment.
-        let mut missing = HashSet::new();
+        // Include best-effort targets attempted from transient caller graphs: those
+        // graphs are not catalogued, so their declarations cannot be rediscovered
+        // by scanning ontology metadata below.
+        let mut missing = self.failed_resolutions.clone();
         for ontology in self.env.ontologies().values() {
             for import in &ontology.imports {
                 if self.env.get_ontology_by_name(import.as_ref()).is_none() {
@@ -1747,7 +2790,7 @@ impl OntoEnv {
         };
         let mut files = HashSet::new();
         for location in &self.config.locations {
-            let resolved = self.resolve_path(location);
+            let resolved = crate::ontology::canonicalize_file_path(&self.resolve_path(location));
             // if location does not exist, skip it
             if !resolved.exists() {
                 warn!("Location does not exist: {resolved:?}");
@@ -1761,7 +2804,9 @@ impl OntoEnv {
                     }
                     warn!("Skipping {:?} due to access error: {}", resolved, err);
                 } else {
-                    files.insert(OntologyLocation::File(resolved.clone()));
+                    files.insert(OntologyLocation::File(
+                        crate::ontology::canonicalize_file_path(&resolved),
+                    ));
                 }
                 continue;
             }
@@ -1793,14 +2838,53 @@ impl OntoEnv {
                         );
                         continue;
                     }
-                    files.insert(OntologyLocation::File(entry.path().to_path_buf()));
+                    files.insert(OntologyLocation::File(
+                        crate::ontology::canonicalize_file_path(entry.path()),
+                    ));
                 }
             }
         }
         Ok(files.into_iter().collect())
     }
 
+    /// Runs `f` against `self` inside a state snapshot. On `Ok`, the snapshot
+    /// is discarded (commit). On `Err`, the snapshotted state is restored
+    /// before the error propagates (rollback).
+    ///
+    /// NOTE: only covers the in-memory fields captured by [`EnvTransaction`].
+    /// `self.io` writes are *not* rolled back; callers that mutate the IO
+    /// store inside the closure must accept that orphan graphs may remain on
+    /// rollback. Today this is acceptable: subsequent runs are idempotent and
+    /// the orphans are pruned at next refresh.
+    pub(crate) fn with_env_transaction<F, R>(&mut self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut OntoEnv) -> Result<R>,
+    {
+        let snapshot = EnvTransaction::snapshot(self);
+        match f(self) {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                snapshot.restore(self);
+                Err(e)
+            }
+        }
+    }
+
     fn add_ids_to_dependency_graph(&mut self, ids: Vec<GraphIdentifier>) -> Result<()> {
+        // Wrap the multi-step env + dep-graph rebuild in a transaction so a
+        // mid-traversal error (typically `self.io.add(...)` failing in strict
+        // mode after earlier successful imports) doesn't leave `self.env`,
+        // `self.dependency_graph`, `self.dependency_graph_index`, and
+        // `self.failed_resolutions` desynced from each other.
+        //
+        // NOTE: rdf5d/oxigraph store writes inside `self.io.add` are *not*
+        // covered by this rollback. If we roll back env after a successful
+        // io.add, the named graph remains in the store as an orphan. This is
+        // a known limitation; existing refresh/prune paths reconcile.
+        self.with_env_transaction(|s| s.add_ids_to_dependency_graph_inner(ids))
+    }
+
+    fn add_ids_to_dependency_graph_inner(&mut self, ids: Vec<GraphIdentifier>) -> Result<()> {
         // Walk the imports closure to ensure all reachable ontologies are loaded.
         // traverse the owl:imports closure and build the dependency graph
         let mut stack: VecDeque<GraphIdentifier> = ids.into();
@@ -1813,8 +2897,10 @@ impl OntoEnv {
             }
             seen.insert(graphid.clone());
             // get the ontology metadata record for this graph. If we don't have
-            // it and we're in strict mode, return an error. Otherwise just skip it
-            let ontology = match self.env.get_ontology(&graphid) {
+            // it and we're in strict mode, return an error. Otherwise just skip it.
+            // Use the direct id lookup; we want THIS exact graph, not whatever the
+            // configured ResolutionPolicy would map this name to.
+            let ontology = match self.env.get_ontology_by_id(&graphid) {
                 Some(ontology) => ontology,
                 None => {
                     let msg = format!("Could not find ontology: {graphid:?}");
@@ -1923,16 +3009,47 @@ impl OntoEnv {
             }
         }
         self.dependency_graph = graph;
+        self.dependency_graph_index = indexes;
         Ok(())
     }
 
     fn rebuild_dependency_graph(&mut self) -> Result<()> {
         let ids: Vec<GraphIdentifier> = self.env.ontologies().keys().cloned().collect();
         self.dependency_graph = DiGraph::new();
+        self.dependency_graph_index.clear();
         if ids.is_empty() {
             return Ok(());
         }
         self.add_ids_to_dependency_graph(ids)
+    }
+
+    /// Rebuild derived dependency indexes strictly from catalog metadata.
+    /// Missing imports remain unresolved; this method never reads or fetches
+    /// ontology graph content.
+    fn rebuild_dependency_graph_from_metadata(&mut self) {
+        let mut graph = DiGraph::new();
+        let mut indexes = HashMap::new();
+        self.failed_resolutions.clear();
+        for id in self.env.ontologies().keys() {
+            let index = graph.add_node(id.clone());
+            indexes.insert(id.clone(), index);
+        }
+        for ontology in self.env.ontologies().values() {
+            let Some(source) = indexes.get(ontology.id()).copied() else {
+                continue;
+            };
+            for import in &ontology.imports {
+                let Some(imported) = self.env.get_ontology_by_name(import.as_ref()) else {
+                    self.failed_resolutions.insert(import.clone());
+                    continue;
+                };
+                if let Some(target) = indexes.get(imported.id()).copied() {
+                    graph.add_edge(source, target, ());
+                }
+            }
+        }
+        self.dependency_graph = graph;
+        self.dependency_graph_index = indexes;
     }
 
     /// Returns a list of issues with the environment
@@ -1957,17 +3074,92 @@ impl OntoEnv {
         id: &GraphIdentifier,
         recursion_depth: i32,
     ) -> Result<Vec<GraphIdentifier>> {
-        // Traverse imports with optional depth limit to build a dependency closure.
+        // Walk the pre-built dependency graph via BFS. This avoids per-step
+        // import name resolution (which would otherwise fall through the alias
+        // map into a linear scan of every ontology in the environment).
+        if !self.ontologies().contains_key(id) {
+            return Err(anyhow!("Ontology {} not found", id.to_uri_string()));
+        }
+
+        let Some(&root_idx) = self.dependency_graph_index.get(id) else {
+            // No dep graph entry. With env mutations now transactional in
+            // `add_ids_to_dependency_graph`, the only way to reach this branch
+            // is the intentional `add(..., update_dependencies=false)` public
+            // API path. Fall back to the legacy name-resolution traversal so
+            // the closure is still correct, at the cost of per-step linear
+            // lookups.
+            return self.get_closure_via_name_resolution(id, recursion_depth);
+        };
+
+        let mut result: Vec<GraphIdentifier> = Vec::new();
+        result.push(id.clone());
+        let mut visited: HashSet<NodeIndex> = HashSet::with_capacity(8);
+        visited.insert(root_idx);
+        let mut queue: VecDeque<(NodeIndex, i32)> = VecDeque::new();
+        queue.push_back((root_idx, 0));
+
+        while let Some((idx, depth)) = queue.pop_front() {
+            if recursion_depth >= 0 && depth >= recursion_depth {
+                continue;
+            }
+            for edge in self
+                .dependency_graph
+                .edges_directed(idx, petgraph::Direction::Outgoing)
+            {
+                let target = edge.target();
+                if visited.insert(target) {
+                    let dep_id = &self.dependency_graph[target];
+                    result.push(dep_id.clone());
+                    queue.push_back((target, depth + 1));
+                }
+            }
+        }
+
+        // In strict mode, surface unresolved imports as an error to match prior
+        // semantics. Use `failed_resolutions` rather than re-resolving by
+        // name: the former records exactly the imports we couldn't resolve
+        // during `add_ids_to_dependency_graph` (which uses id-level lookups),
+        // so it stays consistent with the dependency-graph edges. Re-resolving
+        // via `get_ontology_by_name` would route through `ResolutionPolicy`
+        // and could disagree with the graph the BFS just walked.
+        if self.config.strict {
+            for graph_id in &result {
+                let ontology = self
+                    .ontologies()
+                    .get(graph_id)
+                    .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
+                for import in &ontology.imports {
+                    if self.failed_resolutions.contains(import) {
+                        return Err(anyhow!("Import not found: {}", import));
+                    }
+                }
+            }
+        }
+
+        info!("Dependency closure for {:?}: {:?}", id, result.len());
+        Ok(result)
+    }
+
+    /// Fallback closure traversal that resolves imports by name on each step
+    /// instead of walking `dependency_graph`. Used by [`get_closure`] when the
+    /// requested id isn't represented in `dependency_graph_index` (e.g. an
+    /// ontology was added without updating the dependency graph). Slower than
+    /// the indexed BFS path because it does a name lookup per import, but does
+    /// not require `dependency_graph_index` to be populated.
+    fn get_closure_via_name_resolution(
+        &self,
+        id: &GraphIdentifier,
+        recursion_depth: i32,
+    ) -> Result<Vec<GraphIdentifier>> {
         let mut closure: HashSet<GraphIdentifier> = HashSet::new();
+        let mut order: Vec<GraphIdentifier> = Vec::new();
         let mut stack: VecDeque<(GraphIdentifier, i32)> = VecDeque::new();
-
-        // TODO: how to handle a graph which is not in the environment?
-
         stack.push_back((id.clone(), 0));
         while let Some((graph, depth)) = stack.pop_front() {
             if !closure.insert(graph.clone()) {
                 continue;
             }
+            order.push(graph.clone());
 
             if recursion_depth >= 0 && depth >= recursion_depth {
                 continue;
@@ -1978,12 +3170,11 @@ impl OntoEnv {
                 .get(&graph)
                 .ok_or_else(|| anyhow!("Ontology {} not found", graph.to_uri_string()))?;
             for import in &ontology.imports {
-                // get graph identifier for import
                 let import = match self.env.get_ontology_by_name(import.into()) {
                     Some(imp) => imp.id().clone(),
                     None => {
                         if self.config.strict {
-                            return Err(anyhow::anyhow!("Import not found: {}", import));
+                            return Err(anyhow!("Import not found: {}", import));
                         }
                         warn!("Import not found: {import}");
                         continue;
@@ -1994,14 +3185,12 @@ impl OntoEnv {
                 }
             }
         }
-        // remove the original graph from the closure
-        let mut closure: Vec<GraphIdentifier> = closure.into_iter().collect();
-        if let Some(pos) = closure.iter().position(|x| x == id) {
-            let root = closure.remove(pos);
-            closure.insert(0, root);
-        }
-        info!("Dependency closure for {:?}: {:?}", id, closure.len());
-        Ok(closure)
+        info!(
+            "Dependency closure for {:?} (fallback): {:?}",
+            id,
+            order.len()
+        );
+        Ok(order)
     }
 
     pub fn get_union_graph<'a, I>(
@@ -2014,22 +3203,93 @@ impl OntoEnv {
     where
         I: IntoIterator<Item = &'a GraphIdentifier>,
     {
-        // Merge multiple graphs into a dataset with optional cleanup transforms.
         let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
+        self.build_union_graph(
+            graph_ids,
+            root,
+            rewrite_sh_prefixes,
+            remove_owl_imports,
+            false,
+        )
+    }
 
-        // TODO: figure out failed imports
+    /// Build a normalized union through each backend's read-only graph path.
+    ///
+    /// This differs from [`Self::get_union_graph`] only for backends that
+    /// intentionally distinguish `get_graph` from `copy_graph`, such as a
+    /// Python custom graph store. It is used to materialize a semantically
+    /// correct read-only closure view when no rdf5d snapshot is available.
+    pub fn get_view_union_graph<'a, I>(
+        &self,
+        graph_ids: I,
+        root: NamedNodeRef,
+        rewrite_sh_prefixes: Option<bool>,
+        remove_owl_imports: Option<bool>,
+    ) -> Result<UnionGraph>
+    where
+        I: IntoIterator<Item = &'a GraphIdentifier>,
+    {
+        let graph_ids: Vec<GraphIdentifier> = graph_ids.into_iter().cloned().collect();
+        self.build_union_graph(
+            graph_ids,
+            root,
+            rewrite_sh_prefixes,
+            remove_owl_imports,
+            true,
+        )
+    }
+
+    fn build_union_graph(
+        &self,
+        graph_ids: Vec<GraphIdentifier>,
+        root: NamedNodeRef,
+        rewrite_sh_prefixes: Option<bool>,
+        remove_owl_imports: Option<bool>,
+        read_only: bool,
+    ) -> Result<UnionGraph> {
+        // Merge multiple graphs into a dataset with optional cleanup transforms.
+
         if graph_ids.is_empty() {
             return Err(anyhow!("No graphs found"));
         }
 
-        // Merge all named graphs into a single dataset in IO order.
-        let mut dataset = self.io.union_graph(&graph_ids);
+        // One bulk call into the store. `union_graph` is always best-effort:
+        // it records per-id failures in `failures` and assembles the rest.
+        // Strict mode promotes any failure to an error here; non-strict mode
+        // returns the partial union with `failed_imports` populated so the
+        // caller knows what's missing.
+        let (mut dataset, failures) = if read_only {
+            self.io.view_union_graph(&graph_ids)
+        } else {
+            self.io.union_graph(&graph_ids)
+        };
+        if self.config.strict && !failures.is_empty() {
+            return Err(anyhow!(
+                "union_graph: {} graph(s) failed to load: {}",
+                failures.len(),
+                failures
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+        for f in &failures {
+            warn!("Skipping graph in union: {f}");
+        }
+        let failed_imports = (!failures.is_empty()).then_some(failures);
         let root_ontology = NamedOrBlankNodeRef::NamedNode(root);
 
         // Merge namespace maps so downstream tools can re-materialize prefixes.
+        // Borrow ontologies directly from the environment to avoid cloning each
+        // Ontology and running the resolution policy per closure entry.
         let mut namespace_map = HashMap::new();
         for graph_id in &graph_ids {
-            let ontology = self.get_ontology(graph_id)?;
+            let ontology = self
+                .env
+                .ontologies()
+                .get(graph_id)
+                .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
             namespace_map.extend(
                 ontology
                     .namespace_map()
@@ -2050,12 +3310,65 @@ impl OntoEnv {
         }
         // Collapse ontology declarations onto the chosen root.
         transform::remove_ontology_declarations(&mut dataset, root_ontology);
+        let has_root_declaration = dataset.iter().any(|q| {
+            q.subject == root_ontology
+                && q.predicate == TYPE
+                && q.object == TermRef::NamedNode(ONTOLOGY)
+        });
+        if !has_root_declaration {
+            dataset.insert(QuadRef::new(
+                root_ontology,
+                TYPE,
+                ONTOLOGY,
+                GraphNameRef::DefaultGraph,
+            ));
+        }
         Ok(UnionGraph {
             dataset,
             graph_ids,
-            failed_imports: None, // TODO: Populate this correctly
+            failed_imports,
             namespace_map,
         })
+    }
+
+    /// Resolve an explicitly enumerated set of graph IRIs and return their union.
+    ///
+    /// When `include_closures` is true, each enumerated graph contributes its
+    /// full `owl:imports` closure. Otherwise only the enumerated graphs are
+    /// included. The `root` IRI is used only for union normalization
+    /// (`sh:prefixes` rewriting and ontology declaration cleanup); it does not
+    /// need to be one of the enumerated graphs.
+    pub fn get_explicit_union_graph(
+        &self,
+        graph_iris: &[NamedNode],
+        root: NamedNodeRef,
+        include_closures: bool,
+        recursion_depth: i32,
+        rewrite_sh_prefixes: Option<bool>,
+        remove_owl_imports: Option<bool>,
+    ) -> Result<UnionGraph> {
+        if graph_iris.is_empty() {
+            return Err(anyhow!("No graphs specified"));
+        }
+
+        let mut graph_ids = Vec::new();
+        let mut seen = HashSet::new();
+        for iri in graph_iris {
+            let id = self
+                .resolve(ResolveTarget::Graph(iri.clone()))
+                .ok_or_else(|| anyhow!("Ontology {} not found", iri.as_str()))?;
+            if include_closures {
+                for closure_id in self.get_closure(&id, recursion_depth)? {
+                    if seen.insert(closure_id.clone()) {
+                        graph_ids.push(closure_id);
+                    }
+                }
+            } else if seen.insert(id.clone()) {
+                graph_ids.push(id);
+            }
+        }
+
+        self.get_union_graph(&graph_ids, root, rewrite_sh_prefixes, remove_owl_imports)
     }
 
     /// Collect namespace prefixes for a single ontology.
@@ -2118,13 +3431,20 @@ impl OntoEnv {
             let closure = self.get_closure(id, -1)?;
             let mut namespace_map = HashMap::new();
             for graph_id in &closure {
-                let ontology = self.get_ontology(graph_id)?;
-                namespace_map.extend(self.collect_ontology_prefixes(&ontology));
+                let ontology =
+                    self.env.ontologies().get(graph_id).ok_or_else(|| {
+                        anyhow!("Ontology {} not found", graph_id.to_uri_string())
+                    })?;
+                namespace_map.extend(self.collect_ontology_prefixes(ontology));
             }
             Ok(namespace_map)
         } else {
-            let ontology = self.get_ontology(id)?;
-            Ok(self.collect_ontology_prefixes(&ontology))
+            let ontology = self
+                .env
+                .ontologies()
+                .get(id)
+                .ok_or_else(|| anyhow!("Ontology {} not found", id.to_uri_string()))?;
+            Ok(self.collect_ontology_prefixes(ontology))
         }
     }
 
@@ -2166,12 +3486,10 @@ impl OntoEnv {
         transform::remove_ontology_declarations(&mut union.dataset, root_nb);
 
         // Flatten dataset into a single graph, ignoring named graph labels.
+        // No need to filter owl:imports here: `remove_owl_imports` above already
+        // stripped every owl:imports triple from the dataset.
         let mut graph = Graph::new();
         for quad in union.dataset.iter() {
-            // Drop owl:imports on non-root subjects to prevent retaining inner edges in cycles.
-            if quad.predicate == IMPORTS && quad.subject != root_nb {
-                continue;
-            }
             graph.insert(TripleRef::new(quad.subject, quad.predicate, quad.object));
         }
         // Re-attach imports of the imported ontology and its dependencies onto the root; skip self-imports and dedup.
@@ -2199,9 +3517,25 @@ impl OntoEnv {
         Ok(graph)
     }
 
+    /// Returns a read-only graph from the IO store for the given identifier.
+    ///
+    /// This is the primary read path and dispatches to the underlying backend
+    /// (`PersistentGraphIO`, `PythonGraphIO`, etc.). The returned graph is a
+    /// snapshot and should not be mutated; use [`Self::copy_graph`] when you
+    /// need a mutable copy.
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         // Delegate graph retrieval to the IO backend.
         self.io.get_graph(id)
+    }
+
+    /// Returns a mutable copy of the graph for the given identifier.
+    ///
+    /// Unlike [`Self::get_graph`], this returns a fresh in-memory copy that
+    /// can be freely mutated. Custom `GraphIO` backends can override
+    /// `copy_graph` to distinguish between returning a live view (via
+    /// `get_graph`) and returning a detached copy (via `copy_graph`).
+    pub fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        self.io.copy_graph(id)
     }
 
     pub fn get_ontology(&self, id: &GraphIdentifier) -> Result<Ontology> {
@@ -2483,8 +3817,8 @@ impl OntoEnv {
     }
 
     pub fn set_offline(&mut self, offline: bool) {
-        // Update offline mode; caller is responsible for reloading if needed.
         self.config.offline = offline;
+        self.io.set_offline(offline);
     }
 
     pub fn is_strict(&self) -> bool {
@@ -2495,6 +3829,7 @@ impl OntoEnv {
     pub fn set_strict(&mut self, strict: bool) {
         // Update strict mode for future operations.
         self.config.strict = strict;
+        self.io.set_strict(strict);
     }
 
     pub fn requires_ontology_names(&self) -> bool {
@@ -2505,6 +3840,33 @@ impl OntoEnv {
     pub fn set_require_ontology_names(&mut self, require: bool) {
         // Toggle name requirement to influence future imports/updates.
         self.config.require_ontology_names = require;
+        self.io.set_require_ontology_names(require);
+    }
+
+    /// Set the TTL (in seconds) for caching remote ontologies.
+    ///
+    /// Remote ontologies fetched via HTTP are cached locally. When the TTL
+    /// expires the next `update` or `add` triggers a re-fetch. The default
+    /// is 3600 seconds (1 hour).
+    pub fn set_remote_cache_ttl_secs(&mut self, ttl_secs: u64) {
+        self.config.remote_cache_ttl_secs = ttl_secs;
+    }
+
+    pub fn remote_cache_ttl_secs(&self) -> u64 {
+        self.config.remote_cache_ttl_secs
+    }
+
+    /// Set the cache mode for ontology loading.
+    ///
+    /// Controls whether `update` re-loads ontologies from their original
+    /// source (file/URL) or uses cached copies. See [`CacheMode`] for
+    /// available modes.
+    pub fn set_use_cached_ontologies(&mut self, mode: crate::options::CacheMode) {
+        self.config.use_cached_ontologies = mode;
+    }
+
+    pub fn uses_cached_ontologies(&self) -> bool {
+        self.config.use_cached_ontologies.is_enabled()
     }
 
     pub fn resolution_policy(&self) -> &str {
@@ -2512,9 +3874,10 @@ impl OntoEnv {
         &self.config.resolution_policy
     }
 
-    pub fn set_resolution_policy(&mut self, policy: String) {
-        // Update policy name; actual policy is resolved when needed.
+    pub fn set_resolution_policy(&mut self, policy: String) -> Result<()> {
+        self.env.set_default_policy(&policy)?;
         self.config.resolution_policy = policy;
+        Ok(())
     }
 }
 
@@ -2565,6 +3928,195 @@ mod tests {
             assert!(root.join(".ontoenv").is_dir());
             drop(env);
         }
+    }
+
+    #[test]
+    fn connect_creates_then_warm_opens_builtin_store() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("connected");
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .build()
+            .unwrap();
+
+        let environment = OntoEnv::connect(config.clone(), ConnectSync::Auto, false).unwrap();
+        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        drop(environment);
+
+        let reopened = OntoEnv::connect(config, ConnectSync::Auto, true).unwrap();
+        assert!(reopened.ontologies().is_empty());
+    }
+
+    #[test]
+    fn connect_catalog_policy_requires_existing_catalog() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("missing");
+        let config = Config::builder()
+            .root(root)
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .build()
+            .unwrap();
+
+        let error = OntoEnv::connect(config, ConnectSync::Catalog, false).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("sync=\"catalog\" requires an existing catalog"));
+    }
+
+    #[test]
+    fn pending_marker_blocks_startup_with_recovery_error() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config, false).unwrap();
+        drop(environment);
+
+        std::fs::write(
+            root.join(".ontoenv").join(catalog::PENDING_FILE),
+            r#"{"mutation_id":"test","graphs":["https://example.org/o"]}"#,
+        )
+        .unwrap();
+        let error = OntoEnv::load_from_directory(root, false).unwrap_err();
+        assert!(error.downcast_ref::<CatalogRecoveryError>().is_some());
+        assert!(error.to_string().contains("https://example.org/o"));
+    }
+
+    #[test]
+    fn recover_rebuilds_catalog_and_removes_pending_marker() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config.clone(), false).unwrap();
+        drop(environment);
+
+        let pending = root.join(".ontoenv").join(catalog::PENDING_FILE);
+        std::fs::write(
+            &pending,
+            r#"{"mutation_id":"test","graphs":["https://example.org/o"]}"#,
+        )
+        .unwrap();
+
+        let recovered = OntoEnv::recover(config).unwrap();
+        assert!(recovered.ontologies().is_empty());
+        assert!(!pending.exists());
+        drop(recovered);
+        OntoEnv::load_from_directory(root, false).unwrap();
+    }
+
+    #[test]
+    fn legacy_environment_migrates_without_removing_rollback_files() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config, false).unwrap();
+        let legacy_path = root.join(".ontoenv").join("environment.json");
+        write_json_file(&legacy_path, &environment.env).unwrap();
+        drop(environment);
+        std::fs::remove_file(root.join(".ontoenv").join(catalog::CATALOG_FILE)).unwrap();
+
+        let migrated = OntoEnv::load_from_directory(root.clone(), false).unwrap();
+        assert!(migrated.ontologies().is_empty());
+        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        assert!(legacy_path.exists());
+    }
+
+    #[test]
+    fn legacy_environment_with_graphs_migrates_from_lazy_store() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        std::fs::create_dir_all(&root).unwrap();
+        let ontology_path = root.join("ontology.ttl");
+        std::fs::write(
+            &ontology_path,
+            "<https://example.org/legacy> a <http://www.w3.org/2002/07/owl#Ontology> .",
+        )
+        .unwrap();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![root.clone()])
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config, false).unwrap();
+        let legacy_path = root.join(".ontoenv").join("environment.json");
+        write_json_file(&legacy_path, &environment.env).unwrap();
+        drop(environment);
+        std::fs::remove_file(root.join(".ontoenv").join(catalog::CATALOG_FILE)).unwrap();
+
+        let migrated = OntoEnv::load_from_directory(root.clone(), false).unwrap();
+        assert!(migrated
+            .ontologies()
+            .keys()
+            .any(|id| id.name().as_str() == "https://example.org/legacy"));
+        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        assert!(legacy_path.exists());
+    }
+
+    #[test]
+    fn legacy_environment_rejects_backend_id_mismatch() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        std::fs::create_dir_all(&root).unwrap();
+        let ontology_path = root.join("ontology.ttl");
+        std::fs::write(
+            &ontology_path,
+            "<https://example.org/legacy> a <http://www.w3.org/2002/07/owl#Ontology> .",
+        )
+        .unwrap();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![root.clone()])
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config, false).unwrap();
+        let id = environment.ontologies().keys().next().unwrap().clone();
+        let legacy_path = root.join(".ontoenv").join("environment.json");
+        write_json_file(&legacy_path, &environment.env).unwrap();
+        drop(environment);
+        std::fs::remove_file(root.join(".ontoenv").join(catalog::CATALOG_FILE)).unwrap();
+
+        let mut backend =
+            crate::io::PersistentGraphIO::new(root.join(".ontoenv"), true, false).unwrap();
+        backend.remove(&id).unwrap();
+        backend.flush().unwrap();
+        drop(backend);
+
+        let error = OntoEnv::load_from_directory(root, false).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("legacy metadata does not match backend graph IDs"));
+        assert!(legacy_path.exists());
     }
 
     #[test]
@@ -2650,6 +4202,107 @@ mod tests {
         assert!(
             second_ts > first_ts,
             "update --all should force refresh even when cache is enabled"
+        );
+    }
+
+    /// Build a temporary, offline OntoEnv with one ontology already registered,
+    /// so transaction tests have non-trivial pre-state to roll back to.
+    fn build_env_with_ontology() -> (OntoEnv, tempfile::TempDir, GraphIdentifier) {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let ttl_path = root.join("A.ttl");
+        std::fs::write(
+            &ttl_path,
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+             <http://example.com/tx-A> a owl:Ontology .",
+        )
+        .unwrap();
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(true)
+            .locations(vec![ttl_path.clone()])
+            .build()
+            .unwrap();
+        let mut env = OntoEnv::init(config, true).unwrap();
+        env.update_all(false).unwrap();
+        let id = env
+            .env
+            .ontologies()
+            .keys()
+            .next()
+            .expect("seeded ontology should be registered")
+            .clone();
+        (env, tmp, id)
+    }
+
+    #[test]
+    fn env_transaction_restore_undoes_direct_mutations() {
+        let (mut env, _tmp, _id) = build_env_with_ontology();
+        let pre_onts = env.env.ontologies().len();
+        let pre_dep_nodes = env.dependency_graph.node_count();
+        let pre_index = env.dependency_graph_index.len();
+        let pre_failed = env.failed_resolutions.len();
+
+        let snapshot = EnvTransaction::snapshot(&env);
+
+        // Mutate every field the snapshot covers.
+        env.env = Environment::new();
+        env.dependency_graph = DiGraph::new();
+        env.dependency_graph_index.clear();
+        env.failed_resolutions
+            .insert(NamedNode::new_unchecked("http://example.com/tx-fake"));
+        assert_eq!(env.env.ontologies().len(), 0);
+
+        snapshot.restore(&mut env);
+
+        assert_eq!(env.env.ontologies().len(), pre_onts);
+        assert_eq!(env.dependency_graph.node_count(), pre_dep_nodes);
+        assert_eq!(env.dependency_graph_index.len(), pre_index);
+        assert_eq!(env.failed_resolutions.len(), pre_failed);
+    }
+
+    #[test]
+    fn with_env_transaction_rolls_back_on_err() {
+        let (mut env, _tmp, _id) = build_env_with_ontology();
+        let pre_onts = env.env.ontologies().len();
+        let pre_dep_nodes = env.dependency_graph.node_count();
+        let pre_index = env.dependency_graph_index.len();
+
+        let result: Result<()> = env.with_env_transaction(|s| {
+            s.env = Environment::new();
+            s.dependency_graph = DiGraph::new();
+            s.dependency_graph_index.clear();
+            s.failed_resolutions
+                .insert(NamedNode::new_unchecked("http://example.com/tx-fail"));
+            Err(anyhow!("simulated mid-operation failure"))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(env.env.ontologies().len(), pre_onts);
+        assert_eq!(env.dependency_graph.node_count(), pre_dep_nodes);
+        assert_eq!(env.dependency_graph_index.len(), pre_index);
+        assert!(
+            !env.failed_resolutions
+                .contains(&NamedNode::new_unchecked("http://example.com/tx-fail")),
+            "failed_resolutions mutation should have rolled back"
+        );
+    }
+
+    #[test]
+    fn with_env_transaction_commits_on_ok() {
+        let (mut env, _tmp, _id) = build_env_with_ontology();
+        let marker = NamedNode::new_unchecked("http://example.com/tx-commit");
+
+        let result: Result<()> = env.with_env_transaction(|s| {
+            s.failed_resolutions.insert(marker.clone());
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert!(
+            env.failed_resolutions.contains(&marker),
+            "Ok-return should commit mutations"
         );
     }
 }

@@ -2,6 +2,7 @@
 name = "ontoenv"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Rust library for managing ontologies and their imports in a local environment."
@@ -22,6 +23,7 @@ globset.workspace = true
 chrono.workspace = true
 petgraph.workspace = true
 clap.workspace = true
+dunce = "1"
 derive_builder.workspace = true
 serde.workspace = true
 oxigraph.workspace = true

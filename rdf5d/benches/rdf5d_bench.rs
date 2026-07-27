@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rdf5d::{
-    IntegrityMode, OpenOptions, Quint, R5tuFile, StreamingWriter, Term, WriterOptions,
-    write_file_with_options,
+    IntegrityMode, OpenOptions, Pattern, Quint, R5tuFile, Snapshot, StreamingWriter, Term, View,
+    WriterOptions, write_file_with_options,
 };
 use std::env;
 #[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
@@ -653,8 +653,9 @@ fn load_brick_quints(path: &Path, id: &str, graph_name: &str) -> Vec<Quint> {
 }
 
 #[cfg(all(feature = "oxigraph", feature = "rocksdb", feature = "sparql"))]
-fn count_rdf5d_solutions(file: &R5tuFile, query: &spargebra::Query) -> usize {
-    match file.query(query).unwrap() {
+fn count_rdf5d_solutions(snapshot: &Snapshot, query: &spargebra::Query) -> usize {
+    let mut query = query.clone();
+    match snapshot.query(&mut query).unwrap() {
         R5QueryResults::Solutions(solutions) => solutions.count(),
         R5QueryResults::Boolean(value) => usize::from(value),
         R5QueryResults::Graph(triples) => triples.count(),
@@ -687,7 +688,7 @@ fn bench_sparql_backends(c: &mut Criterion) {
     let total = quints.len() as u64;
     let file_handle = NamedTempFile::new().unwrap();
     write_file_with_options(file_handle.path(), &quints, opts_plain()).unwrap();
-    let file = R5tuFile::open(file_handle.path()).unwrap();
+    let snapshot = Snapshot::open(file_handle.path()).unwrap();
     let (_rocks_dir, store) = build_rocksdb_store(&quints);
 
     let graph_query = SparqlParser::new()
@@ -712,9 +713,9 @@ fn bench_sparql_backends(c: &mut Criterion) {
     group.throughput(Throughput::Elements(total));
     group.bench_with_input(
         BenchmarkId::from_parameter("rdf5d_graph_brick"),
-        &file,
-        |b, file| {
-            b.iter(|| black_box(count_rdf5d_solutions(file, &graph_query)));
+        &snapshot,
+        |b, snapshot| {
+            b.iter(|| black_box(count_rdf5d_solutions(snapshot, &graph_query)));
         },
     );
     group.bench_with_input(
@@ -726,9 +727,9 @@ fn bench_sparql_backends(c: &mut Criterion) {
     );
     group.bench_with_input(
         BenchmarkId::from_parameter("rdf5d_scan_brick"),
-        &file,
-        |b, file| {
-            b.iter(|| black_box(count_rdf5d_solutions(file, &scan_query)));
+        &snapshot,
+        |b, snapshot| {
+            b.iter(|| black_box(count_rdf5d_solutions(snapshot, &scan_query)));
         },
     );
     group.bench_with_input(
@@ -808,6 +809,190 @@ fn bench_workload_matrix(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_view_creation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("view_creation");
+    for case in workload_cases() {
+        let quints = generate_workload(case);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let snap = Snapshot::open(f.path()).unwrap();
+        let total = case.total_quads() as u64;
+        group.throughput(Throughput::Elements(total));
+
+        // Collect graph names
+        let names: Vec<&str> = snap.graph_names().collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("from_names", case.name),
+            &names,
+            |b, names| {
+                b.iter(|| {
+                    let _view = View::from_names(&snap, names);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_view_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("view_scan");
+    for case in workload_cases() {
+        let quints = generate_workload(case);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let snap = Snapshot::open(f.path()).unwrap();
+        let names: Vec<&str> = snap.graph_names().collect();
+        let view = View::from_names(&snap, &names);
+        let total = case.total_quads() as u64;
+        group.throughput(Throughput::Elements(total));
+
+        // All-unbound scan (full scan)
+        group.bench_with_input(BenchmarkId::new("scan_all", case.name), &view, |b, view| {
+            b.iter(|| {
+                let count: usize = view.scan(Pattern::ANY).filter(|r| r.is_ok()).count();
+                black_box(count);
+            });
+        });
+
+        // Bound-predicate scan (uses PSO index, built on first call)
+        group.bench_with_input(BenchmarkId::new("scan_bp", case.name), &view, |b, view| {
+            // Use predicate "p/0" which exists in every workload
+            let p_id = snap
+                .file()
+                .term_id(&rdf5d::DecodedTerm::Iri(std::borrow::Cow::Borrowed(
+                    "http://example.org/p/0",
+                )))
+                .unwrap_or(0);
+            let pat = Pattern {
+                s: None,
+                p: Some(p_id),
+                o: None,
+            };
+            b.iter(|| {
+                let count: usize = view.scan(pat).filter(|r| r.is_ok()).count();
+                black_box(count);
+            });
+        });
+
+        // First scan (triggers index build) vs cached for all-unbound
+        group.bench_with_input(
+            BenchmarkId::new("scan_all_first", case.name),
+            &snap,
+            |b, snap| {
+                b.iter_with_setup(
+                    || {
+                        // Fresh view each iteration so indexes aren't cached
+                        View::from_names(snap, &names)
+                    },
+                    |view| {
+                        let count: usize = view.scan(Pattern::ANY).filter(|r| r.is_ok()).count();
+                        black_box(count);
+                    },
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_view_subset_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("view_subset_scan");
+    for case in workload_cases() {
+        let quints = generate_workload(case);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let snap = Snapshot::open(f.path()).unwrap();
+        let names: Vec<&str> = snap.graph_names().collect();
+        let total = case.total_quads() as u64;
+        group.throughput(Throughput::Elements(total));
+
+        if names.len() > 1 {
+            // View over half the graphs
+            let half = names.len() / 2;
+            let view = View::from_names(&snap, &names[..half]);
+            group.bench_with_input(
+                BenchmarkId::new("half_graphs", case.name),
+                &view,
+                |b, view| {
+                    b.iter(|| {
+                        let count: usize = view.scan(Pattern::ANY).filter(|r| r.is_ok()).count();
+                        black_box(count);
+                    });
+                },
+            );
+
+            // View over a single graph
+            let single = View::from_names(&snap, &names[..1]);
+            group.bench_with_input(
+                BenchmarkId::new("single_graph", case.name),
+                &single,
+                |b, view| {
+                    b.iter(|| {
+                        let count: usize = view.scan(Pattern::ANY).filter(|r| r.is_ok()).count();
+                        black_box(count);
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+#[cfg(feature = "sparql")]
+fn bench_view_sparql(c: &mut Criterion) {
+    use spargebra::SparqlParser;
+
+    let mut group = c.benchmark_group("view_sparql");
+    for case in workload_cases() {
+        let quints = generate_workload(case);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let snap = Snapshot::open(f.path()).unwrap();
+        let names: Vec<&str> = snap.graph_names().collect();
+        let view = View::from_names(&snap, &names);
+        let total = case.total_quads() as u64;
+        group.throughput(Throughput::Elements(total));
+
+        // SPARQL query against the view
+        let query = SparqlParser::new()
+            .parse_query(
+                "SELECT (COUNT(?s) AS ?c) WHERE { ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o }",
+            )
+            .expect("bench query");
+
+        group.bench_with_input(
+            BenchmarkId::new("type_count", case.name),
+            &(&snap, &query, &view),
+            |b, &(_snap, query, view)| {
+                b.iter(|| {
+                    // First call against view builds its indexes
+                    let mut q = query.clone();
+                    let results = view.query(&mut q).unwrap();
+                    black_box(results);
+                });
+            },
+        );
+
+        // Compare: Snapshot query (store-wide indexes)
+        group.bench_with_input(
+            BenchmarkId::new("snapshot_type_count", case.name),
+            &(&snap, &query),
+            |b, &(snap, query)| {
+                b.iter(|| {
+                    let mut q = query.clone();
+                    let results = snap.query(&mut q).unwrap();
+                    black_box(results);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(not(feature = "sparql"))]
+fn bench_view_sparql(_: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_write,
@@ -821,6 +1006,10 @@ criterion_group!(
     bench_enumerate_all,
     bench_roundtrip,
     bench_workload_matrix,
+    bench_view_creation,
+    bench_view_scan,
+    bench_view_subset_scan,
+    bench_view_sparql,
     bench_sparql_backends,
 );
 criterion_main!(benches);

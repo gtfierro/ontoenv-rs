@@ -289,6 +289,57 @@ impl OntologyLocation {
     }
 }
 
+/// Canonicalize a filesystem path so that two references to the same file compare
+/// equal regardless of how the caller obtained the path (relative vs absolute,
+/// symlinked vs resolved, `\??\` UNC prefix on Windows, etc.).
+///
+/// Uses [`dunce::canonicalize`] when the path exists (resolving symlinks, `.`,
+/// `..`, and making the path absolute), falling back to a lexical normalization
+/// (join to the current directory and simplify) when the path does not yet
+/// exist or cannot be resolved. This keeps locations comparable across
+/// `init`/`update` discovery and explicit `add`/`add_from_bytes` calls.
+pub fn canonicalize_file_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    if path.as_os_str().is_empty() {
+        return dunce::canonicalize(".").unwrap_or_else(|_| PathBuf::from("."));
+    }
+
+    if let Ok(canonical) = dunce::canonicalize(path) {
+        return canonical;
+    }
+
+    // Lexical fallback for not-yet-existing or inaccessible paths: anchor to the
+    // current directory and collapse `.`/`..` components without touching the
+    // filesystem. Symlinks cannot be resolved here, but this at least makes
+    // relative and `.`/`..`-laden paths comparable.
+    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Only pop if the last component is a normal name; otherwise keep
+                // the `..` (e.g. at a root boundary).
+                match out.components().next_back() {
+                    Some(Component::Normal(_)) => {
+                        out.pop();
+                    }
+                    _ => out.push(".."),
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 struct LocalType;
 
 impl SerializeAs<NamedNode> for LocalType {
@@ -451,6 +502,13 @@ impl Ontology {
         // Keep id/location consistent since both are persisted and indexed.
         self.id = GraphIdentifier::new_with_location(self.id.name(), location.clone());
         self.location = Some(location);
+    }
+
+    /// Update the ontology's declared IRI (graph name) while keeping the source location.
+    pub fn set_iri(&mut self, new_iri: NamedNode) {
+        let location = self.id.location().clone();
+        self.id = GraphIdentifier::new_with_location(new_iri.as_ref(), location);
+        self.name = new_iri;
     }
 
     pub fn set_content_hash(&mut self, hash: String) {

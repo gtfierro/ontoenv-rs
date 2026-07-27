@@ -100,6 +100,77 @@ fn discovery_from_subdirectory() {
 }
 
 #[test]
+fn recover_rebuilds_catalog_and_removes_pending_marker() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("recover");
+    let iri = "http://example.org/ont/Recoverable";
+    write_ttl(&root.join("recoverable.ttl"), iri, "");
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init");
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let pending = root.join(".ontoenv").join("catalog.pending");
+    fs::write(&pending, r#"{"mutation_id":"test","graphs":[]}"#).expect("write pending marker");
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("status")
+        .output()
+        .expect("run blocked status");
+    assert!(!out.status.success(), "status should require recovery");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("ontoenv recover"),
+        "recovery guidance missing: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    let out = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("recover")
+        .output()
+        .expect("run recover");
+    assert!(
+        out.status.success(),
+        "recover failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Recovered catalog"),
+        "recovery summary missing: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(!pending.exists(), "successful recovery must remove marker");
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("list")
+        .arg("ontologies")
+        .output()
+        .expect("run list after recovery");
+    assert!(
+        out.status.success(),
+        "list failed after recovery: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains(iri),
+        "recovered catalog did not contain ontology: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
 fn ontoenv_dir_override() {
     let exe = ontoenv_bin();
     let env_root = tmp_dir("envdir");
@@ -433,4 +504,230 @@ fn get_with_location_disambiguates() {
     );
     let s2 = String::from_utf8_lossy(&out.stdout);
     assert!(s2.contains("\"v2\""), "expected v2 triple, got: {}", s2);
+}
+
+/// `ontoenv init --offline` on an already-initialized environment must persist
+/// the offline flag to ontoenv.json so subsequent loads honour it.
+#[test]
+fn init_offline_flag_persists_on_existing_env() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("init-offline-persist");
+
+    // First init without --offline.
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init");
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let cfg_path = root.join(".ontoenv").join("ontoenv.json");
+    let raw = fs::read_to_string(&cfg_path).expect("read ontoenv.json");
+    let json: serde_json::Value = serde_json::from_str(&raw).expect("parse json");
+    assert_eq!(
+        json["offline"].as_bool(),
+        Some(false),
+        "offline should be false after first init"
+    );
+
+    // Second init with --offline on the existing env (no --overwrite).
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("--offline")
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init --offline");
+    assert!(
+        out.status.success(),
+        "init --offline failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let raw2 = fs::read_to_string(&cfg_path).expect("read ontoenv.json after second init");
+    let json2: serde_json::Value = serde_json::from_str(&raw2).expect("parse json2");
+    assert_eq!(
+        json2["offline"].as_bool(),
+        Some(true),
+        "offline must be true after `ontoenv init --offline` on existing env"
+    );
+
+    // An explicit false disables the persisted mode; omission alone would
+    // preserve it.
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("--offline=false")
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init --offline=false");
+    assert!(
+        out.status.success(),
+        "init --offline=false failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let raw3 = fs::read_to_string(&cfg_path).expect("read config after explicit false");
+    let json3: serde_json::Value = serde_json::from_str(&raw3).expect("parse config");
+    assert_eq!(json3["offline"].as_bool(), Some(false));
+}
+
+/// `ontoenv union` takes multiple ontology IRIs and writes a merged file.
+/// With --include-closures, the transitive imports of each listed IRI are
+/// included in the union.
+#[test]
+fn union_command_merges_ontologies_with_closures() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("union-test");
+
+    // Write three chained ontologies: C imports B, B imports A
+    let a_path = root.join("A.ttl");
+    write_ttl(
+        &a_path,
+        "http://example.com/A",
+        "<http://example.com/A> <http://example.com/p> \"a-val\" .",
+    );
+    let b_path = root.join("B.ttl");
+    write_ttl(
+        &b_path,
+        "http://example.com/B",
+        "<http://example.com/B> <http://www.w3.org/2002/07/owl#imports> <http://example.com/A> .\n<http://example.com/B> <http://example.com/p> \"b-val\" .",
+    );
+    let c_path = root.join("C.ttl");
+    write_ttl(
+        &c_path,
+        "http://example.com/C",
+        "<http://example.com/C> <http://www.w3.org/2002/07/owl#imports> <http://example.com/B> .\n<http://example.com/C> <http://example.com/p> \"c-val\" .",
+    );
+
+    // Init the env
+    let init_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg("--offline")
+        .arg(root.to_str().unwrap())
+        .output()
+        .expect("run init");
+    assert!(
+        init_out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init_out.stderr)
+    );
+
+    // Add each ontology explicitly so they're registered under the expected IRIs
+    for path in [&a_path, &b_path, &c_path] {
+        let add_out = Command::new(&exe)
+            .current_dir(&root)
+            .arg("add")
+            .arg(path.to_str().unwrap())
+            .output()
+            .expect("run add");
+        assert!(
+            add_out.status.success(),
+            "add failed for {:?}: {}",
+            path,
+            String::from_utf8_lossy(&add_out.stderr)
+        );
+    }
+
+    // Union just C, with --include-closures, which should pull in B and A
+    let output_path = root.join("union-output.ttl");
+    let union_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("union")
+        .arg("--root")
+        .arg("http://example.com/C")
+        .arg("--include-closures")
+        .arg("--output")
+        .arg(output_path.to_str().unwrap())
+        .arg("http://example.com/C")
+        .output()
+        .expect("run union");
+    assert!(
+        union_out.status.success(),
+        "union failed: {}",
+        String::from_utf8_lossy(&union_out.stderr)
+    );
+
+    // The output file should exist
+    assert!(output_path.exists(), "union output file should exist");
+    let output_content = fs::read_to_string(&output_path).expect("read union output");
+
+    // Should contain triples from all three ontologies
+    assert!(
+        output_content.contains("\"a-val\""),
+        "output should contain A's triple"
+    );
+    assert!(
+        output_content.contains("\"b-val\""),
+        "output should contain B's triple"
+    );
+    assert!(
+        output_content.contains("\"c-val\""),
+        "output should contain C's triple"
+    );
+
+    // owl:imports triples should be removed by default
+    assert!(
+        !output_content.contains("owl:imports"),
+        "owl:imports should be removed by default"
+    );
+}
+
+/// Test the `ontoenv add --rename` flag
+#[test]
+fn add_with_rename_stores_under_new_iri() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("add-rename");
+
+    let old_iri = "http://example.com/OldOnt";
+    let new_iri = "http://example.com/NewOnt";
+    let ttl_path = root.join("ont.ttl");
+    write_ttl(&ttl_path, old_iri, "");
+
+    // Init env with the file location
+    let init_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("init");
+    assert!(init_out.status.success());
+
+    // Add with rename
+    let add_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("add")
+        .arg("--rename")
+        .arg(new_iri)
+        .arg(ttl_path.to_str().unwrap())
+        .output()
+        .expect("add with rename");
+    assert!(
+        add_out.status.success(),
+        "add --rename failed: {}",
+        String::from_utf8_lossy(&add_out.stderr)
+    );
+
+    // Verify the new IRI is in the env and the old is gone
+    let list_out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("list")
+        .arg("ontologies")
+        .output()
+        .expect("list");
+    assert!(list_out.status.success());
+    let stdout = String::from_utf8_lossy(&list_out.stdout);
+    assert!(
+        stdout.contains(new_iri),
+        "new IRI should be listed: {stdout}"
+    );
+    assert!(
+        !stdout.contains(old_iri),
+        "old IRI should NOT be listed: {stdout}"
+    );
 }

@@ -1,42 +1,47 @@
 #!/usr/bin/env python3
 """Version management helper for ontoenv-rs.
 
-- Without arguments: print the current workspace version.
-- With a version string: update all manifests and rebuild lockfiles.
+- Without arguments: validate and print the current workspace version.
+- With ``--check``: validate version inheritance without changing files.
+- With a version string: update Cargo.toml and rebuild lockfiles.
+
+Package versions derive from Cargo.toml automatically:
+- Rust crates: version.workspace = true
+- python/pyproject.toml: maturin reads Cargo.toml (dynamic = ["version"])
+- pyontoenv-shim/pyproject.toml: hatchling code source reads Cargo.toml
+
+Cargo does not support inheriting ``workspace.package.version`` as the registry
+requirement of a publishable path dependency. The internal dependency entries
+therefore contain explicit versions; this helper writes and validates them
+from the single workspace version.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-import subprocess
-import sys
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 CARGO_TOML = ROOT / "Cargo.toml"
-ONTOENV_PYPROJECT = ROOT / "python" / "pyproject.toml"
-PYONTOENV_PYPROJECT = ROOT / "pyontoenv-shim" / "pyproject.toml"
+INTERNAL_DEPENDENCIES = ("rdf5d", "ontoenv", "ontoenv-cli")
+
+WORKSPACE_VERSION_PATTERN = re.compile(
+    r'(?ms)(^\[workspace\.package\]\s*$.*?^version\s*=\s*")[^"]+(")'
+)
 
 
-def semver_to_pep440(version: str) -> str:
-    """Convert workspace semver (with `-pre`) into a PEP 440 compatible form."""
-    base, plus, build = version.partition("+")
-    release, hyphen, suffix = base.partition("-")
-    pep = release
-    if hyphen:
-        pep += suffix.replace("-", ".")
-    if plus:
-        normalized = build.replace("-", ".")
-        pep += f".post{normalized or '0'}"
-    return pep
+def dependency_version_pattern(name: str) -> re.Pattern[str]:
+    return re.compile(
+        rf'(?m)^({re.escape(name)}\s*=\s*\{{[^\n]*\bversion\s*=\s*")[^"]+(")'
+    )
 
 
 def read_current_version() -> str:
-    text = (ROOT / "Cargo.toml").read_text(encoding="utf-8").splitlines()
     in_workspace = False
-    for raw in text:
+    for raw in CARGO_TOML.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if line.startswith("[") and line.endswith("]"):
             in_workspace = line == "[workspace.package]"
@@ -50,40 +55,61 @@ def read_current_version() -> str:
     raise SystemExit("Unable to find workspace.package.version in Cargo.toml")
 
 
-def write_if_contains(path: Path, old: str, new: str) -> bool:
-    text = path.read_text(encoding="utf-8")
-    if old not in text:
-        return False
-    path.write_text(text.replace(old, new), encoding="utf-8")
-    return True
+def internal_dependency_versions() -> dict[str, str]:
+    text = CARGO_TOML.read_text(encoding="utf-8")
+    versions: dict[str, str] = {}
+    for name in INTERNAL_DEPENDENCIES:
+        match = dependency_version_pattern(name).search(text)
+        if match is None:
+            raise SystemExit(
+                f"Unable to find a versioned workspace dependency for {name!r}"
+            )
+        line = match.group(0)
+        version_match = re.search(r'\bversion\s*=\s*"([^"]+)"', line)
+        if version_match is None:
+            raise SystemExit(f"Unable to read workspace dependency version for {name!r}")
+        versions[name] = version_match.group(1)
+    return versions
 
 
-def update_versions(old: str, new: str) -> None:
-    touched = []
-    for path in (CARGO_TOML, ONTOENV_PYPROJECT):
-        if write_if_contains(path, old, new):
-            touched.append(path)
-    if update_pyontoenv_shim_version(new):
-        touched.append(PYONTOENV_PYPROJECT)
-    if not touched:
-        print("warning: no files updated; version string may already be current", file=sys.stderr)
+def validate_versions(workspace_version: str) -> None:
+    mismatches = {
+        name: version
+        for name, version in internal_dependency_versions().items()
+        if version != workspace_version
+    }
+    if mismatches:
+        details = ", ".join(f"{name}={version}" for name, version in mismatches.items())
+        raise SystemExit(
+            "Internal dependency versions do not match "
+            f"workspace.package.version={workspace_version}: {details}. "
+            f"Run './version {workspace_version}' to synchronize them."
+        )
 
 
-def update_pyontoenv_shim_version(new_version: str) -> bool:
-    pep_version = semver_to_pep440(new_version)
-    text = PYONTOENV_PYPROJECT.read_text(encoding="utf-8")
-    pattern = re.compile(r'(?m)^(version\s*=\s*)"([^"]+)"')
+def update_cargo_version(new: str) -> None:
+    text = CARGO_TOML.read_text(encoding="utf-8")
+    text, count = WORKSPACE_VERSION_PATTERN.subn(
+        lambda match: f"{match.group(1)}{new}{match.group(2)}",
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit("Unable to update workspace.package.version in Cargo.toml")
 
-    def repl(match: re.Match[str]) -> str:
-        return f'{match.group(1)}"{pep_version}"'
+    for name in INTERNAL_DEPENDENCIES:
+        text, count = dependency_version_pattern(name).subn(
+            lambda match: f"{match.group(1)}{new}{match.group(2)}",
+            text,
+            count=1,
+        )
+        if count != 1:
+            raise SystemExit(
+                f"Unable to update workspace dependency version for {name!r}"
+            )
 
-    updated, count = pattern.subn(repl, text, count=1)
-    if count == 0:
-        raise SystemExit(f"Unable to find version field in {PYONTOENV_PYPROJECT}")
-    if updated != text:
-        PYONTOENV_PYPROJECT.write_text(updated, encoding="utf-8")
-        return True
-    return False
+    CARGO_TOML.write_text(text, encoding="utf-8")
+    validate_versions(new)
 
 
 def run_command(cmd: list[str], cwd: Path | None = None) -> None:
@@ -108,20 +134,32 @@ def rebuild() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manage workspace version.")
     parser.add_argument("version", nargs="?", help="New version string to apply.")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate that internal dependency requirements match the workspace version.",
+    )
     args = parser.parse_args()
 
     current = read_current_version()
+    if args.check and args.version:
+        parser.error("--check cannot be combined with a version")
+    if args.check:
+        validate_versions(current)
+        print(current)
+        return
     if not args.version:
+        validate_versions(current)
         print(current)
         return
 
     new = args.version
+    update_cargo_version(new)
     if new == current:
         print(f"version already {current}")
         rebuild()
         return
 
-    update_versions(current, new)
     rebuild()
 
 

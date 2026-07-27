@@ -82,22 +82,31 @@ class TestOntoEnvInit(unittest.TestCase):
             finally:
                 os.chdir(original_cwd)
 
-    def test_init_no_config_create_flag(self):
+    def test_create_or_use_cached_warns(self):
         original_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as td:
             os.chdir(td)
             try:
-                env = OntoEnv(create_or_use_cached=True)
+                with self.assertWarnsRegex(
+                    DeprecationWarning, "use OntoEnv.connect"
+                ):
+                    env = OntoEnv(create_or_use_cached=True)
                 self.assertTrue(Path(".ontoenv").is_dir())
                 env.close()
+                with self.assertWarnsRegex(
+                    DeprecationWarning, "use OntoEnv.connect"
+                ):
+                    reopened = OntoEnv(create_or_use_cached=True)
+                self.assertTrue(Path(".ontoenv").is_dir())
+                reopened.close()
             finally:
                 os.chdir(original_cwd)
 
-    def test_init_path_auto_initializes(self):
+    def test_connect_path_auto_initializes(self):
         with tempfile.TemporaryDirectory() as td:
             env_path = Path(td) / "no_env_here"
             env_path.mkdir()
-            env = OntoEnv(path=env_path, create_or_use_cached=True)
+            env = OntoEnv.connect(env_path)
             self.assertTrue((env_path / ".ontoenv").is_dir())
             env.close()
 

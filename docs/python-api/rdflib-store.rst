@@ -4,9 +4,20 @@ RDFLib Store
 .. raw:: html
 
    <div class="oe-section-intro">
-     OntoEnv ships a native <code>rdflib</code> store implementation. Use it when you want
-     normal <code>rdflib.Graph</code> / <code>rdflib.Dataset</code> objects, but want SPARQL
-     execution to stay in Rust via <code>spargebra</code> and <code>spareval</code>.
+     OntoEnv ships a native <code>rdflib</code> store implementation that exposes the
+     environment as normal <code>rdflib.Graph</code> / <code>rdflib.Dataset</code> objects
+     while keeping SPARQL execution in Rust — parsing through
+     <a href="https://crates.io/crates/spargebra"><code>spargebra</code></a> and evaluation
+     through <code>spareval</code> — and reading triples directly from the
+     <a href="https://crates.io/crates/rdf5d"><code>rdf5d</code></a> on-disk format via
+     <code>mmap</code> for zero-copy traversal in persistent local environments.
+     The <code>get_*</code> accessors
+     (<code>get_graph</code>, <code>get_closure</code>, <code>get_union</code>,
+     <code>get_dataset</code>, …) return read-only views over that storage and are
+     significantly faster for queries and iteration; the <code>copy_*</code> variants
+     (<code>copy_graph</code>, <code>copy_closure</code>, <code>copy_union</code>,
+     <code>copy_dataset</code>) instead materialize the data into a standard in-memory
+     <code>rdflib</code> graph or dataset that you can freely mutate.
    </div>
 
 When to use it
@@ -16,8 +27,7 @@ Use ``OntoEnvStore`` when you want:
 
 - ``rdflib.Graph.query(...)`` and ``rdflib.Dataset.query(...)`` to execute through the Rust
   backend instead of rdflib's Python query engine.
-- Normal rdflib graph APIs such as ``add``, ``remove``, ``triples``, ``contexts``, and
-  namespace bindings.
+- Normal read APIs such as ``triples``, ``contexts``, queries, and namespace bindings.
 - A lightweight in-memory dataset for scripting, testing, or embedding.
 
 The store is also registered as the rdflib plugin name ``"ontoenv"`` once the
@@ -32,8 +42,8 @@ Do not confuse this with ``OntoEnv(graph_store=...)``:
 Environment-backed usage
 ------------------------
 
-The usual workflow is to build an ``OntoEnv`` environment first, then materialize it into
-an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
+The usual workflow is to build an ``OntoEnv`` environment first, then open a read-only
+``OntoEnvStore``-backed dataset for SPARQL and graph access.
 
 .. code-block:: python
 
@@ -50,7 +60,7 @@ an ``OntoEnvStore``-backed dataset for SPARQL and graph access.
    env.update()
    env.flush()
 
-   dataset = env.snapshot_as_dataset()
+   dataset = env.get_dataset()
 
    for row in dataset.query(
        """
@@ -78,28 +88,23 @@ If you prefer rdflib's plugin lookup:
 
    graph = Graph(store="ontoenv")
 
-``env.snapshot_as_dataset()`` returns a read-only ``rdflib.Dataset`` view of the env.
+``env.get_dataset()`` returns a read-only ``rdflib.Dataset`` view of the env.
 It binds the namespaces known to the environment and keys each named graph by its
 ontology IRI. The Dataset reflects the env's state at the time of the call; call it
-again (or ``refresh_dataset_from_env(dataset, env)``) after ``env.flush()`` to pick
+again (or ``env.refresh_dataset(dataset)``) after ``env.flush()`` to pick
 up changes.
 
-The ``backend`` parameter selects the storage strategy:
-
-- ``"auto"`` (default) — use ``"rdf5d"`` if ``.ontoenv/store.r5tu`` exists, otherwise
-  fall back to ``"copy"``.
-- ``"rdf5d"`` — zero-copy view backed directly by the on-disk snapshot file. Fastest.
-  Raises ``ValueError`` for temporary envs or envs using a custom ``graph_store=``.
-- ``"copy"`` — materialize the env's quads into an in-memory snapshot. Works for any
-  env kind.
+Use ``env.copy_dataset()`` when you need a mutable in-memory copy of the environment.
+``env.get_dataset()`` chooses its storage strategy automatically: a zero-copy
+``rdf5d`` view backed directly by the ``.ontoenv/store.r5tu`` snapshot when one exists
+(fastest; not available for temporary envs or envs using a custom ``graph_store=``),
+falling back to an in-memory ``copy`` otherwise.
 
 What is supported
 -----------------
 
 ``OntoEnvStore`` currently supports:
 
-- ``add`` / ``addN``
-- ``remove``
 - ``triples``
 - ``contexts``
 - ``len(graph)``
@@ -108,9 +113,43 @@ What is supported
 
 Current limits:
 
+- The exposed store is a read-only snapshot; ``add``, ``addN``, and ``remove``
+  raise ``ValueError``. Mutate the ``OntoEnv`` and obtain or refresh a snapshot.
 - SPARQL Update is not implemented.
-- The store is currently in-memory only.
-- This path does not yet persist into ``rdf5d``.
+
+``ViewGraph`` — read-only scoped views
+--------------------------------------
+
+``env.get_closure(uri)`` and ``env.get_union(uris)`` return a
+:class:`ontoenv.ViewGraph` instead of an ``rdflib.Graph``. A ``ViewGraph`` is a
+lightweight, non-``rdflib.Graph`` view over a fixed set of named graphs in the
+snapshot. It delegates triple-pattern lookups, ``len``, ``in``, and SPARQL
+``query()`` to the Rust backend scoped to the view's graphs. Persistent local
+environments read closures directly from rdf5d; temporary and custom-store
+environments normalize the closure into a private in-memory read snapshot.
+
+.. code-block:: python
+
+   view, names = env.get_closure("https://example.com/myOntology")
+   print(len(view))                       # triple count across the closure
+   for s, p, o in view:                    # iterate, de-duplicated across graphs
+       ...
+   subs = list(view.subjects(predicate=RDF.type, object=OWL.Ontology))
+   rows = view.query("SELECT ?s WHERE { ?s a owl:Ontology }")
+
+Supported on ``ViewGraph``:
+
+- ``triples(subject=None, predicate=None, obj=None)`` and iteration over it
+- ``__iter__``, ``__contains__``, ``__len__``, ``__bool__``, ``__repr__``
+- ``subjects`` / ``predicates`` / ``objects`` (pattern-restricted, de-duplicated)
+- ``query(query, init_bindings=None)`` — SPARQL scoped to the view's graphs
+- ``bind`` / ``namespace`` / ``prefix`` / ``namespaces``
+- ``serialize(format="turtle")``
+
+``ViewGraph`` is read-only: ``add``, ``addN``, and ``remove`` raise
+``ValueError``. Use :py:meth:`OntoEnv.copy_closure` / :py:meth:`OntoEnv.copy_union`
+for a mutable merge. ``env.get_graph(uri)`` still returns a plain
+``rdflib.Graph``.
 
 Query behavior
 --------------

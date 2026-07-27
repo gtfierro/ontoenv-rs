@@ -1,0 +1,111 @@
+Migrating from 0.5 to 0.6
+=========================
+
+OntoEnv 0.6 separates read-only views from mutable copies and introduces an
+explicit persistent-environment lifecycle. Existing 0.5 environments migrate
+automatically the first time 0.6 opens them.
+
+Choose views or copies
+----------------------
+
+``get_graph`` and ``get_closure`` now return read-only views. This avoids
+materializing large graphs during ordinary reads. Code that mutates the
+returned graph should use the matching copy operation:
+
+.. code-block:: python
+
+   # 0.5: graph = env.get_graph(iri); graph.add(...)
+   graph = env.copy_graph(iri)
+   graph.add(...)
+
+   # 0.5: closure, names = env.get_closure(iri); closure.add(...)
+   closure, names = env.copy_closure(iri)
+   closure.add(...)
+
+Use ``get_dataset`` and ``copy_dataset`` for the same distinction at dataset
+scope. ``snapshot_as_dataset`` and ``to_rdflib_dataset`` remain as deprecated
+compatibility aliases for 0.6.
+
+Use the persistent lifecycle
+----------------------------
+
+Use ``connect`` for normal application startup:
+
+.. code-block:: python
+
+   env = OntoEnv.connect("./ontology-env", graph_store=store)
+
+It creates an empty environment on first use, adopts a populated custom store,
+and uses the saved catalog for later warm opens. More specific setup flows can
+use ``create``, ``open``, or ``adopt``.
+
+The old ``init_from_store=True`` argument is deprecated. Replace first-time
+adoption with ``OntoEnv.adopt(path, store)``. Use
+``env.refresh_from_store(full=True)`` only when an already-open environment
+must deliberately rescan its entire backend.
+
+Refresh the right source
+------------------------
+
+``env.update()`` refreshes ontology files and URLs. Pass one source to update
+just that source, and use ``force=True`` instead of the deprecated ``all=True``.
+
+``env.refresh_from_store()`` reconciles graphs changed directly in a custom
+backend. These operations are intentionally separate.
+
+Handle recovery and missing imports
+-----------------------------------
+
+If a process is interrupted between a backend mutation and catalog
+publication, normal startup raises ``CatalogRecoveryError``. Recover without
+deleting OntoEnv-owned files:
+
+.. code-block:: python
+
+   env = OntoEnv.recover("./ontology-env", graph_store=store)
+
+For the built-in persistent store, ``ontoenv recover`` provides the same
+operation from the command line using normal environment discovery.
+
+Recovery scans one stable backend snapshot. If the backend changes or a graph
+cannot be read during the scan, recovery fails and leaves its marker in place
+so it can be retried safely.
+
+Reopening configuration
+-----------------------
+
+``OntoEnv.open`` and ``OntoEnv.connect`` preserve every persisted
+configuration value whose option is omitted. Explicit values—including
+``False``, ``"default"``, and empty lists—override it. Writable connections
+save overrides; read-only connections apply them only to the current session.
+
+This covers strict/offline/name-validation/cache settings, resolution policy,
+remote cache TTL, search directories, and file/ontology filters. Overrides do
+not trigger an implicit source scan or graph re-ingestion; discovery settings
+take effect on the next explicit ``update()``.
+
+The legacy ``OntoEnv(..., create_or_use_cached=True)`` spelling now emits
+``DeprecationWarning``. Replace it with ``OntoEnv.connect(path)``. The
+compatibility shim remains available throughout 0.6.x and is planned for
+removal in 0.7.
+
+Non-strict import loading remains best-effort. Completed
+``import_dependencies(..., fetch_missing=True)`` and
+``get_dependencies(..., fetch_missing=True)`` calls commit their partial
+results and remove ``catalog.pending`` even when imports remain unavailable.
+The recovery marker is reserved for an interrupted or failed commit.
+
+Any known unresolved ``owl:imports`` target passed to ``copy_graph`` raises
+``UnresolvedImportError``. This includes direct and indirect imports declared
+by catalogued ontologies as well as targets attempted while fetching dependencies
+for a transient caller graph and retained in the current environment state.
+Arbitrary never-seen graph IRIs
+remain lookup ``ValueError`` failures, and parsing and backend errors retain
+their own error paths, so consumers do not need to catch ``ValueError``
+broadly for expected missing imports.
+
+Toolchain support
+-----------------
+
+Python 3.11 or newer is required. Building the Rust crates from source requires
+Rust 1.88 or newer.

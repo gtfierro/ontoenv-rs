@@ -74,6 +74,25 @@ pub struct Config {
     pub temporary: bool,
 }
 
+/// Explicit changes to apply when reopening an existing environment.
+///
+/// `None` preserves the persisted value. `Some(value)` replaces it, including
+/// `Some(false)` and `Some(Vec::new())`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConfigOverrides {
+    pub locations: Option<Vec<PathBuf>>,
+    pub includes: Option<Vec<String>>,
+    pub excludes: Option<Vec<String>>,
+    pub include_ontologies: Option<Vec<String>>,
+    pub exclude_ontologies: Option<Vec<String>>,
+    pub require_ontology_names: Option<bool>,
+    pub strict: Option<bool>,
+    pub offline: Option<bool>,
+    pub resolution_policy: Option<String>,
+    pub use_cached_ontologies: Option<CacheMode>,
+    pub remote_cache_ttl_secs: Option<u64>,
+}
+
 impl Config {
     /// Creates a new `ConfigBuilder` to construct a `Config`.
     pub fn builder() -> ConfigBuilder {
@@ -123,6 +142,48 @@ impl Config {
             .map(|p| Regex::new(p))
             .collect::<Result<Vec<_>, _>>()?;
         Ok((inc, exc))
+    }
+
+    /// Apply explicit reopen overrides, preserving every omitted setting.
+    ///
+    /// Returns `true` when at least one value changed.
+    pub fn apply_overrides(&mut self, overrides: &ConfigOverrides) -> Result<bool> {
+        let mut candidate = self.clone();
+        let mut changed = false;
+        macro_rules! replace {
+            ($field:ident) => {
+                if let Some(value) = &overrides.$field {
+                    if &candidate.$field != value {
+                        candidate.$field = value.clone();
+                        changed = true;
+                    }
+                }
+            };
+        }
+
+        replace!(locations);
+        replace!(includes);
+        replace!(excludes);
+        replace!(include_ontologies);
+        replace!(exclude_ontologies);
+        replace!(require_ontology_names);
+        replace!(strict);
+        replace!(offline);
+        replace!(resolution_policy);
+        replace!(use_cached_ontologies);
+        replace!(remote_cache_ttl_secs);
+
+        // Validate values before a caller persists them.
+        candidate.build_globsets()?;
+        candidate.build_ontology_regexes()?;
+        if crate::policy::policy_from_name(&candidate.resolution_policy).is_none() {
+            return Err(anyhow::anyhow!(
+                "Unknown resolution policy: {}",
+                candidate.resolution_policy
+            ));
+        }
+        *self = candidate;
+        Ok(changed)
     }
 
     /// A convenient constructor for a default offline, non-temporary environment.

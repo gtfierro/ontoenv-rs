@@ -4,10 +4,112 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
+## [Unreleased]
+
+### Added
+- `ontoenv recover` rebuilds a persistent environment catalog after
+  `CatalogRecoveryError`, using normal environment discovery and removing
+  `catalog.pending` only after successful publication.
+
+### Deprecated
+- `OntoEnv(..., create_or_use_cached=True)` is now a compatibility-only alias
+  for the create-or-reopen lifecycle. It emits `DeprecationWarning`; use
+  `OntoEnv.connect(path)` instead. Removal is planned for 0.7.
+
+### Fixed
+- Python reopen paths now distinguish omitted configuration from explicit
+  values for strict/offline/name-validation/cache settings, resolution policy,
+  cache TTL, search paths, and include/exclude filters. Explicit `False`,
+  `"default"`, and empty lists are honored. Writable connections persist
+  overrides; read-only connections keep them session-local; no reopen path
+  implicitly scans or re-ingests graph data.
+- Runtime configuration setters now update the active graph backend and
+  resolution policy. Python now exposes the documented cache-mode and
+  remote-cache-TTL getters and setters, and `require_ontology_names` controls
+  ontology-declaration validation independently of strict mode.
+- Non-strict `import_dependencies(..., fetch_missing=True)` and
+  `get_dependencies(..., fetch_missing=True)` now commit tolerated unresolved
+  imports without leaving `catalog.pending`, and every attempted unresolved
+  target retained in the current environment state is classified as
+  `UnresolvedImportError` by `copy_graph`, including targets originating in
+  best-effort fetches for transient caller graphs.
+
+## [0.6.0] — 2026-07-26
+
+### Changed (breaking)
+- The documented Rust MSRV is now 1.88, matching edition 2024 and the resolved
+  dependency floor.
+- `OntoEnv.get_graph(uri)` now returns a **read-only store-backed `rdflib.Graph` view** instead of a mutable in-memory copy. Mutating the returned graph raises `ValueError`. Use the new `OntoEnv.copy_graph(uri)` for the previous behavior (mutable in-memory `rdflib.Graph` copy).
+- `OntoEnv.get_closure(uri)` now returns a **read-only, zero-copy `ontoenv.ViewGraph`** instead of a materialized mutable `rdflib.Graph`. The materializing behavior moved to the new `OntoEnv.copy_closure(uri)`. A `ViewGraph` does not subclass `rdflib.Graph`; it delegates triple-pattern lookups (`triples`, `subjects`/`predicates`/`objects`), `len`, `in`, and SPARQL `query()` to the Rust backend, reading directly from the rdf5d mmap snapshot. It is read-only — `add`/`addN`/`remove` raise `ValueError`. The view presents a single flattened, de-duplicated graph with the **same triple set as `copy_closure`**: resolved `owl:imports` stripped, ontology declarations collapsed onto the root (adding `root a owl:Ontology` if absent), and SHACL `sh:prefixes`/`sh:declare` consolidated onto the root. Keyword args `remove_owl_imports=True` / `rewrite_sh_prefixes=True` opt out of the respective transform.
+- `OntoEnv.get_union(uris)` returns a read-only `ontoenv.ViewGraph` — a **raw** merge across the listed named graphs (no closure transform, no cross-graph de-duplication). Use `copy_union` for a mutable merge.
+- `OntoEnv.copy_union(...)` defaults to `rewrite_sh_prefixes=False` and `remove_owl_imports=False` (a raw union, matching `get_union`); pass `True` to opt into the transforms. `copy_closure` defaults both to `True`.
+- `OntoEnv.snapshot_as_dataset(backend=..., store=...)` and `OntoEnv.to_rdflib_dataset(mode=...)` are deprecated in favor of `OntoEnv.get_dataset()` (read-only view) and `OntoEnv.copy_dataset()` (mutable copy). The old names still work and emit `DeprecationWarning`.
+- `GraphIO::union_graph` now returns `(Dataset, Vec<FailedImport>)` — always best-effort: per-id errors (bad graphname, ensure_loaded failure, mid-graph store iteration error) are recorded in the failures list and the offending id is skipped, but the rest of the union is still assembled. The previous behavior silently dropped failures with no signal. `OntoEnv::get_union_graph` consumes the failures list: in **strict** mode any failure becomes an error; in **non-strict** mode the partial union is returned with `UnionGraph.failed_imports` populated so the caller knows what's missing.
+- Catalog adoption and recovery now require a stable, fully readable backend
+  snapshot instead of publishing partial metadata when a graph read fails.
+
+### Added
+- `OntoEnv.recover(path, graph_store=None)` rebuilds a catalog after an
+  interrupted mutation and removes the recovery marker only after the new
+  catalog is published.
+- Python `UnresolvedImportError` distinguishes an unresolved `owl:imports`
+  target passed to `copy_graph` from other `ValueError` failures.
+- Python `OntoEnv.update` now accepts an optional source location and always
+  replaces that source's stored graph while following its imports.
+  `update(force=True)` replaces `update(all=True)`; `all=` remains as a
+  deprecated compatibility alias.
+- An authoritative RDF5D metadata catalog at `.ontoenv/catalog.r5tu`, with
+  graph-free warm opens, automatic legacy JSON migration, backend drift
+  detection, recovery markers, explicit `create`/`open`/`adopt` lifecycle
+  APIs, a state-driven `connect(sync=...)` entry point, and
+  incremental/targeted/full graph-store synchronization reports.
+- Durable RDF5D snapshot replacement using unique same-directory temporary
+  files, file and directory synchronization, and atomic publication.
+- `OntoEnv.copy_graph(uri) -> rdflib.Graph` — materialize a mutable in-memory copy of a single ontology.
+- Pythonic container/context-manager protocols on `OntoEnv`: `len(env)`, `uri in env`, `env[uri]` (shorthand for `get_graph`), `for name in env` (iterates ontology URIs), and `with OntoEnv(...) as env:` (calls `close()` on exit). `bool(env)` is always `True` — use `env is None` to detect absence.
+- `OntoEnv.copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1) -> (Graph, list[str])` — materialize the flattened imports closure into a mutable `rdflib.Graph` (the view-returning `get_closure`'s mutable counterpart).
+- `OntoEnv.iter_triples(uri) -> Iterator[(s, p, o)]` and `OntoEnv.iter_closure_triples(uri, recursion_depth=-1) -> Iterator[(s, p, o)]` — streaming triples as rdflib terms, skipping the rdflib `Graph` wrapper. Closure iteration is not de-duplicated.
+- `ontoenv.ViewGraph` — read-only, non-`rdflib.Graph` view returned by `get_closure` and `get_union`. Exposes `triples`, `subjects`/`predicates`/`objects`, `query` (SPARQL scoped to the view), `len`, `in`, `serialize`, and namespace bindings; mutation raises `ValueError`.
+- `_RdfLibStoreBackend` scoped methods: `iter_triples_scoped`, `triples_scoped`, `subjects_scoped`, `predicates_scoped`, `objects_scoped`, and `query_scoped` — the Rust primitives `ViewGraph` delegates to, scoped to a list of named graphs.
+- Internal `OntoEnv.get_graph(uri)` Dataset cache: subsequent `get_graph` calls reuse the underlying store; mutating methods (`add`, `add_no_imports`, `update`, `flush`) invalidate it.
+- `OntoEnv.refresh_dataset(dataset)` method — re-snapshot the env into an existing `OntoEnvStore`-backed Dataset. Replaces the top-level `refresh_dataset_from_env(dataset, env)` helper.
+- `Environment::get_ontology_by_id(&GraphIdentifier) -> Option<&Ontology>` — direct lookup that skips the configured `ResolutionPolicy`.
+- rdf5d: `closure` module (`rdf5d::ClosurePatch`, `ClosureTripleIds`, `ClosureSparqlView`) — zero-copy closure semantics over a `Snapshot`. A `ClosurePatch` precomputes the closure transform (imports stripping, ontology-declaration collapse, SHACL-prefix consolidation) as removals (a `keep` predicate) plus a small additions "patch graph", all in on-disk term-id space; the iterator and SPARQL views apply it lazily to present a single flattened, de-duplicated graph. Used by `OntoEnv.get_closure`.
+- rdf5d: `Snapshot::build_indexes()` and `R5tuFile::build_term_index()` — eagerly build all four permutation indexes (and the reverse term-id index) at bind time.
+- `GraphIO::ensure_loaded(&GraphIdentifier) -> Result<()>` trait hook for persistent backends to lazily load named graphs into the in-memory store. Default impl is a no-op.
+- `FailedImport::ontology()` and `FailedImport::error()` expose union failures
+  to Rust callers without parsing display strings.
+
+### Removed
+- Top-level re-exports `ontoenv.dataset_from_env` and `ontoenv.refresh_dataset_from_env` — use `env.get_dataset(...)` and `env.refresh_dataset(...)` instead. The functions still exist in `ontoenv.rdflib_store` as the underlying implementation.
+
+### Fixed
+- Successful non-strict `add`/`add_from_bytes` ingestion with unresolved
+  imports no longer leaves a recovery marker; the partial environment remains
+  reopenable.
+- Writable persistent stores enumerate graph IDs from their lazy RDF5D
+  directory, allowing non-empty 0.5 catalogs to migrate without a false
+  backend-mismatch error.
+- `ViewGraph.triples` scoped-pattern branch: `triples_scoped` returns `(triple, contexts)` rows, but the code yielded the whole row — now unpacks to the bare triple.
+- `OntoEnv.add(..., rename=...)` rename test expectation: the minimal `<old> a owl:Ontology .` fixture contains exactly one triple, and `rename_ontology_iri_graph` rewrites the subject to yield one triple; the `test_add_with_rename_overrides_iri` assertion of `len == 2` ("type + declare") was a stale expectation with no matching fixture, corrected to `len == 1`.
+- `add_ids_to_dependency_graph` is now transactional with respect to the in-memory env state: a mid-traversal failure (e.g. a strict-mode unresolved import) no longer leaves `env`, `dependency_graph`, `dependency_graph_index`, and `failed_resolutions` desynced from each other.
+- Dependency-graph construction now resolves imports by `GraphIdentifier` instead of going through `ResolutionPolicy`, so the graph reflects the exact ontology being added rather than whatever the policy maps the name to.
+- Python maps lifecycle errors by their Rust types rather than matching error
+  message text.
+
+### Performance
+- `get_closure` view reads are served directly from the rdf5d mmap snapshot with no materialization. Permutation indexes are built eagerly (in parallel) when the snapshot is bound, and each `_RdfLibStoreBackend` keeps a persistent term-id → rdflib-term cache shared across `triples()` calls, so repeated scans skip rdflib `URIRef`/`Literal` construction. Full closure iteration on the Brick closure runs in ~30 ms warm.
+- `get_closure` BFS-walks the pre-built `dependency_graph` via `NodeIndex` instead of resolving each import by name on every step. A new `dependency_graph_index` map is kept in sync with the graph.
+- `Environment::get_ontology` short-circuits exact-id hits and skips the per-call `Vec<&Ontology>` policy fallback.
+- `GraphIO::union_graph` streams quads from the store directly into the target `Dataset`, dropping the intermediate per-id `Graph` allocation.
+- `get_union_graph` and `get_namespaces` borrow ontologies from `env.ontologies()` instead of cloning each one through `get_ontology`.
+
+---
+
 ## [0.5.5]
 
 ### Added
-- `OntoEnv.snapshot_as_dataset(backend="auto", store=None)` — return a read-only `rdflib.Dataset` view of the environment. `backend="rdf5d"` is a zero-copy mmap-backed view over the persistent `.ontoenv/store.r5tu` snapshot; `backend="copy"` materializes an in-memory copy; `backend="auto"` picks rdf5d when the snapshot file exists and copy otherwise.
+- `OntoEnv.as_dataset(backend="auto", store=None)` — return a read-only `rdflib.Dataset` view of the environment. `backend="rdf5d"` is a zero-copy mmap-backed view over the persistent `.ontoenv/store.r5tu` snapshot; `backend="copy"` materializes an in-memory copy; `backend="auto"` picks rdf5d when the snapshot file exists and copy otherwise.
 - New `ontoenv.OntoEnvStore` rdflib `Store` (also registered as the rdflib plugin `"ontoenv"`) that serves SPARQL through the Rust backend, with `dataset_from_env` / `refresh_dataset_from_env` helpers in `ontoenv.rdflib_store`.
 - rdf5d: SPARQL backend (`rdf5d::SparqlDatasetView`) and a Brick benchmark comparing it to Oxigraph + RocksDB; rdf5d wins on the tested patterns (≈18% faster on bound-graph queries, ≈2× faster on full scans).
 
@@ -16,7 +118,7 @@ All notable changes to this project are documented here. Releases follow [Semant
 - Copy-fallback Dataset construction (the `backend="copy"` / `backend="auto"` fallback path) builds the materialized `OxDataset` directly from the inner Rust `OntoEnv`, dropping the previous round-trip through an intermediate `rdflib.Dataset`.
 
 ### Deprecated
-- `OntoEnv.to_rdflib_dataset(mode=...)` — use `OntoEnv.snapshot_as_dataset(backend=..., store=...)` instead. The old method still works (and forwards to the new one) but now emits `DeprecationWarning`. The new method renames the parameter (`mode` → `backend`) and accepts an optional `store=` to rebind an existing rdflib `Store`; error messages now reference `backend=` accordingly.
+- `OntoEnv.to_rdflib_dataset(mode=...)` — use `OntoEnv.as_dataset(backend=..., store=...)` instead. The old method still works (and forwards to the new one) but now emits `DeprecationWarning`. The new method renames the parameter (`mode` → `backend`) and accepts an optional `store=` to rebind an existing rdflib `Store`; error messages now reference `backend=` accordingly.
 
 ---
 

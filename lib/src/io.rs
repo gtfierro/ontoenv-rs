@@ -1,24 +1,26 @@
 //! Defines traits and implementations for handling graph input/output operations.
 //! This includes reading graphs from files and URLs, and interacting with persistent or in-memory stores.
 
+use crate::catalog::BackendState;
 use crate::errors::OfflineRetrievalError;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::options::Overwrite;
 use crate::util::get_file_contents;
+use crate::FailedImport;
 use anyhow::{anyhow, Error, Result};
 use blake3;
 use chrono::prelude::*;
-use fs2::FileExt;
 use log::{error, info};
 use oxigraph::io::{RdfFormat, RdfParser};
-use oxigraph::model::{Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad};
+use oxigraph::model::{
+    Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad, QuadRef,
+};
 use oxigraph::store::Store;
 use rdf5d::{
     reader::R5tuFile,
     writer::{Quint, StreamingWriter, Term as R5Term, WriterOptions},
 };
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -34,6 +36,46 @@ struct R5GraphInfo {
     gid: u64,
     id: String,
     n_triples: u64,
+}
+
+/// Returns `<r5tu>.idx`, the path of the legacy on-disk index sidecar that
+/// older versions wrote next to a snapshot. Query indexes are now built in
+/// memory; this is only used to delete a stale sidecar left by an upgrade.
+fn legacy_sidecar_path(r5tu: &Path) -> PathBuf {
+    let mut s = r5tu.as_os_str().to_owned();
+    s.push(".idx");
+    PathBuf::from(s)
+}
+
+fn file_backend_state(path: &Path) -> Result<BackendState> {
+    // The store file does not exist for a newly-created empty environment.
+    // Canonicalize its existing parent so platform aliases such as macOS
+    // `/var` -> `/private/var` still produce the same backend identity before
+    // and after reopening through a differently-spelled path.
+    let identity_path = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(file_name)) => {
+            crate::ontology::canonicalize_file_path(parent).join(file_name)
+        }
+        _ => crate::ontology::canonicalize_file_path(path),
+    };
+    let identity = identity_path.to_string_lossy().into_owned();
+    let revision = match std::fs::metadata(path) {
+        Ok(metadata) => {
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+            format!("{}:{modified}", metadata.len())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "missing".to_string(),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(BackendState {
+        id: format!("rdf5d:{identity}"),
+        revision,
+    })
 }
 
 fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
@@ -79,13 +121,13 @@ fn add_ontology_bytes(
     bytes: &[u8],
     format: Option<RdfFormat>,
     overwrite: Overwrite,
-    strict: bool,
+    require_ontology_names: bool,
 ) -> Result<Ontology> {
     // Parse into a temporary store to extract ontology metadata safely.
     let staging_graph = NamedNode::new_unchecked("temp:graph");
     let tmp_store = load_staging_store_from_bytes(bytes, format)?;
     let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
-    let mut ontology = Ontology::from_store(&tmp_store, &staging_id, strict)?;
+    let mut ontology = Ontology::from_store(&tmp_store, &staging_id, require_ontology_names)?;
     // Hash content for change detection without re-reading sources.
     let hash = blake3::hash(bytes).to_hex().to_string();
     ontology.set_content_hash(hash);
@@ -120,7 +162,7 @@ fn add_ontology_to_store(
     location: OntologyLocation,
     overwrite: Overwrite,
     offline: bool,
-    strict: bool,
+    require_ontology_names: bool,
 ) -> Result<Ontology> {
     // Resolve bytes from the location, honoring offline mode.
     let (bytes, format) = match &location {
@@ -139,13 +181,31 @@ fn add_ontology_to_store(
             ))
         }
     };
-    add_ontology_bytes(store, &location, &bytes, format, overwrite, strict)
+    add_ontology_bytes(
+        store,
+        &location,
+        &bytes,
+        format,
+        overwrite,
+        require_ontology_names,
+    )
 }
 
 pub trait GraphIO: Send + Sync {
     /// Returns true if the store is offline; if this is true, then the store
     /// will not fetch any data from the internet
     fn is_offline(&self) -> bool;
+
+    /// Update network access behavior for future graph mutations.
+    fn set_offline(&mut self, _offline: bool) {}
+
+    /// Update strict parsing behavior for future graph mutations.
+    ///
+    /// Read-only backends may keep the default no-op implementation.
+    fn set_strict(&mut self, _strict: bool) {}
+
+    /// Update ontology-declaration validation for future graph mutations.
+    fn set_require_ontology_names(&mut self, _require: bool) {}
 
     /// Returns the type of the store (e.g., "persistent", "memory", "read-only")
     fn io_type(&self) -> String;
@@ -155,6 +215,17 @@ pub trait GraphIO: Send + Sync {
 
     /// Returns a reference to the underlying store
     fn store(&self) -> &Store;
+
+    /// Return an opaque backend identity and global revision in O(1), when
+    /// supported. The revision must change after every backend mutation.
+    fn store_state(&self) -> Result<Option<BackendState>> {
+        Ok(None)
+    }
+
+    /// Return opaque per-graph revisions, when supported.
+    fn graph_revisions(&self) -> Result<Option<HashMap<String, String>>> {
+        Ok(None)
+    }
 
     /// Returns the identifiers of all graphs currently held in the store.
     fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
@@ -185,6 +256,29 @@ pub trait GraphIO: Send + Sync {
         overwrite: Overwrite,
     ) -> Result<Ontology>;
 
+    /// Write a pre-built graph into the store under the given identifier, replacing any
+    /// existing graph at that name.  Used by the rename machinery after a transform.
+    fn add_named_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
+        let graphname = id.graphname()?;
+        self.store().remove_named_graph(id.name())?;
+        let mut loader = self.store().bulk_loader();
+        loader.load_quads(
+            graph
+                .iter()
+                .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
+        )?;
+        loader.commit()?;
+        Ok(())
+    }
+
+    /// Hook for backends that lazy-load graphs from on-disk storage into the
+    /// in-memory store on first access. Default is a no-op. Persistent backends
+    /// override this so that callers iterating `store()` directly (e.g.
+    /// `union_graph`) still see the graph's quads.
+    fn ensure_loaded(&self, _id: &GraphIdentifier) -> Result<()> {
+        Ok(())
+    }
+
     /// Returns the graph with the given identifier
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let mut graph = Graph::new();
@@ -196,6 +290,16 @@ pub trait GraphIO: Send + Sync {
             graph.insert(quad?.as_ref());
         }
         Ok(graph)
+    }
+
+    /// Returns a copy of the graph for mutable operations.
+    ///
+    /// Backends that can provide a more efficient or semantically distinct
+    /// copy path (e.g. a Python graph store that returns a cached view from
+    /// `get_graph` but a fresh deep copy from `copy_graph`) should override
+    /// this. The default delegates to `get_graph`.
+    fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        self.get_graph(id)
     }
 
     /// Returns the size of the underlying store.
@@ -215,22 +319,68 @@ pub trait GraphIO: Send + Sync {
         Ok(())
     }
 
-    /// Returns the union of the graphs with the given identifiers
-    fn union_graph(&self, ids: &[GraphIdentifier]) -> Dataset {
-        let mut graph = Dataset::new();
+    /// Returns the best-effort union of the graphs with the given identifiers,
+    /// along with a list of ids that could not be read.
+    ///
+    /// A failure on any single id (bad graphname, ensure_loaded error, or a
+    /// store iteration error mid-graph) is recorded in the returned
+    /// `Vec<FailedImport>` and that id is skipped; the rest of the union is
+    /// still assembled. Callers that need strict all-or-nothing semantics
+    /// should check the failures list and error themselves.
+    fn union_graph(&self, ids: &[GraphIdentifier]) -> (Dataset, Vec<FailedImport>) {
+        // Stream quads from the store directly into the Dataset. The previous
+        // implementation materialized an intermediate Graph per id, which paid
+        // for an extra hashmap insert per triple and an N-graph allocation.
+        let mut dataset = Dataset::new();
+        let mut failures: Vec<FailedImport> = Vec::new();
         for id in ids {
-            let graphname = id.graphname().unwrap();
-            let g = self.get_graph(id).unwrap();
-            for t in g.iter() {
-                graph.insert(&Quad::new(
-                    t.subject,
-                    t.predicate,
-                    t.object,
-                    graphname.clone(),
-                ));
+            let graphname = match id.graphname() {
+                Ok(gn) => gn,
+                Err(e) => {
+                    failures.push(FailedImport::new(id.clone(), e.to_string()));
+                    continue;
+                }
+            };
+            // For persistent backends, ensure the named graph is in the in-memory store.
+            if let Err(e) = self.ensure_loaded(id) {
+                failures.push(FailedImport::new(id.clone(), e.to_string()));
+                continue;
+            }
+            let mut graph_failure: Option<Error> = None;
+            for quad in self
+                .store()
+                .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+            {
+                match quad {
+                    Ok(q) => {
+                        dataset.insert(QuadRef::new(
+                            q.subject.as_ref(),
+                            q.predicate.as_ref(),
+                            q.object.as_ref(),
+                            graphname.as_ref(),
+                        ));
+                    }
+                    Err(e) => {
+                        graph_failure = Some(anyhow!("union_graph store error: {}", e));
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = graph_failure {
+                failures.push(FailedImport::new(id.clone(), e.to_string()));
             }
         }
-        graph
+        (dataset, failures)
+    }
+
+    /// Returns the best-effort union used by read-only view construction.
+    ///
+    /// Most backends have identical read and copy semantics, so the default
+    /// delegates to [`Self::union_graph`]. Backends that distinguish a live
+    /// read view from a detached copy should override this method and assemble
+    /// the union through [`Self::get_graph`].
+    fn view_union_graph(&self, ids: &[GraphIdentifier]) -> (Dataset, Vec<FailedImport>) {
+        self.union_graph(ids)
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -324,38 +474,29 @@ pub struct PersistentGraphIO {
     store: Store,
     offline: bool,
     strict: bool,
+    require_ontology_names: bool,
     store_path: PathBuf,
     r5_file: Option<R5tuFile>,
     r5_index: HashMap<String, R5GraphInfo>,
     loaded_graphs: Mutex<HashSet<String>>,
-    // Keep the interprocess lock alive for the lifetime of this IO
-    lock_file: File,
     dirty: bool,
     batch_depth: usize,
 }
 
+/// Predicates whose transitive closure the query layer precomputes by default
+/// (in memory, on demand) for SPARQL `P+`/`P*` property paths. Covers the most
+/// common property-path use cases on ontologies.
+pub const DEFAULT_CLOSURE_PREDICATES: &[&str] = &[
+    "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+    "http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
+    "http://www.w3.org/2002/07/owl#sameAs",
+];
+
 impl PersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool, strict: bool) -> Result<Self> {
-        // Create or open a persistent store with an exclusive lock for writers.
-        // Ensure target directory exists before creating/locking files
+        // Locking is owned by the environment/catalog layer so custom and
+        // built-in graph backends share identical concurrency semantics.
         std::fs::create_dir_all(&path)?;
-        // Try to acquire an exclusive lock for writer; if any readers/writers hold the lock, error out immediately
-        let lock_path = path.join("store.lock");
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
-        if let Err(e) = lock_file.try_lock_exclusive() {
-            return Err(anyhow!(
-                "Failed to open OntoEnv store for write: could not acquire exclusive lock on {:?}: {}. If another process has the store open (even read-only), open this instance in read-only mode.",
-                lock_path, e
-            ));
-        }
-        // Small delay to ensure lock contention is observable in concurrent tests/processes.
-        // Keeps the lock held a bit longer so another writer will see it.
-        std::thread::sleep(std::time::Duration::from_millis(75));
         // On-disk file is an RDF5D `.r5tu` file; in-memory store is Oxigraph
         let store_path = path.join("store.r5tu");
         let store = Store::new()?;
@@ -382,43 +523,14 @@ impl PersistentGraphIO {
             store,
             offline,
             strict,
+            require_ontology_names: false,
             store_path,
             r5_file,
             r5_index,
             loaded_graphs: Mutex::new(HashSet::new()),
-            lock_file,
             dirty: false,
             batch_depth: 0,
         })
-    }
-
-    fn load_r5tu_into_store(store: &Store, r5tu_path: &Path) -> Result<()> {
-        // Load the entire RDF5D file into the in-memory Oxigraph store.
-        let file = R5tuFile::open(r5tu_path)?;
-        // Enumerate all logical graphs and load triples into named graphs
-        let mut loader = store.bulk_loader();
-        for gr in file.enumerate_all()? {
-            let gname_str = gr.graphname;
-            let gnn = NamedNode::new(&gname_str)
-                .map_err(|e| anyhow!("Invalid graph name IRI in RDF5D: {}", e))?;
-            let graphname = GraphName::NamedNode(gnn);
-            // Iterate triples as Oxigraph terms (requires rdf5d `oxigraph` feature)
-            let triples = file.oxigraph_triples(gr.gid)?;
-            let mut quads_buf: Vec<Quad> = Vec::with_capacity(gr.n_triples as usize);
-            for res in triples {
-                let t = res.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
-                quads_buf.push(Quad::new(
-                    t.subject,
-                    t.predicate,
-                    t.object,
-                    graphname.clone(),
-                ));
-            }
-            // Bulk load per-graph to reduce overhead and keep ordering deterministic.
-            loader.load_quads(quads_buf)?;
-        }
-        loader.commit()?;
-        Ok(())
     }
 
     fn ensure_graph_loaded(&self, graphname: &str) -> Result<()> {
@@ -554,6 +666,10 @@ impl PersistentGraphIO {
         // Finalize writes and mark the store clean.
         writer.finalize()?;
         self.dirty = false;
+        // Query indexes are now built in memory on demand, so no sidecar is
+        // written. Remove any sidecar left behind by an older version to
+        // reclaim disk and avoid confusion.
+        let _ = std::fs::remove_file(legacy_sidecar_path(&self.store_path));
         Ok(())
     }
 
@@ -571,6 +687,18 @@ impl GraphIO for PersistentGraphIO {
         self.offline
     }
 
+    fn set_offline(&mut self, offline: bool) {
+        self.offline = offline;
+    }
+
+    fn set_strict(&mut self, strict: bool) {
+        self.strict = strict;
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) {
+        self.require_ontology_names = require;
+    }
+
     fn io_type(&self) -> String {
         "persistent".to_string()
     }
@@ -583,9 +711,55 @@ impl GraphIO for PersistentGraphIO {
         &self.store
     }
 
+    fn store_state(&self) -> Result<Option<BackendState>> {
+        Ok(Some(file_backend_state(&self.store_path)?))
+    }
+
+    fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
+        // Persistent graphs are loaded lazily, so the in-memory Oxigraph store
+        // is not authoritative until a graph is first read. Use the RDF5D
+        // directory populated at open time instead.
+        self.r5_index
+            .keys()
+            .map(|id| {
+                NamedNode::new(id)
+                    .map(|name| GraphIdentifier::new(name.as_ref()))
+                    .map_err(|error| anyhow!(error.to_string()))
+            })
+            .collect()
+    }
+
+    fn add_named_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
+        let graphname = id.graphname()?;
+        self.store.remove_named_graph(id.name())?;
+        let mut loader = self.store.bulk_loader();
+        loader.load_quads(
+            graph
+                .iter()
+                .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
+        )?;
+        loader.commit()?;
+        self.update_index_for_graph(&graphname)?;
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if let GraphName::NamedNode(nn) = graphname {
+            loaded.insert(nn.as_str().to_string());
+        }
+        drop(loaded);
+        self.on_store_mutated()?;
+        Ok(())
+    }
+
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
-        let ont =
-            add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
+        let ont = add_ontology_to_store(
+            &self.store,
+            location,
+            overwrite,
+            self.offline,
+            self.require_ontology_names,
+        )?;
         let graphname = ont.id().graphname()?;
         self.update_index_for_graph(&graphname)?;
         let mut loaded = self
@@ -613,7 +787,7 @@ impl GraphIO for PersistentGraphIO {
             &bytes,
             format,
             overwrite,
-            self.strict,
+            self.require_ontology_names,
         )?;
         let graphname = ont.id().graphname()?;
         self.update_index_for_graph(&graphname)?;
@@ -642,6 +816,10 @@ impl GraphIO for PersistentGraphIO {
         drop(loaded);
         self.on_store_mutated()?;
         Ok(())
+    }
+
+    fn ensure_loaded(&self, id: &GraphIdentifier) -> Result<()> {
+        self.ensure_graph_loaded(id.name().as_str())
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
@@ -692,33 +870,76 @@ pub struct ReadOnlyPersistentGraphIO {
     store: Store,
     offline: bool,
     store_path: PathBuf,
-    // Keep the shared interprocess lock alive for the lifetime of this IO
-    lock_file: File,
+    r5_file: Option<R5tuFile>,
+    r5_index: HashMap<String, R5GraphInfo>,
+    loaded_graphs: Mutex<HashSet<String>>,
 }
 
 impl ReadOnlyPersistentGraphIO {
     pub fn new(path: PathBuf, offline: bool) -> Result<Self> {
-        // Open a persistent store in read-only mode with a shared lock.
-        // Acquire shared lock for readers; will block while a writer holds the exclusive lock
-        let lock_path = path.join("store.lock");
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
-        lock_file.lock_shared()?;
         let store_path = path.join("store.r5tu");
         let store = Store::new()?;
-        if store_path.exists() {
-            PersistentGraphIO::load_r5tu_into_store(&store, &store_path)?;
-        }
+        let (r5_file, r5_index) = if store_path.exists() {
+            let file = R5tuFile::open(&store_path)?;
+            let mut index = HashMap::new();
+            for graph in file.enumerate_all()? {
+                index.insert(
+                    graph.graphname.clone(),
+                    R5GraphInfo {
+                        gid: graph.gid,
+                        id: graph.id,
+                        n_triples: graph.n_triples,
+                    },
+                );
+            }
+            (Some(file), index)
+        } else {
+            (None, HashMap::new())
+        };
         Ok(Self {
             store,
             offline,
             store_path,
-            lock_file,
+            r5_file,
+            r5_index,
+            loaded_graphs: Mutex::new(HashSet::new()),
         })
+    }
+
+    fn ensure_graph_loaded(&self, graphname: &str) -> Result<()> {
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if loaded.contains(graphname) {
+            return Ok(());
+        }
+        let Some(info) = self.r5_index.get(graphname) else {
+            return Ok(());
+        };
+        let Some(file) = self.r5_file.as_ref() else {
+            return Ok(());
+        };
+        let graph_name = GraphName::NamedNode(
+            NamedNode::new(graphname)
+                .map_err(|error| anyhow!("Invalid graph name IRI in RDF5D: {error}"))?,
+        );
+        let triples = file.oxigraph_triples(info.gid)?;
+        let mut loader = self.store.bulk_loader();
+        let mut quads = Vec::with_capacity(info.n_triples as usize);
+        for triple in triples {
+            let triple = triple.map_err(|error| anyhow!("RDF5D read error: {error}"))?;
+            quads.push(Quad::new(
+                triple.subject,
+                triple.predicate,
+                triple.object,
+                graph_name.clone(),
+            ));
+        }
+        loader.load_quads(quads)?;
+        loader.commit()?;
+        loaded.insert(graphname.to_string());
+        Ok(())
     }
 }
 
@@ -729,15 +950,6 @@ impl Drop for PersistentGraphIO {
                 error!("Failed to flush RDF5D store on drop: {err}");
             }
         }
-        // Best-effort unlock on drop
-        let _ = self.lock_file.unlock();
-    }
-}
-
-impl Drop for ReadOnlyPersistentGraphIO {
-    fn drop(&mut self) {
-        // Best-effort unlock on drop
-        let _ = self.lock_file.unlock();
     }
 }
 
@@ -760,6 +972,41 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
 
     fn store(&self) -> &Store {
         &self.store
+    }
+
+    fn store_state(&self) -> Result<Option<BackendState>> {
+        Ok(Some(file_backend_state(&self.store_path)?))
+    }
+
+    fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
+        self.r5_index
+            .keys()
+            .map(|id| {
+                NamedNode::new(id)
+                    .map(|name| GraphIdentifier::new(name.as_ref()))
+                    .map_err(|error| anyhow!(error.to_string()))
+            })
+            .collect()
+    }
+
+    fn ensure_loaded(&self, id: &GraphIdentifier) -> Result<()> {
+        self.ensure_graph_loaded(id.name().as_str())
+    }
+
+    fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+        self.ensure_graph_loaded(id.name().as_str())?;
+        let mut graph = Graph::new();
+        for quad in
+            self.store
+                .quads_for_pattern(None, None, None, Some(GraphNameRef::NamedNode(id.name())))
+        {
+            graph.insert(quad?.as_ref());
+        }
+        Ok(graph)
+    }
+
+    fn add_named_graph(&mut self, _id: GraphIdentifier, _graph: Graph) -> Result<()> {
+        Err(anyhow!("Cannot add to read-only store"))
     }
 
     fn add(&mut self, _location: OntologyLocation, _overwrite: Overwrite) -> Result<Ontology> {
@@ -802,6 +1049,7 @@ pub struct ExternalStoreGraphIO {
     store: Store,
     offline: bool,
     strict: bool,
+    require_ontology_names: bool,
 }
 
 impl ExternalStoreGraphIO {
@@ -811,6 +1059,7 @@ impl ExternalStoreGraphIO {
             store,
             offline,
             strict,
+            require_ontology_names: false,
         }
     }
 }
@@ -818,6 +1067,18 @@ impl ExternalStoreGraphIO {
 impl GraphIO for ExternalStoreGraphIO {
     fn is_offline(&self) -> bool {
         self.offline
+    }
+
+    fn set_offline(&mut self, offline: bool) {
+        self.offline = offline;
+    }
+
+    fn set_strict(&mut self, strict: bool) {
+        self.strict = strict;
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) {
+        self.require_ontology_names = require;
     }
 
     fn io_type(&self) -> String {
@@ -833,7 +1094,13 @@ impl GraphIO for ExternalStoreGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
-        add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
+        add_ontology_to_store(
+            &self.store,
+            location,
+            overwrite,
+            self.offline,
+            self.require_ontology_names,
+        )
     }
 
     fn add_from_bytes(
@@ -849,7 +1116,7 @@ impl GraphIO for ExternalStoreGraphIO {
             &bytes,
             format,
             overwrite,
-            self.strict,
+            self.require_ontology_names,
         )
     }
 }
@@ -858,6 +1125,7 @@ pub struct MemoryGraphIO {
     store: Store,
     offline: bool,
     strict: bool,
+    require_ontology_names: bool,
 }
 
 impl MemoryGraphIO {
@@ -867,6 +1135,7 @@ impl MemoryGraphIO {
             store: Store::new()?,
             offline,
             strict,
+            require_ontology_names: false,
         })
     }
 
@@ -890,6 +1159,18 @@ impl GraphIO for MemoryGraphIO {
         self.offline
     }
 
+    fn set_offline(&mut self, offline: bool) {
+        self.offline = offline;
+    }
+
+    fn set_strict(&mut self, strict: bool) {
+        self.strict = strict;
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) {
+        self.require_ontology_names = require;
+    }
+
     fn io_type(&self) -> String {
         "memory".to_string()
     }
@@ -903,7 +1184,13 @@ impl GraphIO for MemoryGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
-        add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
+        add_ontology_to_store(
+            &self.store,
+            location,
+            overwrite,
+            self.offline,
+            self.require_ontology_names,
+        )
     }
 
     fn add_from_bytes(
@@ -919,7 +1206,7 @@ impl GraphIO for MemoryGraphIO {
             &bytes,
             format,
             overwrite,
-            self.strict,
+            self.require_ontology_names,
         )
     }
 }

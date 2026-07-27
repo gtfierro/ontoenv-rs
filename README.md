@@ -37,12 +37,10 @@ Or from Python:
 
 ```python
 from ontoenv import OntoEnv
-from rdflib import Graph
 
 env = OntoEnv(search_directories=["./ontologies"], strict=False, temporary=True)
 
-g = Graph()
-env.get_closure("http://example.org/ont/MyOntology", destination_graph=g)
+g, closure_names = env.copy_closure("http://example.org/ont/MyOntology")
 print(f"Closure has {len(g)} triples")
 ```
 
@@ -63,12 +61,16 @@ print(f"Closure has {len(g)} triples")
 
 When initialized, `ontoenv` searches configured directories for ontology declarations, identifies their `owl:imports`, and recursively pulls in dependencies. The central operation is computing the *imports closure*: the set of all ontologies transitively required by a given root, optionally merged into a single flat graph.
 
-**Implementation:** Built in Rust using [oxigraph](https://github.com/oxigraph/oxigraph) as the internal RDF store and [petgraph](https://github.com/petgraph/petgraph) for dependency graph traversal. Python bindings are generated via [PyO3](https://pyo3.rs/). Persistent on-disk state uses a compact binary format (RDF5D) at `.ontoenv/store.r5tu` with single-writer/shared-reader locking.
+In a persistent environment, OntoEnv saves both the graph content and the
+smaller collection of ontology names, imports, aliases, source locations, and
+namespaces needed to navigate it. Later connections can restore dependency
+lookups from that saved information without rereading every graph. The
+environment also coordinates readers and writers so a CLI process, script, or
+long-running service sees a consistent saved state.
 
-**Design goals:**
-- **Lightweight** — usable from a Python library or CLI without a heavyweight GUI
-- **Configurable** — control which files are local vs. remote, which IRIs to include/exclude
-- **Fast** — quickly refresh a workspace after local file changes
+Discovery remains configurable: applications can decide which local files and
+remote IRIs are eligible, work offline, and control when cached remote
+ontologies should be refreshed.
 
 ### Canonical IRIs and Source URLs
 
@@ -91,7 +93,19 @@ Ontologies fetched from a URL often declare a different (usually versioned) onto
 |---|---|
 | `.ontoenv/` | Environment directory |
 | `.ontoenv/store.r5tu` | RDF5D persistent store |
+| `.ontoenv/catalog.r5tu` | Authoritative, versioned environment metadata catalog |
+| `.ontoenv/catalog.pending` | Recovery marker for an interrupted graph/catalog mutation; successful operations, including tolerated non-strict import misses, remove it |
 | `.ontoenv/store.lock` | File lock (single writer, shared readers) |
+
+Warm opens read only `ontoenv.json`, `catalog.r5tu`, and O(1) backend state when
+available. They do not materialize ontology graphs. Legacy `environment.json`
+metadata is migrated automatically when its graph IDs match the backend;
+legacy JSON files are retained but ignored after migration.
+
+If a command reports `CatalogRecoveryError` for `catalog.pending`, run
+`ontoenv recover` from the environment or a child directory. It rebuilds the
+catalog from the persistent graph store and removes the marker only after the
+replacement catalog is published successfully.
 
 Set `ONTOENV_DIR` to override the environment location. Logging is controlled via `ONTOENV_LOG` or `RUST_LOG`.
 
@@ -111,10 +125,10 @@ Arguments:
 
 Options:
       --overwrite                       Overwrite an existing environment
-  -r, --require-ontology-names          Raise an error if multiple ontologies share the same name
-  -s, --strict                          Raise an error if an import is not found
-  -o, --offline                         Do not fetch ontologies from the web
-  -p, --policy <POLICY>                 Resolution policy: 'default', 'latest', or 'version' [default: default]
+      --require-ontology-names [<BOOL>] Require an ontology declaration during ingestion
+      --strict [<BOOL>]                 Treat missing imports as errors
+  -o, --offline [<BOOL>]                Disable network retrieval
+  -p, --policy <POLICY>                 Resolution policy: 'default', 'latest', or 'version'
   -i, --includes <INCLUDES>...          Glob patterns to include [default: *.ttl *.xml *.n3]
   -e, --excludes <EXCLUDES>...          Glob patterns to exclude
       --include-ontology, --io <REGEX>  Regex patterns of ontology IRIs to include
@@ -131,6 +145,8 @@ ontoenv init --overwrite --offline ./ontologies      # rebuild from scratch, off
 ```
 
 Offline mode is particularly useful when you want to limit which ontologies are loaded: download the ones you want, then enable `--offline` to prevent any further network access.
+On an existing environment, omitted mode flags preserve saved values; use
+forms such as `--offline=false` or `--strict=false` to disable them explicitly.
 
 #### `update`
 
@@ -192,7 +208,7 @@ Supported formats: `turtle` (default), `ntriples`, `rdfxml`, `jsonld`.
 pip install ontoenv   # Python 3.11+; prebuilt wheels for common platforms
 ```
 
-Building from source requires a Rust toolchain (MSRV 1.70).
+Building from source requires a Rust toolchain (MSRV 1.88).
 
 ### Basic Usage
 
@@ -200,7 +216,6 @@ Building from source requires a Rust toolchain (MSRV 1.70).
 import tempfile
 from pathlib import Path
 from ontoenv import OntoEnv
-from rdflib import Graph
 
 with tempfile.TemporaryDirectory() as temp_dir:
     root = Path(temp_dir)
@@ -219,10 +234,52 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
     print("Ontologies found:", env.get_ontology_names())
 
-    g = Graph()
-    env.get_closure("http://example.com/ontology_b", destination_graph=g)
+    g, closure_names = env.copy_closure("http://example.com/ontology_b")
     print(f"Closure of ontology_b has {len(g)} triples")  # → 2
 ```
+
+### Persistent Lifecycle
+
+For most persistent applications, use ``connect``:
+
+```python
+from ontoenv import OntoEnv
+
+# First run: create the environment directory, save its settings, and
+# initialize graph storage plus an empty ontology index.
+# Later runs: reuse that index without rereading every RDF triple.
+env = OntoEnv.connect("./my-env")
+env.add("./ontologies/site.ttl")
+
+# Keep the object in application state and close it during shutdown.
+application_state.ontoenv = env
+application_state.ontoenv.close()
+```
+
+When reopening, omitted configuration options preserve their saved values.
+Explicit values—including `False`, `"default"`, and empty lists—replace them.
+Writable connections persist overrides; read-only connections apply them only
+for that session. Reconfiguration does not rescan or re-ingest stored graphs.
+Search paths and filters take effect on the next explicit `update()`.
+
+With ``graph_store=store``, the first connection instead reads graphs already
+in that store and records their ontology names, imports, aliases, locations,
+namespaces, and hashes. Later connections reuse and synchronize that saved
+index.
+
+Use the lower-level methods when you want strict lifecycle control:
+
+```python
+OntoEnv.create("./new-env")  # set up empty state; fail if it already exists
+OntoEnv.open("./existing-env", read_only=True)  # load only; never create or sync
+OntoEnv.adopt("./adopted-env", graph_store)  # index every existing store graph once
+```
+
+``connect(sync="auto")`` never silently falls back to a full scan after drift:
+it incrementally reconciles stores with graph revisions and otherwise asks for
+an explicit ``sync="full"``. It does not refresh ontology files or URLs; call
+``env.update()`` after connecting to refresh changed sources and their
+imports.
 
 ### Constructor
 
@@ -230,14 +287,14 @@ with tempfile.TemporaryDirectory() as temp_dir:
 OntoEnv(
     path=None,
     recreate=False,
-    create_or_use_cached=False,
+    create_or_use_cached=False,  # deprecated; use OntoEnv.connect(path)
     read_only=False,
     search_directories=None,   # pass ["."] to scan immediately; None skips discovery
-    require_ontology_names=False,
-    strict=False,
-    offline=False,
-    use_cached_ontologies=False,
-    resolution_policy="default",
+    require_ontology_names=None,
+    strict=None,
+    offline=None,              # None preserves saved values when reopening
+    use_cached_ontologies=None,
+    resolution_policy=None,
     root=".",
     includes=None,             # gitignore-style globs; bare dirs match everything under them
     excludes=None,
@@ -250,49 +307,86 @@ OntoEnv(
 
 **Environment modes:**
 - `temporary=True` — in-memory only, no `.ontoenv/`
+- `OntoEnv.connect(path, sync="auto")` — persistent connection and graph-store synchronization; call `update()` separately for source files and URLs
+- `OntoEnv.create(path)` — create a persistent empty environment
+- `OntoEnv.open(path, read_only=False)` — require and load an existing catalog
+- `OntoEnv.adopt(path, graph_store)` — scan an existing store and create its catalog
 - `recreate=True` — explicitly create (or overwrite) at `path`
-- `create_or_use_cached=True` — bootstrap a new environment if none is found, otherwise reuse existing
+- `create_or_use_cached=True` — deprecated compatibility alias for
+  `OntoEnv.connect(path)`; retained for the 0.6.x line and planned for removal
+  in 0.7
 - Default — walk up from `path` (or `root`) to find an existing `.ontoenv/`; raise `FileNotFoundError` if not found
 
 ### Dependency Resolution Methods
 
 | Method | Root identified by | Mutates input? | Returns |
 |---|---|---|---|
-| `get_closure(name, ...)` | IRI string | No | `(Graph, list[str])` |
+| `get_closure(name, ...)` | IRI string | No | `(ViewGraph, list[str])` read-only view |
+| `copy_closure(name, ...)` | IRI string | No | `(Graph, list[str])` mutable copy |
 | `import_graph(destination_graph, name, ...)` | IRI string | Yes (required) | `None` |
 | `import_dependencies(graph, ...)` | `owl:imports` in caller's graph | Yes | `list[str]` |
 | `get_dependencies(graph, ...)` | `owl:imports` in caller's graph | No | `(Graph, list[str])` |
 | `list_closure(name, ...)` | IRI string | — | `list[str]` (IRIs only) |
 
-**`get_closure(uri, destination_graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`**
-Compute the full closure by IRI. `sh:prefixes` blocks are consolidated onto `uri` and `owl:imports` removed by default. Returns `(merged_graph, closure_iris)`. Use when you have an IRI and want a self-contained graph for reasoning, exchange, or export.
+**`get_closure(uri, recursion_depth=-1, remove_owl_imports=True, rewrite_sh_prefixes=True)`**
+Return a read-only `ViewGraph` over the full closure by IRI. Persistent local environments serve it directly from the rdf5d mmap snapshot without materializing the closure; temporary and custom-store environments build a normalized in-memory read snapshot. Both paths present a single flattened, de-duplicated graph with the **same triple set as `copy_closure`** (resolved `owl:imports` stripped, ontology declarations collapsed onto `uri`, SHACL `sh:prefixes`/`sh:declare` consolidated). Pass `remove_owl_imports=False` / `rewrite_sh_prefixes=False` to opt out of those transforms. `ViewGraph` is not an `rdflib.Graph` subclass — it delegates `triples`, `subjects`/`predicates`/`objects`, `len`, `in`, and `query()` to the Rust backend; mutation raises `ValueError`.
+
+**`copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)`**
+Copy the full closure by IRI into a mutable graph. `sh:prefixes` blocks are consolidated onto `uri` and `owl:imports` removed by default. Returns `(merged_graph, closure_iris)`. Use when you want a self-contained graph for reasoning, exchange, or export.
 
 **`import_dependencies(graph, fetch_missing=False)`**
-Mutates the provided graph in-place. Reads its `owl:imports` statements, resolves each one transitively, merges all closure triples into the same graph, removes `owl:imports`, and rewrites `sh:prefixes` onto the graph's root. Returns `list[str]` of imported IRIs.
+Mutates the provided graph in-place. Reads its `owl:imports` statements,
+resolves each one transitively, merges all available closure triples into the
+same graph, and rewrites `sh:prefixes` onto the graph's root. Once at least one
+dependency resolves, all `owl:imports` statements are removed from the merged
+graph; if none resolve, the input graph is left unchanged. Returns `list[str]`
+of imported IRIs.
+
+With `fetch_missing=True`, imports not already in the environment are fetched.
+In non-strict mode, unavailable imports are recorded and skipped; completing
+this best-effort operation does not leave `.ontoenv/catalog.pending`, including
+when no target can be fetched. In strict mode, an unavailable import aborts the
+operation with its underlying error.
 
 **`get_dependencies(graph, graph_name=None, fetch_missing=False)`**
-Same closure as `import_dependencies` but never modifies the original graph. Returns a new graph. Without `graph_name`, each ontology retains its own `owl:Ontology` declaration. With `graph_name`, all declarations are collapsed onto that single IRI and `sh:prefixes` are rewritten onto it. Returns `(deps_graph, list[str])`.
+Same best-effort resolution and marker behavior as `import_dependencies` but
+never modifies the original graph. Returns a new graph. Without `graph_name`,
+each ontology retains its own `owl:Ontology` declaration. With `graph_name`,
+all declarations are collapsed onto that single IRI and `sh:prefixes` are
+rewritten onto it. Returns `(deps_graph, list[str])`.
 
 ### Other Methods
 
 | Method | Description |
 |---|---|
-| `update(all=False)` | Refresh discovered ontologies |
+| `update(location=None, force=False)` | Refresh changed sources, or one named source, together with their imports |
 | `add(location, fetch_imports=True) -> str` | Add ontology by file path, URL, or `rdflib.Graph`; returns IRI |
 | `add_no_imports(location) -> str` | Same as `add`, but skips import traversal |
-| `get_graph(name) -> Graph` | Retrieve a single ontology (no closure expansion) |
+| `get_graph(name) -> Graph` | Read-only store-backed view of a single ontology (no closure expansion). Mutation raises `ValueError` |
+| `copy_graph(name, graph=None) -> Graph` | Mutable in-memory copy of a single ontology; raises `UnresolvedImportError` for a known unresolved import |
+| `get_closure(name, ...) -> (ViewGraph, list[str])` | Read-only closure view; mmap-backed for persistent local envs, normalized in memory otherwise; same triple set as `copy_closure` |
+| `copy_closure(name, graph=None, ...) -> (Graph, list[str])` | Mutable in-memory copy of the imports closure |
+| `iter_triples(name)` / `iter_closure_triples(name, recursion_depth=-1)` | Streaming triple iterators that skip the rdflib `Graph` wrapper |
 | `get_ontology(name)` | Inspect metadata: imports list, version, namespace map, last-updated |
 | `get_importers(name) -> list[str]` | Reverse dependency lookup |
 | `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings |
 | `missing_imports(uri=None) -> list[str]` | List unresolvable `owl:imports` IRIs (see below) |
-| `snapshot_as_dataset(backend="auto") -> rdflib.Dataset` | Read-only Dataset view of the env (`"auto"`/`"rdf5d"`/`"copy"`) |
+| `get_dataset() -> rdflib.Dataset` | Read-only Dataset view of the env |
+| `copy_dataset(dataset=None) -> rdflib.Dataset` | Mutable in-memory copy of the env |
 | `store_path() -> str \| None` | Path to `.ontoenv/`, or `None` for temporary environments |
 | `close()` | Persist (if applicable) and release resources |
+| `len(env)` | Number of ontologies in the environment |
+| `uri in env` | True if `uri` resolves to a known ontology |
+| `env[uri]` | Shorthand for `get_graph(uri)` |
+| `iter(env)` | Iterate over ontology URIs |
+| `with OntoEnv(...) as env:` | Context manager — calls `close()` on exit |
 
 **`missing_imports(uri=None) -> list[str]`**
 Returns a list of `owl:imports` IRIs that could not be resolved in the environment.
 
-- `uri=None` — scans every ontology in the environment and returns the de-duplicated union of all unresolvable imports.
+- `uri=None` — returns the de-duplicated union of unresolvable imports declared
+  by catalogued ontologies and currently recorded targets encountered by
+  best-effort fetching for transient caller graphs.
 - `uri="http://..."` — walks the full transitive `owl:imports` closure of the given ontology and returns every import IRI that cannot be found, including those declared by transitively-imported ontologies.
 
 ```python
@@ -303,6 +397,11 @@ missing = env.missing_imports()
 missing = env.missing_imports("http://example.org/ont/MyOntology")
 ```
 
+Passing any target reported by `missing_imports()` to `copy_graph()` raises
+`UnresolvedImportError`, a `LookupError` subclass. An arbitrary unknown IRI
+that was never declared or attempted is still a normal lookup `ValueError`;
+parsing and graph-store failures retain their own error types.
+
 ---
 
 ## Rust Library
@@ -311,10 +410,10 @@ missing = env.missing_imports("http://example.org/ont/MyOntology")
 
 ```toml
 [dependencies]
-ontoenv = "0.5"
+ontoenv = "0.6"
 ```
 
-Requires Rust 1.70+.
+Requires Rust 1.88+.
 
 ### Basic Usage
 
@@ -372,6 +471,10 @@ fs::remove_dir_all(&test_dir)?;
 |---|---|
 | `OntoEnv::init(config, overwrite)` | Create (or overwrite) an environment |
 | `OntoEnv::load_from_directory(root, read_only)` | Load an existing environment |
+| `OntoEnv::connect(config, sync, read_only)` | Connect while preserving persisted configuration |
+| `OntoEnv::connect_with_overrides(config, sync, read_only, overrides)` | Connect with explicit `ConfigOverrides` |
+| `OntoEnv::connect_with_graph_io_and_overrides(config, io, sync, read_only, overrides)` | Apply the same rules to a custom graph backend |
+| `OntoEnv::open_or_init_with_overrides(config, read_only, overrides)` | Open-or-create with explicit reopen overrides |
 | `find_ontoenv_root()` / `find_ontoenv_root_from(path)` | Locate the nearest `.ontoenv/` by walking up |
 | `env.update_all(all)` | Refresh discovered ontologies |
 | `env.add(location, Overwrite, RefreshStrategy)` | Add by file/URL |
@@ -392,11 +495,16 @@ fs::remove_dir_all(&test_dir)?;
 
 `bool` values still convert via `Into` for backward compatibility.
 
+For Rust reopen calls, fields in `ConfigOverrides` use `Option`: `None`
+preserves the persisted value and `Some(value)` replaces it. This includes
+`Some(false)` and `Some(Vec::new())`. Overrides change future behavior without
+implicitly calling `update()`.
+
 ---
 
 ## Building From Source
 
-**Prerequisites:** Rust 1.70+, Python 3.11+ (for Python bindings)
+**Prerequisites:** Rust 1.88+, Python 3.11+ (for Python bindings)
 
 ### Rust workspace
 
@@ -411,7 +519,7 @@ cargo test --workspace               # all Rust tests
 ```bash
 cd python
 uv run --group dev maturin develop              # editable dev install
-uv run python -m unittest discover -s tests     # run Python tests
+uv run --group dev pytest -q                    # run Python tests
 uv run --group dev maturin build --release      # wheels → python/target/wheels/
 ```
 
@@ -429,5 +537,11 @@ This exists because I have both `ontoenv` and `pyontoenv` on PyPI — a mistake 
 ### Version bumping
 
 ```bash
-./version <new-version>   # syncs all Cargo.toml files and Python pyproject.toml
+./version --check         # verify every internal crate requirement is synchronized
+./version <new-version>   # set the workspace version and rebuild package lockfiles
 ```
+
+Every Rust crate inherits its package version from `workspace.package.version`.
+Cargo requires explicit registry versions for publishable path dependencies,
+so the helper derives and validates those requirements from the same workspace
+version. Do not edit the individual crate versions directly.

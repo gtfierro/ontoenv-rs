@@ -1,0 +1,861 @@
+version = 1
+ontoenv_version = "0.6.0-a3"
+resolution_policy = "default"
+config_hash = "026d0501f1f9c833aa1ac54e58c05903fff910782f06a8597e5ca5526cf171e6"
+
+[[ontology]]
+iri = "http://data.ashrae.org/bacnet/2020"
+source = "brick/support/bacnet.ttl"
+content_hash = "e93004036c88590429c41c575873b33548849996af4deed53c99b2b011ae3497"
+
+[[ontology]]
+iri = "http://data.ashrae.org/bacnet/2020"
+source = "lib/fixtures/brick-stuff/support/bacnet.ttl"
+content_hash = "e93004036c88590429c41c575873b33548849996af4deed53c99b2b011ae3497"
+
+[[ontology]]
+iri = "http://datashapes.org/dash"
+source = "http://datashapes.org/dash"
+content_hash = "d6071ce120fc3242fe5d6004769f026859cbeb73c9cf693a529bfdc814124a73"
+imports = ["http://www.w3.org/ns/shacl#"]
+
+[[ontology]]
+iri = "http://datashapes.org/dash"
+source = "lib/fixtures/brick-stuff/support/dash.ttl"
+content_hash = "d6071ce120fc3242fe5d6004769f026859cbeb73c9cf693a529bfdc814124a73"
+imports = ["http://www.w3.org/ns/shacl#"]
+
+[[ontology]]
+iri = "http://example.org/ontology1"
+source = "lib/fixtures/rdftest/ontology1.ttl"
+content_hash = "b659e08a7ffcb5afa358b7e0587d223b5519dcb2e03f6209b47fb5e5985a5d77"
+
+[[ontology]]
+iri = "http://example.org/ontology2"
+source = "lib/fixtures/rdftest/ontology2.ttl"
+content_hash = "3608af0a8c7ec3df684266f355b2aabcdda20ff700febd0c445901a5398f49a1"
+imports = ["http://example.org/ontology1"]
+
+[[ontology]]
+iri = "http://example.org/ontology3"
+source = "lib/fixtures/rdftest/ontology3.ttl"
+content_hash = "94bc34fead8bcaee1fc80435b9e3e600c312408a83c221b40e61b5d2ca8121ac"
+imports = [
+    "http://example.org/ontology1",
+    "http://example.org/ontology2",
+]
+
+[[ontology]]
+iri = "http://example.org/ontology4"
+source = "lib/fixtures/rdftest/ontology4.ttl"
+content_hash = "dbb43f4ff3226db81dd97d6e5537de453cc4eacb1226b1ba5c8c682c73ab6c80"
+imports = ["http://example.org/ontology1"]
+
+[[ontology]]
+iri = "http://example.org/ontology5"
+source = "lib/fixtures/rdftest/ontology5.ttl"
+content_hash = "1dd77ad7e7d95b6a1a564ccbb7afaeb6fa30c86e23a4048ae833421937d7b8cf"
+imports = [
+    "http://example.org/ontology2",
+    "http://example.org/ontology3",
+    "http://example.org/ontology4",
+]
+
+[[ontology]]
+iri = "http://example.org/ontology6"
+source = "lib/fixtures/rdftest/ontology6.ttl"
+content_hash = "b62c6eb625ad10c486801a11e6c3e3d4b5b04d87fa843dae5a392b6cdf4ad401"
+imports = [
+    "http://example.org/ontology3",
+    "http://example.org/ontology4",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/extensions/functions"
+source = "http://qudt.org/2.1/schema/extensions/functions"
+content_hash = "36313cdfdcdc457305b83aa096200e02ed1634b7a57ad79688924d40fcc9253f"
+imports = ["http://spinrdf.org/spl"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/facade/qudt"
+source = "brick/support/SCHEMA-FACADE_QUDT-v2.1.ttl"
+content_hash = "e66337545d65810378bc04f5d5d264cf2aad227f4e8f045e49682f8dbcbf6626"
+imports = ["http://qudt.org/2.1/schema/shacl/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/facade/qudt"
+source = "http://qudt.org/2.1/schema/facade/qudt"
+content_hash = "588bf0abb4e8afcfb3e29825ab3dc53431efb969da747e8588895a219993961a"
+imports = [
+    "http://qudt.org/2.1/schema/extensions/functions",
+    "http://qudt.org/2.1/schema/qudt",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/facade/qudt"
+source = "lib/fixtures/brick-stuff/support/SCHEMA-FACADE_QUDT-v2.1.ttl"
+content_hash = "e66337545d65810378bc04f5d5d264cf2aad227f4e8f045e49682f8dbcbf6626"
+imports = ["http://qudt.org/2.1/schema/shacl/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/qudt"
+source = "http://qudt.org/2.1/schema/qudt"
+content_hash = "ae0667770506b4e77a6b25a31886153c77c2b33d1969e46c9ad9a090a14e53b0"
+version_iri = "<http://qudt.org/2.1/schema/qudt>"
+imports = [
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/shacl/overlay/qudt"
+source = "brick/support/SHACL-SCHEMA-SUPPLEMENT_QUDT-v2.1.ttl"
+content_hash = "945b54c2074e85fc4da14f499641a1fb6f9ea9eb4b6597636f3f7c3f6d4bf4de"
+version_iri = "<http://qudt.org/2.1/schema/shacl/overlay/qudt>"
+imports = [
+    "http://qudt.org/2.1/schema/shacl/qudt",
+    "http://www.w3.org/ns/shacl#",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/shacl/overlay/qudt"
+source = "http://qudt.org/2.1/schema/shacl/overlay/qudt"
+content_hash = "56818555486844c765dc10caa260da4aee23b2ccd9ed8cf4f546ed09de957260"
+version_iri = "<http://qudt.org/2.1/schema/shacl/overlay/qudt>"
+imports = [
+    "http://qudt.org/2.1/schema/shacl/qudt",
+    "http://www.w3.org/ns/shacl#",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/shacl/overlay/qudt"
+source = "lib/fixtures/brick-stuff/support/SHACL-SCHEMA-SUPPLEMENT_QUDT-v2.1.ttl"
+content_hash = "945b54c2074e85fc4da14f499641a1fb6f9ea9eb4b6597636f3f7c3f6d4bf4de"
+version_iri = "<http://qudt.org/2.1/schema/shacl/overlay/qudt>"
+imports = [
+    "http://qudt.org/2.1/schema/shacl/qudt",
+    "http://www.w3.org/ns/shacl#",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/shacl/qudt"
+source = "brick/support/SCHEMA_QUDT_NoOWL-v2.1.ttl"
+content_hash = "9c7ef80d21407fb2917a88c437c4890dbfd24e6ab44ed9bdbff06d6d0f51c7fc"
+version_iri = "<http://qudt.org/2.1/schema/shacl/qudt>"
+imports = [
+    "http://qudt.org/2.1/schema/shacl/overlay/qudt",
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+    "http://www.w3.org/ns/shacl#",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/shacl/qudt"
+source = "http://qudt.org/2.1/schema/shacl/qudt"
+content_hash = "4b2e4221e2dc50afabc76c757e0f598e9c74088bf502b71188a9bae104427cfe"
+version_iri = "<http://qudt.org/2.1/schema/shacl/qudt>"
+imports = [
+    "http://qudt.org/2.1/schema/shacl/datatype",
+    "http://qudt.org/2.1/schema/shacl/overlay/qudt",
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+    "http://www.w3.org/ns/shacl#",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/schema/shacl/qudt"
+source = "lib/fixtures/brick-stuff/support/SCHEMA_QUDT_NoOWL-v2.1.ttl"
+content_hash = "9c7ef80d21407fb2917a88c437c4890dbfd24e6ab44ed9bdbff06d6d0f51c7fc"
+version_iri = "<http://qudt.org/2.1/schema/shacl/qudt>"
+imports = [
+    "http://qudt.org/2.1/schema/shacl/overlay/qudt",
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+    "http://www.w3.org/ns/shacl#",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/currency"
+source = "brick/support/VOCAB_QUDT-UNITS-CURRENCY-v2.1.ttl"
+content_hash = "4b8b424376a7f6be113fed4443cf6ae73bae83643d4abe9ab7042ced5e2eff00"
+version_iri = "<http://qudt.org/2.1/vocab/currency>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/unit",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/currency"
+source = "lib/fixtures/brick-stuff/support/VOCAB_QUDT-UNITS-CURRENCY-v2.1.ttl"
+content_hash = "4b8b424376a7f6be113fed4443cf6ae73bae83643d4abe9ab7042ced5e2eff00"
+version_iri = "<http://qudt.org/2.1/vocab/currency>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/unit",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/dimensionvector"
+source = "brick/support/VOCAB_QUDT-DIMENSION-VECTORS-v2.1.ttl"
+content_hash = "a380e33480e11ff921fb9240427da0b085ddf24fe64b6564069f049cbd9fd5f7"
+version_iri = "<http://qudt.org/2.1/vocab/dimensionvector>"
+imports = ["http://qudt.org/2.1/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/dimensionvector"
+source = "http://qudt.org/2.1/vocab/dimensionvector"
+content_hash = "0e6853d6ee421e7a3c2c8f7d9f31bc42af8eca57ec31608c0d14b5fc6ea50b09"
+version_iri = "<http://qudt.org/2.1/vocab/dimensionvector>"
+imports = ["http://qudt.org/2.1/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/dimensionvector"
+source = "lib/fixtures/brick-stuff/support/VOCAB_QUDT-DIMENSION-VECTORS-v2.1.ttl"
+content_hash = "a380e33480e11ff921fb9240427da0b085ddf24fe64b6564069f049cbd9fd5f7"
+version_iri = "<http://qudt.org/2.1/vocab/dimensionvector>"
+imports = ["http://qudt.org/2.1/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/prefix"
+source = "brick/support/VOCAB_QUDT-PREFIX-v2.1.ttl"
+content_hash = "66e9174b9a663d88b6c948c80562479e1b81998ca6fe5cfaf901caed1119c641"
+version_iri = "<http://qudt.org/2.1/vocab/prefix>"
+imports = ["http://qudt.org/2.1/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/prefix"
+source = "brick/support/VOCAB_QUDT-PREFIXES-v2.1.ttl"
+content_hash = "bbfc42ca19a229bffa82685631517926cda1dca08439b38a52526d94743d0dc9"
+version_iri = "<http://qudt.org/2.1/vocab/prefix>"
+imports = ["http://qudt.org/2.1/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/prefix"
+source = "http://qudt.org/2.1/vocab/prefix"
+content_hash = "d3e4ac19a1ed8ec5dbcf6564439120d5b89eb3f12aac52eb2140d6b4d4beb65f"
+version_iri = "<http://qudt.org/2.1/vocab/prefix>"
+imports = ["http://qudt.org/2.1/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/prefix"
+source = "lib/fixtures/brick-stuff/support/VOCAB_QUDT-PREFIX-v2.1.ttl"
+content_hash = "66e9174b9a663d88b6c948c80562479e1b81998ca6fe5cfaf901caed1119c641"
+version_iri = "<http://qudt.org/2.1/vocab/prefix>"
+imports = ["http://qudt.org/2.1/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/quantitykind"
+source = "brick/support/VOCAB_QUDT-QUANTITY-KINDS-ALL-v2.1.ttl"
+content_hash = "76266279c62fe44f0fe7654ba5bfe2f28604a088baa58267ebf9dc6cc82a3810"
+version_iri = "<http://qudt.org/2.1/vocab/quantitykind>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/dimensionvector",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/quantitykind"
+source = "http://qudt.org/2.1/vocab/quantitykind"
+content_hash = "ee8a257cade1117f2425205e0989d40073a044b3747b72ac0b0e44a7544cb7a2"
+version_iri = "<http://qudt.org/2.1/vocab/quantitykind>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/dimensionvector",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/quantitykind"
+source = "lib/fixtures/brick-stuff/support/VOCAB_QUDT-QUANTITY-KINDS-ALL-v2.1.ttl"
+content_hash = "76266279c62fe44f0fe7654ba5bfe2f28604a088baa58267ebf9dc6cc82a3810"
+version_iri = "<http://qudt.org/2.1/vocab/quantitykind>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/dimensionvector",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/sou"
+source = "brick/support/VOCAB_QUDT-SYSTEM-OF-UNITS-ALL-v2.1.ttl"
+content_hash = "cebdf6e529ba6632b1742c297d117b70da2ebf8b1a93f81851a691a2c2718f90"
+version_iri = "<http://qudt.org/2.1/vocab/sou>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/prefix",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/sou"
+source = "http://qudt.org/2.1/vocab/sou"
+content_hash = "22b9f60d2436b2dd36f8404754b03f3247a4aaf77788d654a92b5b507374b24b"
+version_iri = "<http://qudt.org/2.1/vocab/sou>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/prefix",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/sou"
+source = "lib/fixtures/brick-stuff/support/VOCAB_QUDT-SYSTEM-OF-UNITS-ALL-v2.1.ttl"
+content_hash = "cebdf6e529ba6632b1742c297d117b70da2ebf8b1a93f81851a691a2c2718f90"
+version_iri = "<http://qudt.org/2.1/vocab/sou>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/prefix",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/unit"
+source = "brick/support/VOCAB_QUDT-UNITS-ALL-v2.1.ttl"
+content_hash = "091416453a9be77c0ac13d632b1fdc85938048355caf06fa03867361b5932df6"
+version_iri = "<http://qudt.org/2.1/vocab/unit>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/prefix",
+    "http://qudt.org/2.1/vocab/quantitykind",
+    "http://qudt.org/2.1/vocab/sou",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/unit"
+source = "http://qudt.org/2.1/vocab/unit"
+content_hash = "561165e1aba0a9ddb93df6cf2d45e8c25101b3a02c4db13aa1801dbecdf8eedd"
+version_iri = "<http://qudt.org/2.1/vocab/unit>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/prefix",
+    "http://qudt.org/2.1/vocab/quantitykind",
+    "http://qudt.org/2.1/vocab/sou",
+]
+
+[[ontology]]
+iri = "http://qudt.org/2.1/vocab/unit"
+source = "lib/fixtures/brick-stuff/support/VOCAB_QUDT-UNITS-ALL-v2.1.ttl"
+content_hash = "091416453a9be77c0ac13d632b1fdc85938048355caf06fa03867361b5932df6"
+version_iri = "<http://qudt.org/2.1/vocab/unit>"
+imports = [
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/vocab/prefix",
+    "http://qudt.org/2.1/vocab/quantitykind",
+    "http://qudt.org/2.1/vocab/sou",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.1.8/schema/facade/qudt"
+source = "http://qudt.org/3.1.8/schema/facade/qudt"
+content_hash = "ab057b0d9243ee43c07fe609f04156f9383bf8ed54adf26373d33e303889733d"
+imports = [
+    "http://qudt.org/3.1.8/collection/usertest",
+    "http://qudt.org/3.1.8/schema/qudt",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.1.8/schema/qudt"
+source = "http://qudt.org/3.1.8/schema/qudt"
+content_hash = "a8c07b084bdc0f3957d1de9059521cf62a31f30aeed52b32dbcb38568824f023"
+version_iri = "<http://qudt.org/3.1.8/schema/qudt>"
+imports = [
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.1.8/vocab/dimensionvector"
+source = "http://qudt.org/3.1.8/vocab/dimensionvector"
+content_hash = "70c96ea5cf1900d752fa84e97b8d664176af503ddcee0f360aa48e4a2d37ca19"
+version_iri = "<http://qudt.org/3.1.8/vocab/dimensionvector>"
+imports = ["http://qudt.org/3.1.8/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/3.1.8/vocab/prefix"
+source = "http://qudt.org/3.1.8/vocab/prefix"
+content_hash = "ffb0dda7e7920dd858f33d917dca2c807757ba7343ae7fca856f97559dca750f"
+version_iri = "<http://qudt.org/3.1.8/vocab/prefix>"
+imports = ["http://qudt.org/3.1.8/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/3.1.8/vocab/quantitykind"
+source = "http://qudt.org/3.1.8/vocab/quantitykind"
+content_hash = "72b00c85d51918c09df41a9b03150ebcc61d63f22ddc906efe645aad8d3b62d1"
+version_iri = "<http://qudt.org/3.1.8/vocab/quantitykind>"
+imports = [
+    "http://qudt.org/3.1.8/schema/facade/qudt",
+    "http://qudt.org/3.1.8/vocab/dimensionvector",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.1.8/vocab/sou"
+source = "http://qudt.org/3.1.8/vocab/sou"
+content_hash = "53bc0e423da5d7f8e8b61cf6bec151a722bde18f6336c21ad4c9db3aee287930"
+version_iri = "<http://qudt.org/3.1.8/vocab/sou>"
+imports = [
+    "http://qudt.org/3.1.8/schema/facade/qudt",
+    "http://qudt.org/3.1.8/vocab/prefix",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.1.8/vocab/unit"
+source = "http://qudt.org/3.1.8/vocab/unit"
+content_hash = "127b801108e3480da14161f2aeef21def8dcfc79a2d628e43dd194a14cf38f8a"
+version_iri = "<http://qudt.org/3.1.8/vocab/unit>"
+imports = [
+    "http://qudt.org/3.1.8/schema/facade/qudt",
+    "http://qudt.org/3.1.8/vocab/prefix",
+    "http://qudt.org/3.1.8/vocab/quantitykind",
+    "http://qudt.org/3.1.8/vocab/sou",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/collection/usertest"
+source = "http://qudt.org/3.3.0/collection/usertest"
+content_hash = "67a22508bf5b508e63795c371ea9b40cd653dc3a4f364447d7a694c79ff4e7d4"
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/schema/coordinateSystems"
+source = "http://qudt.org/3.3.0/schema/coordinateSystems"
+content_hash = "ed603648688e7c379d7f85743224bc365d5c1be9a8e8051ab0a04d5847302927"
+version_iri = "<http://qudt.org/3.3.0/schema/coordinateSystems>"
+imports = [
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/schema/datatype"
+source = "http://qudt.org/3.3.0/schema/datatype"
+content_hash = "662f79d3cfa40ccc84071fc475de6df0ee1dd96f3f8629a0419fa9cb1b0c16af"
+version_iri = "<http://qudt.org/3.3.0/schema/datatype>"
+imports = [
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/schema/facade/qudt"
+source = "http://qudt.org/3.3.0/schema/facade/qudt"
+content_hash = "2da84da61f76a05170d2cfa27ae441fb4749af9a5ae09c499ba6f80cd925cc1e"
+imports = [
+    "http://qudt.org/3.3.0/collection/usertest",
+    "http://qudt.org/3.3.0/schema/qudt",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/schema/qudt"
+source = "http://qudt.org/3.3.0/schema/qudt"
+content_hash = "b6faaac1e46e2b5155cb2838d5498e7b8b5160ea1903e2da81ee6f11b64399f9"
+version_iri = "<http://qudt.org/3.3.0/schema/qudt>"
+imports = [
+    "http://qudt.org/3.3.0/schema/coordinateSystems",
+    "http://qudt.org/3.3.0/schema/datatype",
+    "http://www.linkedmodel.org/schema/dtype",
+    "http://www.linkedmodel.org/schema/vaem",
+    "http://www.w3.org/2004/02/skos/core",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/vocab/dimensionvector"
+source = "http://qudt.org/3.3.0/vocab/dimensionvector"
+content_hash = "af46133d892960e1eb71c39b08d7350b3e91a5f4734ba8f5c3c1ae6ea26f06a3"
+version_iri = "<http://qudt.org/3.3.0/vocab/dimensionvector>"
+imports = ["http://qudt.org/3.3.0/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/vocab/prefix"
+source = "http://qudt.org/3.3.0/vocab/prefix"
+content_hash = "0cbbc999cab4cd4193674fb7fb22483cdbcc9779f1358227e820fa473046aad0"
+version_iri = "<http://qudt.org/3.3.0/vocab/prefix>"
+imports = ["http://qudt.org/3.3.0/schema/facade/qudt"]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/vocab/quantitykind"
+source = "http://qudt.org/3.3.0/vocab/quantitykind"
+content_hash = "40d7a47bae44ba2e276b8eda592773e817f099e8d0743ea82815fe73c876bf90"
+version_iri = "<http://qudt.org/3.3.0/vocab/quantitykind>"
+imports = [
+    "http://qudt.org/3.3.0/schema/facade/qudt",
+    "http://qudt.org/3.3.0/vocab/dimensionvector",
+    "http://qudt.org/3.3.0/vocab/soqk",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/vocab/soqk"
+source = "http://qudt.org/3.3.0/vocab/soqk"
+content_hash = "b5f29a916217ed67166500a9a31916ac24898538ad05316e50d4301b9e09beb9"
+version_iri = "<http://qudt.org/3.3.0/vocab/soqk>"
+imports = [
+    "http://qudt.org/3.3.0/schema/facade/qudt",
+    "http://qudt.org/3.3.0/vocab/sou",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/vocab/sou"
+source = "http://qudt.org/3.3.0/vocab/sou"
+content_hash = "e477a14b1aa46a61af37eac1c71ee1ebfc07a91191351703fcfa11f669f1da2e"
+version_iri = "<http://qudt.org/3.3.0/vocab/sou>"
+imports = [
+    "http://qudt.org/3.3.0/schema/facade/qudt",
+    "http://qudt.org/3.3.0/vocab/prefix",
+]
+
+[[ontology]]
+iri = "http://qudt.org/3.3.0/vocab/unit"
+source = "http://qudt.org/3.3.0/vocab/unit"
+content_hash = "3ffcece3d86dcdd4574ba6a2a11ca5aef7bc293e46e48f1eda492ada0134b266"
+version_iri = "<http://qudt.org/3.3.0/vocab/unit>"
+imports = [
+    "http://qudt.org/3.3.0/schema/facade/qudt",
+    "http://qudt.org/3.3.0/vocab/prefix",
+    "http://qudt.org/3.3.0/vocab/quantitykind",
+    "http://qudt.org/3.3.0/vocab/sou",
+]
+
+[[ontology]]
+iri = "http://spinrdf.org/sp"
+source = "http://spinrdf.org/sp"
+content_hash = "f28b858539598b36ef64613165b2ca196264f79c9ce25d5e10ecb5627107a788"
+
+[[ontology]]
+iri = "http://spinrdf.org/spin"
+source = "http://spinrdf.org/spin"
+content_hash = "33ac37e20768e151acbf0aff6884a2a9d16417d404bf37e4fcb45d8cb4f05554"
+imports = ["http://spinrdf.org/sp"]
+
+[[ontology]]
+iri = "http://spinrdf.org/spl"
+source = "http://spinrdf.org/spl"
+content_hash = "c5fa29829799fcdac45bc846f380557b7ea4ba8a036010d390292e5eb33b14e4"
+imports = ["http://spinrdf.org/spin"]
+
+[[ontology]]
+iri = "http://www.linkedmodel.org/schema/dtype"
+source = "http://www.linkedmodel.org/schema/dtype"
+content_hash = "3a023660c0d8f19bdf941756c164d595413cbbc9b20e027a2b355fff1215b2a3"
+version_iri = "<http://www.linkedmodel.org/schema/dtype>"
+imports = ["http://www.linkedmodel.org/schema/vaem"]
+
+[[ontology]]
+iri = "http://www.linkedmodel.org/schema/dtype"
+source = "lib/fixtures/brick-stuff/support/dtype.xml"
+content_hash = "3a023660c0d8f19bdf941756c164d595413cbbc9b20e027a2b355fff1215b2a3"
+version_iri = "<http://www.linkedmodel.org/schema/dtype>"
+imports = ["http://www.linkedmodel.org/schema/vaem"]
+
+[[ontology]]
+iri = "http://www.linkedmodel.org/schema/vaem"
+source = "http://www.linkedmodel.org/schema/vaem"
+content_hash = "428dd9c5e992169aaafbc120d79add28b70844c79021c8a93a3d3397519a7d71"
+
+[[ontology]]
+iri = "http://www.linkedmodel.org/schema/vaem"
+source = "lib/fixtures/brick-stuff/support/vaem.xml"
+content_hash = "428dd9c5e992169aaafbc120d79add28b70844c79021c8a93a3d3397519a7d71"
+
+[[ontology]]
+iri = "http://www.w3.org/2004/02/skos/core"
+source = "http://www.w3.org/2004/02/skos/core"
+content_hash = "ff114c5c20184d31e9ccbc59091b689dd108ec94910ed019446b6fdc5855cbfa"
+
+[[ontology]]
+iri = "http://www.w3.org/2004/02/skos/core"
+source = "lib/fixtures/brick-stuff/support/skos.ttl"
+content_hash = "a64a48966dacbf5f6abd1dc2c401ded77b71fb6ab19563d7990751892db8721c"
+
+[[ontology]]
+iri = "http://www.w3.org/ns/shacl#"
+source = "http://www.w3.org/ns/shacl#"
+content_hash = "6cfb01a621afc8420f57e90e21f7d79acfdbbbab99d4f374bcf4be46fb18ce42"
+
+[[ontology]]
+iri = "http://www.w3.org/ns/shacl#"
+source = "lib/fixtures/brick-stuff/support/shacl.ttl"
+content_hash = "6cfb01a621afc8420f57e90e21f7d79acfdbbbab99d4f374bcf4be46fb18ce42"
+
+[[ontology]]
+iri = "https://brickschema.org/schema/1.3/Brick"
+source = "https://brickschema.org/schema/1.3/Brick"
+content_hash = "c50bb24f13a9d921a67053bb446f968a5f96c6fb798c2d4a8365f1ee231957be"
+
+[[ontology]]
+iri = "https://brickschema.org/schema/1.3/Brick"
+source = "lib/fixtures/brick-stuff/Brick-1.3.ttl"
+content_hash = "fef63ce358269bfbbf64701c5ce8240221b1beda87e6d457fc51fe09fa5e7b0f"
+imports = [
+    "http://data.ashrae.org/bacnet/2020",
+    "http://qudt.org/2.1/schema/shacl/overlay/qudt",
+    "http://qudt.org/2.1/schema/shacl/qudt",
+    "http://qudt.org/2.1/vocab/dimensionvector",
+    "http://qudt.org/2.1/vocab/prefix",
+    "http://qudt.org/2.1/vocab/quantitykind",
+    "http://qudt.org/2.1/vocab/sou",
+    "http://qudt.org/2.1/vocab/unit",
+    "https://brickschema.org/schema/Brick/ref",
+    "https://w3id.org/rec/recimports",
+]
+
+[[ontology]]
+iri = "https://brickschema.org/schema/1.3/Brick"
+source = "lib/model_out.ttl"
+content_hash = "95d3961a0319383e7a45b08605f1835ba8ea9a72a3cc886ce5055dd64d524468"
+imports = [
+    "http://data.ashrae.org/bacnet/2020",
+    "http://qudt.org/2.1/schema/shacl/overlay/qudt",
+    "http://qudt.org/2.1/schema/shacl/qudt",
+    "http://qudt.org/2.1/vocab/dimensionvector",
+    "http://qudt.org/2.1/vocab/prefix",
+    "http://qudt.org/2.1/vocab/quantitykind",
+    "http://qudt.org/2.1/vocab/sou",
+    "http://qudt.org/2.1/vocab/unit",
+    "https://brickschema.org/schema/Brick/ref",
+    "https://w3id.org/rec/recimports",
+]
+
+[[ontology]]
+iri = "https://brickschema.org/schema/1.4-rc1/Brick"
+source = "lib/fixtures/Brick-1.4-rc1.ttl"
+content_hash = "91abe773d3fa5bf86a8e72ccfacf5ffb3b369828a5770a5144f280c77ad8dbcc"
+imports = [
+    "http://data.ashrae.org/bacnet/2020",
+    "http://qudt.org/2.1/schema/shacl/overlay/qudt",
+    "http://qudt.org/2.1/schema/shacl/qudt",
+    "http://qudt.org/2.1/vocab/dimensionvector",
+    "http://qudt.org/2.1/vocab/prefix",
+    "http://qudt.org/2.1/vocab/quantitykind",
+    "http://qudt.org/2.1/vocab/sou",
+    "http://qudt.org/2.1/vocab/unit",
+    "https://brickschema.org/schema/Brick/ref",
+    "https://w3id.org/rec/recimports",
+]
+
+[[ontology]]
+iri = "https://brickschema.org/schema/1.4/Brick"
+source = "brick/Brick.ttl"
+content_hash = "ef74fafc382a0acab4647bfee7aa55865bd3894bfa622bb67e9bf44ff64f8f3c"
+imports = [
+    "http://data.ashrae.org/bacnet/2020",
+    "http://qudt.org/3.1.8/vocab/quantitykind",
+    "http://qudt.org/3.1.8/vocab/unit",
+    "https://brickschema.org/schema/Brick/ref",
+    "https://w3id.org/rec",
+    "https://w3id.org/rec/recimports",
+]
+
+[[ontology]]
+iri = "https://brickschema.org/schema/1.4/Brick"
+source = "https://brickschema.org/schema/1.4/Brick"
+content_hash = "64f75055e6930101bdfc7cdd436388097de6c5f7064e9dbbff8f07dd23c5eb90"
+imports = [
+    "http://data.ashrae.org/bacnet/2020",
+    "http://qudt.org/2.1/collection/usertest",
+    "http://qudt.org/2.1/schema/facade/qudt",
+    "http://qudt.org/2.1/schema/shacl/overlay/qudt",
+    "http://qudt.org/2.1/schema/shacl/qudt",
+    "http://qudt.org/2.1/vocab/dimensionvector",
+    "http://qudt.org/2.1/vocab/prefix",
+    "http://qudt.org/2.1/vocab/quantitykind",
+    "http://qudt.org/2.1/vocab/sou",
+    "http://qudt.org/2.1/vocab/unit",
+    "https://brickschema.org/schema/Brick/ref",
+    "https://w3id.org/rec/recimports",
+]
+
+[[ontology]]
+iri = "https://brickschema.org/schema/1.5/Brick"
+source = "Brick.ttl"
+content_hash = "93e4627ddf489490c46e0f7aebe93f1e9bbcc2912f175222bbff1becfc4232b8"
+imports = [
+    "http://data.ashrae.org/bacnet",
+    "http://qudt.org/3.3.0/vocab/quantitykind",
+    "http://qudt.org/3.3.0/vocab/unit",
+    "https://brickschema.org/schema/Brick/ref",
+    "https://w3id.org/rec/recimports",
+]
+
+[[ontology]]
+iri = "https://brickschema.org/schema/Brick/ref"
+source = "brick/support/ref-schema.ttl"
+content_hash = "c6f4b009c04770e8713f79bccd7db29d4a4f8c31cb028695374a1b68cc2498bb"
+
+[[ontology]]
+iri = "https://brickschema.org/schema/Brick/ref"
+source = "lib/fixtures/brick-stuff/support/ref-schema.ttl"
+content_hash = "c6f4b009c04770e8713f79bccd7db29d4a4f8c31cb028695374a1b68cc2498bb"
+
+[[ontology]]
+iri = "https://w3id.org/rec"
+source = "brick/support/rec.ttl"
+content_hash = "abb56c38e4c46c5d3fb9ff0d13afc686d1e5c97748bd005e938a6a7af7370d47"
+imports = [
+    "http://datashapes.org/dash",
+    "https://brickschema.org/schema/1.3/Brick",
+    "https://w3id.org/rec/brickpatches",
+]
+
+[[ontology]]
+iri = "https://w3id.org/rec"
+source = "https://w3id.org/rec"
+content_hash = "51fefb560e45efcb86400b8ac2d2fbe9aed4cde445f5941dd3abbf2189269bc2"
+imports = [
+    "http://datashapes.org/dash",
+    "https://brickschema.org/schema/1.3/Brick",
+    "https://w3id.org/rec/brickpatches",
+]
+
+[[ontology]]
+iri = "https://w3id.org/rec"
+source = "lib/fixtures/brick-stuff/support/rec.ttl"
+content_hash = "abb56c38e4c46c5d3fb9ff0d13afc686d1e5c97748bd005e938a6a7af7370d47"
+imports = [
+    "http://datashapes.org/dash",
+    "https://brickschema.org/schema/1.3/Brick",
+    "https://w3id.org/rec/brickpatches",
+]
+
+[[ontology]]
+iri = "https://w3id.org/rec/brickpatches"
+source = "brick/support/brickpatches.ttl"
+content_hash = "d5f3b5a22a6b2565319655c8b930153fe6e9430078979c70f45ef0014a85c0d7"
+imports = [
+    "https://brickschema.org/schema/1.3/Brick",
+    "https://w3id.org/rec",
+]
+
+[[ontology]]
+iri = "https://w3id.org/rec/brickpatches"
+source = "lib/fixtures/brick-stuff/support/brickpatches.ttl"
+content_hash = "d5f3b5a22a6b2565319655c8b930153fe6e9430078979c70f45ef0014a85c0d7"
+imports = [
+    "https://brickschema.org/schema/1.3/Brick",
+    "https://w3id.org/rec",
+]
+
+[[ontology]]
+iri = "https://w3id.org/rec/recimports"
+source = "brick/support/recimports.ttl"
+content_hash = "76f1318a2980787bf74bd99438af8ff7b1b28362fe195d9b4a75a5f5b6ca04fa"
+imports = ["https://w3id.org/rec"]
+
+[[ontology]]
+iri = "https://w3id.org/rec/recimports"
+source = "lib/fixtures/brick-stuff/support/recimports.ttl"
+content_hash = "76f1318a2980787bf74bd99438af8ff7b1b28362fe195d9b4a75a5f5b6ca04fa"
+imports = ["https://w3id.org/rec"]
+
+[[ontology]]
+iri = "urn:bldg"
+source = "lib/fixtures/brick-stuff/model.n3"
+content_hash = "730be962dd9568f39c56368c14a3b5cda1585204e7e551307bd7c72ce623d913"
+imports = ["https://brickschema.org/schema/1.4/Brick"]
+
+[[ontology]]
+iri = "urn:bldg"
+source = "lib/fixtures/brick-stuff/model.ttl"
+content_hash = "7179c86545689977f22529bc2d74a54af7bd5ce7b6c3d809ff5f273fccb8b8ba"
+imports = ["https://brickschema.org/schema/1.4/Brick"]
+
+[[ontology]]
+iri = "urn:bldg"
+source = "lib/fixtures/brick-stuff/model.xml"
+content_hash = "1c03d9d97e974710b52a5fc4eef6e6cd7e3692d4af291da4e38522fd70e3d101"
+imports = ["https://brickschema.org/schema/1.4/Brick"]
+
+[[ontology]]
+iri = "urn:bldg"
+source = "lib/fixtures/fileendings/model.n3"
+content_hash = "730be962dd9568f39c56368c14a3b5cda1585204e7e551307bd7c72ce623d913"
+imports = ["https://brickschema.org/schema/1.4/Brick"]
+
+[[ontology]]
+iri = "urn:bldg"
+source = "lib/fixtures/fileendings/model.ttl"
+content_hash = "7179c86545689977f22529bc2d74a54af7bd5ce7b6c3d809ff5f273fccb8b8ba"
+imports = ["https://brickschema.org/schema/1.4/Brick"]
+
+[[ontology]]
+iri = "urn:bldg"
+source = "lib/fixtures/fileendings/model.xml"
+content_hash = "1c03d9d97e974710b52a5fc4eef6e6cd7e3692d4af291da4e38522fd70e3d101"
+imports = ["https://brickschema.org/schema/1.4/Brick"]
+
+[[ontology]]
+iri = "urn:example:demo"
+source = "python/tests/fixtures/rdflib_store/demo.ttl"
+content_hash = "65cba21970eb03dd531fc53e43dc9c2b6047019baadb14337d5835ac601cf98f"
+
+[[ontology]]
+iri = "urn:example:first"
+source = "python/tests/fixtures/rdflib_store/first.ttl"
+content_hash = "b9b6529e277658a21b288c1ce5c91e1f01d5e3107f294815dfad9e7e50244560"
+
+[[ontology]]
+iri = "urn:example:second"
+source = "python/tests/fixtures/rdflib_store/second.ttl"
+content_hash = "ec242f4401711dace25b5aa91aa66141f4559b751dfd33e8e731a22770c3d77e"
+
+[[ontology]]
+iri = "urn:ont1"
+source = "lib/fixtures/ont1.ttl"
+content_hash = "36e237fdbdc1ace0d0e84fc838b4200379e23b501d045eef485eb20ca795cb1a"
+imports = ["urn:ont3"]
+
+[[ontology]]
+iri = "urn:ont1"
+source = "lib/fixtures/updates/v1/ont1.ttl"
+content_hash = "90c1c5634f8054d82ccbe5eafb15b9ac1ca122b4d5daf875cdf2a9237f19172d"
+imports = [
+    "urn:ont2",
+    "urn:ont3",
+]
+
+[[ontology]]
+iri = "urn:ont2"
+source = "lib/fixtures/ont2.ttl"
+content_hash = "d2073aaa2fa38d5f7e0c5e9ff9acd89165b29584a4025152d6d23aee70babfbd"
+imports = [
+    "urn:ont3",
+    "urn:ont4",
+]
+
+[[ontology]]
+iri = "urn:ont2"
+source = "lib/fixtures/updates/v1/ont2.ttl"
+content_hash = "a8f5a4daa411d8c519272e90c539635935c1591829f0fdb31b80b7c3be38601a"
+imports = ["urn:ont4"]
+
+[[ontology]]
+iri = "urn:ont3"
+source = "lib/fixtures/ont3.ttl"
+content_hash = "319ba2557222790ab329a931fc87455e3313d495c761c53705247c5f8eaf228f"
+imports = ["urn:ont4"]
+
+[[ontology]]
+iri = "urn:ont3"
+source = "lib/fixtures/updates/v1/ont3.ttl"
+content_hash = "319ba2557222790ab329a931fc87455e3313d495c761c53705247c5f8eaf228f"
+imports = ["urn:ont4"]
+
+[[ontology]]
+iri = "urn:ont3"
+source = "lib/fixtures/updates/v2/ont3.ttl"
+content_hash = "a2f3d3c2a5bdbfeeaaae428707fabcba7a4b2f7d2702d8e2cbbb3a8c59aa243a"
+imports = ["urn:ont5"]
+
+[[ontology]]
+iri = "urn:ont4"
+source = "lib/fixtures/ont4.ttl"
+content_hash = "6d367ff94305bf9c3ff19fc83e67b12e794f3cdad4c42d50d9c9a0bc7e0a207f"
+
+[[ontology]]
+iri = "urn:ont4"
+source = "lib/fixtures/updates/v1/ont4.ttl"
+content_hash = "6d367ff94305bf9c3ff19fc83e67b12e794f3cdad4c42d50d9c9a0bc7e0a207f"
+
+[[ontology]]
+iri = "urn:ont5"
+source = "lib/fixtures/updates/v2/ont5.ttl"
+content_hash = "075f25df0366c720885df0b03cc485dce38cb5b4030e9088518f63c242119051"

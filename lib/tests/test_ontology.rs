@@ -1,4 +1,5 @@
-use ontoenv::ontology::OntologyLocation;
+use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
+use ontoenv::FailedImport;
 use oxigraph::model::NamedNode;
 use url::Url;
 
@@ -50,4 +51,15 @@ fn test_ontology_location_to_iri() {
 
     // 4. The assertion will now pass on all platforms
     assert_eq!(location.to_iri(), expected_iri); // <-- REMOVED .unwrap()
+}
+
+#[test]
+fn failed_import_exposes_structured_context() {
+    let id = GraphIdentifier::new(
+        oxigraph::model::NamedNodeRef::new("https://example.org/missing").unwrap(),
+    );
+    let failure = FailedImport::new(id.clone(), "backend unavailable".to_string());
+
+    assert_eq!(failure.ontology(), &id);
+    assert_eq!(failure.error(), "backend unavailable");
 }

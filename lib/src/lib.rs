@@ -93,6 +93,7 @@
 extern crate derive_builder;
 
 pub mod api;
+pub mod catalog;
 pub mod config;
 pub mod consts;
 pub mod doctor;
@@ -163,17 +164,30 @@ impl ToUriString for &GraphIdentifier {
     }
 }
 
-// Keep error context lightweight and printable without tying to a specific
-// error type; this gets surfaced in CLI output and logs.
+/// A graph omitted from a best-effort union and the backend error that caused it.
+///
+/// The fields are exposed through accessors so callers can handle failures
+/// structurally without parsing the human-readable [`Display`] output.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailedImport {
     ontology: GraphIdentifier,
     error: String,
 }
 
 impl FailedImport {
+    /// Construct a failure for `ontology`.
     pub fn new(ontology: GraphIdentifier, error: String) -> Self {
-        // Store only the minimum context needed for user-facing diagnostics.
         Self { ontology, error }
+    }
+
+    /// Return the graph that could not be included.
+    pub fn ontology(&self) -> &GraphIdentifier {
+        &self.ontology
+    }
+
+    /// Return the backend error message.
+    pub fn error(&self) -> &str {
+        &self.error
     }
 }
 

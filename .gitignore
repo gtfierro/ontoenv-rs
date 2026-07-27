@@ -5,3 +5,9 @@ docs/_build/
 docs/_doctrees/
 docs/.venv/
 .uv-cache/
+*.bak
+__pycache__/
+*.pyc
+/brick/
+/python/test.ttl
+/lib/model_out.ttl

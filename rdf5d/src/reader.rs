@@ -18,7 +18,13 @@
 //! }
 //! ```
 
-use std::{borrow::Cow, fmt, fs, path::Path};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    fmt, fs,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 
 use crate::header::{
     Header, Section, SectionKind, TocEntry, crc32_ieee, parse_footer, parse_toc, section_in_bounds,
@@ -160,6 +166,24 @@ pub struct R5tuFile {
     idx_pair2gid: Section,
     #[allow(dead_code)]
     triple_blocks: Section,
+    /// Lazily-built reverse index mapping each in-dictionary term to its id.
+    /// Built once on first SPARQL term lookup; lock-free reads thereafter.
+    term_index: OnceLock<HashMap<DecodedTerm<'static>, u64>>,
+    /// In-memory overflow dictionary for terms absent from the on-disk term
+    /// dict (graph-name IRIs not present as data terms, computed query values,
+    /// etc.). These receive stable ids `>= term_dict.n_terms` that never
+    /// collide with a scanned id.
+    term_overflow: Mutex<TermOverflow>,
+}
+
+/// In-memory extension dictionary for terms not present on disk. See
+/// [`R5tuFile::intern_decoded`].
+#[derive(Debug, Default)]
+struct TermOverflow {
+    /// term -> overflow id
+    map: HashMap<DecodedTerm<'static>, u64>,
+    /// overflow id (minus `n_terms`) -> term, for reverse lookup.
+    terms: Vec<DecodedTerm<'static>>,
 }
 
 impl R5tuFile {
@@ -286,6 +310,88 @@ impl R5tuFile {
         Ok(None)
     }
 
+    /// Lazily-built reverse index over the on-disk term dictionary.
+    ///
+    /// Built once on first call by decoding every dictionary term; subsequent
+    /// calls are lock-free reads. This is the `O(1)` reverse lookup backing
+    /// [`Self::intern_decoded`].
+    /// Eagerly build the reverse term-id index (term -> id). Idempotent and
+    /// lock-free after the first build. Pays the one-time scan of the term
+    /// dictionary up front rather than billing it to the first
+    /// [`Self::term_id`] lookup in a query.
+    pub fn build_term_index(&self) {
+        let _ = self.term_index();
+    }
+
+    fn term_index(&self) -> &HashMap<DecodedTerm<'static>, u64> {
+        self.term_index.get_or_init(|| {
+            let n = self.term_dict.n_terms;
+            let mut map = HashMap::with_capacity(n as usize);
+            for id in 0..n {
+                if let Ok(term) = self.term_dict.decoded_term(self.bytes(), id) {
+                    map.insert(term.into_owned(), id);
+                }
+            }
+            map
+        })
+    }
+
+    /// Number of terms in the on-disk term dictionary. Ids `< num_terms()` are
+    /// stored terms; ids `>= num_terms()` are in-memory overflow terms (see
+    /// [`Self::intern_decoded`]).
+    pub fn num_terms(&self) -> u64 {
+        self.term_dict.n_terms
+    }
+
+    /// Looks up a decoded term's on-disk id without interning. Returns `None`
+    /// for terms absent from the dictionary. `O(1)` after the first call
+    /// (which lazily builds the reverse index).
+    pub fn term_id(&self, term: &DecodedTerm<'_>) -> Option<u64> {
+        self.term_index().get(term).copied()
+    }
+
+    /// Resolves a decoded term to a stable term id for SPARQL evaluation.
+    ///
+    /// In-dictionary terms map to their on-disk id (`< n_terms`). Any other
+    /// term — a query constant absent from the data, a graph-name IRI that is
+    /// not itself a data term, or a value computed during evaluation — is
+    /// interned into an in-memory overflow table and assigned a stable id
+    /// `>= n_terms`. Overflow ids never collide with a scanned id, so an absent
+    /// pattern constant matches nothing, while remaining round-trippable via
+    /// [`Self::externalize_id`]. Equal terms always resolve to the same id.
+    pub fn intern_decoded(&self, term: &DecodedTerm<'_>) -> u64 {
+        if let Some(id) = self.term_id(term) {
+            return id;
+        }
+        let key = term.clone().into_owned();
+        let mut overflow = self.term_overflow.lock().unwrap();
+        if let Some(&id) = overflow.map.get(&key) {
+            return id;
+        }
+        let id = self.term_dict.n_terms + overflow.terms.len() as u64;
+        overflow.terms.push(key.clone());
+        overflow.map.insert(key, id);
+        id
+    }
+
+    /// Resolves a term id (on-disk or overflow) back to a decoded term.
+    ///
+    /// The inverse of [`Self::intern_decoded`]; ids `< n_terms` borrow from the
+    /// backing store, overflow ids are cloned out of the in-memory table.
+    pub fn externalize_id(&self, id: u64) -> Result<DecodedTerm<'_>> {
+        let n = self.term_dict.n_terms;
+        if id < n {
+            return self.term_dict.decoded_term(self.bytes(), id);
+        }
+        let idx = (id - n) as usize;
+        let overflow = self.term_overflow.lock().unwrap();
+        overflow
+            .terms
+            .get(idx)
+            .map(|term| term.clone().into_owned())
+            .ok_or(R5Error::Invalid("term id out of range"))
+    }
+
     /// Internal helper: convert a term id into the writer's [`crate::writer::Term`].
     ///
     /// Exposed as `pub(crate)` for modules that need to reconstruct quads
@@ -410,6 +516,8 @@ impl R5tuFile {
             idx_gname2gid: sections.idx_gname2gid,
             idx_pair2gid: sections.idx_pair2gid,
             triple_blocks: sections.triple_blocks,
+            term_index: OnceLock::new(),
+            term_overflow: Mutex::new(TermOverflow::default()),
         })
     }
 }
@@ -847,6 +955,7 @@ impl TermDict {
         Ok((lex, dt, lang))
     }
 
+    #[allow(clippy::type_complexity)]
     fn decode_component_literal_borrowed<'a>(
         &self,
         data: &'a [u8],
@@ -1356,7 +1465,7 @@ impl R5tuFile {
         }
     }
 
-    fn graphref_for_gid(&self, gid: u64) -> Result<GraphRef> {
+    pub(crate) fn graphref_for_gid(&self, gid: u64) -> Result<GraphRef> {
         let row = self.gdir_row(gid)?;
         let bytes = self.bytes();
         let id = self
@@ -2169,6 +2278,8 @@ mod tests {
             idx_gname2gid: Section { off: 0, len: 0 },
             idx_pair2gid: Section { off: 0, len: 0 },
             triple_blocks: Section { off: 0, len: 0 },
+            term_index: OnceLock::new(),
+            term_overflow: Mutex::new(TermOverflow::default()),
         };
 
         let mut iter = file.decode_raw_payload(Cow::Owned(raw)).unwrap();
@@ -2460,6 +2571,8 @@ mod tests {
             idx_gname2gid: Section { off: 0, len: 0 },
             idx_pair2gid: Section { off: 0, len: 0 },
             triple_blocks: Section { off: 0, len: 0 },
+            term_index: OnceLock::new(),
+            term_overflow: Mutex::new(TermOverflow::default()),
         };
         let row = file.gdir_row(0).unwrap();
         assert_eq!(row.id_id, 7);
