@@ -17,7 +17,7 @@ the same closure transforms as ``copy_closure`` (see ``OntoEnv.get_closure``).
 Run from the ``python/`` directory:
 
     uv run python bench_rdflib_store.py
-    uv run python bench_rdflib_store.py --output ../docs/python-api/_bench_results.txt
+    uv run python bench_rdflib_store.py --output ../docs/explanation/_bench_results.txt
 """
 
 from __future__ import annotations

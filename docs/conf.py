@@ -64,6 +64,7 @@ html_theme = "furo"
 html_static_path = ["_static"]
 html_title = "OntoEnv Documentation"
 html_css_files = ["custom.css"]
+html_js_files = ["expand-nav.js"]
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", {}),

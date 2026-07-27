@@ -11,6 +11,9 @@ help:
 html:
 	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)"
 
+single:
+	@$(SPHINXBUILD) -M singlehtml "$(SOURCEDIR)" "$(BUILDDIR)"
+
 # Produce a single concatenated text file for LLM ingestion.
 llms:
 	@$(SPHINXBUILD) -M text "$(SOURCEDIR)" "$(BUILDDIR)"
