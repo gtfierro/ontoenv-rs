@@ -1,25 +1,70 @@
 Working with persistent environments
 ====================================
 
-Most applications can use one entry point for the entire life of an
-environment:
+.. _choosing-an-environment-lifecycle:
+
+Choose the lifecycle first
+--------------------------
+
+Most applications should start with ``OntoEnv.connect(path)``. It creates a
+persistent environment when one is missing and efficiently reopens it later.
+The other entry points make a narrower lifecycle requirement explicit.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 35 43
+
+   * - Entry point
+     - Use it when
+     - Existing or missing environment
+   * - ``OntoEnv.connect(path)``
+     - Normal persistent application startup
+     - Reopens an existing environment or creates a missing one
+   * - ``OntoEnv.create(path)``
+     - Setup must create a new environment
+     - Fails if one exists unless overwrite is explicitly requested
+   * - ``OntoEnv.open(path)``
+     - Deployment must already have prepared the environment
+     - Opens an existing environment or fails if it is missing
+   * - ``OntoEnv.adopt(path, store)``
+     - A custom graph store is already populated
+     - Scans the store and creates its first OntoEnv catalog
+   * - ``OntoEnv.recover(path)``
+     - Startup raised ``CatalogRecoveryError``
+     - Rebuilds the catalog from the authoritative graph store
+   * - ``OntoEnv(temporary=True)``
+     - A test, notebook, or transformation should save nothing
+     - Always creates a new in-memory environment
+
+The direct constructor is still used internally and remains available for
+compatibility. For new code, use the named lifecycle methods above. The named
+methods make it clear whether creation, reopening, adoption, or recovery is
+allowed.
+
+Normal persistent usage
+-----------------------
 
 .. code-block:: python
 
    from ontoenv import OntoEnv
 
-   env = OntoEnv.connect("./ontology-env")
-   site = env.add("./ontologies/site.ttl")
+   with OntoEnv.connect(
+       "./ontology-env",
+       offline=True,
+       search_directories=["./ontologies"],
+   ) as env:
+       # connect() does not scan ontology source files or URLs.
+       env.update()
 
-   graph = env.get_graph(site)
-   closure, imported = env.get_closure(site)
-
-   env.close()
+       site = env.get_ontology_names()[0]
+       graph = env.get_graph(site)
+       closure, imported = env.get_closure(site)
 
 On the first run, ``connect`` creates the environment directory, saves its
-settings, and initializes its graph storage. As ontologies are added, OntoEnv
-also saves a small index of their names, imports, aliases, source locations,
-namespaces, and hashes.
+settings, and initializes empty graph storage. ``update()`` then scans the
+configured source directories for new or changed ontology files. On later
+runs, ``connect`` loads the saved catalog without rereading every RDF triple;
+``update()`` performs the explicit source refresh.
 
 That saved index is what makes the same call suitable for later runs:
 
@@ -32,6 +77,59 @@ OntoEnv loads the index instead of rereading every RDF triple. Import
 resolution and closure lookup are therefore ready as soon as ``connect``
 returns. You do not need to check whether the directory already exists or
 choose between “create” and “open” in ordinary application code.
+
+Why ``recreate=True`` is different
+----------------------------------
+
+This constructor call is a destructive rebuild, not a reconnect:
+
+.. code-block:: python
+
+   env = OntoEnv(
+       path=".demo-env",
+       recreate=True,
+       offline=True,
+       search_directories=["./brick"],
+   )
+
+Each call removes ``.demo-env/.ontoenv/`` if it exists, creates fresh storage,
+and immediately scans ``./brick``. It discards the saved catalog, cached
+graphs, and other OntoEnv-managed state. The surrounding ``.demo-env``
+directory and the source directory are not removed.
+
+The normal persistent equivalent keeps the environment and makes source
+refresh explicit:
+
+.. code-block:: python
+
+   with OntoEnv.connect(
+       ".demo-env",
+       offline=True,
+       search_directories=["./brick"],
+   ) as env:
+       env.update()
+
+Use a destructive rebuild only when that is the intended contract. The named
+form communicates it more directly:
+
+.. code-block:: python
+
+   env = OntoEnv.create(
+       ".demo-env",
+       overwrite=True,
+       offline=True,
+       search_directories=["./brick"],
+   )
+
+``create`` starts with an empty environment. Call ``env.update()`` afterward
+when the new environment should discover the configured source files.
+
+There is one more constructor behavior worth distinguishing:
+``OntoEnv(path="./project")`` without ``recreate`` searches that directory and
+its parents for an existing ``.ontoenv`` directory. It opens what it finds and
+raises ``FileNotFoundError`` if no environment exists. It neither creates nor
+synchronizes an environment. Prefer ``connect`` or ``open`` when the target
+path and lifecycle should be explicit.
 
 Reopening with configuration overrides
 --------------------------------------

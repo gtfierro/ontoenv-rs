@@ -46,15 +46,16 @@ Quick start
 
    from ontoenv import OntoEnv
 
-   env = OntoEnv(
-       path=".",
-       recreate=True,
+   env = OntoEnv.connect(
+       ".ontoenv-demo",
        search_directories=["./ontologies"],
        includes=["*.ttl"],
    )
+   env.update()
 
    # Copy an ontology and all its imports into a mutable rdflib graph
    g, closure_names = env.copy_closure("https://example.com/myOntology")
+   env.close()
 
 Explore the docs
 ----------------

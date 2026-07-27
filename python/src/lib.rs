@@ -3144,23 +3144,37 @@ fn snapshot_signature(path: &Path) -> Option<SnapshotSignature> {
 /// * Creating merged views over ontology closures
 /// * Managing aliases for ontology IRIs
 ///
+/// Use ``OntoEnv.connect(path)`` for the normal persistent lifecycle. It
+/// creates a missing environment or efficiently reopens an existing one.
+/// Call ``update()`` when configured ontology files or URLs should be
+/// discovered or refreshed. Use ``OntoEnv(temporary=True)`` for unsaved
+/// in-memory work.
+///
+/// ``OntoEnv.create``, ``open``, ``adopt``, and ``recover`` provide narrower
+/// lifecycle contracts. The direct constructor's ``recreate=True`` option
+/// deletes and rebuilds the target ``.ontoenv`` directory; it is not
+/// equivalent to ``connect``.
+///
 /// Example:
 ///     .. code-block:: python
 ///
 ///         from ontoenv import OntoEnv
 ///
-///         env = OntoEnv()
-///         # Add an ontology
-///         env.add("http://example.com/ontology.ttl")
+///         with OntoEnv.connect("./ontology-env") as env:
+///             # Add an ontology
+///             env.add("http://example.com/ontology.ttl")
 ///
-///         # Add an alias - multiple IRIs can now refer to the same ontology
-///         env.add_alias("http://example.com/B-alias", "http://example.com/B")
+///             # Add an alias - multiple IRIs can refer to one ontology
+///             env.add_alias(
+///                 "http://example.com/B-alias",
+///                 "http://example.com/B",
+///             )
 ///
-///         # Resolve an alias to its canonical IRI
-///         canonical = env.resolve_alias("http://example.com/B-alias")
+///             # Resolve an alias to its canonical IRI
+///             canonical = env.resolve_alias("http://example.com/B-alias")
 ///
-///         # Get the closure (all imported ontologies)
-///         graph, iris = env.get_closure("http://example.com/ontology")
+///             # Get the closure (all imported ontologies)
+///             graph, iris = env.get_closure("http://example.com/ontology")
 ///
 ///     The OntoEnv uses a snapshot-based approach for consistency:
 ///     operations see a consistent view of the environment, and the

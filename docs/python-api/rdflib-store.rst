@@ -50,14 +50,12 @@ The usual workflow is to build an ``OntoEnv`` environment first, then open a rea
    from rdflib import URIRef
    from ontoenv import OntoEnv
 
-   env = OntoEnv(
-       path=".demo-env",
-       recreate=True,
+   env = OntoEnv.connect(
+       ".demo-env",
        offline=True,
        search_directories=["./brick"],
    )
    brick_name = env.add("./brick/Brick.ttl")
-   env.update()
    env.flush()
 
    dataset = env.get_dataset()

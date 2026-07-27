@@ -57,7 +57,16 @@ class SyncReport:
     still_pending: List[str]
 
 class OntoEnv:
-    """Ontology environment for managing ontologies and graphs."""
+    """Ontology environment for managing ontologies and graphs.
+
+    Use :meth:`connect` for normal persistent usage and
+    ``OntoEnv(temporary=True)`` for unsaved in-memory work. The named
+    :meth:`create`, :meth:`open`, :meth:`adopt`, and :meth:`recover` methods
+    express stricter lifecycle requirements.
+
+    ``recreate=True`` on the direct constructor deletes and rebuilds the
+    target ``.ontoenv`` directory. It is not equivalent to :meth:`connect`.
+    """
 
     @classmethod
     def connect(

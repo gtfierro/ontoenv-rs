@@ -19,26 +19,35 @@ Install
 
    pip install ontoenv   # Python 3.11+
 
-First steps
------------
+Choose an environment lifecycle
+-------------------------------
 
-Use ``connect`` for a persistent environment:
+For normal persistent usage, call ``connect`` and then explicitly refresh
+ontology source files and URLs when needed:
 
 .. code-block:: python
 
    from ontoenv import OntoEnv
 
-   env = OntoEnv.connect("./ontology-env")
-   ontology = env.add("./ontologies/site.ttl")
+   with OntoEnv.connect(
+       "./ontology-env",
+       search_directories=["./ontologies"],
+   ) as env:
+       env.update()
 
-   graph = env.get_graph(ontology)
-   closure, imported = env.get_closure(ontology)
+       ontology = env.get_ontology_names()[0]
+       graph = env.get_graph(ontology)
+       closure, imported = env.get_closure(ontology)
 
-   env.close()
+``connect`` creates the environment on first use and quickly reopens its saved
+catalog later. It does not scan source files or URLs; ``update`` does that
+work explicitly.
 
-Use ``OntoEnv(temporary=True)`` when nothing should be saved. See
-:doc:`lifecycle` for scripts, webservers, custom stores, synchronization, and
-the stricter lifecycle methods.
+Use ``OntoEnv(temporary=True)`` when nothing should be saved. Use ``create``,
+``open``, ``adopt``, or ``recover`` when your program requires one specific
+lifecycle state. See :ref:`choosing-an-environment-lifecycle` for the complete
+decision table, the difference between ``connect`` and ``recreate=True``, and
+examples for scripts and long-running services.
 
 What OntoEnv keeps track of
 ---------------------------
@@ -62,16 +71,10 @@ an explicit choice.
 Key methods
 -----------
 
-- ``OntoEnv.connect(path, sync="auto", …)`` — Recommended persistent entry point.
-  It handles first use, fast restarts, and direct graph-store changes. It does
-  not refresh ontology files or URLs; see :ref:`refreshing-ontology-sources`.
-- ``OntoEnv.create(path, …)`` — Require a new persistent environment.
-- ``OntoEnv.open(path, read_only=False, …)`` — Load an existing saved environment
-  without scanning ontology graphs.
-- ``OntoEnv.adopt(path, graph_store, …)`` — Deliberately scan a pre-populated custom
-  store and save its first ontology index.
-- ``OntoEnv(..., temporary=True)`` — Keep graphs and ontology information in memory.
-  See :doc:`lifecycle` for API selection, long-lived webserver usage, and cleanup.
+Lifecycle methods are grouped in
+:ref:`choosing-an-environment-lifecycle`. Once an environment is open, these
+are the main operations:
+
 - ``env.update()`` — Refresh changed known sources and follow their imports.
   Pass a file or URL to update one source, or ``force=True`` to reread sources
   regardless of timestamps and cache age.
@@ -219,27 +222,30 @@ Example
 
 .. code-block:: python
 
-   from pathlib import Path
    from ontoenv import OntoEnv
 
-   env = OntoEnv(
+   with OntoEnv.connect(
+       "./ontology-env",
        search_directories=["./ontologies"],
        includes=["*.ttl"],
        strict=False,
-   )
+   ) as env:
+       env.update()
 
-   # Add a remote ontology and follow its imports
-   env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
+       # Add a remote ontology and follow its imports
+       env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
 
-   # Retrieve just the Brick graph (no imports merged)
-   brick = env.get_graph("https://brickschema.org/schema/1.4/Brick")
+       # Retrieve just the Brick graph (no imports merged)
+       brick = env.get_graph("https://brickschema.org/schema/1.4/Brick")
 
-   # Query Brick with all transitive imports through a read-only merged view
-   g, closure_names = env.get_closure("https://brickschema.org/schema/1.4/Brick")
-   print(f"Read {len(closure_names)} graphs — {len(g)} triples total")
+       # Query its imports closure through a read-only merged view
+       g, closure_names = env.get_closure("https://brickschema.org/schema/1.4/Brick")
+       print(f"Read {len(closure_names)} graphs — {len(g)} triples total")
 
-   # Copy the same closure when you need a mutable materialized graph
-   mutable_g, closure_names = env.copy_closure("https://brickschema.org/schema/1.4/Brick")
+       # Materialize a mutable copy only when one is needed
+       mutable_g, closure_names = env.copy_closure(
+           "https://brickschema.org/schema/1.4/Brick"
+       )
 
 .. note::
 
