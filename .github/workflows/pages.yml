@@ -7,6 +7,15 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      simulate_prerelease:
+        description: "Stage docs into versions/<tag>/ as if a pre-release had been published, without publishing anything"
+        type: boolean
+        default: false
+      simulate_tag:
+        description: "Tag name to stage under when simulate_prerelease is enabled (e.g. v0.6.1a1)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -77,8 +86,8 @@ jobs:
 
       - name: Stage Pages site
         env:
-          IS_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ (github.event_name == 'release' && github.event.release.prerelease) || inputs.simulate_prerelease }}
+          RELEASE_TAG: ${{ (github.event_name == 'release' && github.event.release.tag_name) || inputs.simulate_tag }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -97,7 +106,14 @@ jobs:
 
           if [[ "$IS_PRERELEASE" == "true" ]]; then
             if [[ -z "$RELEASE_TAG" ]]; then
-              echo "Pre-release docs require github.event.release.tag_name" >&2
+              echo "Pre-release docs require a tag name (release.tag_name, or the simulate_tag input)" >&2
+              exit 1
+            fi
+            # RELEASE_TAG becomes a directory name that is passed to rm -rf, and
+            # can come from a free-text workflow_dispatch input. Keep it to a
+            # single harmless path segment.
+            if [[ ! "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+              echo "Refusing to stage docs under unsafe tag name: ${RELEASE_TAG}" >&2
               exit 1
             fi
             version_dir="$site_dir/versions/$RELEASE_TAG"
@@ -148,8 +164,8 @@ jobs:
       - name: Report docs URL
         id: docs-url
         env:
-          IS_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ (github.event_name == 'release' && github.event.release.prerelease) || inputs.simulate_prerelease }}
+          RELEASE_TAG: ${{ (github.event_name == 'release' && github.event.release.tag_name) || inputs.simulate_tag }}
         run: |
           page_url="${{ steps.deployment.outputs.page_url }}"
           if [[ "$IS_PRERELEASE" == "true" ]]; then
