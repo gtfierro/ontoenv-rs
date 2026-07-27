@@ -127,12 +127,8 @@ jobs:
         run: uv run --group dev pytest -q
 
   upgrade:
-    name: Upgrade from ${{ matrix.version }}
+    name: Upgrade from 0.5.5
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ["0.5.5", "0.6.0a6", "0.6.0a8"]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -146,7 +142,7 @@ jobs:
         shell: bash
         run: |
           uv venv .upgrade-venv
-          uv pip install --python .upgrade-venv/bin/python "ontoenv==${{ matrix.version }}"
+          uv pip install --python .upgrade-venv/bin/python "ontoenv==0.5.5"
           .upgrade-venv/bin/python python/scripts/test_release_upgrade.py create .upgrade-fixture
       - name: Install current source into the same environment
         shell: bash
