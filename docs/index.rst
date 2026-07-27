@@ -21,13 +21,14 @@ OntoEnv
      <code class="oe-install">cargo install ontoenv-cli</code>
    </div>
 
-The problem OntoEnv solves
---------------------------
+Overview
+--------
 
-An ontology is rarely self-contained. It declares ``owl:imports``, those
-imports declare their own imports, and before long a single file needs a dozen
-others — some local, some on the web, some moved or renamed since they were
-published. Assembling that set by hand is tedious and easy to get wrong.
+OntoEnv is a tool for managing knowledge graphs, ontologies, and their
+interdependencies. It is designed to handle the part you would otherwise do by
+hand: an ontology declares ``owl:imports``, those imports declare their own,
+and before long a single file needs a dozen others — some local, some on the
+web, some moved or renamed since they were published.
 
 OntoEnv keeps an *environment*: a directory of ontologies it has discovered,
 plus everything it learned about them — canonical names, source locations,
