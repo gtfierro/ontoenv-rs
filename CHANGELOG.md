@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-27
+
 ### Added
 - `ontoenv recover` rebuilds a persistent environment catalog after
   `CatalogRecoveryError`, using normal environment discovery and removing
@@ -16,29 +18,9 @@ All notable changes to this project are documented here. Releases follow [Semant
   for the create-or-reopen lifecycle. It emits `DeprecationWarning`; use
   `OntoEnv.connect(path)` instead. Removal is planned for 0.7.
 
-### Fixed
-- Python reopen paths now distinguish omitted configuration from explicit
-  values for strict/offline/name-validation/cache settings, resolution policy,
-  cache TTL, search paths, and include/exclude filters. Explicit `False`,
-  `"default"`, and empty lists are honored. Writable connections persist
-  overrides; read-only connections keep them session-local; no reopen path
-  implicitly scans or re-ingests graph data.
-- Runtime configuration setters now update the active graph backend and
-  resolution policy. Python now exposes the documented cache-mode and
-  remote-cache-TTL getters and setters, and `require_ontology_names` controls
-  ontology-declaration validation independently of strict mode.
-- Non-strict `import_dependencies(..., fetch_missing=True)` and
-  `get_dependencies(..., fetch_missing=True)` now commit tolerated unresolved
-  imports without leaving `catalog.pending`, and every attempted unresolved
-  target retained in the current environment state is classified as
-  `UnresolvedImportError` by `copy_graph`, including targets originating in
-  best-effort fetches for transient caller graphs.
-
-## [0.6.0] — 2026-07-26
-
 ### Changed (breaking)
-- The documented Rust MSRV is now 1.88, matching edition 2024 and the resolved
-  dependency floor.
+- The documented Rust MSRV is now 1.88, matching rdf5d's edition 2024 and the
+  resolved dependency floor.
 - `OntoEnv.get_graph(uri)` now returns a **read-only store-backed `rdflib.Graph` view** instead of a mutable in-memory copy. Mutating the returned graph raises `ValueError`. Use the new `OntoEnv.copy_graph(uri)` for the previous behavior (mutable in-memory `rdflib.Graph` copy).
 - `OntoEnv.get_closure(uri)` now returns a **read-only, zero-copy `ontoenv.ViewGraph`** instead of a materialized mutable `rdflib.Graph`. The materializing behavior moved to the new `OntoEnv.copy_closure(uri)`. A `ViewGraph` does not subclass `rdflib.Graph`; it delegates triple-pattern lookups (`triples`, `subjects`/`predicates`/`objects`), `len`, `in`, and SPARQL `query()` to the Rust backend, reading directly from the rdf5d mmap snapshot. It is read-only — `add`/`addN`/`remove` raise `ValueError`. The view presents a single flattened, de-duplicated graph with the **same triple set as `copy_closure`**: resolved `owl:imports` stripped, ontology declarations collapsed onto the root (adding `root a owl:Ontology` if absent), and SHACL `sh:prefixes`/`sh:declare` consolidated onto the root. Keyword args `remove_owl_imports=True` / `rewrite_sh_prefixes=True` opt out of the respective transform.
 - `OntoEnv.get_union(uris)` returns a read-only `ontoenv.ViewGraph` — a **raw** merge across the listed named graphs (no closure transform, no cross-graph de-duplication). Use `copy_union` for a mutable merge.
@@ -84,6 +66,22 @@ All notable changes to this project are documented here. Releases follow [Semant
 - Top-level re-exports `ontoenv.dataset_from_env` and `ontoenv.refresh_dataset_from_env` — use `env.get_dataset(...)` and `env.refresh_dataset(...)` instead. The functions still exist in `ontoenv.rdflib_store` as the underlying implementation.
 
 ### Fixed
+- Python reopen paths now distinguish omitted configuration from explicit
+  values for strict/offline/name-validation/cache settings, resolution policy,
+  cache TTL, search paths, and include/exclude filters. Explicit `False`,
+  `"default"`, and empty lists are honored. Writable connections persist
+  overrides; read-only connections keep them session-local; no reopen path
+  implicitly scans or re-ingests graph data.
+- Runtime configuration setters now update the active graph backend and
+  resolution policy. Python now exposes the documented cache-mode and
+  remote-cache-TTL getters and setters, and `require_ontology_names` controls
+  ontology-declaration validation independently of strict mode.
+- Non-strict `import_dependencies(..., fetch_missing=True)` and
+  `get_dependencies(..., fetch_missing=True)` now commit tolerated unresolved
+  imports without leaving `catalog.pending`, and every attempted unresolved
+  target retained in the current environment state is classified as
+  `UnresolvedImportError` by `copy_graph`, including targets originating in
+  best-effort fetches for transient caller graphs.
 - Successful non-strict `add`/`add_from_bytes` ingestion with unresolved
   imports no longer leaves a recovery marker; the partial environment remains
   reopenable.
