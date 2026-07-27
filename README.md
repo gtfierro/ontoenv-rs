@@ -102,6 +102,11 @@ available. They do not materialize ontology graphs. Legacy `environment.json`
 metadata is migrated automatically when its graph IDs match the backend;
 legacy JSON files are retained but ignored after migration.
 
+If a command reports `CatalogRecoveryError` for `catalog.pending`, run
+`ontoenv recover` from the environment or a child directory. It rebuilds the
+catalog from the persistent graph store and removes the marker only after the
+replacement catalog is published successfully.
+
 Set `ONTOENV_DIR` to override the environment location. Logging is controlled via `ONTOENV_LOG` or `RUST_LOG`.
 
 ### Commands
@@ -120,10 +125,10 @@ Arguments:
 
 Options:
       --overwrite                       Overwrite an existing environment
-  -r, --require-ontology-names          Raise an error if multiple ontologies share the same name
-  -s, --strict                          Raise an error if an import is not found
-  -o, --offline                         Do not fetch ontologies from the web
-  -p, --policy <POLICY>                 Resolution policy: 'default', 'latest', or 'version' [default: default]
+      --require-ontology-names [<BOOL>] Require an ontology declaration during ingestion
+      --strict [<BOOL>]                 Treat missing imports as errors
+  -o, --offline [<BOOL>]                Disable network retrieval
+  -p, --policy <POLICY>                 Resolution policy: 'default', 'latest', or 'version'
   -i, --includes <INCLUDES>...          Glob patterns to include [default: *.ttl *.xml *.n3]
   -e, --excludes <EXCLUDES>...          Glob patterns to exclude
       --include-ontology, --io <REGEX>  Regex patterns of ontology IRIs to include
@@ -140,6 +145,8 @@ ontoenv init --overwrite --offline ./ontologies      # rebuild from scratch, off
 ```
 
 Offline mode is particularly useful when you want to limit which ontologies are loaded: download the ones you want, then enable `--offline` to prevent any further network access.
+On an existing environment, omitted mode flags preserve saved values; use
+forms such as `--offline=false` or `--strict=false` to disable them explicitly.
 
 #### `update`
 
@@ -249,6 +256,12 @@ application_state.ontoenv = env
 application_state.ontoenv.close()
 ```
 
+When reopening, omitted configuration options preserve their saved values.
+Explicit values—including `False`, `"default"`, and empty lists—replace them.
+Writable connections persist overrides; read-only connections apply them only
+for that session. Reconfiguration does not rescan or re-ingest stored graphs.
+Search paths and filters take effect on the next explicit `update()`.
+
 With ``graph_store=store``, the first connection instead reads graphs already
 in that store and records their ontology names, imports, aliases, locations,
 namespaces, and hashes. Later connections reuse and synchronize that saved
@@ -277,11 +290,11 @@ OntoEnv(
     create_or_use_cached=False,
     read_only=False,
     search_directories=None,   # pass ["."] to scan immediately; None skips discovery
-    require_ontology_names=False,
-    strict=False,
-    offline=False,
-    use_cached_ontologies=False,
-    resolution_policy="default",
+    require_ontology_names=None,
+    strict=None,
+    offline=None,              # None preserves saved values when reopening
+    use_cached_ontologies=None,
+    resolution_policy=None,
     root=".",
     includes=None,             # gitignore-style globs; bare dirs match everything under them
     excludes=None,
@@ -456,6 +469,10 @@ fs::remove_dir_all(&test_dir)?;
 |---|---|
 | `OntoEnv::init(config, overwrite)` | Create (or overwrite) an environment |
 | `OntoEnv::load_from_directory(root, read_only)` | Load an existing environment |
+| `OntoEnv::connect(config, sync, read_only)` | Connect while preserving persisted configuration |
+| `OntoEnv::connect_with_overrides(config, sync, read_only, overrides)` | Connect with explicit `ConfigOverrides` |
+| `OntoEnv::connect_with_graph_io_and_overrides(config, io, sync, read_only, overrides)` | Apply the same rules to a custom graph backend |
+| `OntoEnv::open_or_init_with_overrides(config, read_only, overrides)` | Open-or-create with explicit reopen overrides |
 | `find_ontoenv_root()` / `find_ontoenv_root_from(path)` | Locate the nearest `.ontoenv/` by walking up |
 | `env.update_all(all)` | Refresh discovered ontologies |
 | `env.add(location, Overwrite, RefreshStrategy)` | Add by file/URL |
@@ -475,6 +492,11 @@ fs::remove_dir_all(&test_dir)?;
 | `CacheMode` | `Enabled`, `Disabled` | Mirrored in Python as `use_cached_ontologies` |
 
 `bool` values still convert via `Into` for backward compatibility.
+
+For Rust reopen calls, fields in `ConfigOverrides` use `Option`: `None`
+preserves the persisted value and `Some(value)` replaces it. This includes
+`Some(false)` and `Some(Vec::new())`. Overrides change future behavior without
+implicitly calling `update()`.
 
 ---
 

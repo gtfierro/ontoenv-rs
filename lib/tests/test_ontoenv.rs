@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
-use ontoenv::config::Config;
+use ontoenv::config::{Config, ConfigOverrides};
 use ontoenv::consts::IMPORTS;
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
@@ -3168,10 +3168,9 @@ fn config_flags_persist_across_reload() -> Result<()> {
     Ok(())
 }
 
-/// `open_or_init` must apply scalar flags from the provided config even when
-/// the environment already exists on disk.
+/// Reopening preserves persisted configuration unless an override is explicit.
 #[test]
-fn open_or_init_applies_flags_on_existing_env() -> Result<()> {
+fn open_or_init_uses_explicit_overrides_on_existing_env() -> Result<()> {
     let dir = new_tempdir("ontoenv-open-or-init-flags")?;
 
     // Create an env with offline=false (the default).
@@ -3184,21 +3183,46 @@ fn open_or_init_applies_flags_on_existing_env() -> Result<()> {
     assert!(!env.is_offline());
     drop(env);
 
-    // Re-open with offline=true via open_or_init.
+    // Values on the initialization config are not treated as reopen
+    // overrides, because Config itself cannot distinguish defaults.
     let offline_cfg = Config::builder()
         .root(dir.path().into())
         .offline(true)
         .build()?;
-    let env2 = OntoEnv::open_or_init(offline_cfg, false)?;
-    assert!(env2.is_offline(), "open_or_init should apply offline=true");
+    let env2 = OntoEnv::open_or_init(offline_cfg.clone(), false)?;
+    assert!(!env2.is_offline(), "omitted override should preserve false");
     drop(env2);
 
-    // The flag must be persisted so the next plain load also sees it.
+    let overrides = ConfigOverrides {
+        offline: Some(true),
+        strict: Some(true),
+        require_ontology_names: Some(true),
+        remote_cache_ttl_secs: Some(17),
+        use_cached_ontologies: Some(CacheMode::Enabled),
+        resolution_policy: Some("latest".to_string()),
+        locations: Some(Vec::new()),
+        includes: Some(Vec::new()),
+        excludes: Some(vec!["ignored/**".to_string()]),
+        include_ontologies: Some(vec!["example".to_string()]),
+        exclude_ontologies: Some(Vec::new()),
+    };
+    let env2 = OntoEnv::open_or_init_with_overrides(offline_cfg, false, overrides)?;
+    assert!(env2.is_offline());
+    assert!(env2.is_strict());
+    assert!(env2.requires_ontology_names());
+    assert_eq!(env2.remote_cache_ttl_secs(), 17);
+    assert!(env2.uses_cached_ontologies());
+    assert_eq!(env2.resolution_policy(), "latest");
+    drop(env2);
+
+    // Explicit overrides persist, while a subsequent plain load is inert.
     let env3 = OntoEnv::load_from_directory(dir.path().into(), false)?;
-    assert!(
-        env3.is_offline(),
-        "offline=true must be persisted by open_or_init"
-    );
+    assert!(env3.is_offline());
+    assert!(env3.is_strict());
+    assert!(env3.requires_ontology_names());
+    assert_eq!(env3.remote_cache_ttl_secs(), 17);
+    assert!(env3.uses_cached_ontologies());
+    assert_eq!(env3.resolution_policy(), "latest");
 
     teardown(dir);
     Ok(())

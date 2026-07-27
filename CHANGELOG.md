@@ -6,7 +6,22 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Added
+- `ontoenv recover` rebuilds a persistent environment catalog after
+  `CatalogRecoveryError`, using normal environment discovery and removing
+  `catalog.pending` only after successful publication.
+
 ### Fixed
+- Python reopen paths now distinguish omitted configuration from explicit
+  values for strict/offline/name-validation/cache settings, resolution policy,
+  cache TTL, search paths, and include/exclude filters. Explicit `False`,
+  `"default"`, and empty lists are honored. Writable connections persist
+  overrides; read-only connections keep them session-local; no reopen path
+  implicitly scans or re-ingests graph data.
+- Runtime configuration setters now update the active graph backend and
+  resolution policy. Python now exposes the documented cache-mode and
+  remote-cache-TTL getters and setters, and `require_ontology_names` controls
+  ontology-declaration validation independently of strict mode.
 - Non-strict `import_dependencies(..., fetch_missing=True)` and
   `get_dependencies(..., fetch_missing=True)` now commit tolerated unresolved
   imports without leaving `catalog.pending`, and every attempted unresolved

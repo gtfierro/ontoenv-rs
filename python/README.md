@@ -95,6 +95,32 @@ and initializes graph storage. On later runs, the same call loads the saved
 ontology index. There is no need to check whether the environment exists
 before connecting.
 
+Saved settings are retained when their options are omitted. To deliberately
+change a setting, pass an explicit value:
+
+```python
+env = OntoEnv.connect(
+    "./ontology-env",
+    strict=True,
+    offline=True,
+    resolution_policy="latest",
+)
+env.close()
+env = OntoEnv.connect(
+    "./ontology-env",
+    strict=False,
+    offline=False,
+    resolution_policy="default",
+    search_directories=[],  # an empty list explicitly clears saved paths
+)
+```
+
+This rule also covers ``require_ontology_names``, ``use_cached_ontologies``,
+``remote_cache_ttl_secs``, and all include/exclude settings. A read-only
+connection applies explicit overrides only for that session. Reconfiguration
+does not re-ingest the graph store; changed discovery paths and filters are
+used by the next explicit ``update()``.
+
 The context manager is optional. For a long-lived service, connect once during
 startup and keep the object in application state:
 

@@ -2,7 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::catalog;
-use crate::config::Config;
+use crate::config::{Config, ConfigOverrides};
 use crate::consts::{IMPORTS, ONTOLOGY, TYPE};
 use crate::doctor::{
     ConflictingPrefixes, Doctor, DuplicateOntology, OntologyDeclaration, OntologyProblem,
@@ -419,7 +419,7 @@ impl OntoEnv {
         let backend_state = io.store_state().ok().flatten();
         let read_only = io.io_type() == "read-only";
         let lock_file = Self::acquire_environment_lock(&config, read_only)?;
-        Ok(Self {
+        let mut result = Self {
             env,
             io,
             config,
@@ -430,7 +430,19 @@ impl OntoEnv {
             graph_revisions: HashMap::new(),
             backend_state,
             _lock_file: lock_file,
-        })
+        };
+        result.sync_runtime_config()?;
+        Ok(result)
+    }
+
+    fn sync_runtime_config(&mut self) -> Result<()> {
+        self.env
+            .set_default_policy(&self.config.resolution_policy)?;
+        self.io.set_offline(self.config.offline);
+        self.io.set_strict(self.config.strict);
+        self.io
+            .set_require_ontology_names(self.config.require_ontology_names);
+        Ok(())
     }
 
     fn acquire_environment_lock(config: &Config, read_only: bool) -> Result<Option<File>> {
@@ -477,7 +489,22 @@ impl OntoEnv {
     /// and adopts an already-populated store. Existing matching catalogs warm
     /// open without graph reads. See [`ConnectSync`] for drift behavior.
     pub fn connect(config: Config, sync: ConnectSync, read_only: bool) -> Result<Self> {
-        let config = Self::connect_config(config)?;
+        Self::connect_with_overrides(config, sync, read_only, ConfigOverrides::default())
+    }
+
+    /// Connect while applying explicit overrides to persisted configuration.
+    ///
+    /// Used by language bindings that distinguish an omitted option from an
+    /// explicit `false`. Writable connections persist an explicit override;
+    /// read-only connections apply it only for the returned session.
+    pub fn connect_with_overrides(
+        config: Config,
+        sync: ConnectSync,
+        read_only: bool,
+        overrides: ConfigOverrides,
+    ) -> Result<Self> {
+        let mut config = Self::connect_config(config)?;
+        let config_changed = config.apply_overrides(&overrides)?;
         let ontoenv_dir = config.root.join(".ontoenv");
         if read_only && !ontoenv_dir.join(catalog::CATALOG_FILE).exists() {
             return Err(anyhow!(
@@ -497,7 +524,11 @@ impl OntoEnv {
                 config.strict,
             )?)
         };
-        Self::connect_with_graph_io(config, io, sync, read_only)
+        let environment = Self::connect_with_graph_io_resolved(config, io, sync, read_only)?;
+        if config_changed && !read_only {
+            environment.save_to_directory()?;
+        }
+        Ok(environment)
     }
 
     /// Recover from an interrupted backend/catalog mutation.
@@ -568,7 +599,43 @@ impl OntoEnv {
         sync: ConnectSync,
         read_only: bool,
     ) -> Result<Self> {
+        Self::connect_with_graph_io_and_overrides(
+            config,
+            io,
+            sync,
+            read_only,
+            ConfigOverrides::default(),
+        )
+    }
+
+    /// Connect to a caller-provided backend with explicit configuration
+    /// overrides.
+    pub fn connect_with_graph_io_and_overrides(
+        config: Config,
+        io: Box<dyn GraphIO>,
+        sync: ConnectSync,
+        read_only: bool,
+        overrides: ConfigOverrides,
+    ) -> Result<Self> {
         let mut config = Self::connect_config(config)?;
+        let config_changed = config.apply_overrides(&overrides)?;
+        let environment =
+            Self::connect_with_graph_io_resolved(config, io, sync, read_only)?;
+        if config_changed && !read_only {
+            environment.save_to_directory()?;
+        }
+        Ok(environment)
+    }
+
+    /// Connect with configuration that has already been merged with persisted
+    /// settings and explicit caller overrides.
+    #[doc(hidden)]
+    pub fn connect_with_graph_io_resolved(
+        mut config: Config,
+        io: Box<dyn GraphIO>,
+        sync: ConnectSync,
+        read_only: bool,
+    ) -> Result<Self> {
         if config.temporary {
             return Err(anyhow!(
                 "OntoEnv::connect requires a persistent environment; use OntoEnv::init for temporary environments"
@@ -579,7 +646,7 @@ impl OntoEnv {
         if pending_path.exists() {
             return Err(CatalogRecoveryError {
                 message: format!(
-                    "interrupted mutation marker at {}; call OntoEnv::recover to rebuild the catalog",
+                    "interrupted mutation marker at {}; run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog",
                     pending_path.display()
                 ),
             }
@@ -715,6 +782,18 @@ impl OntoEnv {
         Ok(persisted)
     }
 
+    /// Apply explicit configuration changes to a live environment.
+    ///
+    /// This updates runtime collaborators immediately but does not scan,
+    /// refresh, or re-ingest ontology sources.
+    pub fn apply_config_overrides(&mut self, overrides: &ConfigOverrides) -> Result<bool> {
+        let changed = self.config.apply_overrides(overrides)?;
+        if changed {
+            self.sync_runtime_config()?;
+        }
+        Ok(changed)
+    }
+
     fn load_catalog_with_graph_io(
         config: Config,
         io: Box<dyn GraphIO>,
@@ -725,7 +804,7 @@ impl OntoEnv {
         if pending_path.exists() {
             return Err(CatalogRecoveryError {
                 message: format!(
-                    "interrupted mutation marker at {}; call OntoEnv::recover to rebuild the catalog",
+                    "interrupted mutation marker at {}; run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog",
                     pending_path.display()
                 ),
             }
@@ -799,6 +878,17 @@ impl OntoEnv {
     /// Opens an existing environment rooted at `config.root`, or initializes a new one using
     /// the provided configuration when none exists yet.
     pub fn open_or_init(config: Config, read_only: bool) -> Result<Self> {
+        Self::open_or_init_with_overrides(config, read_only, ConfigOverrides::default())
+    }
+
+    /// Open an existing environment with explicit overrides, or initialize a
+    /// missing environment from `config`.
+    pub fn open_or_init_with_overrides(
+        mut config: Config,
+        read_only: bool,
+        overrides: ConfigOverrides,
+    ) -> Result<Self> {
+        config.apply_overrides(&overrides)?;
         // Reuse an existing environment if present; otherwise initialize a new one.
         if config.temporary {
             return Self::init(config, false);
@@ -820,11 +910,8 @@ impl OntoEnv {
 
         if let Some(load_root) = existing_root {
             let mut env = Self::load_from_directory(load_root, read_only)?;
-            // The caller provided an explicit config; apply its scalar mode flags
-            // (offline, strict, TTL, …) so they take effect even when the env
-            // already exists.  List fields (locations, includes, …) from the
-            // stored config are left intact.
-            if !read_only && env.merge_scalar_flags(&config) {
+            let changed = env.apply_config_overrides(&overrides)?;
+            if !read_only && changed {
                 env.save_to_directory()?;
             }
             return Ok(env);
@@ -1212,14 +1299,14 @@ impl OntoEnv {
         loader
             .commit()
             .map_err(|error| anyhow!(error.to_string()))?;
-        Ontology::from_store(&tmp_store, id, self.config.strict)
+        Ontology::from_store(&tmp_store, id, self.config.require_ontology_names)
     }
 
     /// Reads all graphs from the IO layer, derives `Ontology` metadata from each one, and
     /// registers them in the environment together with a freshly-built dependency graph.
     fn init_from_graph_io(&mut self) -> Result<()> {
         let ids = self.io.graph_ids()?;
-        let strict = self.config.strict;
+        let require_ontology_names = self.config.require_ontology_names;
         let mut ontologies = Vec::with_capacity(ids.len());
         for id in &ids {
             // Adoption and recovery must be all-or-nothing: silently skipping
@@ -1244,12 +1331,13 @@ impl OntoEnv {
             let mut loader = tmp_store.bulk_loader();
             loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
             loader.commit().map_err(|e| anyhow!(e.to_string()))?;
-            let ontology = Ontology::from_store(&tmp_store, id, strict)
+            let ontology = Ontology::from_store(&tmp_store, id, require_ontology_names)
                 .map_err(|error| anyhow!("could not parse ontology from {id}: {error}"))?;
             ontologies.push(ontology);
         }
         let filters = self.ontology_filters()?;
         let mut rebuilt = Environment::new();
+        rebuilt.set_default_policy(&self.config.resolution_policy)?;
         for ontology in ontologies {
             if filters.allow(ontology.id()) {
                 rebuilt.add_ontology(ontology)?;
@@ -1423,7 +1511,7 @@ impl OntoEnv {
             let details = std::fs::read_to_string(&pending_path).unwrap_or_default();
             return Err(CatalogRecoveryError {
                 message: format!(
-                    "{} records an interrupted backend/catalog mutation ({}). Run OntoEnv::recover to rebuild the catalog from the graph store",
+                    "{} records an interrupted backend/catalog mutation ({}). Run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog from the graph store",
                     pending_path.display(),
                     details
                 ),
@@ -1509,6 +1597,7 @@ impl OntoEnv {
             backend_state: expected_state.or(state_before),
             _lock_file: lock_file,
         };
+        ontoenv.sync_runtime_config()?;
         ontoenv.rebuild_dependency_graph_from_metadata();
         if migrated && !read_only {
             ontoenv.save_to_directory()?;
@@ -1668,6 +1757,7 @@ impl OntoEnv {
             backend_state: None,
             _lock_file: lock_file,
         };
+        ontoenv.sync_runtime_config()?;
 
         if !ontoenv.config.use_cached_ontologies.is_enabled() {
             let _ = ontoenv.update_all(false)?;
@@ -2940,6 +3030,7 @@ impl OntoEnv {
     fn rebuild_dependency_graph_from_metadata(&mut self) {
         let mut graph = DiGraph::new();
         let mut indexes = HashMap::new();
+        self.failed_resolutions.clear();
         for id in self.env.ontologies().keys() {
             let index = graph.add_node(id.clone());
             indexes.insert(id.clone(), index);
@@ -2950,6 +3041,7 @@ impl OntoEnv {
             };
             for import in &ontology.imports {
                 let Some(imported) = self.env.get_ontology_by_name(import.as_ref()) else {
+                    self.failed_resolutions.insert(import.clone());
                     continue;
                 };
                 if let Some(target) = indexes.get(imported.id()).copied() {
@@ -3726,8 +3818,8 @@ impl OntoEnv {
     }
 
     pub fn set_offline(&mut self, offline: bool) {
-        // Update offline mode; caller is responsible for reloading if needed.
         self.config.offline = offline;
+        self.io.set_offline(offline);
     }
 
     pub fn is_strict(&self) -> bool {
@@ -3738,6 +3830,7 @@ impl OntoEnv {
     pub fn set_strict(&mut self, strict: bool) {
         // Update strict mode for future operations.
         self.config.strict = strict;
+        self.io.set_strict(strict);
     }
 
     pub fn requires_ontology_names(&self) -> bool {
@@ -3748,6 +3841,7 @@ impl OntoEnv {
     pub fn set_require_ontology_names(&mut self, require: bool) {
         // Toggle name requirement to influence future imports/updates.
         self.config.require_ontology_names = require;
+        self.io.set_require_ontology_names(require);
     }
 
     /// Set the TTL (in seconds) for caching remote ontologies.
@@ -3759,6 +3853,10 @@ impl OntoEnv {
         self.config.remote_cache_ttl_secs = ttl_secs;
     }
 
+    pub fn remote_cache_ttl_secs(&self) -> u64 {
+        self.config.remote_cache_ttl_secs
+    }
+
     /// Set the cache mode for ontology loading.
     ///
     /// Controls whether `update` re-loads ontologies from their original
@@ -3768,37 +3866,8 @@ impl OntoEnv {
         self.config.use_cached_ontologies = mode;
     }
 
-    /// Apply scalar mode flags (offline, strict, etc.) from `source` to this
-    /// env's persisted config, leaving list fields (locations, includes, …)
-    /// untouched. Returns `true` if any field actually changed.
-    fn merge_scalar_flags(&mut self, source: &Config) -> bool {
-        let c = &mut self.config;
-        let mut changed = false;
-        if c.offline != source.offline {
-            c.offline = source.offline;
-            changed = true;
-        }
-        if c.strict != source.strict {
-            c.strict = source.strict;
-            changed = true;
-        }
-        if c.require_ontology_names != source.require_ontology_names {
-            c.require_ontology_names = source.require_ontology_names;
-            changed = true;
-        }
-        if c.remote_cache_ttl_secs != source.remote_cache_ttl_secs {
-            c.remote_cache_ttl_secs = source.remote_cache_ttl_secs;
-            changed = true;
-        }
-        if c.use_cached_ontologies != source.use_cached_ontologies {
-            c.use_cached_ontologies = source.use_cached_ontologies;
-            changed = true;
-        }
-        if c.resolution_policy != source.resolution_policy {
-            c.resolution_policy = source.resolution_policy.clone();
-            changed = true;
-        }
-        changed
+    pub fn uses_cached_ontologies(&self) -> bool {
+        self.config.use_cached_ontologies.is_enabled()
     }
 
     pub fn resolution_policy(&self) -> &str {
@@ -3806,9 +3875,10 @@ impl OntoEnv {
         &self.config.resolution_policy
     }
 
-    pub fn set_resolution_policy(&mut self, policy: String) {
-        // Update policy name; actual policy is resolved when needed.
+    pub fn set_resolution_policy(&mut self, policy: String) -> Result<()> {
+        self.env.set_default_policy(&policy)?;
         self.config.resolution_policy = policy;
+        Ok(())
     }
 }
 

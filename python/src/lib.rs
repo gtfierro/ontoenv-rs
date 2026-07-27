@@ -5,6 +5,7 @@ use ontoenv::api::{
 };
 use ontoenv::catalog::BackendState;
 use ontoenv::config;
+use ontoenv::config::ConfigOverrides;
 use ontoenv::consts::{IMPORTS, ONTOLOGY, TYPE};
 use ontoenv::errors::{
     CatalogRecoveryError as CatalogRecoveryErrorRs,
@@ -63,7 +64,7 @@ pyo3::create_exception!(
     ontoenv,
     CatalogRecoveryError,
     pyo3::exceptions::PyRuntimeError,
-    "The catalog cannot be opened because an interrupted mutation requires OntoEnv.recover()."
+    "The catalog cannot be opened because an interrupted mutation requires `ontoenv recover` or OntoEnv.recover()."
 );
 pyo3::create_exception!(
     ontoenv,
@@ -880,12 +881,12 @@ fn parse_ontology_bytes(
     location: &OntologyLocation,
     bytes: &[u8],
     format: Option<RdfFormat>,
-    strict: bool,
+    require_ontology_names: bool,
 ) -> Result<(OntologyRs, OxigraphGraph)> {
     let staging_graph = NamedNode::new_unchecked("temp:graph");
     let tmp_store = load_staging_store_from_bytes(bytes, format)?;
     let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
-    let mut ontology = OntologyRs::from_store(&tmp_store, &staging_id, strict)?;
+    let mut ontology = OntologyRs::from_store(&tmp_store, &staging_id, require_ontology_names)?;
     let hash = blake3::hash(bytes).to_hex().to_string();
     ontology.set_content_hash(hash);
     ontology.with_last_updated(Utc::now());
@@ -928,6 +929,7 @@ struct PythonGraphIO {
     store: Mutex<Py<PyAny>>,
     offline: bool,
     strict: bool,
+    require_ontology_names: bool,
     read_only: bool,
     scratch: Store,
 }
@@ -938,6 +940,7 @@ impl PythonGraphIO {
             store: Mutex::new(store),
             offline,
             strict,
+            require_ontology_names: false,
             read_only,
             scratch: Store::new().map_err(|e| anyhow!(e.to_string()))?,
         })
@@ -1006,6 +1009,18 @@ impl PythonGraphIO {
 impl GraphIO for PythonGraphIO {
     fn is_offline(&self) -> bool {
         self.offline
+    }
+
+    fn set_offline(&mut self, offline: bool) {
+        self.offline = offline;
+    }
+
+    fn set_strict(&mut self, strict: bool) {
+        self.strict = strict;
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) {
+        self.require_ontology_names = require;
     }
 
     fn io_type(&self) -> String {
@@ -1092,7 +1107,8 @@ impl GraphIO for PythonGraphIO {
             }
         };
 
-        let (ontology, graph) = parse_ontology_bytes(&location, &bytes, format, self.strict)?;
+        let (ontology, graph) =
+            parse_ontology_bytes(&location, &bytes, format, self.require_ontology_names)?;
         let graph_id = ontology.id().to_uri_string();
         self.with_store(|py, store| {
             self.add_graph_to_store(py, &store, &graph_id, &graph, overwrite)
@@ -1110,7 +1126,8 @@ impl GraphIO for PythonGraphIO {
         if self.read_only {
             return Err(anyhow!("Cannot add to read-only store"));
         }
-        let (ontology, graph) = parse_ontology_bytes(&location, &bytes, format, self.strict)?;
+        let (ontology, graph) =
+            parse_ontology_bytes(&location, &bytes, format, self.require_ontology_names)?;
         let graph_id = ontology.id().to_uri_string();
         self.with_store(|py, store| {
             self.add_graph_to_store(py, &store, &graph_id, &graph, overwrite)
@@ -3582,6 +3599,10 @@ impl OntoEnv {
     /// `sync="auto"` reconciles direct graph-store changes when the backend
     /// can identify them. It does not refresh ontology source files or URLs;
     /// call `update()` after connecting for source refresh.
+    ///
+    /// Omitted configuration preserves persisted settings. Explicit values
+    /// override them; writable connections persist overrides and read-only
+    /// connections keep them session-local.
     #[pyo3(signature = (path, graph_store=None, sync="auto", read_only=false, **options))]
     fn connect(
         cls: &Bound<'_, PyType>,
@@ -3684,6 +3705,11 @@ impl OntoEnv {
     }
 
     #[classmethod]
+    /// Open an existing environment without synchronizing its graph store.
+    ///
+    /// Omitted configuration preserves persisted settings. Explicit values
+    /// override them; writable opens persist overrides and read-only opens
+    /// keep them session-local.
     #[pyo3(signature = (path, graph_store=None, read_only=false, **options))]
     fn open(
         cls: &Bound<'_, PyType>,
@@ -3774,7 +3800,7 @@ impl OntoEnv {
     }
 
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=false, strict=false, offline=false, use_cached_ontologies=false, resolution_policy="default".to_owned(), root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
+    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=None, strict=None, offline=None, use_cached_ontologies=None, resolution_policy=None, root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -3783,11 +3809,11 @@ impl OntoEnv {
         create_or_use_cached: bool,
         read_only: bool,
         search_directories: Option<Vec<String>>,
-        require_ontology_names: bool,
-        strict: bool,
-        offline: bool,
-        use_cached_ontologies: bool,
-        resolution_policy: String,
+        require_ontology_names: Option<bool>,
+        strict: Option<bool>,
+        offline: Option<bool>,
+        use_cached_ontologies: Option<bool>,
+        resolution_policy: Option<String>,
         root: String,
         includes: Option<Vec<String>>,
         excludes: Option<Vec<String>>,
@@ -3824,13 +3850,29 @@ impl OntoEnv {
         // - create_or_use_cached=True: create if missing, otherwise load
         // - otherwise: discover upward; if not found, error
 
+        let overrides = ConfigOverrides {
+            locations: search_directories
+                .as_ref()
+                .map(|dirs| dirs.iter().map(PathBuf::from).collect()),
+            includes: includes.clone(),
+            excludes: excludes.clone(),
+            include_ontologies: include_ontologies.clone(),
+            exclude_ontologies: exclude_ontologies.clone(),
+            require_ontology_names,
+            strict,
+            offline,
+            resolution_policy: resolution_policy.clone(),
+            use_cached_ontologies: use_cached_ontologies.map(CacheMode::from),
+            remote_cache_ttl_secs,
+        };
+
         let mut builder = config::Config::builder()
             .root(root_path.clone())
-            .require_ontology_names(require_ontology_names)
-            .strict(strict)
-            .offline(offline)
-            .use_cached_ontologies(CacheMode::from(use_cached_ontologies))
-            .resolution_policy(resolution_policy)
+            .require_ontology_names(require_ontology_names.unwrap_or(false))
+            .strict(strict.unwrap_or(false))
+            .offline(offline.unwrap_or(false))
+            .use_cached_ontologies(CacheMode::from(use_cached_ontologies.unwrap_or(false)))
+            .resolution_policy(resolution_policy.unwrap_or_else(|| "default".to_owned()))
             .temporary(temporary);
 
         if let Some(dirs) = search_directories {
@@ -3867,21 +3909,23 @@ impl OntoEnv {
             }
             let desc = graph_store_description(_py, store.bind(_py))?;
             cfg.external_graph_store = Some(desc);
-            if connect_sync.is_some() || recover {
-                cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
-            }
-            let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
-                .map_err(anyhow_to_pyerr)?;
             let catalog_exists = cfg
                 .root
                 .join(".ontoenv")
                 .join(ontoenv::catalog::CATALOG_FILE)
                 .exists();
+            let mut config_changed = false;
+            if connect_sync.is_some() || recover || catalog_exists {
+                cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
+                config_changed = cfg.apply_overrides(&overrides).map_err(anyhow_to_pyerr)?;
+            }
+            let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
+                .map_err(anyhow_to_pyerr)?;
             let explicit_adopt = EXPLICIT_ADOPT.with(Cell::get);
             let env = if recover {
                 OntoEnvRs::recover_with_graph_io(cfg, Box::new(io))
             } else if let Some(sync) = connect_sync {
-                OntoEnvRs::connect_with_graph_io(cfg, Box::new(io), sync, read_only)
+                OntoEnvRs::connect_with_graph_io_resolved(cfg, Box::new(io), sync, read_only)
             } else if !cfg.temporary && catalog_exists && !explicit_adopt {
                 OntoEnvRs::open_with_graph_io(cfg, Box::new(io), read_only)
             } else if init_from_store {
@@ -3890,6 +3934,9 @@ impl OntoEnv {
                 OntoEnvRs::new_with_graph_io(cfg, Box::new(io))
             }
             .map_err(anyhow_to_pyerr)?;
+            if config_changed && !read_only {
+                env.save_to_directory().map_err(anyhow_to_pyerr)?;
+            }
             let inner = Arc::new(Mutex::new(Some(env)));
             return Ok(OntoEnv {
                 inner,
@@ -3900,18 +3947,21 @@ impl OntoEnv {
 
         if recover {
             cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
+            cfg.apply_overrides(&overrides).map_err(anyhow_to_pyerr)?;
         }
         let root_for_lookup = cfg.root.clone();
         let env = if recover {
             OntoEnvRs::recover(cfg).map_err(anyhow_to_pyerr)?
         } else if let Some(sync) = connect_sync {
-            OntoEnvRs::connect(cfg, sync, read_only).map_err(anyhow_to_pyerr)?
+            OntoEnvRs::connect_with_overrides(cfg, sync, read_only, overrides.clone())
+                .map_err(anyhow_to_pyerr)?
         } else if cfg.temporary {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
         } else if create_or_use_cached {
-            OntoEnvRs::open_or_init(cfg, read_only).map_err(anyhow_to_pyerr)?
+            OntoEnvRs::open_or_init_with_overrides(cfg, read_only, overrides.clone())
+                .map_err(anyhow_to_pyerr)?
         } else {
             let load_root = if let Some(found_root) =
                 find_ontoenv_root_from(root_for_lookup.as_path())
@@ -3932,27 +3982,9 @@ impl OntoEnv {
             };
             let mut env =
                 OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?;
-            // Apply any explicitly-activated flags so that e.g.
-            // `OntoEnv(offline=True)` makes the loaded env offline.
-            // Only non-default values are applied; calling `OntoEnv()` with
-            // all defaults is still a pure load with no config side-effects.
-            let mut config_changed = false;
-            if offline && !env.is_offline() {
-                env.set_offline(true);
-                config_changed = true;
-            }
-            if strict && !env.is_strict() {
-                env.set_strict(true);
-                config_changed = true;
-            }
-            if require_ontology_names && !env.requires_ontology_names() {
-                env.set_require_ontology_names(true);
-                config_changed = true;
-            }
-            if let Some(ttl) = remote_cache_ttl_secs {
-                env.set_remote_cache_ttl_secs(ttl);
-                config_changed = true;
-            }
+            let config_changed = env
+                .apply_config_overrides(&overrides)
+                .map_err(anyhow_to_pyerr)?;
             if !read_only && config_changed {
                 env.save_to_directory().map_err(anyhow_to_pyerr)?;
             }
@@ -5626,6 +5658,11 @@ impl OntoEnv {
     }
 
     fn set_offline(&mut self, offline: bool) -> PyResult<()> {
+        if self.read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot persist configuration on a read-only OntoEnv",
+            ));
+        }
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let Some(env) = guard.as_mut() else {
@@ -5653,6 +5690,11 @@ impl OntoEnv {
     }
 
     fn set_strict(&mut self, strict: bool) -> PyResult<()> {
+        if self.read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot persist configuration on a read-only OntoEnv",
+            ));
+        }
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let Some(env) = guard.as_mut() else {
@@ -5680,6 +5722,11 @@ impl OntoEnv {
     }
 
     fn set_require_ontology_names(&mut self, require: bool) -> PyResult<()> {
+        if self.read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot persist configuration on a read-only OntoEnv",
+            ));
+        }
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let Some(env) = guard.as_mut() else {
@@ -5688,6 +5735,68 @@ impl OntoEnv {
             ));
         };
         env.set_require_ontology_names(require);
+        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
+    }
+
+    fn remote_cache_ttl_secs(&self) -> PyResult<u64> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let Some(env) = guard.as_ref() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ));
+        };
+        Ok(env.remote_cache_ttl_secs())
+    }
+
+    fn set_remote_cache_ttl_secs(&mut self, ttl_secs: u64) -> PyResult<()> {
+        if self.read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot persist configuration on a read-only OntoEnv",
+            ));
+        }
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ));
+        };
+        env.set_remote_cache_ttl_secs(ttl_secs);
+        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        drop(guard);
+        self.bump_generation();
+        result
+    }
+
+    fn uses_cached_ontologies(&self) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let Some(env) = guard.as_ref() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ));
+        };
+        Ok(env.uses_cached_ontologies())
+    }
+
+    fn set_use_cached_ontologies(&mut self, enabled: bool) -> PyResult<()> {
+        if self.read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot persist configuration on a read-only OntoEnv",
+            ));
+        }
+        let inner = self.inner.clone();
+        let mut guard = inner.lock().unwrap();
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ));
+        };
+        env.set_use_cached_ontologies(CacheMode::from(enabled));
         let result = env.save_to_directory().map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
@@ -5707,6 +5816,11 @@ impl OntoEnv {
     }
 
     fn set_resolution_policy(&mut self, policy: String) -> PyResult<()> {
+        if self.read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot persist configuration on a read-only OntoEnv",
+            ));
+        }
         let inner = self.inner.clone();
         let mut guard = inner.lock().unwrap();
         let Some(env) = guard.as_mut() else {
@@ -5714,7 +5828,7 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_resolution_policy(policy);
+        env.set_resolution_policy(policy).map_err(anyhow_to_pyerr)?;
         let result = env.save_to_directory().map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();

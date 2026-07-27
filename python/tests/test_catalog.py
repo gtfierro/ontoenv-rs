@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -517,6 +518,201 @@ def test_connect_reuses_persisted_configuration(tmp_path: Path) -> None:
     assert custom_reopened.is_offline() is True
     assert custom_reopened.is_strict() is True
     custom_reopened.close()
+
+    custom_non_strict = OntoEnv.connect(
+        custom_root,
+        graph_store=store,
+        strict=False,
+    )
+    assert custom_non_strict.is_strict() is False
+    custom_non_strict.close()
+
+    custom_persisted = OntoEnv.connect(custom_root, graph_store=store)
+    assert custom_persisted.is_strict() is False
+    custom_persisted.close()
+
+
+def test_explicit_strict_override_persists_both_transitions(tmp_path: Path) -> None:
+    environment = OntoEnv.create(tmp_path, strict=False)
+    environment.close()
+
+    strict_environment = OntoEnv.open(tmp_path, strict=True)
+    assert strict_environment.is_strict() is True
+    strict_environment.close()
+
+    persisted_strict = OntoEnv.connect(tmp_path)
+    assert persisted_strict.is_strict() is True
+    persisted_strict.close()
+
+    non_strict_environment = OntoEnv.connect(tmp_path, strict=False)
+    assert non_strict_environment.is_strict() is False
+    non_strict_environment.close()
+
+    persisted_non_strict = OntoEnv.open(tmp_path)
+    assert persisted_non_strict.is_strict() is False
+    persisted_non_strict.close()
+
+
+def test_read_only_strict_override_is_session_only(tmp_path: Path) -> None:
+    environment = OntoEnv.create(tmp_path, strict=False)
+    environment.close()
+
+    read_only = OntoEnv.open(tmp_path, read_only=True, strict=True)
+    assert read_only.is_strict() is True
+    read_only.close()
+
+    reopened = OntoEnv.open(tmp_path)
+    assert reopened.is_strict() is False
+    reopened.close()
+
+
+def test_reopen_configuration_overrides_are_explicit_and_persisted(
+    tmp_path: Path,
+) -> None:
+    environment = OntoEnv(
+        tmp_path,
+        recreate=True,
+        offline=True,
+        strict=True,
+        require_ontology_names=True,
+        use_cached_ontologies=True,
+        resolution_policy="latest",
+        remote_cache_ttl_secs=41,
+        search_directories=[str(tmp_path / "sources")],
+        includes=["**/*.ttl"],
+        excludes=["ignored/**"],
+        include_ontologies=["example"],
+        exclude_ontologies=["deprecated"],
+    )
+    environment.close()
+
+    # Omitted values preserve all persisted configuration, including through
+    # the legacy create-or-use-cached constructor path.
+    preserved = OntoEnv(tmp_path, create_or_use_cached=True)
+    assert preserved.is_offline() is True
+    assert preserved.is_strict() is True
+    assert preserved.requires_ontology_names() is True
+    assert preserved.uses_cached_ontologies() is True
+    assert preserved.resolution_policy() == "latest"
+    assert preserved.remote_cache_ttl_secs() == 41
+    preserved.close()
+
+    overridden = OntoEnv.open(
+        tmp_path,
+        offline=False,
+        strict=False,
+        require_ontology_names=False,
+        use_cached_ontologies=False,
+        resolution_policy="default",
+        remote_cache_ttl_secs=7,
+        search_directories=[],
+        includes=[],
+        excludes=[],
+        include_ontologies=[],
+        exclude_ontologies=[],
+    )
+    assert overridden.is_offline() is False
+    assert overridden.is_strict() is False
+    assert overridden.requires_ontology_names() is False
+    assert overridden.uses_cached_ontologies() is False
+    assert overridden.resolution_policy() == "default"
+    assert overridden.remote_cache_ttl_secs() == 7
+    overridden.close()
+
+    config = json.loads((tmp_path / ".ontoenv" / "ontoenv.json").read_text())
+    assert config["locations"] == []
+    assert config["includes"] == []
+    assert config["excludes"] == []
+    assert config["include_ontologies"] == []
+    assert config["exclude_ontologies"] == []
+
+
+def test_read_only_configuration_overrides_are_session_only(tmp_path: Path) -> None:
+    environment = OntoEnv.create(
+        tmp_path,
+        offline=False,
+        strict=False,
+        resolution_policy="default",
+        remote_cache_ttl_secs=11,
+    )
+    environment.close()
+
+    read_only = OntoEnv.open(
+        tmp_path,
+        read_only=True,
+        offline=True,
+        strict=True,
+        resolution_policy="latest",
+        remote_cache_ttl_secs=99,
+    )
+    assert read_only.is_offline() is True
+    assert read_only.is_strict() is True
+    assert read_only.resolution_policy() == "latest"
+    assert read_only.remote_cache_ttl_secs() == 99
+    with pytest.raises(ValueError, match="read-only"):
+        read_only.set_offline(False)
+    read_only.close()
+
+    persisted = OntoEnv.open(tmp_path)
+    assert persisted.is_offline() is False
+    assert persisted.is_strict() is False
+    assert persisted.resolution_policy() == "default"
+    assert persisted.remote_cache_ttl_secs() == 11
+    persisted.close()
+
+
+def test_require_ontology_names_controls_future_ingestion(tmp_path: Path) -> None:
+    source = tmp_path / "unnamed.ttl"
+    source.write_text(
+        "@prefix ex: <https://example.org/> .\n"
+        "ex:subject ex:predicate ex:object .\n"
+    )
+    environment = OntoEnv.create(tmp_path, require_ontology_names=True)
+    environment.close()
+    environment = OntoEnv.open(tmp_path)
+    with pytest.raises(ValueError, match="No ontology declaration"):
+        environment.add(str(source))
+
+    environment.set_require_ontology_names(False)
+    environment.add(str(source))
+    assert len(environment.get_ontology_names()) == 1
+    environment.close()
+
+
+def test_configuration_setters_are_live_and_validate_policy(tmp_path: Path) -> None:
+    environment = OntoEnv.create(tmp_path)
+    environment.set_offline(True)
+    environment.set_remote_cache_ttl_secs(23)
+    environment.set_use_cached_ontologies(False)
+    environment.set_resolution_policy("latest")
+
+    assert environment.is_offline() is True
+    assert environment.remote_cache_ttl_secs() == 23
+    assert environment.uses_cached_ontologies() is False
+    assert environment.resolution_policy() == "latest"
+    with pytest.raises(ValueError, match="Unknown resolution policy"):
+        environment.set_resolution_policy("not-a-policy")
+    assert environment.resolution_policy() == "latest"
+    environment.close()
+
+
+def test_reopened_strict_environment_detects_catalogued_missing_import(
+    tmp_path: Path,
+) -> None:
+    root = "https://example.org/root"
+    missing = "https://example.invalid/missing"
+    graph = ontology_graph(root)
+    graph.add((URIRef(root), OWL.imports, URIRef(missing)))
+
+    environment = OntoEnv.create(tmp_path, strict=False, offline=True)
+    environment.add(graph)
+    environment.close()
+
+    reopened = OntoEnv.open(tmp_path, strict=True)
+    assert reopened.missing_imports(root) == [missing]
+    with pytest.raises(ValueError, match="Import not found"):
+        reopened.list_closure(root)
+    reopened.close()
 
 
 def test_connect_rejects_invalid_policy_and_temporary_mode(tmp_path: Path) -> None:

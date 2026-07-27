@@ -36,20 +36,39 @@ struct Cli {
     #[clap(long, action, default_value = "false", global = true)]
     debug: bool,
     /// Resolution policy for determining which ontology to use when there are multiple with the same name
-    #[clap(long, short, default_value = "default", global = true)]
+    #[clap(long, short, global = true)]
     policy: Option<String>,
     /// Temporary (non-persistent) mode - will not save the environment to disk
     #[clap(long, short, action, global = true)]
     temporary: bool,
-    /// Require ontology names to be unique; will raise an error if multiple ontologies have the same name
-    #[clap(long, action, global = true)]
-    require_ontology_names: bool,
+    /// Require each ingested graph to declare an ontology name
+    #[clap(
+        long,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true,
+        global = true
+    )]
+    require_ontology_names: Option<bool>,
     /// Strict mode - will raise an error if an ontology is not found
-    #[clap(long, action, default_value = "false", global = true)]
-    strict: bool,
+    #[clap(
+        long,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true,
+        global = true
+    )]
+    strict: Option<bool>,
     /// Offline mode - will not attempt to fetch ontologies from the web
-    #[clap(long, short, action, default_value = "false", global = true)]
-    offline: bool,
+    #[clap(
+        long,
+        short,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true,
+        global = true
+    )]
+    offline: Option<bool>,
     /// Glob patterns for which files to include, defaults to ['*.ttl','*.xml','*.n3'].
     /// Supports **, ?, and bare directories (e.g., 'lib/tests' => 'lib/tests/**').
     #[clap(long, short, num_args = 1.., global = true)]
@@ -214,7 +233,6 @@ enum Commands {
         rename: Option<String>,
     },
     /// List various properties of the environment
-    /// List various properties of the environment
     List {
         #[command(subcommand)]
         list_cmd: ListCommands,
@@ -253,6 +271,8 @@ enum Commands {
         #[clap(long, action, default_value = "false")]
         json: bool,
     },
+    /// Rebuild the catalog after an interrupted mutation
+    Recover,
     /// Reset the ontology environment by removing the .ontoenv directory
     Reset {
         #[clap(long, short, action = clap::ArgAction::SetTrue, default_value = "false")]
@@ -294,6 +314,7 @@ impl std::fmt::Display for Commands {
             Commands::DepGraph { .. } => "DepGraph",
             Commands::Why { .. } => "Why",
             Commands::Doctor { .. } => "Doctor",
+            Commands::Recover => "Recover",
             Commands::Reset { .. } => "Reset",
             Commands::Namespaces { .. } => "Namespaces",
             Commands::Config { .. } => "Config",
@@ -494,14 +515,14 @@ fn execute(cmd: Cli) -> Result<()> {
 
     ontoenv::progress::set_progress_output_enabled(true);
 
-    let policy = cmd.policy.unwrap_or_else(|| "default".to_string());
+    let policy = cmd.policy.clone().unwrap_or_else(|| "default".to_string());
 
     let cwd = current_dir()?;
     let mut builder = Config::builder()
         .root(cwd.clone())
-        .require_ontology_names(cmd.require_ontology_names)
-        .strict(cmd.strict)
-        .offline(cmd.offline)
+        .require_ontology_names(cmd.require_ontology_names.unwrap_or(false))
+        .strict(cmd.strict.unwrap_or(false))
+        .offline(cmd.offline.unwrap_or(false))
         .resolution_policy(policy)
         .temporary(cmd.temporary);
 
@@ -577,6 +598,43 @@ fn execute(cmd: Cli) -> Result<()> {
         .unwrap_or(false);
     info!("OntoEnv exists: {ontoenv_exists}");
 
+    // Recovery must run before the normal environment-open path below: that
+    // path deliberately rejects catalog.pending with CatalogRecoveryError.
+    if matches!(cmd.command, Commands::Recover) {
+        if cmd.temporary {
+            return Err(anyhow::anyhow!(
+                "Cannot recover in temporary mode because there is no persistent catalog."
+            ));
+        }
+        let root = discovered_root.ok_or_else(|| {
+            anyhow::anyhow!(
+                "OntoEnv not found. Run `ontoenv recover` from an environment directory or set ONTOENV_DIR."
+            )
+        })?;
+        if !ontoenv_exists {
+            return Err(anyhow::anyhow!(
+                "OntoEnv catalog configuration not found at {}.",
+                root.join(".ontoenv").join("ontoenv.json").display()
+            ));
+        }
+        let recovery_config =
+            OntoEnv::connect_config(Config::builder().root(root.clone()).build()?)?;
+        if recovery_config.external_graph_store.is_some() {
+            return Err(anyhow::anyhow!(
+                "This environment uses a caller-provided graph store. Recover it with `OntoEnv.recover(path, graph_store=store)` in Python."
+            ));
+        }
+        let recovered = OntoEnv::recover(recovery_config)?;
+        let records = recovered.ontologies().len();
+        println!(
+            "Recovered catalog at {} with {} ontology {}.",
+            root.join(".ontoenv").display(),
+            records,
+            plural(records, "record", "records")
+        );
+        return Ok(());
+    }
+
     // create the env object to use in the subcommand.
     // - if temporary is true, create a new env object each time
     // - if temporary is false, load the env from the .ontoenv directory if it exists
@@ -621,17 +679,29 @@ fn execute(cmd: Cli) -> Result<()> {
                 // requiring a full --overwrite re-init.
                 let mut env = OntoEnv::load_from_directory(root, false)?;
                 let mut config_changed = false;
-                if cmd.offline && !env.is_offline() {
-                    env.set_offline(true);
-                    config_changed = true;
+                if let Some(offline) = cmd.offline {
+                    if offline != env.is_offline() {
+                        env.set_offline(offline);
+                        config_changed = true;
+                    }
                 }
-                if cmd.strict && !env.is_strict() {
-                    env.set_strict(true);
-                    config_changed = true;
+                if let Some(strict) = cmd.strict {
+                    if strict != env.is_strict() {
+                        env.set_strict(strict);
+                        config_changed = true;
+                    }
                 }
-                if cmd.require_ontology_names && !env.requires_ontology_names() {
-                    env.set_require_ontology_names(true);
-                    config_changed = true;
+                if let Some(require) = cmd.require_ontology_names {
+                    if require != env.requires_ontology_names() {
+                        env.set_require_ontology_names(require);
+                        config_changed = true;
+                    }
+                }
+                if let Some(policy) = cmd.policy {
+                    if policy != env.resolution_policy() {
+                        env.set_resolution_policy(policy)?;
+                        config_changed = true;
+                    }
                 }
                 if let Some(ttl) = cmd.remote_cache_ttl_secs {
                     env.set_remote_cache_ttl_secs(ttl);
@@ -1004,6 +1074,9 @@ fn execute(cmd: Cli) -> Result<()> {
                     }
                 }
             }
+        }
+        Commands::Recover => {
+            // This command is handled before the environment is opened.
         }
         Commands::Namespaces {
             ontology,

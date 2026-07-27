@@ -10,7 +10,7 @@ is_debug_build: bool
 
 class ExternalStoreChangedError(RuntimeError): ...
 class CatalogRecoveryError(RuntimeError):
-    """An interrupted mutation requires :meth:`OntoEnv.recover` before opening."""
+    """An interrupted mutation requires ``ontoenv recover`` or :meth:`OntoEnv.recover`."""
 
 class UnresolvedImportError(LookupError):
     """A known ``owl:imports`` target could not be resolved or loaded.
@@ -73,7 +73,8 @@ class OntoEnv:
         ``sync="auto"`` reconciles direct graph-store changes when the store
         can identify them. It does not inspect ontology files or URLs. Call
         :py:meth:`update` after connecting to refresh sources and their
-        imports.
+        imports. Omitted configuration preserves persisted settings; explicit
+        values override them.
         """
         ...
 
@@ -92,7 +93,14 @@ class OntoEnv:
         graph_store: Optional[object] = None,
         read_only: bool = False,
         **options: object,
-    ) -> "OntoEnv": ...
+    ) -> "OntoEnv":
+        """Open an existing environment without synchronizing its graph store.
+
+        Omitted configuration preserves persisted settings. Explicit values
+        are persisted by writable opens; read-only opens apply them only to
+        that session.
+        """
+        ...
 
     @classmethod
     def recover(
@@ -124,11 +132,11 @@ class OntoEnv:
         create_or_use_cached: bool = False,
         read_only: bool = False,
         search_directories: Optional[List[str]] = None,
-        require_ontology_names: bool = False,
-        strict: bool = False,
-        offline: bool = False,
-        use_cached_ontologies: bool = False,
-        resolution_policy: str = "default",
+        require_ontology_names: Optional[bool] = None,
+        strict: Optional[bool] = None,
+        offline: Optional[bool] = None,
+        use_cached_ontologies: Optional[bool] = None,
+        resolution_policy: Optional[str] = None,
         root: str = ".",
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
@@ -153,7 +161,12 @@ class OntoEnv:
         PSO/POS/SPO/OSP posting-list indexes are built in memory when a
         persistent ``.r5tu`` snapshot is first bound. The transitive-closure
         table for supported property paths is built lazily on first use.
-        Nothing is written to disk and no configuration is required.
+
+        For an existing persistent environment, ``None`` preserves persisted
+        configuration. Explicit values—including ``False``, ``"default"``,
+        and empty lists—override it. Writable opens persist overrides;
+        read-only opens keep them session-local. Overrides do not trigger an
+        implicit source scan or graph re-ingestion.
         """
         ...
 
@@ -629,10 +642,18 @@ class OntoEnv:
     def set_offline(self, offline: bool) -> None: ...
 
     def is_strict(self) -> bool: ...
-    def set_strict(self, strict: bool) -> None: ...
+    def set_strict(self, strict: bool) -> None:
+        """Set and persist strict mode for future operations."""
+        ...
 
     def requires_ontology_names(self) -> bool: ...
     def set_require_ontology_names(self, require: bool) -> None: ...
+
+    def remote_cache_ttl_secs(self) -> int: ...
+    def set_remote_cache_ttl_secs(self, ttl_secs: int) -> None: ...
+
+    def uses_cached_ontologies(self) -> bool: ...
+    def set_use_cached_ontologies(self, enabled: bool) -> None: ...
 
     def resolution_policy(self) -> str: ...
     def set_resolution_policy(self, policy: str) -> None: ...

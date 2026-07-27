@@ -88,6 +88,12 @@ impl Environment {
         }
     }
 
+    pub fn set_default_policy(&mut self, name: &str) -> anyhow::Result<()> {
+        self.default_policy = policy::policy_from_name(name)
+            .ok_or_else(|| anyhow!("Unknown resolution policy: {name}"))?;
+        Ok(())
+    }
+
     pub fn ontologies(&self) -> &HashMap<GraphIdentifier, Ontology> {
         &self.ontologies
     }

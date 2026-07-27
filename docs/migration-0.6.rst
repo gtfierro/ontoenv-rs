@@ -64,9 +64,26 @@ deleting OntoEnv-owned files:
 
    env = OntoEnv.recover("./ontology-env", graph_store=store)
 
+For the built-in persistent store, ``ontoenv recover`` provides the same
+operation from the command line using normal environment discovery.
+
 Recovery scans one stable backend snapshot. If the backend changes or a graph
 cannot be read during the scan, recovery fails and leaves its marker in place
 so it can be retried safely.
+
+Reopening configuration
+-----------------------
+
+``OntoEnv.open``, ``OntoEnv.connect``, and
+``create_or_use_cached=True`` preserve every persisted configuration value
+whose option is omitted. Explicit values—including ``False``, ``"default"``,
+and empty lists—override it. Writable connections save overrides; read-only
+connections apply them only to the current session.
+
+This covers strict/offline/name-validation/cache settings, resolution policy,
+remote cache TTL, search directories, and file/ontology filters. Overrides do
+not trigger an implicit source scan or graph re-ingestion; discovery settings
+take effect on the next explicit ``update()``.
 
 Non-strict import loading remains best-effort. Completed
 ``import_dependencies(..., fetch_missing=True)`` and

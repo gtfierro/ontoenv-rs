@@ -100,6 +100,77 @@ fn discovery_from_subdirectory() {
 }
 
 #[test]
+fn recover_rebuilds_catalog_and_removes_pending_marker() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("recover");
+    let iri = "http://example.org/ont/Recoverable";
+    write_ttl(&root.join("recoverable.ttl"), iri, "");
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init");
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let pending = root.join(".ontoenv").join("catalog.pending");
+    fs::write(&pending, r#"{"mutation_id":"test","graphs":[]}"#).expect("write pending marker");
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("status")
+        .output()
+        .expect("run blocked status");
+    assert!(!out.status.success(), "status should require recovery");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("ontoenv recover"),
+        "recovery guidance missing: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    let out = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("recover")
+        .output()
+        .expect("run recover");
+    assert!(
+        out.status.success(),
+        "recover failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Recovered catalog"),
+        "recovery summary missing: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(!pending.exists(), "successful recovery must remove marker");
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("list")
+        .arg("ontologies")
+        .output()
+        .expect("run list after recovery");
+    assert!(
+        out.status.success(),
+        "list failed after recovery: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains(iri),
+        "recovered catalog did not contain ontology: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
 fn ontoenv_dir_override() {
     let exe = ontoenv_bin();
     let env_root = tmp_dir("envdir");
@@ -485,6 +556,24 @@ fn init_offline_flag_persists_on_existing_env() {
         Some(true),
         "offline must be true after `ontoenv init --offline` on existing env"
     );
+
+    // An explicit false disables the persisted mode; omission alone would
+    // preserve it.
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .arg("--offline=false")
+        .arg("init")
+        .arg(".")
+        .output()
+        .expect("run init --offline=false");
+    assert!(
+        out.status.success(),
+        "init --offline=false failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let raw3 = fs::read_to_string(&cfg_path).expect("read config after explicit false");
+    let json3: serde_json::Value = serde_json::from_str(&raw3).expect("parse config");
+    assert_eq!(json3["offline"].as_bool(), Some(false));
 }
 
 /// `ontoenv union` takes multiple ontology IRIs and writes a merged file.

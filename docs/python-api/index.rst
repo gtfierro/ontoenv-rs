@@ -149,11 +149,24 @@ Key methods
 - ``env.set_offline(bool)`` / ``env.is_offline()`` — Toggle or query offline mode.
 - ``env.set_strict(bool)`` / ``env.is_strict()`` — Strict mode makes missing imports an
   error instead of a warning.
-- ``env.set_remote_cache_ttl_secs(secs)`` — Override the remote-ontology cache TTL.
-- ``env.set_use_cached_ontologies(mode)`` — Control whether cached copies or fresh fetches
+- ``env.set_require_ontology_names(bool)`` / ``env.requires_ontology_names()`` —
+  Require an ontology declaration during future ingestion.
+- ``env.set_remote_cache_ttl_secs(secs)`` / ``env.remote_cache_ttl_secs()`` —
+  Override or query the remote-ontology cache TTL.
+- ``env.set_use_cached_ontologies(enabled)`` / ``env.uses_cached_ontologies()`` —
+  Control whether cached copies or fresh fetches
   are preferred.
+- ``env.set_resolution_policy(name)`` / ``env.resolution_policy()`` — Select or
+  query ``"default"``, ``"latest"``, or ``"version"`` resolution.
 - ``OntoEnv.recover(path, graph_store=None)`` — Rebuild the catalog after
   ``CatalogRecoveryError`` without manually deleting OntoEnv-owned files.
+
+When reopening, every configuration option follows the same rule: omission
+preserves its persisted value, while an explicit value (including ``False``,
+``"default"``, or ``[]``) overrides it. Writable opens persist overrides and
+read-only opens keep them session-local. Reconfiguration does not implicitly
+scan or re-ingest; changed search paths and filters apply on the next
+``update()``.
 
 A known unresolved ``owl:imports`` target passed to ``copy_graph`` raises
 ``UnresolvedImportError`` (a ``LookupError``). Known targets include imports

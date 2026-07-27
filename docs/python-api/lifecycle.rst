@@ -33,6 +33,37 @@ resolution and closure lookup are therefore ready as soon as ``connect``
 returns. You do not need to check whether the directory already exists or
 choose between “create” and “open” in ordinary application code.
 
+Reopening with configuration overrides
+--------------------------------------
+
+Persistent settings are reused when an option is omitted. Boolean options are
+tri-state on reopen: ``None`` preserves the saved value, while either boolean
+is an explicit override:
+
+.. code-block:: python
+
+   env = OntoEnv.connect("./ontology-env")  # keep all saved settings
+   env = OntoEnv.connect("./ontology-env", strict=True, offline=True)
+   env = OntoEnv.connect("./ontology-env", strict=False, offline=False)
+   env = OntoEnv.connect(
+       "./ontology-env",
+       resolution_policy="default",
+       search_directories=[],  # explicitly clear saved search paths
+   )
+
+The same rule covers ``require_ontology_names``,
+``use_cached_ontologies``, ``remote_cache_ttl_secs``, ``resolution_policy``,
+search directories, and file/ontology include and exclude settings.
+``OntoEnv.open`` and ``create_or_use_cached=True`` follow the same behavior.
+On a read-only connection, an explicit override applies only to that session
+and is not saved.
+
+Changing configuration does not rescan or re-ingest graph data. Runtime modes
+take effect immediately for future operations; changed discovery paths and
+filters are used by the next explicit ``update()``. The ``set_*`` methods
+remain the explicit way to change and persist settings on an already-open
+writable environment.
+
 Choosing how long the object lives
 ----------------------------------
 
@@ -217,8 +248,10 @@ from the authoritative graph store:
 
    env = OntoEnv.recover("./project", graph_store=store)
 
-For the built-in persistent store, omit ``graph_store``. Recovery scans every
-stored graph and publishes a replacement catalog. The ``catalog.pending``
+For the built-in persistent store, omit ``graph_store`` or run
+``ontoenv recover`` from the environment directory. The CLI also discovers
+the environment from child directories and honors ``ONTOENV_DIR``. Recovery
+scans every stored graph and publishes a replacement catalog. The ``catalog.pending``
 marker is removed only after that publication succeeds, so callers never need
 to delete OntoEnv-owned files themselves. The backend must remain unchanged
 during the scan; a concurrent mutation or unreadable graph aborts recovery and

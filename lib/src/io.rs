@@ -121,13 +121,13 @@ fn add_ontology_bytes(
     bytes: &[u8],
     format: Option<RdfFormat>,
     overwrite: Overwrite,
-    strict: bool,
+    require_ontology_names: bool,
 ) -> Result<Ontology> {
     // Parse into a temporary store to extract ontology metadata safely.
     let staging_graph = NamedNode::new_unchecked("temp:graph");
     let tmp_store = load_staging_store_from_bytes(bytes, format)?;
     let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
-    let mut ontology = Ontology::from_store(&tmp_store, &staging_id, strict)?;
+    let mut ontology = Ontology::from_store(&tmp_store, &staging_id, require_ontology_names)?;
     // Hash content for change detection without re-reading sources.
     let hash = blake3::hash(bytes).to_hex().to_string();
     ontology.set_content_hash(hash);
@@ -162,7 +162,7 @@ fn add_ontology_to_store(
     location: OntologyLocation,
     overwrite: Overwrite,
     offline: bool,
-    strict: bool,
+    require_ontology_names: bool,
 ) -> Result<Ontology> {
     // Resolve bytes from the location, honoring offline mode.
     let (bytes, format) = match &location {
@@ -181,13 +181,31 @@ fn add_ontology_to_store(
             ))
         }
     };
-    add_ontology_bytes(store, &location, &bytes, format, overwrite, strict)
+    add_ontology_bytes(
+        store,
+        &location,
+        &bytes,
+        format,
+        overwrite,
+        require_ontology_names,
+    )
 }
 
 pub trait GraphIO: Send + Sync {
     /// Returns true if the store is offline; if this is true, then the store
     /// will not fetch any data from the internet
     fn is_offline(&self) -> bool;
+
+    /// Update network access behavior for future graph mutations.
+    fn set_offline(&mut self, _offline: bool) {}
+
+    /// Update strict parsing behavior for future graph mutations.
+    ///
+    /// Read-only backends may keep the default no-op implementation.
+    fn set_strict(&mut self, _strict: bool) {}
+
+    /// Update ontology-declaration validation for future graph mutations.
+    fn set_require_ontology_names(&mut self, _require: bool) {}
 
     /// Returns the type of the store (e.g., "persistent", "memory", "read-only")
     fn io_type(&self) -> String;
@@ -456,6 +474,7 @@ pub struct PersistentGraphIO {
     store: Store,
     offline: bool,
     strict: bool,
+    require_ontology_names: bool,
     store_path: PathBuf,
     r5_file: Option<R5tuFile>,
     r5_index: HashMap<String, R5GraphInfo>,
@@ -504,6 +523,7 @@ impl PersistentGraphIO {
             store,
             offline,
             strict,
+            require_ontology_names: false,
             store_path,
             r5_file,
             r5_index,
@@ -667,6 +687,18 @@ impl GraphIO for PersistentGraphIO {
         self.offline
     }
 
+    fn set_offline(&mut self, offline: bool) {
+        self.offline = offline;
+    }
+
+    fn set_strict(&mut self, strict: bool) {
+        self.strict = strict;
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) {
+        self.require_ontology_names = require;
+    }
+
     fn io_type(&self) -> String {
         "persistent".to_string()
     }
@@ -721,8 +753,13 @@ impl GraphIO for PersistentGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
-        let ont =
-            add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)?;
+        let ont = add_ontology_to_store(
+            &self.store,
+            location,
+            overwrite,
+            self.offline,
+            self.require_ontology_names,
+        )?;
         let graphname = ont.id().graphname()?;
         self.update_index_for_graph(&graphname)?;
         let mut loaded = self
@@ -750,7 +787,7 @@ impl GraphIO for PersistentGraphIO {
             &bytes,
             format,
             overwrite,
-            self.strict,
+            self.require_ontology_names,
         )?;
         let graphname = ont.id().graphname()?;
         self.update_index_for_graph(&graphname)?;
@@ -1012,6 +1049,7 @@ pub struct ExternalStoreGraphIO {
     store: Store,
     offline: bool,
     strict: bool,
+    require_ontology_names: bool,
 }
 
 impl ExternalStoreGraphIO {
@@ -1021,6 +1059,7 @@ impl ExternalStoreGraphIO {
             store,
             offline,
             strict,
+            require_ontology_names: false,
         }
     }
 }
@@ -1028,6 +1067,18 @@ impl ExternalStoreGraphIO {
 impl GraphIO for ExternalStoreGraphIO {
     fn is_offline(&self) -> bool {
         self.offline
+    }
+
+    fn set_offline(&mut self, offline: bool) {
+        self.offline = offline;
+    }
+
+    fn set_strict(&mut self, strict: bool) {
+        self.strict = strict;
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) {
+        self.require_ontology_names = require;
     }
 
     fn io_type(&self) -> String {
@@ -1043,7 +1094,13 @@ impl GraphIO for ExternalStoreGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
-        add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
+        add_ontology_to_store(
+            &self.store,
+            location,
+            overwrite,
+            self.offline,
+            self.require_ontology_names,
+        )
     }
 
     fn add_from_bytes(
@@ -1059,7 +1116,7 @@ impl GraphIO for ExternalStoreGraphIO {
             &bytes,
             format,
             overwrite,
-            self.strict,
+            self.require_ontology_names,
         )
     }
 }
@@ -1068,6 +1125,7 @@ pub struct MemoryGraphIO {
     store: Store,
     offline: bool,
     strict: bool,
+    require_ontology_names: bool,
 }
 
 impl MemoryGraphIO {
@@ -1077,6 +1135,7 @@ impl MemoryGraphIO {
             store: Store::new()?,
             offline,
             strict,
+            require_ontology_names: false,
         })
     }
 
@@ -1100,6 +1159,18 @@ impl GraphIO for MemoryGraphIO {
         self.offline
     }
 
+    fn set_offline(&mut self, offline: bool) {
+        self.offline = offline;
+    }
+
+    fn set_strict(&mut self, strict: bool) {
+        self.strict = strict;
+    }
+
+    fn set_require_ontology_names(&mut self, require: bool) {
+        self.require_ontology_names = require;
+    }
+
     fn io_type(&self) -> String {
         "memory".to_string()
     }
@@ -1113,7 +1184,13 @@ impl GraphIO for MemoryGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
-        add_ontology_to_store(&self.store, location, overwrite, self.offline, self.strict)
+        add_ontology_to_store(
+            &self.store,
+            location,
+            overwrite,
+            self.offline,
+            self.require_ontology_names,
+        )
     }
 
     fn add_from_bytes(
@@ -1129,7 +1206,7 @@ impl GraphIO for MemoryGraphIO {
             &bytes,
             format,
             overwrite,
-            self.strict,
+            self.require_ontology_names,
         )
     }
 }

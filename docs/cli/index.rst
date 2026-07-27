@@ -29,6 +29,9 @@ Typical workflow
 #. ``ontoenv closure`` / ``ontoenv get`` — export a merged graph of an ontology plus all its
    imports, or retrieve a single graph.
 
+If a command reports ``CatalogRecoveryError`` after an interrupted mutation,
+run ``ontoenv recover`` from the environment or one of its subdirectories.
+
 Commands: status and inspection
 --------------------------------
 
@@ -96,6 +99,9 @@ Commands: update and manage
   different IRI than the one declared in the file (see :ref:`renaming-on-add`).
 - ``ontoenv update`` — Re-ingest modified local files and re-fetch stale remote ontologies.
   ``--all`` forces a full refresh regardless of modification times or cache age.
+- ``ontoenv recover`` — Rebuild the catalog from the authoritative persistent
+  graph store after an interrupted mutation. The command removes
+  ``catalog.pending`` only after the replacement catalog is published.
 - ``ontoenv config`` — Read or update the persisted configuration. Supports ``get``, ``set``,
   ``unset``, ``add``, ``remove``, and ``list`` subcommands.
 - ``ontoenv reset`` — Remove the ``.ontoenv/`` directory entirely, wiping all cached state
@@ -124,6 +130,9 @@ Commands: update and manage
    # force a full refresh of everything regardless of modification times
    ontoenv update --all
 
+   # recover after CatalogRecoveryError
+   ontoenv recover
+
    # show all persisted config keys and values
    ontoenv config list
 
@@ -139,6 +148,30 @@ Commands: update and manage
    ontoenv reset
    # skip the confirmation prompt
    ontoenv reset --force
+
+Recovering an interrupted mutation
+----------------------------------
+
+An interrupted write can leave ``.ontoenv/catalog.pending`` to prevent a
+normal command from trusting a possibly stale catalog. Recover from the
+authoritative built-in graph store instead of deleting the marker:
+
+.. code-block:: console
+
+   $ ontoenv status
+   Error: OntoEnv recovery required: interrupted mutation marker at \
+   ./.ontoenv/catalog.pending; run `ontoenv recover` or call OntoEnv::recover \
+   to rebuild the catalog
+
+   $ ontoenv recover
+   Recovered catalog at ./.ontoenv with 12 ontology records.
+
+``recover`` uses normal parent-directory discovery and honors ``ONTOENV_DIR``.
+It scans the stored graphs, publishes a replacement catalog, and removes the
+marker only after publication succeeds. If recovery fails, the marker remains
+so the operation can be retried safely. Recovery is not available with
+``--temporary`` or for caller-provided Python ``graph_store`` backends; use
+``OntoEnv.recover(path, graph_store=store)`` for the latter.
 
 .. _renaming-on-add:
 
@@ -265,6 +298,12 @@ These flags are accepted by every subcommand.
 - ``-p/--policy`` — conflict-resolution policy when multiple files declare the same
   ontology IRI.
 - ``-v/--verbose``, ``--debug`` — increase log verbosity.
+
+When ``ontoenv init`` finds an existing environment, omitted mode flags
+preserve their saved values. Boolean flags accept explicit false values, for
+example ``--offline=false``, ``--strict=false``, and
+``--require-ontology-names=false``. Explicit changes are persisted without
+rescanning the graph store.
 
 Filtering by IRI
 ----------------
