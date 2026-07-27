@@ -619,8 +619,7 @@ impl OntoEnv {
     ) -> Result<Self> {
         let mut config = Self::connect_config(config)?;
         let config_changed = config.apply_overrides(&overrides)?;
-        let environment =
-            Self::connect_with_graph_io_resolved(config, io, sync, read_only)?;
+        let environment = Self::connect_with_graph_io_resolved(config, io, sync, read_only)?;
         if config_changed && !read_only {
             environment.save_to_directory()?;
         }

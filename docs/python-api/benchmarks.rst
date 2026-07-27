@@ -280,7 +280,7 @@ itself, exactly as before):
    from ontoenv import OntoEnv
 
    # Permutation indexes are built when the rdf5d snapshot is bound.
-   env = OntoEnv(path="./.ontoenv", create_or_use_cached=True)
+   env = OntoEnv.connect(".")
    env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
    env.flush()
 

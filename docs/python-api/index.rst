@@ -168,6 +168,10 @@ read-only opens keep them session-local. Reconfiguration does not implicitly
 scan or re-ingest; changed search paths and filters apply on the next
 ``update()``.
 
+``OntoEnv(..., create_or_use_cached=True)`` is deprecated. It emits
+``DeprecationWarning`` and is planned for removal in 0.7; use
+``OntoEnv.connect(path)``.
+
 A known unresolved ``owl:imports`` target passed to ``copy_graph`` raises
 ``UnresolvedImportError`` (a ``LookupError``). Known targets include imports
 declared by catalogued ontologies and currently recorded targets encountered while

@@ -74,16 +74,20 @@ so it can be retried safely.
 Reopening configuration
 -----------------------
 
-``OntoEnv.open``, ``OntoEnv.connect``, and
-``create_or_use_cached=True`` preserve every persisted configuration value
-whose option is omitted. Explicit values—including ``False``, ``"default"``,
-and empty lists—override it. Writable connections save overrides; read-only
-connections apply them only to the current session.
+``OntoEnv.open`` and ``OntoEnv.connect`` preserve every persisted
+configuration value whose option is omitted. Explicit values—including
+``False``, ``"default"``, and empty lists—override it. Writable connections
+save overrides; read-only connections apply them only to the current session.
 
 This covers strict/offline/name-validation/cache settings, resolution policy,
 remote cache TTL, search directories, and file/ontology filters. Overrides do
 not trigger an implicit source scan or graph re-ingestion; discovery settings
 take effect on the next explicit ``update()``.
+
+The legacy ``OntoEnv(..., create_or_use_cached=True)`` spelling now emits
+``DeprecationWarning``. Replace it with ``OntoEnv.connect(path)``. The
+compatibility shim remains available throughout 0.6.x and is planned for
+removal in 0.7.
 
 Non-strict import loading remains best-effort. Completed
 ``import_dependencies(..., fetch_missing=True)`` and

@@ -54,7 +54,9 @@ Pass a ``graph_store=`` object to ``OntoEnv()``. It must implement the following
      <span class="oe-tip-icon">&#x26A0;&#xFE0F;</span>
      <p>
        <strong>Constraint:</strong> <code>graph_store</code> cannot be combined with
-       <code>recreate=True</code> or <code>create_or_use_cached</code>. Graphs are always
+       <code>recreate=True</code>. The deprecated
+       <code>create_or_use_cached=True</code> constructor option is likewise unsupported.
+       Graphs are always
        passed as <code>rdflib.Graph</code> instances.
      </p>
    </div>

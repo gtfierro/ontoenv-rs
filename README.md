@@ -287,7 +287,7 @@ imports.
 OntoEnv(
     path=None,
     recreate=False,
-    create_or_use_cached=False,
+    create_or_use_cached=False,  # deprecated; use OntoEnv.connect(path)
     read_only=False,
     search_directories=None,   # pass ["."] to scan immediately; None skips discovery
     require_ontology_names=None,
@@ -312,7 +312,9 @@ OntoEnv(
 - `OntoEnv.open(path, read_only=False)` — require and load an existing catalog
 - `OntoEnv.adopt(path, graph_store)` — scan an existing store and create its catalog
 - `recreate=True` — explicitly create (or overwrite) at `path`
-- `create_or_use_cached=True` — bootstrap a new environment if none is found, otherwise reuse existing
+- `create_or_use_cached=True` — deprecated compatibility alias for
+  `OntoEnv.connect(path)`; retained for the 0.6.x line and planned for removal
+  in 0.7
 - Default — walk up from `path` (or `root`) to find an existing `.ontoenv/`; raise `FileNotFoundError` if not found
 
 ### Dependency Resolution Methods

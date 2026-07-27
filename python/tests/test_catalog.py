@@ -586,9 +586,8 @@ def test_reopen_configuration_overrides_are_explicit_and_persisted(
     )
     environment.close()
 
-    # Omitted values preserve all persisted configuration, including through
-    # the legacy create-or-use-cached constructor path.
-    preserved = OntoEnv(tmp_path, create_or_use_cached=True)
+    # Omitted values preserve all persisted configuration.
+    preserved = OntoEnv.connect(tmp_path)
     assert preserved.is_offline() is True
     assert preserved.is_strict() is True
     assert preserved.requires_ontology_names() is True

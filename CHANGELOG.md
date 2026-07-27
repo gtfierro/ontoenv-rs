@@ -11,6 +11,11 @@ All notable changes to this project are documented here. Releases follow [Semant
   `CatalogRecoveryError`, using normal environment discovery and removing
   `catalog.pending` only after successful publication.
 
+### Deprecated
+- `OntoEnv(..., create_or_use_cached=True)` is now a compatibility-only alias
+  for the create-or-reopen lifecycle. It emits `DeprecationWarning`; use
+  `OntoEnv.connect(path)` instead. Removal is planned for 0.7.
+
 ### Fixed
 - Python reopen paths now distinguish omitted configuration from explicit
   values for strict/offline/name-validation/cache settings, resolution policy,

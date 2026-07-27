@@ -121,6 +121,10 @@ connection applies explicit overrides only for that session. Reconfiguration
 does not re-ingest the graph store; changed discovery paths and filters are
 used by the next explicit ``update()``.
 
+The older ``OntoEnv(..., create_or_use_cached=True)`` spelling is deprecated.
+It remains as a warning-emitting compatibility shim for 0.6.x and is planned
+for removal in 0.7; use ``OntoEnv.connect(path)``.
+
 The context manager is optional. For a long-lived service, connect once during
 startup and keep the object in application state:
 

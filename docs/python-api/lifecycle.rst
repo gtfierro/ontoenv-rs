@@ -54,7 +54,7 @@ is an explicit override:
 The same rule covers ``require_ontology_names``,
 ``use_cached_ontologies``, ``remote_cache_ttl_secs``, ``resolution_policy``,
 search directories, and file/ontology include and exclude settings.
-``OntoEnv.open`` and ``create_or_use_cached=True`` follow the same behavior.
+``OntoEnv.open`` follows the same behavior.
 On a read-only connection, an explicit override applies only to that session
 and is not saved.
 
@@ -63,6 +63,25 @@ take effect immediately for future operations; changed discovery paths and
 filters are used by the next explicit ``update()``. The ``set_*`` methods
 remain the explicit way to change and persist settings on an already-open
 writable environment.
+
+Deprecated create-or-use-cached option
+--------------------------------------
+
+``OntoEnv(..., create_or_use_cached=True)`` is retained as a compatibility
+shim for the 0.6.x series and emits ``DeprecationWarning``. Use
+``OntoEnv.connect(path)`` instead:
+
+.. code-block:: python
+
+   # Deprecated
+   env = OntoEnv("./ontology-env", create_or_use_cached=True)
+
+   # Supported lifecycle API
+   env = OntoEnv.connect("./ontology-env")
+
+The compatibility option is planned for removal in 0.7. It has the same
+create-or-reopen intent but lacks the clear lifecycle and synchronization
+vocabulary of ``connect``.
 
 Choosing how long the object lives
 ----------------------------------

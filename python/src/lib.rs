@@ -3832,6 +3832,14 @@ impl OntoEnv {
                 1,
             )?;
         }
+        if create_or_use_cached {
+            PyErr::warn(
+                _py,
+                &_py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                c"create_or_use_cached=True is deprecated and will be removed in 0.7; use OntoEnv.connect(path) instead",
+                1,
+            )?;
+        }
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
         if root_path
@@ -3847,7 +3855,7 @@ impl OntoEnv {
         // Strict Git-like behavior:
         // - temporary=True: create a temporary (in-memory) env
         // - recreate=True: create (or overwrite) an env at root_path
-        // - create_or_use_cached=True: create if missing, otherwise load
+        // - create_or_use_cached=True: deprecated compatibility alias for connect
         // - otherwise: discover upward; if not found, error
 
         let overrides = ConfigOverrides {
@@ -3904,7 +3912,7 @@ impl OntoEnv {
         if let Some(store) = graph_store {
             if recreate || create_or_use_cached {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "graph_store cannot be combined with recreate or create_or_use_cached",
+                    "graph_store cannot be combined with recreate or the deprecated create_or_use_cached option",
                 ));
             }
             let desc = graph_store_description(_py, store.bind(_py))?;
@@ -3974,7 +3982,7 @@ impl OntoEnv {
                 } else {
                     return Err(PyErr::new::<pyo3::exceptions::PyFileNotFoundError, _>(
                         format!(
-                            "OntoEnv directory not found at {} (set create_or_use_cached=True to initialize a new environment)",
+                            "OntoEnv directory not found at {} (use OntoEnv.connect(path) to initialize or reopen a persistent environment)",
                             ontoenv_dir.display()
                         ),
                     ));

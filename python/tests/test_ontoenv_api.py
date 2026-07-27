@@ -39,7 +39,7 @@ class TestOntoEnvAPI(unittest.TestCase):
         original_cwd = Path.cwd()
         os.chdir(self.test_dir)
         try:
-            bootstrap = OntoEnv(create_or_use_cached=True)
+            bootstrap = OntoEnv.connect(".")
             bootstrap.close()
             self.env = OntoEnv()
             self.assertIn("OntoEnv", repr(self.env))

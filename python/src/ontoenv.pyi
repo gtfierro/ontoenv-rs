@@ -167,6 +167,10 @@ class OntoEnv:
         and empty lists—override it. Writable opens persist overrides;
         read-only opens keep them session-local. Overrides do not trigger an
         implicit source scan or graph re-ingestion.
+
+        ``create_or_use_cached=True`` is deprecated and emits
+        ``DeprecationWarning``. Use :meth:`OntoEnv.connect` instead. The
+        compatibility option is planned for removal in 0.7.
         """
         ...
 
