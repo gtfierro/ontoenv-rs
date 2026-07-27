@@ -66,6 +66,9 @@ All notable changes to this project are documented here. Releases follow [Semant
 - Top-level re-exports `ontoenv.dataset_from_env` and `ontoenv.refresh_dataset_from_env` — use `env.get_dataset(...)` and `env.refresh_dataset(...)` instead. The functions still exist in `ontoenv.rdflib_store` as the underlying implementation.
 
 ### Fixed
+- `ontoenv dep-graph` no longer defines a short `-o` for `--output`, which
+  collided with the global `-o/--offline` flag and made `ontoenv dep-graph
+  --help` panic on debug builds. Use the long `--output` form.
 - Python reopen paths now distinguish omitted configuration from explicit
   values for strict/offline/name-validation/cache settings, resolution policy,
   cache TTL, search paths, and include/exclude filters. Explicit `False`,

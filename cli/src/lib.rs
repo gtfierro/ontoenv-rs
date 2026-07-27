@@ -254,7 +254,8 @@ enum Commands {
         /// The root ontologies to start the graph from. Given by name (URI)
         roots: Option<Vec<String>>,
         /// The output file to write the PDF to, defaults to 'dep_graph.pdf'
-        #[clap(long, short)]
+        // No `short`: `-o` is taken by the global `--offline` flag.
+        #[clap(long)]
         output: Option<String>,
     },
     /// Lists which ontologies import the given ontology
