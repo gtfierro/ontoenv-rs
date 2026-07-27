@@ -99,11 +99,14 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Open a `.r5tu` file as a query snapshot. Uses an mmap-backed reader when
-    /// the `mmap` feature is enabled, falling back to an owned read otherwise.
+    /// the `mmap` feature is enabled on Unix, falling back to an owned read on
+    /// Windows and when mmap support is disabled. Windows does not allow the
+    /// backing file to be atomically replaced while a mapping is alive, but
+    /// OntoEnv snapshots intentionally outlive later store rewrites.
     pub fn open(path: &Path) -> Result<Self> {
-        #[cfg(feature = "mmap")]
+        #[cfg(all(feature = "mmap", not(windows)))]
         let file = R5tuFile::open_mmap(path)?;
-        #[cfg(not(feature = "mmap"))]
+        #[cfg(any(not(feature = "mmap"), windows))]
         let file = R5tuFile::open(path)?;
         Self::from_file(Arc::new(file))
     }

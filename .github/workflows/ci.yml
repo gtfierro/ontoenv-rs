@@ -150,9 +150,10 @@ jobs:
           .upgrade-venv/bin/python python/scripts/test_release_upgrade.py create .upgrade-fixture
       - name: Install current source into the same environment
         shell: bash
+        working-directory: python
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/.upgrade-venv
-        run: uv tool run maturin develop --release -m python/Cargo.toml
+        run: uv tool run maturin develop --release
       - name: Verify migration
         run: .upgrade-venv/bin/python python/scripts/test_release_upgrade.py verify .upgrade-fixture
 
@@ -163,10 +164,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: true
+      - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           python-version: "3.12"
+      - name: Install ontoenv into docs environment
+        working-directory: docs
+        run: uv pip install --project . -e ../python
       - name: Build documentation with warnings as errors
         working-directory: docs
         run: uv run sphinx-build -W --keep-going -b html . _build/html
