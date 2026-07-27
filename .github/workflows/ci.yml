@@ -169,6 +169,9 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
+      - name: Sync docs environment
+        working-directory: docs
+        run: uv sync --project .
       - name: Install ontoenv into docs environment
         working-directory: docs
         run: uv pip install --project . -e ../python
