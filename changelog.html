@@ -1,0 +1,952 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="./">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="prev" title="Building from source" href="development.html">
+
+    <!-- Generated with Sphinx 7.4.7 and Furo 2025.09.25 -->
+        <title>Changelog - OntoEnv Documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="_static/custom.css?v=e49ed175" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="index.html"><div class="brand">OntoEnv Documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
+  
+  <span class="sidebar-brand-text">OntoEnv Documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="tutorials/index.html">Tutorials</a><input aria-label="Toggle navigation of Tutorials" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/first-environment.html">Your first environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/python.html">OntoEnv from Python</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="how-to/index.html">How-to guides</a><input aria-label="Toggle navigation of How-to guides" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="how-to/choose-what-gets-loaded.html">Choose what gets loaded</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/work-offline.html">Work offline and control caching</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/rename-and-alias.html">Rename and alias ontologies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/use-in-a-service.html">Use OntoEnv in a long-running service</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/query-with-sparql.html">Query with SPARQL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/use-a-custom-graph-store.html">Use your own graph storage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/recover-an-environment.html">Recover an interrupted environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/diagnose-imports.html">Diagnose import problems</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="reference/index.html">Reference</a><input aria-label="Toggle navigation of Reference" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="reference/cli.html">CLI reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="reference/python.html">Python API reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="reference/configuration.html">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="reference/rdflib-store.html">ViewGraph and OntoEnvStore</a></li>
+<li class="toctree-l2"><a class="reference internal" href="reference/graph-store.html">Graph store protocol</a></li>
+<li class="toctree-l2"><a class="reference internal" href="reference/api.html">Generated API</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="explanation/index.html">Explanation</a><input aria-label="Toggle navigation of Explanation" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="explanation/concepts.html">Concepts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="explanation/views-and-copies.html">Views and copies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="explanation/lifecycle.html">Opening an environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="explanation/staying-in-sync.html">Staying in sync</a></li>
+<li class="toctree-l2"><a class="reference internal" href="explanation/performance.html">Performance</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Project</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="migration-0.6.html">Migrating from 0.5 to 0.6</a></li>
+<li class="toctree-l1"><a class="reference internal" href="development.html">Building from source</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://docs.rs/ontoenv">Rust API (docs.rs)</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Changelog</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="_sources/changelog.md.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="changelog">
+<h1>Changelog<a class="headerlink" href="#changelog" title="Link to this heading">¶</a></h1>
+<p>All notable changes to this project are documented here. Releases follow <a class="reference external" href="https://semver.org/">Semantic Versioning</a>.</p>
+<hr class="docutils" />
+<section id="unreleased">
+<h2>[Unreleased]<a class="headerlink" href="#unreleased" title="Link to this heading">¶</a></h2>
+</section>
+<section id="id1">
+<h2>[0.6.0] — 2026-07-27<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<section id="added">
+<h3>Added<a class="headerlink" href="#added" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ontoenv</span> <span class="pre">recover</span></code> rebuilds a persistent environment catalog after
+<code class="docutils literal notranslate"><span class="pre">CatalogRecoveryError</span></code>, using normal environment discovery and removing
+<code class="docutils literal notranslate"><span class="pre">catalog.pending</span></code> only after successful publication.</p></li>
+</ul>
+</section>
+<section id="deprecated">
+<h3>Deprecated<a class="headerlink" href="#deprecated" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv(...,</span> <span class="pre">create_or_use_cached=True)</span></code> is now a compatibility-only alias
+for the create-or-reopen lifecycle. It emits <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code>; use
+<code class="docutils literal notranslate"><span class="pre">OntoEnv.connect(path)</span></code> instead. Removal is planned for 0.7.</p></li>
+</ul>
+</section>
+<section id="changed-breaking">
+<h3>Changed (breaking)<a class="headerlink" href="#changed-breaking" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The documented Rust MSRV is now 1.88, matching rdf5d’s edition 2024 and the
+resolved dependency floor.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_graph(uri)</span></code> now returns a <strong>read-only store-backed <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> view</strong> instead of a mutable in-memory copy. Mutating the returned graph raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. Use the new <code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_graph(uri)</span></code> for the previous behavior (mutable in-memory <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> copy).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_closure(uri)</span></code> now returns a <strong>read-only, zero-copy <code class="docutils literal notranslate"><span class="pre">ontoenv.ViewGraph</span></code></strong> instead of a materialized mutable <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code>. The materializing behavior moved to the new <code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_closure(uri)</span></code>. A <code class="docutils literal notranslate"><span class="pre">ViewGraph</span></code> does not subclass <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code>; it delegates triple-pattern lookups (<code class="docutils literal notranslate"><span class="pre">triples</span></code>, <code class="docutils literal notranslate"><span class="pre">subjects</span></code>/<code class="docutils literal notranslate"><span class="pre">predicates</span></code>/<code class="docutils literal notranslate"><span class="pre">objects</span></code>), <code class="docutils literal notranslate"><span class="pre">len</span></code>, <code class="docutils literal notranslate"><span class="pre">in</span></code>, and SPARQL <code class="docutils literal notranslate"><span class="pre">query()</span></code> to the Rust backend, reading directly from the rdf5d mmap snapshot. It is read-only — <code class="docutils literal notranslate"><span class="pre">add</span></code>/<code class="docutils literal notranslate"><span class="pre">addN</span></code>/<code class="docutils literal notranslate"><span class="pre">remove</span></code> raise <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. The view presents a single flattened, de-duplicated graph with the <strong>same triple set as <code class="docutils literal notranslate"><span class="pre">copy_closure</span></code></strong>: resolved <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> stripped, ontology declarations collapsed onto the root (adding <code class="docutils literal notranslate"><span class="pre">root</span> <span class="pre">a</span> <span class="pre">owl:Ontology</span></code> if absent), and SHACL <code class="docutils literal notranslate"><span class="pre">sh:prefixes</span></code>/<code class="docutils literal notranslate"><span class="pre">sh:declare</span></code> consolidated onto the root. Keyword args <code class="docutils literal notranslate"><span class="pre">remove_owl_imports=True</span></code> / <code class="docutils literal notranslate"><span class="pre">rewrite_sh_prefixes=True</span></code> opt out of the respective transform.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_union(uris)</span></code> returns a read-only <code class="docutils literal notranslate"><span class="pre">ontoenv.ViewGraph</span></code> — a <strong>raw</strong> merge across the listed named graphs (no closure transform, no cross-graph de-duplication). Use <code class="docutils literal notranslate"><span class="pre">copy_union</span></code> for a mutable merge.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_union(...)</span></code> defaults to <code class="docutils literal notranslate"><span class="pre">rewrite_sh_prefixes=False</span></code> and <code class="docutils literal notranslate"><span class="pre">remove_owl_imports=False</span></code> (a raw union, matching <code class="docutils literal notranslate"><span class="pre">get_union</span></code>); pass <code class="docutils literal notranslate"><span class="pre">True</span></code> to opt into the transforms. <code class="docutils literal notranslate"><span class="pre">copy_closure</span></code> defaults both to <code class="docutils literal notranslate"><span class="pre">True</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.snapshot_as_dataset(backend=...,</span> <span class="pre">store=...)</span></code> and <code class="docutils literal notranslate"><span class="pre">OntoEnv.to_rdflib_dataset(mode=...)</span></code> are deprecated in favor of <code class="docutils literal notranslate"><span class="pre">OntoEnv.get_dataset()</span></code> (read-only view) and <code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_dataset()</span></code> (mutable copy). The old names still work and emit <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GraphIO::union_graph</span></code> now returns <code class="docutils literal notranslate"><span class="pre">(Dataset,</span> <span class="pre">Vec&lt;FailedImport&gt;)</span></code> — always best-effort: per-id errors (bad graphname, ensure_loaded failure, mid-graph store iteration error) are recorded in the failures list and the offending id is skipped, but the rest of the union is still assembled. The previous behavior silently dropped failures with no signal. <code class="docutils literal notranslate"><span class="pre">OntoEnv::get_union_graph</span></code> consumes the failures list: in <strong>strict</strong> mode any failure becomes an error; in <strong>non-strict</strong> mode the partial union is returned with <code class="docutils literal notranslate"><span class="pre">UnionGraph.failed_imports</span></code> populated so the caller knows what’s missing.</p></li>
+<li><p>Catalog adoption and recovery now require a stable, fully readable backend
+snapshot instead of publishing partial metadata when a graph read fails.</p></li>
+</ul>
+</section>
+<section id="id2">
+<h3>Added<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.recover(path,</span> <span class="pre">graph_store=None)</span></code> rebuilds a catalog after an
+interrupted mutation and removes the recovery marker only after the new
+catalog is published.</p></li>
+<li><p>Python <code class="docutils literal notranslate"><span class="pre">UnresolvedImportError</span></code> distinguishes an unresolved <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>
+target passed to <code class="docutils literal notranslate"><span class="pre">copy_graph</span></code> from other <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> failures.</p></li>
+<li><p>Python <code class="docutils literal notranslate"><span class="pre">OntoEnv.update</span></code> now accepts an optional source location and always
+replaces that source’s stored graph while following its imports.
+<code class="docutils literal notranslate"><span class="pre">update(force=True)</span></code> replaces <code class="docutils literal notranslate"><span class="pre">update(all=True)</span></code>; <code class="docutils literal notranslate"><span class="pre">all=</span></code> remains as a
+deprecated compatibility alias.</p></li>
+<li><p>An authoritative RDF5D metadata catalog at <code class="docutils literal notranslate"><span class="pre">.ontoenv/catalog.r5tu</span></code>, with
+graph-free warm opens, automatic legacy JSON migration, backend drift
+detection, recovery markers, explicit <code class="docutils literal notranslate"><span class="pre">create</span></code>/<code class="docutils literal notranslate"><span class="pre">open</span></code>/<code class="docutils literal notranslate"><span class="pre">adopt</span></code> lifecycle
+APIs, a state-driven <code class="docutils literal notranslate"><span class="pre">connect(sync=...)</span></code> entry point, and
+incremental/targeted/full graph-store synchronization reports.</p></li>
+<li><p>Durable RDF5D snapshot replacement using unique same-directory temporary
+files, file and directory synchronization, and atomic publication.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_graph(uri)</span> <span class="pre">-&gt;</span> <span class="pre">rdflib.Graph</span></code> — materialize a mutable in-memory copy of a single ontology.</p></li>
+<li><p>Pythonic container/context-manager protocols on <code class="docutils literal notranslate"><span class="pre">OntoEnv</span></code>: <code class="docutils literal notranslate"><span class="pre">len(env)</span></code>, <code class="docutils literal notranslate"><span class="pre">uri</span> <span class="pre">in</span> <span class="pre">env</span></code>, <code class="docutils literal notranslate"><span class="pre">env[uri]</span></code> (shorthand for <code class="docutils literal notranslate"><span class="pre">get_graph</span></code>), <code class="docutils literal notranslate"><span class="pre">for</span> <span class="pre">name</span> <span class="pre">in</span> <span class="pre">env</span></code> (iterates ontology URIs), and <code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">OntoEnv(...)</span> <span class="pre">as</span> <span class="pre">env:</span></code> (calls <code class="docutils literal notranslate"><span class="pre">close()</span></code> on exit). <code class="docutils literal notranslate"><span class="pre">bool(env)</span></code> is always <code class="docutils literal notranslate"><span class="pre">True</span></code> — use <code class="docutils literal notranslate"><span class="pre">env</span> <span class="pre">is</span> <span class="pre">None</span></code> to detect absence.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_closure(uri,</span> <span class="pre">graph=None,</span> <span class="pre">rewrite_sh_prefixes=True,</span> <span class="pre">remove_owl_imports=True,</span> <span class="pre">recursion_depth=-1)</span> <span class="pre">-&gt;</span> <span class="pre">(Graph,</span> <span class="pre">list[str])</span></code> — materialize the flattened imports closure into a mutable <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> (the view-returning <code class="docutils literal notranslate"><span class="pre">get_closure</span></code>’s mutable counterpart).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.iter_triples(uri)</span> <span class="pre">-&gt;</span> <span class="pre">Iterator[(s,</span> <span class="pre">p,</span> <span class="pre">o)]</span></code> and <code class="docutils literal notranslate"><span class="pre">OntoEnv.iter_closure_triples(uri,</span> <span class="pre">recursion_depth=-1)</span> <span class="pre">-&gt;</span> <span class="pre">Iterator[(s,</span> <span class="pre">p,</span> <span class="pre">o)]</span></code> — streaming triples as rdflib terms, skipping the rdflib <code class="docutils literal notranslate"><span class="pre">Graph</span></code> wrapper. Closure iteration is not de-duplicated.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ontoenv.ViewGraph</span></code> — read-only, non-<code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> view returned by <code class="docutils literal notranslate"><span class="pre">get_closure</span></code> and <code class="docutils literal notranslate"><span class="pre">get_union</span></code>. Exposes <code class="docutils literal notranslate"><span class="pre">triples</span></code>, <code class="docutils literal notranslate"><span class="pre">subjects</span></code>/<code class="docutils literal notranslate"><span class="pre">predicates</span></code>/<code class="docutils literal notranslate"><span class="pre">objects</span></code>, <code class="docutils literal notranslate"><span class="pre">query</span></code> (SPARQL scoped to the view), <code class="docutils literal notranslate"><span class="pre">len</span></code>, <code class="docutils literal notranslate"><span class="pre">in</span></code>, <code class="docutils literal notranslate"><span class="pre">serialize</span></code>, and namespace bindings; mutation raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_RdfLibStoreBackend</span></code> scoped methods: <code class="docutils literal notranslate"><span class="pre">iter_triples_scoped</span></code>, <code class="docutils literal notranslate"><span class="pre">triples_scoped</span></code>, <code class="docutils literal notranslate"><span class="pre">subjects_scoped</span></code>, <code class="docutils literal notranslate"><span class="pre">predicates_scoped</span></code>, <code class="docutils literal notranslate"><span class="pre">objects_scoped</span></code>, and <code class="docutils literal notranslate"><span class="pre">query_scoped</span></code> — the Rust primitives <code class="docutils literal notranslate"><span class="pre">ViewGraph</span></code> delegates to, scoped to a list of named graphs.</p></li>
+<li><p>Internal <code class="docutils literal notranslate"><span class="pre">OntoEnv.get_graph(uri)</span></code> Dataset cache: subsequent <code class="docutils literal notranslate"><span class="pre">get_graph</span></code> calls reuse the underlying store; mutating methods (<code class="docutils literal notranslate"><span class="pre">add</span></code>, <code class="docutils literal notranslate"><span class="pre">add_no_imports</span></code>, <code class="docutils literal notranslate"><span class="pre">update</span></code>, <code class="docutils literal notranslate"><span class="pre">flush</span></code>) invalidate it.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.refresh_dataset(dataset)</span></code> method — re-snapshot the env into an existing <code class="docutils literal notranslate"><span class="pre">OntoEnvStore</span></code>-backed Dataset. Replaces the top-level <code class="docutils literal notranslate"><span class="pre">refresh_dataset_from_env(dataset,</span> <span class="pre">env)</span></code> helper.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Environment::get_ontology_by_id(&amp;GraphIdentifier)</span> <span class="pre">-&gt;</span> <span class="pre">Option&lt;&amp;Ontology&gt;</span></code> — direct lookup that skips the configured <code class="docutils literal notranslate"><span class="pre">ResolutionPolicy</span></code>.</p></li>
+<li><p>rdf5d: <code class="docutils literal notranslate"><span class="pre">closure</span></code> module (<code class="docutils literal notranslate"><span class="pre">rdf5d::ClosurePatch</span></code>, <code class="docutils literal notranslate"><span class="pre">ClosureTripleIds</span></code>, <code class="docutils literal notranslate"><span class="pre">ClosureSparqlView</span></code>) — zero-copy closure semantics over a <code class="docutils literal notranslate"><span class="pre">Snapshot</span></code>. A <code class="docutils literal notranslate"><span class="pre">ClosurePatch</span></code> precomputes the closure transform (imports stripping, ontology-declaration collapse, SHACL-prefix consolidation) as removals (a <code class="docutils literal notranslate"><span class="pre">keep</span></code> predicate) plus a small additions “patch graph”, all in on-disk term-id space; the iterator and SPARQL views apply it lazily to present a single flattened, de-duplicated graph. Used by <code class="docutils literal notranslate"><span class="pre">OntoEnv.get_closure</span></code>.</p></li>
+<li><p>rdf5d: <code class="docutils literal notranslate"><span class="pre">Snapshot::build_indexes()</span></code> and <code class="docutils literal notranslate"><span class="pre">R5tuFile::build_term_index()</span></code> — eagerly build all four permutation indexes (and the reverse term-id index) at bind time.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GraphIO::ensure_loaded(&amp;GraphIdentifier)</span> <span class="pre">-&gt;</span> <span class="pre">Result&lt;()&gt;</span></code> trait hook for persistent backends to lazily load named graphs into the in-memory store. Default impl is a no-op.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FailedImport::ontology()</span></code> and <code class="docutils literal notranslate"><span class="pre">FailedImport::error()</span></code> expose union failures
+to Rust callers without parsing display strings.</p></li>
+</ul>
+</section>
+<section id="removed">
+<h3>Removed<a class="headerlink" href="#removed" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Top-level re-exports <code class="docutils literal notranslate"><span class="pre">ontoenv.dataset_from_env</span></code> and <code class="docutils literal notranslate"><span class="pre">ontoenv.refresh_dataset_from_env</span></code> — use <code class="docutils literal notranslate"><span class="pre">env.get_dataset(...)</span></code> and <code class="docutils literal notranslate"><span class="pre">env.refresh_dataset(...)</span></code> instead. The functions still exist in <code class="docutils literal notranslate"><span class="pre">ontoenv.rdflib_store</span></code> as the underlying implementation.</p></li>
+</ul>
+</section>
+<section id="fixed">
+<h3>Fixed<a class="headerlink" href="#fixed" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ontoenv</span> <span class="pre">dep-graph</span></code> no longer defines a short <code class="docutils literal notranslate"><span class="pre">-o</span></code> for <code class="docutils literal notranslate"><span class="pre">--output</span></code>, which
+collided with the global <code class="docutils literal notranslate"><span class="pre">-o/--offline</span></code> flag and made <code class="docutils literal notranslate"><span class="pre">ontoenv</span> <span class="pre">dep-graph</span> <span class="pre">--help</span></code> panic on debug builds. Use the long <code class="docutils literal notranslate"><span class="pre">--output</span></code> form.</p></li>
+<li><p>Python reopen paths now distinguish omitted configuration from explicit
+values for strict/offline/name-validation/cache settings, resolution policy,
+cache TTL, search paths, and include/exclude filters. Explicit <code class="docutils literal notranslate"><span class="pre">False</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;default&quot;</span></code>, and empty lists are honored. Writable connections persist
+overrides; read-only connections keep them session-local; no reopen path
+implicitly scans or re-ingests graph data.</p></li>
+<li><p>Runtime configuration setters now update the active graph backend and
+resolution policy. Python now exposes the documented cache-mode and
+remote-cache-TTL getters and setters, and <code class="docutils literal notranslate"><span class="pre">require_ontology_names</span></code> controls
+ontology-declaration validation independently of strict mode.</p></li>
+<li><p>Non-strict <code class="docutils literal notranslate"><span class="pre">import_dependencies(...,</span> <span class="pre">fetch_missing=True)</span></code> and
+<code class="docutils literal notranslate"><span class="pre">get_dependencies(...,</span> <span class="pre">fetch_missing=True)</span></code> now commit tolerated unresolved
+imports without leaving <code class="docutils literal notranslate"><span class="pre">catalog.pending</span></code>, and every attempted unresolved
+target retained in the current environment state is classified as
+<code class="docutils literal notranslate"><span class="pre">UnresolvedImportError</span></code> by <code class="docutils literal notranslate"><span class="pre">copy_graph</span></code>, including targets originating in
+best-effort fetches for transient caller graphs.</p></li>
+<li><p>Successful non-strict <code class="docutils literal notranslate"><span class="pre">add</span></code>/<code class="docutils literal notranslate"><span class="pre">add_from_bytes</span></code> ingestion with unresolved
+imports no longer leaves a recovery marker; the partial environment remains
+reopenable.</p></li>
+<li><p>Writable persistent stores enumerate graph IDs from their lazy RDF5D
+directory, allowing non-empty 0.5 catalogs to migrate without a false
+backend-mismatch error.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ViewGraph.triples</span></code> scoped-pattern branch: <code class="docutils literal notranslate"><span class="pre">triples_scoped</span></code> returns <code class="docutils literal notranslate"><span class="pre">(triple,</span> <span class="pre">contexts)</span></code> rows, but the code yielded the whole row — now unpacks to the bare triple.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.add(...,</span> <span class="pre">rename=...)</span></code> rename test expectation: the minimal <code class="docutils literal notranslate"><span class="pre">&lt;old&gt;</span> <span class="pre">a</span> <span class="pre">owl:Ontology</span> <span class="pre">.</span></code> fixture contains exactly one triple, and <code class="docutils literal notranslate"><span class="pre">rename_ontology_iri_graph</span></code> rewrites the subject to yield one triple; the <code class="docutils literal notranslate"><span class="pre">test_add_with_rename_overrides_iri</span></code> assertion of <code class="docutils literal notranslate"><span class="pre">len</span> <span class="pre">==</span> <span class="pre">2</span></code> (“type + declare”) was a stale expectation with no matching fixture, corrected to <code class="docutils literal notranslate"><span class="pre">len</span> <span class="pre">==</span> <span class="pre">1</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">add_ids_to_dependency_graph</span></code> is now transactional with respect to the in-memory env state: a mid-traversal failure (e.g. a strict-mode unresolved import) no longer leaves <code class="docutils literal notranslate"><span class="pre">env</span></code>, <code class="docutils literal notranslate"><span class="pre">dependency_graph</span></code>, <code class="docutils literal notranslate"><span class="pre">dependency_graph_index</span></code>, and <code class="docutils literal notranslate"><span class="pre">failed_resolutions</span></code> desynced from each other.</p></li>
+<li><p>Dependency-graph construction now resolves imports by <code class="docutils literal notranslate"><span class="pre">GraphIdentifier</span></code> instead of going through <code class="docutils literal notranslate"><span class="pre">ResolutionPolicy</span></code>, so the graph reflects the exact ontology being added rather than whatever the policy maps the name to.</p></li>
+<li><p>Python maps lifecycle errors by their Rust types rather than matching error
+message text.</p></li>
+</ul>
+</section>
+<section id="performance">
+<h3>Performance<a class="headerlink" href="#performance" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">get_closure</span></code> view reads are served directly from the rdf5d mmap snapshot with no materialization. Permutation indexes are built eagerly (in parallel) when the snapshot is bound, and each <code class="docutils literal notranslate"><span class="pre">_RdfLibStoreBackend</span></code> keeps a persistent term-id → rdflib-term cache shared across <code class="docutils literal notranslate"><span class="pre">triples()</span></code> calls, so repeated scans skip rdflib <code class="docutils literal notranslate"><span class="pre">URIRef</span></code>/<code class="docutils literal notranslate"><span class="pre">Literal</span></code> construction. Full closure iteration on the Brick closure runs in ~30 ms warm.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">get_closure</span></code> BFS-walks the pre-built <code class="docutils literal notranslate"><span class="pre">dependency_graph</span></code> via <code class="docutils literal notranslate"><span class="pre">NodeIndex</span></code> instead of resolving each import by name on every step. A new <code class="docutils literal notranslate"><span class="pre">dependency_graph_index</span></code> map is kept in sync with the graph.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Environment::get_ontology</span></code> short-circuits exact-id hits and skips the per-call <code class="docutils literal notranslate"><span class="pre">Vec&lt;&amp;Ontology&gt;</span></code> policy fallback.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GraphIO::union_graph</span></code> streams quads from the store directly into the target <code class="docutils literal notranslate"><span class="pre">Dataset</span></code>, dropping the intermediate per-id <code class="docutils literal notranslate"><span class="pre">Graph</span></code> allocation.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">get_union_graph</span></code> and <code class="docutils literal notranslate"><span class="pre">get_namespaces</span></code> borrow ontologies from <code class="docutils literal notranslate"><span class="pre">env.ontologies()</span></code> instead of cloning each one through <code class="docutils literal notranslate"><span class="pre">get_ontology</span></code>.</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id3">
+<h2>[0.5.5]<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<section id="id4">
+<h3>Added<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.as_dataset(backend=&quot;auto&quot;,</span> <span class="pre">store=None)</span></code> — return a read-only <code class="docutils literal notranslate"><span class="pre">rdflib.Dataset</span></code> view of the environment. <code class="docutils literal notranslate"><span class="pre">backend=&quot;rdf5d&quot;</span></code> is a zero-copy mmap-backed view over the persistent <code class="docutils literal notranslate"><span class="pre">.ontoenv/store.r5tu</span></code> snapshot; <code class="docutils literal notranslate"><span class="pre">backend=&quot;copy&quot;</span></code> materializes an in-memory copy; <code class="docutils literal notranslate"><span class="pre">backend=&quot;auto&quot;</span></code> picks rdf5d when the snapshot file exists and copy otherwise.</p></li>
+<li><p>New <code class="docutils literal notranslate"><span class="pre">ontoenv.OntoEnvStore</span></code> rdflib <code class="docutils literal notranslate"><span class="pre">Store</span></code> (also registered as the rdflib plugin <code class="docutils literal notranslate"><span class="pre">&quot;ontoenv&quot;</span></code>) that serves SPARQL through the Rust backend, with <code class="docutils literal notranslate"><span class="pre">dataset_from_env</span></code> / <code class="docutils literal notranslate"><span class="pre">refresh_dataset_from_env</span></code> helpers in <code class="docutils literal notranslate"><span class="pre">ontoenv.rdflib_store</span></code>.</p></li>
+<li><p>rdf5d: SPARQL backend (<code class="docutils literal notranslate"><span class="pre">rdf5d::SparqlDatasetView</span></code>) and a Brick benchmark comparing it to Oxigraph + RocksDB; rdf5d wins on the tested patterns (≈18% faster on bound-graph queries, ≈2× faster on full scans).</p></li>
+</ul>
+</section>
+<section id="changed">
+<h3>Changed<a class="headerlink" href="#changed" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Rdf5dSnapshot::open</span></code> is now O(graphs) rather than O(triples) — per-logical-graph unique-triple counts are computed lazily via <code class="docutils literal notranslate"><span class="pre">OnceLock</span></code>, with a single-gid fast path that trusts the GDIR <code class="docutils literal notranslate"><span class="pre">n_triples</span></code> directly. Reverse term lookup (<code class="docutils literal notranslate"><span class="pre">find_term_id</span></code>) memoizes against <code class="docutils literal notranslate"><span class="pre">R5tuFile::find_decoded_term</span></code> so repeated SPARQL bindings of the same IRI stop re-scanning the term table.</p></li>
+<li><p>Copy-fallback Dataset construction (the <code class="docutils literal notranslate"><span class="pre">backend=&quot;copy&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">backend=&quot;auto&quot;</span></code> fallback path) builds the materialized <code class="docutils literal notranslate"><span class="pre">OxDataset</span></code> directly from the inner Rust <code class="docutils literal notranslate"><span class="pre">OntoEnv</span></code>, dropping the previous round-trip through an intermediate <code class="docutils literal notranslate"><span class="pre">rdflib.Dataset</span></code>.</p></li>
+</ul>
+</section>
+<section id="id5">
+<h3>Deprecated<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.to_rdflib_dataset(mode=...)</span></code> — use <code class="docutils literal notranslate"><span class="pre">OntoEnv.as_dataset(backend=...,</span> <span class="pre">store=...)</span></code> instead. The old method still works (and forwards to the new one) but now emits <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code>. The new method renames the parameter (<code class="docutils literal notranslate"><span class="pre">mode</span></code> → <code class="docutils literal notranslate"><span class="pre">backend</span></code>) and accepts an optional <code class="docutils literal notranslate"><span class="pre">store=</span></code> to rebind an existing rdflib <code class="docutils literal notranslate"><span class="pre">Store</span></code>; error messages now reference <code class="docutils literal notranslate"><span class="pre">backend=</span></code> accordingly.</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id6">
+<h2>[0.5.4]<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h2>
+<section id="id7">
+<h3>Added<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Progress reporting for <code class="docutils literal notranslate"><span class="pre">update</span></code> command; output suppressed when stderr is not a TTY</p></li>
+<li><p>RDF5D: compact string/literal dictionaries, streaming spill policy, workload profiling, and optimized reader/metadata layout</p></li>
+<li><p>GitHub badge in README; rdf5d architecture documentation</p></li>
+</ul>
+</section>
+<section id="id8">
+<h3>Changed<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>RocksDB is no longer compiled by default. OntoEnv uses an in-memory Oxigraph store backed by the custom RDF5D on-disk format, so the heavyweight RocksDB C++ dependency was unnecessary. It is now opt-in via <code class="docutils literal notranslate"><span class="pre">--features</span> <span class="pre">rocksdb</span></code> across all crates (<code class="docutils literal notranslate"><span class="pre">ontoenv</span></code>, <code class="docutils literal notranslate"><span class="pre">ontoenv-cli</span></code>, and the Python bindings). This significantly reduces compile times and binary size for the common case. <code class="docutils literal notranslate"><span class="pre">Store::flush()</span></code> is gated behind the same feature flag since that method only exists when RocksDB is compiled in.</p></li>
+<li><p>Upgraded reqwest 0.12 → 0.13</p></li>
+<li><p>Internal <code class="docutils literal notranslate"><span class="pre">lib/src</span></code> helpers extracted and dead code removed</p></li>
+<li><p>Removed deprecated <code class="docutils literal notranslate"><span class="pre">tempdir</span></code> dependency</p></li>
+</ul>
+</section>
+<section id="id9">
+<h3>Fixed<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ontoenv</span> <span class="pre">add</span></code> now correctly handles JSON-LD files served with a <code class="docutils literal notranslate"><span class="pre">text/plain</span></code> content-type header (e.g. GitHub raw URLs); URL extension and content sniffing are used when content-type is generic</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ext_to_rdf_format</span></code> now maps <code class="docutils literal notranslate"><span class="pre">.jsonld</span></code>, <code class="docutils literal notranslate"><span class="pre">.json</span></code>, <code class="docutils literal notranslate"><span class="pre">.rdf</span></code>, <code class="docutils literal notranslate"><span class="pre">.owl</span></code>, and <code class="docutils literal notranslate"><span class="pre">.nq</span></code> extensions for local file loading</p></li>
+<li><p>Format fallback in <code class="docutils literal notranslate"><span class="pre">load_staging_store_from_bytes</span></code> now cycles through all supported formats (NQuads, TriG, JSON-LD) instead of only Turtle/RDF-XML/N-Triples</p></li>
+<li><p>All <code class="docutils literal notranslate"><span class="pre">cargo</span> <span class="pre">clippy</span> <span class="pre">-D</span> <span class="pre">warnings</span></code> errors resolved across the workspace</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id10">
+<h2>[0.5.3] — 2026-04-03<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h2>
+<section id="id11">
+<h3>Added<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">list_closure</span></code> and <code class="docutils literal notranslate"><span class="pre">missing_imports</span></code> now accept a transient <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> in addition to ontology IRIs</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">graph_store</span></code>: new <code class="docutils literal notranslate"><span class="pre">init_from_store</span></code> and <code class="docutils literal notranslate"><span class="pre">refresh_from_store</span></code> constructors</p></li>
+</ul>
+</section>
+<section id="id12">
+<h3>Changed<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Updated <code class="docutils literal notranslate"><span class="pre">.pyi</span></code> stub with all recent API additions</p></li>
+<li><p>Updated GitHub Actions versions</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id13">
+<h2>[0.5.2] — 2026-04-02<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h2>
+<section id="id14">
+<h3>Added<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">missing_imports</span></code> method in Python API to list unresolved ontology imports</p></li>
+<li><p>Three-level import chain test for <code class="docutils literal notranslate"><span class="pre">missing_imports</span></code></p></li>
+</ul>
+</section>
+<section id="id15">
+<h3>Changed<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Improved documentation</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id16">
+<h2>[0.5.1] — 2026-03-04<a class="headerlink" href="#id16" title="Link to this heading">¶</a></h2>
+<section id="id17">
+<h3>Fixed<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Linux wheel build</p></li>
+</ul>
+</section>
+<section id="id18">
+<h3>Changed<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Updated license year to 2025</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id19">
+<h2>[0.5.0] — 2026-03-03<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h2>
+<section id="id20">
+<h3>Added<a class="headerlink" href="#id20" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>In-memory <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> objects can now be passed directly to <code class="docutils literal notranslate"><span class="pre">OntoEnv.add</span></code> in Python</p></li>
+<li><p>External Python graph store protocol support (duck-typed; no ABC required)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">namespaces</span></code> CLI command and Python/Rust API method</p></li>
+<li><p>sh:prefix conflict detection in <code class="docutils literal notranslate"><span class="pre">rewrite_sh_prefixes</span></code></p></li>
+<li><p>ontology include/exclude regex and glob filters (<code class="docutils literal notranslate"><span class="pre">Config.include</span></code>/<code class="docutils literal notranslate"><span class="pre">Config.exclude</span></code>)</p></li>
+<li><p>Content hash-based caching to avoid redundant re-parses</p></li>
+<li><p>Sphinx documentation with GitHub Pages deployment</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">llms.txt</span></code> for LLM-friendly docs</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">oxrdflib</span></code> integration</p></li>
+</ul>
+</section>
+<section id="id21">
+<h3>Changed<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Lazy loading of graphs from RDF5D on first access</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">get_dependencies_graph</span></code> renamed to <code class="docutils literal notranslate"><span class="pre">get_dependencies</span></code></p></li>
+<li><p>SHACL prefix rewrite now correctly targets the root ontology</p></li>
+<li><p>Python build switched to <code class="docutils literal notranslate"><span class="pre">abi3</span></code> wheels (Python 3.12 default)</p></li>
+<li><p>Search directories made explicit in config</p></li>
+</ul>
+</section>
+<section id="id22">
+<h3>Fixed<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Windows cross-platform path and file URI handling</p></li>
+<li><p>CI flakes: mtime sleep guards, Windows file IRIs, locked-file skipping</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">import_graph</span></code> depth/cycle handling and QUDT URI updates</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id23">
+<h2>[0.4.0] — 2025-11-07<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h2>
+<section id="id24">
+<h3>Added<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>RDF5D custom storage format</strong> (<code class="docutils literal notranslate"><span class="pre">.r5tu</span></code>) replaces SQLite-backed Oxigraph on-disk store; zstd-compressed, CRC-verified, with lazy graph loading</p></li>
+<li><p>Interprocess read/write locking via <code class="docutils literal notranslate"><span class="pre">fs2</span></code> (exclusive writer, shared readers)</p></li>
+<li><p>Parallel remote ontology fetching via staged ingestion</p></li>
+<li><p>New <code class="docutils literal notranslate"><span class="pre">fetch</span></code> module with layered format detection, content sniffing, Link header following, and extension candidate fallbacks</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">use_cached_ontologies</span></code> option to skip unchanged ontologies</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">get_dependencies</span></code> / <code class="docutils literal notranslate"><span class="pre">get_dependencies_graph</span></code> method (Rust + Python)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--all</span></code> flag for <code class="docutils literal notranslate"><span class="pre">update</span></code> to force-reload all ontologies</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ONTOENV_LOG</span></code> environment variable for log control</p></li>
+<li><p>Concurrency tests (Python and Rust)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">new_online</span></code> constructor as the default for Python</p></li>
+</ul>
+</section>
+<section id="id25">
+<h3>Changed<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Upgraded to oxigraph 0.5</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">update</span></code> command gains <code class="docutils literal notranslate"><span class="pre">--all</span></code> flag; <code class="docutils literal notranslate"><span class="pre">update_all</span></code> alias added</p></li>
+<li><p>Config drops <code class="docutils literal notranslate"><span class="pre">ConfigBuilder</span></code> from Python API; flags passed directly to <code class="docutils literal notranslate"><span class="pre">OntoEnv</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">import_graph</span></code> merges full closure with SHACL rewrite</p></li>
+<li><p>Namespace prefix map built at ontology init time</p></li>
+<li><p>RDF5D localized into this repo as a workspace crate</p></li>
+</ul>
+</section>
+<section id="id26">
+<h3>Fixed<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Failed ontology resolutions tracked to avoid redundant retries</p></li>
+<li><p>Correct graph-name handling for oxigraph queries</p></li>
+<li><p>File URI generation and angle bracket stripping in IRIs</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id27">
+<h2>[0.3.0] — 2025-07-24<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h2>
+<section id="id28">
+<h3>Added<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">why</span></code> command and <code class="docutils literal notranslate"><span class="pre">importers</span></code> method (replaces <code class="docutils literal notranslate"><span class="pre">get_dependents</span></code>) — explains why an ontology is in the environment</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">missing_imports</span></code> method to list unresolved <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">list</span></code> subcommand for locations, ontologies, and missing imports</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">config</span></code> subcommand (replaces <code class="docutils literal notranslate"><span class="pre">set</span></code>) with <code class="docutils literal notranslate"><span class="pre">get</span></code>, <code class="docutils literal notranslate"><span class="pre">unset</span></code>, <code class="docutils literal notranslate"><span class="pre">add</span></code>, <code class="docutils literal notranslate"><span class="pre">remove</span></code>, <code class="docutils literal notranslate"><span class="pre">list</span></code> operations</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">add_no_imports</span></code> flag to load an ontology without following its <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">recursion_depth</span></code> parameter for <code class="docutils literal notranslate"><span class="pre">get_closure</span></code> and <code class="docutils literal notranslate"><span class="pre">import_dependencies</span></code></p></li>
+<li><p>Recursive <code class="docutils literal notranslate"><span class="pre">.ontoenv</span></code> directory search from the current working directory</p></li>
+<li><p>Namespace prefix extraction and utility functions</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ExternalStoreGraphIO</span></code> for integrating with other Oxigraph-based packages</p></li>
+<li><p>Comprehensive Python <code class="docutils literal notranslate"><span class="pre">unittest</span></code> suite</p></li>
+</ul>
+</section>
+<section id="id29">
+<h3>Changed<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">refresh</span></code> command renamed to <code class="docutils literal notranslate"><span class="pre">update</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">get-closure</span></code> CLI subcommand renamed to <code class="docutils literal notranslate"><span class="pre">closure</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Config</span></code> builder pattern replaces direct struct construction</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">import_dependencies</span></code> returns a list of URIs and modifies graph in-place</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">add</span></code> auto-detects whether the argument is a URL or file path</p></li>
+</ul>
+</section>
+<section id="id30">
+<h3>Fixed<a class="headerlink" href="#id30" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Namespace map deserialization robustness</p></li>
+<li><p>Self-import filtering to prevent recursion</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">no_search</span></code> respected when loading config from file</p></li>
+<li><p>Graph content compared (not just mtime) to detect updates</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id31">
+<h2>[0.2.1] — 2025-06-06<a class="headerlink" href="#id31" title="Link to this heading">¶</a></h2>
+<section id="id32">
+<h3>Fixed<a class="headerlink" href="#id32" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Improved detection of changed files</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id33">
+<h2>[0.2.0] — 2025-05-07<a class="headerlink" href="#id33" title="Link to this heading">¶</a></h2>
+<section id="id34">
+<h3>Added<a class="headerlink" href="#id34" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>New <code class="docutils literal notranslate"><span class="pre">GraphIO</span></code> trait abstraction (<code class="docutils literal notranslate"><span class="pre">PersistentGraphIO</span></code>, <code class="docutils literal notranslate"><span class="pre">MemoryGraphIO</span></code>, <code class="docutils literal notranslate"><span class="pre">ReadOnlyPersistentGraphIO</span></code>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">UnionGraph</span></code> struct returned from <code class="docutils literal notranslate"><span class="pre">get_union_graph</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flush</span></code> method for explicit store writes</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">size</span></code> stats reporting</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">io_type</span></code> accessor on <code class="docutils literal notranslate"><span class="pre">GraphIO</span></code></p></li>
+<li><p>Serialization of <code class="docutils literal notranslate"><span class="pre">Environment</span></code> struct</p></li>
+<li><p>Python <code class="docutils literal notranslate"><span class="pre">flush</span></code> binding</p></li>
+</ul>
+</section>
+<section id="id35">
+<h3>Changed<a class="headerlink" href="#id35" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv::new</span></code> made private; use named constructors</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">search_directories</span></code> made a positional CLI argument</p></li>
+<li><p>Poetry replaced with <code class="docutils literal notranslate"><span class="pre">uv</span></code> for Python tooling</p></li>
+<li><p>Temporary environments improved; <code class="docutils literal notranslate"><span class="pre">--force</span></code> flag for reset</p></li>
+</ul>
+</section>
+<section id="id36">
+<h3>Fixed<a class="headerlink" href="#id36" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Offline retrieval error propagation</p></li>
+<li><p>Store initialization and path handling</p></li>
+<li><p>Stat report accuracy</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id37">
+<h2>[0.1.10] — 2025-03-19<a class="headerlink" href="#id37" title="Link to this heading">¶</a></h2>
+<section id="id38">
+<h3>Added<a class="headerlink" href="#id38" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">get_dependents</span></code> method</p></li>
+<li><p>Type hints stub file (<code class="docutils literal notranslate"><span class="pre">.pyi</span></code>) for <code class="docutils literal notranslate"><span class="pre">Config</span></code> and <code class="docutils literal notranslate"><span class="pre">OntoEnv</span></code></p></li>
+<li><p>JSON-based ontology URI/file config (<code class="docutils literal notranslate"><span class="pre">fetch</span></code> subcommand)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">no_search</span></code> flag to disable directory walking</p></li>
+<li><p>Read-only mode for <code class="docutils literal notranslate"><span class="pre">OntoEnv</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">read_format</span></code> fallback logic for ambiguous RDF inputs</p></li>
+<li><p>Accept <code class="docutils literal notranslate"><span class="pre">text/turtle</span></code> content-type header</p></li>
+</ul>
+</section>
+<section id="id39">
+<h3>Changed<a class="headerlink" href="#id39" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Bulk loading of graphs for performance</p></li>
+<li><p>Mutex lock scope reduced in <code class="docutils literal notranslate"><span class="pre">get_graph</span></code> to lower deadlock risk</p></li>
+</ul>
+</section>
+<section id="id40">
+<h3>Fixed<a class="headerlink" href="#id40" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Store re-opened unnecessarily on repeated calls — fixed by caching</p></li>
+<li><p>Mutex unlocking on drop</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id41">
+<h2>[0.1.9] — 2024-08-28<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h2>
+<section id="id42">
+<h3>Added<a class="headerlink" href="#id42" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">list_closure</span></code> method</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">status</span></code> and <code class="docutils literal notranslate"><span class="pre">version</span></code> CLI commands</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">rdflib</span></code> graph conversion method (<code class="docutils literal notranslate"><span class="pre">to_rdflib</span></code>)</p></li>
+<li><p>Git hash embedded in CLI binary via <code class="docutils literal notranslate"><span class="pre">build.rs</span></code></p></li>
+</ul>
+</section>
+<section id="id43">
+<h3>Changed<a class="headerlink" href="#id43" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Build system improvements (musl, zig cross-compilation)</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id44">
+<h2>[0.1.8] — 2024-06-15<a class="headerlink" href="#id44" title="Link to this heading">¶</a></h2>
+<section id="id45">
+<h3>Added<a class="headerlink" href="#id45" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Read-only mode fallback in Python</p></li>
+<li><p>More test coverage</p></li>
+</ul>
+</section>
+<section id="id46">
+<h3>Fixed<a class="headerlink" href="#id46" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Strict mode now respected throughout</p></li>
+<li><p>Resolution of ontology locations</p></li>
+<li><p>Python state persistence across calls</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id47">
+<h2>[0.1.6] — 2024-04-29<a class="headerlink" href="#id47" title="Link to this heading">¶</a></h2>
+<section id="id48">
+<h3>Changed<a class="headerlink" href="#id48" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Switched from OpenSSL to <code class="docutils literal notranslate"><span class="pre">rustls</span></code> (no system SSL dependency)</p></li>
+<li><p>Cross-platform build improvements (aarch64, x86 macOS, Linux musl)</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id49">
+<h2>[0.1.5] — 2024-04-28<a class="headerlink" href="#id49" title="Link to this heading">¶</a></h2>
+<section id="id50">
+<h3>Added<a class="headerlink" href="#id50" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">--recreate</span></code> flag for <code class="docutils literal notranslate"><span class="pre">init</span></code> to force reinitialize an existing environment</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id51">
+<h2>[0.1.4] — 2024-04-26<a class="headerlink" href="#id51" title="Link to this heading">¶</a></h2>
+<section id="id52">
+<h3>Added<a class="headerlink" href="#id52" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">import_graph</span></code> method (Python)</p></li>
+<li><p>Graph transforms (SHACL prefix rewriting, import removal)</p></li>
+<li><p>README</p></li>
+</ul>
+</section>
+<section id="id53">
+<h3>Fixed<a class="headerlink" href="#id53" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>URL handling and path normalization</p></li>
+<li><p>Detection of removed files</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="id54">
+<h2>[0.1.2] — 2024-04-13<a class="headerlink" href="#id54" title="Link to this heading">¶</a></h2>
+<p>Initial release.</p>
+<section id="features">
+<h3>Features<a class="headerlink" href="#features" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Core ontology environment management: discover, load, and resolve <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> transitively</p></li>
+<li><p>CLI: <code class="docutils literal notranslate"><span class="pre">init</span></code>, <code class="docutils literal notranslate"><span class="pre">add</span></code>, <code class="docutils literal notranslate"><span class="pre">closure</span></code>, <code class="docutils literal notranslate"><span class="pre">get</span></code>, <code class="docutils literal notranslate"><span class="pre">dump</span></code>, <code class="docutils literal notranslate"><span class="pre">status</span></code></p></li>
+<li><p>Python bindings via PyO3/maturin</p></li>
+<li><p>Offline mode</p></li>
+<li><p>Strict mode (require <code class="docutils literal notranslate"><span class="pre">owl:Ontology</span></code> declarations)</p></li>
+<li><p>Directory walking with glob patterns</p></li>
+<li><p>CI/CD for Linux, macOS, and Windows wheels</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          <a class="prev-page" href="development.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Building from source</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Changelog</a><ul>
+<li><a class="reference internal" href="#unreleased">[Unreleased]</a></li>
+<li><a class="reference internal" href="#id1">[0.6.0] — 2026-07-27</a><ul>
+<li><a class="reference internal" href="#added">Added</a></li>
+<li><a class="reference internal" href="#deprecated">Deprecated</a></li>
+<li><a class="reference internal" href="#changed-breaking">Changed (breaking)</a></li>
+<li><a class="reference internal" href="#id2">Added</a></li>
+<li><a class="reference internal" href="#removed">Removed</a></li>
+<li><a class="reference internal" href="#fixed">Fixed</a></li>
+<li><a class="reference internal" href="#performance">Performance</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id3">[0.5.5]</a><ul>
+<li><a class="reference internal" href="#id4">Added</a></li>
+<li><a class="reference internal" href="#changed">Changed</a></li>
+<li><a class="reference internal" href="#id5">Deprecated</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id6">[0.5.4]</a><ul>
+<li><a class="reference internal" href="#id7">Added</a></li>
+<li><a class="reference internal" href="#id8">Changed</a></li>
+<li><a class="reference internal" href="#id9">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id10">[0.5.3] — 2026-04-03</a><ul>
+<li><a class="reference internal" href="#id11">Added</a></li>
+<li><a class="reference internal" href="#id12">Changed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id13">[0.5.2] — 2026-04-02</a><ul>
+<li><a class="reference internal" href="#id14">Added</a></li>
+<li><a class="reference internal" href="#id15">Changed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id16">[0.5.1] — 2026-03-04</a><ul>
+<li><a class="reference internal" href="#id17">Fixed</a></li>
+<li><a class="reference internal" href="#id18">Changed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id19">[0.5.0] — 2026-03-03</a><ul>
+<li><a class="reference internal" href="#id20">Added</a></li>
+<li><a class="reference internal" href="#id21">Changed</a></li>
+<li><a class="reference internal" href="#id22">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id23">[0.4.0] — 2025-11-07</a><ul>
+<li><a class="reference internal" href="#id24">Added</a></li>
+<li><a class="reference internal" href="#id25">Changed</a></li>
+<li><a class="reference internal" href="#id26">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id27">[0.3.0] — 2025-07-24</a><ul>
+<li><a class="reference internal" href="#id28">Added</a></li>
+<li><a class="reference internal" href="#id29">Changed</a></li>
+<li><a class="reference internal" href="#id30">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id31">[0.2.1] — 2025-06-06</a><ul>
+<li><a class="reference internal" href="#id32">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id33">[0.2.0] — 2025-05-07</a><ul>
+<li><a class="reference internal" href="#id34">Added</a></li>
+<li><a class="reference internal" href="#id35">Changed</a></li>
+<li><a class="reference internal" href="#id36">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id37">[0.1.10] — 2025-03-19</a><ul>
+<li><a class="reference internal" href="#id38">Added</a></li>
+<li><a class="reference internal" href="#id39">Changed</a></li>
+<li><a class="reference internal" href="#id40">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id41">[0.1.9] — 2024-08-28</a><ul>
+<li><a class="reference internal" href="#id42">Added</a></li>
+<li><a class="reference internal" href="#id43">Changed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id44">[0.1.8] — 2024-06-15</a><ul>
+<li><a class="reference internal" href="#id45">Added</a></li>
+<li><a class="reference internal" href="#id46">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id47">[0.1.6] — 2024-04-29</a><ul>
+<li><a class="reference internal" href="#id48">Changed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id49">[0.1.5] — 2024-04-28</a><ul>
+<li><a class="reference internal" href="#id50">Added</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id51">[0.1.4] — 2024-04-26</a><ul>
+<li><a class="reference internal" href="#id52">Added</a></li>
+<li><a class="reference internal" href="#id53">Fixed</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#id54">[0.1.2] — 2024-04-13</a><ul>
+<li><a class="reference internal" href="#features">Features</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="_static/documentation_options.js?v=8fa8b3e9"></script>
+    <script src="_static/doctools.js?v=9a2dae69"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="_static/expand-nav.js?v=c9702942"></script>
+    </body>
+</html>
