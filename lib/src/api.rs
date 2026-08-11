@@ -27,6 +27,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::io::GraphIO;
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
@@ -414,6 +415,42 @@ fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 impl OntoEnv {
+    /// Wait briefly for a marker held by a live writer to clear. A marker left
+    /// behind after the writer releases its lock still requires recovery.
+    fn pending_marker_after_active_writer(config: &Config) -> Option<String> {
+        let directory = config.root.join(".ontoenv");
+        let pending_path = directory.join(catalog::PENDING_FILE);
+        if !pending_path.exists() {
+            return None;
+        }
+
+        let lock_path = directory.join("store.lock");
+        let writer_is_active = || -> bool {
+            let Ok(file) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&lock_path)
+            else {
+                return false;
+            };
+            match FileExt::try_lock_shared(&file) {
+                Ok(()) => {
+                    let _ = FileExt::unlock(&file);
+                    false
+                }
+                Err(_) => true,
+            }
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while pending_path.exists() && writer_is_active() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        pending_path
+            .exists()
+            .then(|| std::fs::read_to_string(&pending_path).unwrap_or_default())
+    }
+
     // Constructors
     fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Result<Self> {
         let backend_state = io.store_state().ok().flatten();
@@ -642,7 +679,7 @@ impl OntoEnv {
         }
         let catalog_path = config.root.join(".ontoenv").join(catalog::CATALOG_FILE);
         let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
-        if pending_path.exists() {
+        if let Some(_) = Self::pending_marker_after_active_writer(&config) {
             return Err(CatalogRecoveryError {
                 message: format!(
                     "interrupted mutation marker at {}; run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog",
@@ -1506,8 +1543,7 @@ impl OntoEnv {
         }
 
         let pending_path = ontoenv_dir.join(catalog::PENDING_FILE);
-        if pending_path.exists() {
-            let details = std::fs::read_to_string(&pending_path).unwrap_or_default();
+        if let Some(details) = Self::pending_marker_after_active_writer(&config) {
             return Err(CatalogRecoveryError {
                 message: format!(
                     "{} records an interrupted backend/catalog mutation ({}). Run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog from the graph store",
@@ -3992,6 +4028,43 @@ mod tests {
         let error = OntoEnv::load_from_directory(root, false).unwrap_err();
         assert!(error.downcast_ref::<CatalogRecoveryError>().is_some());
         assert!(error.to_string().contains("https://example.org/o"));
+    }
+
+    #[test]
+    fn startup_waits_for_an_active_pending_mutation_to_finish() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config.clone(), false).unwrap();
+        drop(environment);
+
+        let pending = root.join(".ontoenv").join(catalog::PENDING_FILE);
+        std::fs::write(&pending, r#"{"mutation_id":"active","graphs":[]}"#).unwrap();
+        let lock_path = root.join(".ontoenv").join("store.lock");
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(lock_path)
+                .unwrap();
+            FileExt::lock_exclusive(&lock).unwrap();
+            ready_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            std::fs::remove_file(pending).unwrap();
+        });
+        ready_rx.recv().unwrap();
+
+        let reopened = OntoEnv::load_from_directory(root, false).unwrap();
+        drop(reopened);
+        writer.join().unwrap();
     }
 
     #[test]
