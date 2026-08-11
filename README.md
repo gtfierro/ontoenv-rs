@@ -94,7 +94,7 @@ Ontologies fetched from a URL often declare a different (usually versioned) onto
 | `.ontoenv/` | Environment directory |
 | `.ontoenv/store.r5tu` | RDF5D persistent store |
 | `.ontoenv/catalog.r5tu` | Authoritative, versioned environment metadata catalog |
-| `.ontoenv/catalog.pending` | Recovery marker for an interrupted graph/catalog mutation; successful operations, including tolerated non-strict import misses, remove it |
+| `.ontoenv/catalog.pending` | Marker for a graph/catalog mutation in progress or interrupted mutation; successful operations, including failed mutations that make no backend changes, remove it |
 | `.ontoenv/store.lock` | File lock (single writer, shared readers) |
 
 Warm opens read only `ontoenv.json`, `catalog.r5tu`, and O(1) backend state when
@@ -102,10 +102,13 @@ available. They do not materialize ontology graphs. Legacy `environment.json`
 metadata is migrated automatically when its graph IDs match the backend;
 legacy JSON files are retained but ignored after migration.
 
-If a command reports `CatalogRecoveryError` for `catalog.pending`, run
-`ontoenv recover` from the environment or a child directory. It rebuilds the
-catalog from the persistent graph store and removes the marker only after the
-replacement catalog is published successfully.
+If a command reports that an external process is mutating the environment,
+another writer currently holds `.ontoenv/store.lock`; wait for it to finish and
+retry. If a command instead reports `CatalogRecoveryError` for
+`catalog.pending`, no active writer owns the marker: run `ontoenv recover` from
+the environment or a child directory. It rebuilds the catalog from the
+persistent graph store and removes the marker only after the replacement
+catalog is published successfully.
 
 Set `ONTOENV_DIR` to override the environment location. Logging is controlled via `ONTOENV_LOG` or `RUST_LOG`.
 
