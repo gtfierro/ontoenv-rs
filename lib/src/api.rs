@@ -313,7 +313,28 @@ impl<'a> BatchScope<'a> {
                 Ok(value)
             }
             (Ok(_), Err(err)) => Err(err),
-            (Err(err), Ok(())) => Err(err),
+            (Err(err), Ok(())) => {
+                // A failed import can occur before the backend receives any
+                // write. In that case the persisted catalog still describes
+                // the authoritative store, so do not turn a harmless error
+                // into a recovery-required environment.
+                if self.outermost {
+                    let unchanged = self.env.io.store_state().ok().flatten()
+                        == self.env.backend_state
+                        && self
+                            .env
+                            .io
+                            .graph_revisions()
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default()
+                            == self.env.graph_revisions;
+                    if unchanged {
+                        self.env.remove_pending_marker()?;
+                    }
+                }
+                Err(err)
+            }
             (Err(err), Err(end_err)) => {
                 error!("Failed to finalize batched RDF write: {end_err}");
                 Err(err)
@@ -4028,6 +4049,33 @@ mod tests {
         let error = OntoEnv::load_from_directory(root, false).unwrap_err();
         assert!(error.downcast_ref::<CatalogRecoveryError>().is_some());
         assert!(error.to_string().contains("https://example.org/o"));
+    }
+
+    #[test]
+    fn failed_add_without_backend_changes_does_not_require_recovery() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let mut environment = OntoEnv::init(config, false).unwrap();
+
+        let missing = OntologyLocation::File(root.join("missing.ttl"));
+        assert!(environment
+            .add(missing, Overwrite::Allow, RefreshStrategy::UseCache)
+            .is_err());
+        assert!(
+            !root.join(".ontoenv").join(catalog::PENDING_FILE).exists(),
+            "a failed add that wrote no graph must not leave a recovery marker"
+        );
+
+        drop(environment);
+        OntoEnv::load_from_directory(root, false).unwrap();
     }
 
     #[test]
