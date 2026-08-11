@@ -714,7 +714,7 @@ impl OntoEnv {
             PendingMarkerState::Clear => {}
             PendingMarkerState::Active => {
                 return Err(anyhow!(
-                    "OntoEnv mutation is still in progress at {}; retry once the writer releases the environment lock",
+                    "an external process is mutating this OntoEnv at {}; retry once it releases the environment lock",
                     pending_path.display()
                 ));
             }
@@ -1585,7 +1585,7 @@ impl OntoEnv {
             PendingMarkerState::Clear => {}
             PendingMarkerState::Active => {
                 return Err(anyhow!(
-                    "OntoEnv mutation is still in progress at {}; retry once the writer releases the environment lock",
+                    "an external process is mutating this OntoEnv at {}; retry once it releases the environment lock",
                     pending_path.display()
                 ));
             }
@@ -4171,7 +4171,9 @@ mod tests {
         ready_rx.recv().unwrap();
 
         let error = OntoEnv::load_from_directory(root, false).unwrap_err();
-        assert!(error.to_string().contains("mutation is still in progress"));
+        assert!(error
+            .to_string()
+            .contains("external process is mutating this OntoEnv"));
         assert!(error.downcast_ref::<CatalogRecoveryError>().is_none());
         writer.join().unwrap();
     }
