@@ -257,6 +257,12 @@ struct BatchScope<'a> {
     outermost: bool,
 }
 
+enum PendingMarkerState {
+    Clear,
+    Active,
+    Stale(String),
+}
+
 #[derive(Default)]
 struct OntologyFilters {
     include: Vec<Regex>,
@@ -438,11 +444,11 @@ fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
 impl OntoEnv {
     /// Wait briefly for a marker held by a live writer to clear. A marker left
     /// behind after the writer releases its lock still requires recovery.
-    fn pending_marker_after_active_writer(config: &Config) -> Option<String> {
+    fn pending_marker_after_active_writer(config: &Config) -> PendingMarkerState {
         let directory = config.root.join(".ontoenv");
         let pending_path = directory.join(catalog::PENDING_FILE);
         if !pending_path.exists() {
-            return None;
+            return PendingMarkerState::Clear;
         }
 
         let lock_path = directory.join("store.lock");
@@ -467,9 +473,13 @@ impl OntoEnv {
         while pending_path.exists() && writer_is_active() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
-        pending_path
-            .exists()
-            .then(|| std::fs::read_to_string(&pending_path).unwrap_or_default())
+        if !pending_path.exists() {
+            PendingMarkerState::Clear
+        } else if writer_is_active() {
+            PendingMarkerState::Active
+        } else {
+            PendingMarkerState::Stale(std::fs::read_to_string(&pending_path).unwrap_or_default())
+        }
     }
 
     // Constructors
@@ -700,14 +710,21 @@ impl OntoEnv {
         }
         let catalog_path = config.root.join(".ontoenv").join(catalog::CATALOG_FILE);
         let pending_path = config.root.join(".ontoenv").join(catalog::PENDING_FILE);
-        if let Some(_) = Self::pending_marker_after_active_writer(&config) {
-            return Err(CatalogRecoveryError {
+        match Self::pending_marker_after_active_writer(&config) {
+            PendingMarkerState::Clear => {}
+            PendingMarkerState::Active => {
+                return Err(anyhow!(
+                    "OntoEnv mutation is still in progress at {}; retry once the writer releases the environment lock",
+                    pending_path.display()
+                ));
+            }
+            PendingMarkerState::Stale(_) => return Err(CatalogRecoveryError {
                 message: format!(
                     "interrupted mutation marker at {}; run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog",
                     pending_path.display()
                 ),
             }
-            .into());
+            .into()),
         }
         if !catalog_path.exists() {
             if read_only {
@@ -1564,15 +1581,22 @@ impl OntoEnv {
         }
 
         let pending_path = ontoenv_dir.join(catalog::PENDING_FILE);
-        if let Some(details) = Self::pending_marker_after_active_writer(&config) {
-            return Err(CatalogRecoveryError {
+        match Self::pending_marker_after_active_writer(&config) {
+            PendingMarkerState::Clear => {}
+            PendingMarkerState::Active => {
+                return Err(anyhow!(
+                    "OntoEnv mutation is still in progress at {}; retry once the writer releases the environment lock",
+                    pending_path.display()
+                ));
+            }
+            PendingMarkerState::Stale(details) => return Err(CatalogRecoveryError {
                 message: format!(
                     "{} records an interrupted backend/catalog mutation ({}). Run `ontoenv recover` or call OntoEnv::recover to rebuild the catalog from the graph store",
                     pending_path.display(),
                     details
                 ),
             }
-            .into());
+            .into()),
         }
 
         let lock_file = Self::acquire_environment_lock(&config, read_only)?;
@@ -4112,6 +4136,43 @@ mod tests {
 
         let reopened = OntoEnv::load_from_directory(root, false).unwrap();
         drop(reopened);
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn startup_reports_an_active_mutation_as_retryable_not_stale() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("env");
+        let config = Config::builder()
+            .root(root.clone())
+            .offline(true)
+            .temporary(false)
+            .locations(vec![])
+            .use_cached_ontologies(CacheMode::Enabled)
+            .build()
+            .unwrap();
+        let environment = OntoEnv::init(config, false).unwrap();
+        drop(environment);
+
+        let pending = root.join(".ontoenv").join(catalog::PENDING_FILE);
+        std::fs::write(&pending, r#"{"mutation_id":"active","graphs":[]}"#).unwrap();
+        let lock_path = root.join(".ontoenv").join("store.lock");
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(lock_path)
+                .unwrap();
+            FileExt::lock_exclusive(&lock).unwrap();
+            ready_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(2100));
+        });
+        ready_rx.recv().unwrap();
+
+        let error = OntoEnv::load_from_directory(root, false).unwrap_err();
+        assert!(error.to_string().contains("mutation is still in progress"));
+        assert!(error.downcast_ref::<CatalogRecoveryError>().is_none());
         writer.join().unwrap();
     }
 
