@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-08-12
+
+### Added
+- `OntoEnv.temporary_snapshot()` (Python) and `OntoEnv::new_temporary()`
+  (Rust) create isolated in-memory snapshots that copy both catalog metadata
+  and graph contents.
+
+### Changed
+- `temporary=True` always creates an empty in-memory environment. Incompatible
+  lifecycle-option combinations now fail with a clear error instead of being
+  silently ignored.
+
 ## [0.6.0] — 2026-07-27
 
 ### Added
