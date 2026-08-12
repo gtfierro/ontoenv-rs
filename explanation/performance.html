@@ -1,0 +1,566 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Migrating from 0.5 to 0.6" href="../migration-0.6.html"><link rel="prev" title="Staying in sync" href="staying-in-sync.html">
+
+    <!-- Generated with Sphinx 7.4.7 and Furo 2025.09.25 -->
+        <title>Performance - OntoEnv Documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=e49ed175" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">OntoEnv Documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  
+  <span class="sidebar-brand-text">OntoEnv Documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul class="current">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/index.html">Tutorials</a><input aria-label="Toggle navigation of Tutorials" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/first-environment.html">Your first environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/python.html">OntoEnv from Python</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../how-to/index.html">How-to guides</a><input aria-label="Toggle navigation of How-to guides" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/choose-what-gets-loaded.html">Choose what gets loaded</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/work-offline.html">Work offline and control caching</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/rename-and-alias.html">Rename and alias ontologies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-in-a-service.html">Use OntoEnv in a long-running service</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/query-with-sparql.html">Query with SPARQL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-a-custom-graph-store.html">Use your own graph storage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/recover-an-environment.html">Recover an interrupted environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/diagnose-imports.html">Diagnose import problems</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../reference/index.html">Reference</a><input aria-label="Toggle navigation of Reference" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../reference/cli.html">CLI reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/python.html">Python API reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/configuration.html">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/rdflib-store.html">ViewGraph and OntoEnvStore</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/graph-store.html">Graph store protocol</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/api.html">Generated API</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Explanation</a><input aria-label="Toggle navigation of Explanation" checked="" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="concepts.html">Concepts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="views-and-copies.html">Views and copies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lifecycle.html">Opening an environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="staying-in-sync.html">Staying in sync</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Performance</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Project</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../migration-0.6.html">Migrating from 0.5 to 0.6</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development.html">Building from source</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://docs.rs/ontoenv">Rust API (docs.rs)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../changelog.html">Changelog</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../_sources/explanation/performance.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="performance">
+<h1>Performance<a class="headerlink" href="#performance" title="Link to this heading">¶</a></h1>
+<p>Two claims underpin the 0.6 API: that reopening an environment is cheap
+regardless of how much data is in it, and that read-only views beat
+materialized graphs for most query workloads. This page shows the measurements
+and explains what produces them.</p>
+<section id="the-headline">
+<h2>The headline<a class="headerlink" href="#the-headline" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Reopening scales with ontology count, not triple count.</strong> About 10 ms
+either way.</p></li>
+<li><p><strong>Views win big on SPARQL, tie on iteration, and lose slightly on
+microsecond triple lookups.</strong></p></li>
+</ul>
+<p>If you only take one thing away: prefer <code class="docutils literal notranslate"><span class="pre">get_*</span></code> in read paths, and reach for
+<code class="docutils literal notranslate"><span class="pre">copy_*</span></code> when you need to mutate.</p>
+</section>
+<section id="warm-starts">
+<h2>Warm starts<a class="headerlink" href="#warm-starts" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">python/bench_catalog_warm_start.py</span></code> adopts synthetic one-graph stores
+holding 1 and 124,000 triples, then repeatedly reopens each catalog-backed
+environment.</p>
+<p>Both averaged about 10 ms per open — 9.75 ms and 9.95 ms — on an Apple Silicon
+development machine, and neither warm loop ever called <code class="docutils literal notranslate"><span class="pre">get_graph</span></code>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>python
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>bench_catalog_warm_start.py
+</pre></div>
+</div>
+<p>That near-identical result is the point. Open cost tracks the number of
+catalog records, not the size of the graphs they describe, because a warm open
+reads the catalog and nothing else. It is what makes <code class="docutils literal notranslate"><span class="pre">connect</span></code> cheap enough
+to call at every process start.</p>
+</section>
+<section id="views-versus-copies">
+<h2>Views versus copies<a class="headerlink" href="#views-versus-copies" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">python/bench_rdflib_store.py</span></code> loads Brick 1.4.4 and its imports closure
+(15 graphs, ~237k triples) and times the same operations across four
+<code class="docutils literal notranslate"><span class="pre">rdflib</span></code>-compatible backends:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">ontoenv-get</span></code></dt><dd><p><code class="docutils literal notranslate"><span class="pre">env.get_closure(...)</span></code> — a read-only zero-copy view over the on-disk
+rdf5d store via <code class="docutils literal notranslate"><span class="pre">mmap</span></code>, with in-memory permutation indexes.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">ontoenv-copy</span></code></dt><dd><p><code class="docutils literal notranslate"><span class="pre">env.copy_closure(...)</span></code> — a mutable in-memory <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code>
+materialized from the same closure.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">rdflib-memory</span></code></dt><dd><p>The default rdflib <code class="docutils literal notranslate"><span class="pre">Memory</span></code> store, loaded from the same triples.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">oxigraph</span></code></dt><dd><p>The <code class="docutils literal notranslate"><span class="pre">oxrdflib</span></code> store, loaded from the same triples. Optional; skipped if
+<code class="docutils literal notranslate"><span class="pre">oxrdflib</span></code> is not installed.</p>
+</dd>
+</dl>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>python
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>bench_rdflib_store.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--brick<span class="w"> </span>https://brickschema.org/schema/1.4.4/Brick.ttl<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--repeat<span class="w"> </span><span class="m">3</span>
+
+<span class="c1"># Or point at a local file for offline runs:</span>
+uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>bench_rdflib_store.py<span class="w"> </span>--brick<span class="w"> </span>../brick/Brick.ttl
+</pre></div>
+</div>
+</section>
+<section id="results">
+<h2>Results<a class="headerlink" href="#results" title="Link to this heading">¶</a></h2>
+<p>Best of two runs on an Apple Silicon laptop. Your absolute numbers will differ;
+the <em>shape</em> of the comparison should not.</p>
+<div class="table-wrapper docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Workload</p></th>
+<th class="head"><p>ontoenv-get</p></th>
+<th class="head"><p>ontoenv-copy</p></th>
+<th class="head"><p>rdflib-memory</p></th>
+<th class="head"><p>oxigraph</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Iterate all triples</p></td>
+<td><p><strong>131 ms</strong></p></td>
+<td><p>154 ms</p></td>
+<td><p>135 ms</p></td>
+<td><p>784 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>Match <code class="docutils literal notranslate"><span class="pre">?s</span> <span class="pre">owl:imports</span> <span class="pre">?o</span></code></p></td>
+<td><p>0.07 ms</p></td>
+<td><p>0.04 ms</p></td>
+<td><p>0.04 ms</p></td>
+<td><p>0.13 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>Match <code class="docutils literal notranslate"><span class="pre">brick:Equipment</span> <span class="pre">?p</span> <span class="pre">?o</span></code></p></td>
+<td><p>0.12 ms</p></td>
+<td><p>0.05 ms</p></td>
+<td><p>0.05 ms</p></td>
+<td><p>0.25 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>Match <code class="docutils literal notranslate"><span class="pre">?s</span> <span class="pre">?p</span> <span class="pre">owl:Class</span></code></p></td>
+<td><p>1.53 ms</p></td>
+<td><p>1.48 ms</p></td>
+<td><p>1.33 ms</p></td>
+<td><p>5.02 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>SPARQL <code class="docutils literal notranslate"><span class="pre">COUNT</span></code> of <code class="docutils literal notranslate"><span class="pre">rdf:type</span></code></p></td>
+<td><p><strong>1.41 ms</strong></p></td>
+<td><p>114 ms</p></td>
+<td><p>110 ms</p></td>
+<td><p>5.30 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>SPARQL <code class="docutils literal notranslate"><span class="pre">rdfs:subClassOf*</span></code> of <code class="docutils literal notranslate"><span class="pre">brick:Equipment</span></code></p></td>
+<td><p><strong>0.57 ms</strong></p></td>
+<td><p>4.46 ms</p></td>
+<td><p>4.32 ms</p></td>
+<td><p>0.47 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>SPARQL <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">...</span> <span class="pre">rdfs:label</span> <span class="pre">...</span> <span class="pre">LIMIT</span> <span class="pre">1000</span></code></p></td>
+<td><p><strong>5.48 ms</strong></p></td>
+<td><p>10.99 ms</p></td>
+<td><p>10.52 ms</p></td>
+<td><p>5.50 ms</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Bold marks where <code class="docutils literal notranslate"><span class="pre">ontoenv-get</span></code> beats the in-memory baseline.</p>
+<p>Measurements cover steady-state reads. Backend construction — view creation,
+closure materialization, loading the reference stores — happens before the
+timed region, and each workload gets one untimed warm-up. If startup or
+one-shot export latency is your actual question, measure that end to end
+instead.</p>
+</section>
+<section id="reading-the-results">
+<h2>Reading the results<a class="headerlink" href="#reading-the-results" title="Link to this heading">¶</a></h2>
+<p><strong>``ontoenv-copy`` ≈ ``rdflib-memory`` everywhere.</strong> <code class="docutils literal notranslate"><span class="pre">copy_closure</span></code>
+materializes into a vanilla rdflib <code class="docutils literal notranslate"><span class="pre">Memory</span></code> store, so it inherits the same
+query engine and the same profile. That equivalence is deliberate: choosing a
+copy costs you nothing beyond the materialization itself.</p>
+<p><strong>Views win outright on SPARQL with small result sets.</strong> The whole query plan
+runs against the rdf5d-backed dataset via <code class="docutils literal notranslate"><span class="pre">spareval</span></code>, joining on integer
+term IDs and never crossing the FFI boundary for individual triples.
+<code class="docutils literal notranslate"><span class="pre">COUNT</span> <span class="pre">rdf:type</span></code> is ~78× faster than in-memory rdflib (1.4 ms vs 110 ms);
+a <code class="docutils literal notranslate"><span class="pre">LIMIT</span> <span class="pre">1000</span></code> label scan is ~1.9× faster.</p>
+<p><strong>Full iteration matches in-memory.</strong> 131 ms vs 135 ms across ~237k triples.
+The all-unbound path streams directly from the snapshot’s term-ID iterator
+with a u64-keyed cache for Python terms, building no intermediate term objects
+per row.</p>
+<p><strong>Microsecond lookups still favour rdflib.</strong> <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> matching is
+0.07 ms as a view against 0.04 ms in memory. A Python hash table is hard to
+beat when the work is a single dictionary probe. If that is your dominant
+access pattern, benchmark before assuming a view helps.</p>
+<p><strong>Oxigraph remains a strong SPARQL backend</strong>, but <code class="docutils literal notranslate"><span class="pre">ontoenv-get</span></code> matches or
+beats it on every query workload here, at the cost of slower loads and much
+slower full iteration on Oxigraph’s side. Reach for Oxigraph when the same
+data serves many queries and you can amortize the load.</p>
+</section>
+<section id="where-the-speed-comes-from">
+<span id="sidecar-index"></span><h2>Where the speed comes from<a class="headerlink" href="#where-the-speed-comes-from" title="Link to this heading">¶</a></h2>
+<p><strong>Permutation indexes.</strong> Binding an rdf5d snapshot eagerly builds four
+posting-list indexes, held in memory for the life of the snapshot:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">PSO</span></code> and <code class="docutils literal notranslate"><span class="pre">POS</span></code> for a <strong>bound predicate</strong></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SPO</span></code> for a <strong>bound subject</strong> with unbound predicate</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OSP</span></code> for a <strong>bound object</strong> with unbound predicate</p></li>
+</ul>
+<p>A triple pattern with any bound term reads the matching posting list instead
+of scanning every triple in every graph of the closure. Only the fully
+unbound pattern scans directly.</p>
+<p>The builds run in parallel threads at bind time — tens of milliseconds per
+permutation for the Brick closure — so the cost lands once, up front, rather
+than on the first query of each pattern shape. Because an index is built from
+the snapshot you just opened, there is nothing to invalidate: no staleness
+checks, no sidecar files. Older versions wrote a <code class="docutils literal notranslate"><span class="pre">store.r5tu.idx</span></code> sidecar;
+it is unused now and removed on the next flush.</p>
+<p>The indexes cost roughly a few times the on-disk snapshot’s size in RAM, and
+are discarded when the snapshot drops. There is no configuration.</p>
+<p id="pclos-rewriting"><strong>Property-path closure rewriting.</strong> The query layer also precomputes, in
+memory and lazily on first use, the transitive closure of three predicates:
+<code class="docutils literal notranslate"><span class="pre">rdfs:subClassOf</span></code>, <code class="docutils literal notranslate"><span class="pre">rdfs:subPropertyOf</span></code>, and <code class="docutils literal notranslate"><span class="pre">owl:sameAs</span></code>.</p>
+<p>At query time the evaluator intercepts <code class="docutils literal notranslate"><span class="pre">?x</span> <span class="pre">P+</span> <span class="pre">?y</span></code> and <code class="docutils literal notranslate"><span class="pre">?x</span> <span class="pre">P*</span> <span class="pre">?y</span></code> patterns
+whose predicate is in that list and substitutes a materialized <code class="docutils literal notranslate"><span class="pre">VALUES</span></code>
+block before handing the query to spareval. Supported shapes: <code class="docutils literal notranslate"><span class="pre">P+</span></code>, <code class="docutils literal notranslate"><span class="pre">P*</span></code>,
+<code class="docutils literal notranslate"><span class="pre">^P+</span></code>, <code class="docutils literal notranslate"><span class="pre">^P*</span></code> for a single IRI <code class="docutils literal notranslate"><span class="pre">P</span></code>. That is why <code class="docutils literal notranslate"><span class="pre">subClassOf*</span></code> runs in
+0.57 ms against 4.32 ms for in-memory rdflib.</p>
+<p>The rewrite bails out — leaving the path for spareval to evaluate normally —
+when the predicate is not in the precomputed list, when the path is a
+sequence, alternative, or negated property set rather than a direct <code class="docutils literal notranslate"><span class="pre">P+</span></code>/<code class="docutils literal notranslate"><span class="pre">P*</span></code>
+of one IRI, or when both endpoints of the path are variables.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ontoenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">OntoEnv</span>
+
+<span class="c1"># Permutation indexes are built when the rdf5d snapshot is bound.</span>
+<span class="n">env</span> <span class="o">=</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;./ontology-env&quot;</span><span class="p">)</span>
+<span class="n">env</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;https://brickschema.org/schema/1.4.4/Brick.ttl&quot;</span><span class="p">)</span>
+<span class="n">env</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+<span class="c1"># The property-closure table stays lazy: the first supported path query</span>
+<span class="c1"># builds it, and later queries reuse it.</span>
+<span class="n">view</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_closure</span><span class="p">(</span><span class="s2">&quot;https://brickschema.org/schema/1.4/Brick&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="rules-of-thumb">
+<h2>Rules of thumb<a class="headerlink" href="#rules-of-thumb" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Reach for <code class="docutils literal notranslate"><span class="pre">get_*</span></code> to keep memory low, for SPARQL that returns small result
+sets (<code class="docutils literal notranslate"><span class="pre">COUNT</span></code>, aggregations, <code class="docutils literal notranslate"><span class="pre">LIMIT</span></code>), and when you want a read path
+that structurally cannot mutate the environment.</p></li>
+<li><p>Reach for <code class="docutils literal notranslate"><span class="pre">copy_*</span></code> when you need to mutate, or need an API only a real
+<code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> implements.</p></li>
+<li><p>Prefer <code class="docutils literal notranslate"><span class="pre">get_*</span></code> for the supported recursive property paths — the closure
+table exists specifically to accelerate them.</p></li>
+<li><p>Reach for Oxigraph when one dataset will serve many SPARQL queries and the
+load cost amortizes.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../migration-0.6.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Migrating from 0.5 to 0.6</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="staying-in-sync.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Staying in sync</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Performance</a><ul>
+<li><a class="reference internal" href="#the-headline">The headline</a></li>
+<li><a class="reference internal" href="#warm-starts">Warm starts</a></li>
+<li><a class="reference internal" href="#views-versus-copies">Views versus copies</a></li>
+<li><a class="reference internal" href="#results">Results</a></li>
+<li><a class="reference internal" href="#reading-the-results">Reading the results</a></li>
+<li><a class="reference internal" href="#where-the-speed-comes-from">Where the speed comes from</a></li>
+<li><a class="reference internal" href="#rules-of-thumb">Rules of thumb</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=1c28bd9a"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/expand-nav.js?v=c9702942"></script>
+    </body>
+</html>

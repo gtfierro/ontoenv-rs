@@ -1,0 +1,1830 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Explanation" href="../explanation/index.html"><link rel="prev" title="Graph store protocol" href="graph-store.html">
+
+    <!-- Generated with Sphinx 7.4.7 and Furo 2025.09.25 -->
+        <title>Generated API - OntoEnv Documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=e49ed175" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">OntoEnv Documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  
+  <span class="sidebar-brand-text">OntoEnv Documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul class="current">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/index.html">Tutorials</a><input aria-label="Toggle navigation of Tutorials" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/first-environment.html">Your first environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/python.html">OntoEnv from Python</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../how-to/index.html">How-to guides</a><input aria-label="Toggle navigation of How-to guides" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/choose-what-gets-loaded.html">Choose what gets loaded</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/work-offline.html">Work offline and control caching</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/rename-and-alias.html">Rename and alias ontologies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-in-a-service.html">Use OntoEnv in a long-running service</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/query-with-sparql.html">Query with SPARQL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-a-custom-graph-store.html">Use your own graph storage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/recover-an-environment.html">Recover an interrupted environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/diagnose-imports.html">Diagnose import problems</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Reference</a><input aria-label="Toggle navigation of Reference" checked="" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="cli.html">CLI reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="python.html">Python API reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="configuration.html">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="rdflib-store.html">ViewGraph and OntoEnvStore</a></li>
+<li class="toctree-l2"><a class="reference internal" href="graph-store.html">Graph store protocol</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Generated API</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../explanation/index.html">Explanation</a><input aria-label="Toggle navigation of Explanation" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/concepts.html">Concepts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/views-and-copies.html">Views and copies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/lifecycle.html">Opening an environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/staying-in-sync.html">Staying in sync</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/performance.html">Performance</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Project</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../migration-0.6.html">Migrating from 0.5 to 0.6</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development.html">Building from source</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://docs.rs/ontoenv">Rust API (docs.rs)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../changelog.html">Changelog</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../_sources/reference/api.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="generated-api">
+<h1>Generated API<a class="headerlink" href="#generated-api" title="Link to this heading">¶</a></h1>
+<p>Auto-generated signatures and docstrings for the <code class="docutils literal notranslate"><span class="pre">ontoenv</span></code> module. See
+<a class="reference internal" href="python.html"><span class="doc">Python API reference</span></a> for the same surface organized by purpose.</p>
+<dl class="py exception" id="module-ontoenv">
+<dt class="sig sig-object py" id="ontoenv.CatalogRecoveryError">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">CatalogRecoveryError</span></span><a class="headerlink" href="#ontoenv.CatalogRecoveryError" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/exceptions.html#RuntimeError" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">RuntimeError</span></code></a></p>
+<p>The catalog cannot be opened because an interrupted mutation requires <cite>ontoenv recover</cite> or OntoEnv.recover().</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.CatalogRecoveryError.add_note">
+<span class="sig-name descname"><span class="pre">add_note</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.CatalogRecoveryError.add_note" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.add_note(note) –
+add a note to the exception</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.CatalogRecoveryError.args">
+<span class="sig-name descname"><span class="pre">args</span></span><a class="headerlink" href="#ontoenv.CatalogRecoveryError.args" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.CatalogRecoveryError.with_traceback">
+<span class="sig-name descname"><span class="pre">with_traceback</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.CatalogRecoveryError.with_traceback" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.with_traceback(tb) –
+set self.__traceback__ to tb and return self.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="ontoenv.ExternalStoreChangedError">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">ExternalStoreChangedError</span></span><a class="headerlink" href="#ontoenv.ExternalStoreChangedError" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/exceptions.html#RuntimeError" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">RuntimeError</span></code></a></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ExternalStoreChangedError.add_note">
+<span class="sig-name descname"><span class="pre">add_note</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.ExternalStoreChangedError.add_note" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.add_note(note) –
+add a note to the exception</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.ExternalStoreChangedError.args">
+<span class="sig-name descname"><span class="pre">args</span></span><a class="headerlink" href="#ontoenv.ExternalStoreChangedError.args" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ExternalStoreChangedError.with_traceback">
+<span class="sig-name descname"><span class="pre">with_traceback</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.ExternalStoreChangedError.with_traceback" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.with_traceback(tb) –
+set self.__traceback__ to tb and return self.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">OntoEnv</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recreate</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">create_or_use_cached</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">read_only</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">search_directories</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">require_ontology_names</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strict</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">offline</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_cached_ontologies</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">resolution_policy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">root</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">includes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">excludes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_ontologies</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exclude_ontologies</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temporary</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">remote_cache_ttl_secs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">graph_store</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">init_from_store</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>A high-level API for managing and querying RDF ontologies.</p>
+<p>The OntoEnv class provides methods for:</p>
+<ul class="simple">
+<li><p>Adding ontologies from files, URLs, or in-memory graphs</p></li>
+<li><p>Managing imports and resolving the dependency closure</p></li>
+<li><p>Creating merged views over ontology closures</p></li>
+<li><p>Managing aliases for ontology IRIs</p></li>
+</ul>
+<p>Use <code class="docutils literal notranslate"><span class="pre">OntoEnv.connect(path)</span></code> for the normal persistent lifecycle. It
+creates a missing environment or efficiently reopens an existing one.
+Call <code class="docutils literal notranslate"><span class="pre">update()</span></code> when configured ontology files or URLs should be
+discovered or refreshed. Use <code class="docutils literal notranslate"><span class="pre">OntoEnv(temporary=True)</span></code> for unsaved
+in-memory work.</p>
+<p><code class="docutils literal notranslate"><span class="pre">OntoEnv.create</span></code>, <code class="docutils literal notranslate"><span class="pre">open</span></code>, <code class="docutils literal notranslate"><span class="pre">adopt</span></code>, and <code class="docutils literal notranslate"><span class="pre">recover</span></code> provide narrower
+lifecycle contracts. The direct constructor’s <code class="docutils literal notranslate"><span class="pre">recreate=True</span></code> option
+deletes and rebuilds the target <code class="docutils literal notranslate"><span class="pre">.ontoenv</span></code> directory; it is not
+equivalent to <code class="docutils literal notranslate"><span class="pre">connect</span></code>.</p>
+<p class="rubric">Example</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ontoenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">OntoEnv</span>
+
+<span class="k">with</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;./ontology-env&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">env</span><span class="p">:</span>
+    <span class="c1"># Add an ontology</span>
+    <span class="n">env</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;http://example.com/ontology.ttl&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Add an alias - multiple IRIs can refer to one ontology</span>
+    <span class="n">env</span><span class="o">.</span><span class="n">add_alias</span><span class="p">(</span>
+        <span class="s2">&quot;http://example.com/B-alias&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;http://example.com/B&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Resolve an alias to its canonical IRI</span>
+    <span class="n">canonical</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">resolve_alias</span><span class="p">(</span><span class="s2">&quot;http://example.com/B-alias&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Get the closure (all imported ontologies)</span>
+    <span class="n">graph</span><span class="p">,</span> <span class="n">iris</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_closure</span><span class="p">(</span><span class="s2">&quot;http://example.com/ontology&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The OntoEnv uses a snapshot-based approach for consistency:
+operations see a consistent view of the environment, and the
+underlying store can be updated without affecting existing queries.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.add">
+<span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">location</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">overwrite</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fetch_imports</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rename</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.add" title="Link to this definition">¶</a></dt>
+<dd><p>Add a new ontology to the OntoEnv</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.add_alias">
+<span class="sig-name descname"><span class="pre">add_alias</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alias_iri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">canonical_iri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.add_alias" title="Link to this definition">¶</a></dt>
+<dd><p>Add an alias for a canonical ontology IRI.</p>
+<p>The alias will route to the same graph as the canonical IRI.
+Aliases only point to canonical IRIs (not other aliases) to avoid chains.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alias_iri</strong> – The alias IRI to add</p></li>
+<li><p><strong>canonical_iri</strong> – The canonical IRI that the alias should point to</p></li>
+</ul>
+</dd>
+</dl>
+<p class="rubric">Example</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">env</span><span class="o">.</span><span class="n">add_alias</span><span class="p">(</span><span class="s2">&quot;http://example.com/B-alias&quot;</span><span class="p">,</span> <span class="s2">&quot;http://example.com/B&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>After this, <code class="docutils literal notranslate"><span class="pre">env.get_graph(&quot;http://example.com/B-alias&quot;)</span></code> will return
+the same graph as <code class="docutils literal notranslate"><span class="pre">env.get_graph(&quot;http://example.com/B&quot;)</span></code>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.add_no_imports">
+<span class="sig-name descname"><span class="pre">add_no_imports</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">location</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">overwrite</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rename</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.add_no_imports" title="Link to this definition">¶</a></dt>
+<dd><p>Add a new ontology to the OntoEnv without exploring owl:imports.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.adopt">
+<span class="sig-name descname"><span class="pre">adopt</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph_store</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">overwrite</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.adopt" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.close" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.connect">
+<span class="sig-name descname"><span class="pre">connect</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph_store</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sync</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'auto'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">read_only</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.connect" title="Link to this definition">¶</a></dt>
+<dd><p>Connect to a persistent environment.</p>
+<p><cite>sync=”auto”</cite> reconciles direct graph-store changes when the backend
+can identify them. It does not refresh ontology source files or URLs;
+call <cite>update()</cite> after connecting for source refresh.</p>
+<p>Omitted configuration preserves persisted settings. Explicit values
+override them; writable connections persist overrides and read-only
+connections keep them session-local.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.copy_closure">
+<span class="sig-name descname"><span class="pre">copy_closure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">graph</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rewrite_sh_prefixes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">remove_owl_imports</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.copy_closure" title="Link to this definition">¶</a></dt>
+<dd><p>Copy the imports closure of <cite>uri</cite> into a mutable graph and return it
+alongside the closure list.</p>
+<p>The first element of the returned tuple is either the provided <cite>graph</cite>
+after mutation or a brand-new <cite>rdflib.Graph</cite>. The second element is an
+ordered list of ontology IRIs in the resolved closure starting with
+<cite>uri</cite>. Set <cite>rewrite_sh_prefixes</cite> or <cite>remove_owl_imports</cite> to control
+post-processing of the merged triples.</p>
+<p>Works correctly with custom <code class="docutils literal notranslate"><span class="pre">graph_store=</span></code> backends: each graph in
+the closure is fetched via the backend’s <code class="docutils literal notranslate"><span class="pre">get_graph</span></code> rather than the
+internal oxigraph store.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.copy_dataset">
+<span class="sig-name descname"><span class="pre">copy_dataset</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dataset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.copy_dataset" title="Link to this definition">¶</a></dt>
+<dd><p>Copy the environment into a mutable in-memory <code class="docutils literal notranslate"><span class="pre">rdflib.Dataset</span></code>.</p>
+<p>If <cite>dataset</cite> is provided, quads are added to it and the same object is
+returned. Otherwise a new <code class="docutils literal notranslate"><span class="pre">rdflib.Dataset</span></code> is created.</p>
+<p>Works correctly with custom <code class="docutils literal notranslate"><span class="pre">graph_store=</span></code> backends: every named
+graph is materialised via the backend’s <code class="docutils literal notranslate"><span class="pre">get_graph</span></code> path rather than
+the internal oxigraph store.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.copy_graph">
+<span class="sig-name descname"><span class="pre">copy_graph</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">graph</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.copy_graph" title="Link to this definition">¶</a></dt>
+<dd><p>Copy the named graph into a mutable in-memory <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code>.</p>
+<p>If <cite>graph</cite> is provided, triples are added to it and the same object is
+returned. Otherwise a new <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> is created.</p>
+<p>Works correctly with custom <code class="docutils literal notranslate"><span class="pre">graph_store=</span></code> backends: triples are
+fetched via the backend’s <code class="docutils literal notranslate"><span class="pre">get_graph</span></code> method rather than the
+internal oxigraph store, so the returned graph always reflects what
+the Python store holds.</p>
+<p>Raises <code class="docutils literal notranslate"><span class="pre">UnresolvedImportError</span></code> when <cite>uri</cite> is a currently known unresolved
+import. An arbitrary unknown graph IRI raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>; parsing and
+backend failures retain their own error types.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.copy_union">
+<span class="sig-name descname"><span class="pre">copy_union</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uris</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">root</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">graph</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_closures</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rewrite_sh_prefixes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">remove_owl_imports</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.copy_union" title="Link to this definition">¶</a></dt>
+<dd><p>Copy the union of explicitly listed ontology graphs into a mutable graph.</p>
+<p>Set <code class="docutils literal notranslate"><span class="pre">include_closures=True</span></code> to include each listed graph’s transitive
+<code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> closure. The <code class="docutils literal notranslate"><span class="pre">root</span></code> IRI is used for ontology
+declaration cleanup and optional SHACL prefix rewriting; it does not
+need to be one of the listed graphs.</p>
+<p>As a <em>union</em> (vs <a class="reference internal" href="#ontoenv.OntoEnv.copy_closure" title="ontoenv.OntoEnv.copy_closure"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_closure()</span></code></a>), this defaults to a raw merge
+with no transform applied — matching <a class="reference internal" href="#ontoenv.OntoEnv.get_union" title="ontoenv.OntoEnv.get_union"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_union()</span></code></a>. Pass
+<code class="docutils literal notranslate"><span class="pre">remove_owl_imports=True</span></code> / <code class="docutils literal notranslate"><span class="pre">rewrite_sh_prefixes=True</span></code> to opt into
+the closure transforms.</p>
+<p>Use <a class="reference internal" href="#ontoenv.OntoEnv.get_union" title="ontoenv.OntoEnv.get_union"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_union()</span></code></a> for a read-only store-backed view that avoids
+materializing triples.</p>
+<p>Works correctly with custom <code class="docutils literal notranslate"><span class="pre">graph_store=</span></code> backends: each graph is
+fetched via the backend’s <code class="docutils literal notranslate"><span class="pre">copy_graph</span></code> when available, otherwise
+<code class="docutils literal notranslate"><span class="pre">get_graph</span></code>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.create">
+<span class="sig-name descname"><span class="pre">create</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph_store</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.create" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.dump">
+<span class="sig-name descname"><span class="pre">dump</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">includes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.dump" title="Link to this definition">¶</a></dt>
+<dd><p>Print the contents of the OntoEnv</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.flush">
+<span class="sig-name descname"><span class="pre">flush</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.flush" title="Link to this definition">¶</a></dt>
+<dd><p>Flush pending changes and rebind cached Graph views to the new
+snapshot. Graphs returned by prior <cite>get_graph</cite> calls share the cached
+Dataset’s store, so they observe post-flush state without re-fetching.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_aliases_for">
+<span class="sig-name descname"><span class="pre">get_aliases_for</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">canonical_iri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_aliases_for" title="Link to this definition">¶</a></dt>
+<dd><p>List all aliases that point to a given canonical IRI.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>canonical_iri</strong> – The canonical IRI to list aliases for</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of all alias IRIs that point to the given canonical IRI</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_closure">
+<span class="sig-name descname"><span class="pre">get_closure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">remove_owl_imports</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rewrite_sh_prefixes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_closure" title="Link to this definition">¶</a></dt>
+<dd><p>Return a read-only merged view over the transitive <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>
+closure of <em>uri</em>, plus the list of ontology IRIs that contribute to
+the view (root first, in BFS order).</p>
+<p>The returned object is a <a class="reference internal" href="#ontoenv.ViewGraph" title="ontoenv.ViewGraph"><code class="xref py py-class docutils literal notranslate"><span class="pre">ontoenv.ViewGraph</span></code></a> — a lightweight,
+non-<code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> view that delegates triple-pattern lookups to the
+Rust backend scoped to the closure’s named graphs, so it behaves like
+a merged graph. Persistent rdf5d environments apply the transform
+without materializing triples; temporary and custom-store environments
+use a normalized in-memory fallback. Mutation raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>;
+use <a class="reference internal" href="#ontoenv.OntoEnv.copy_closure" title="ontoenv.OntoEnv.copy_closure"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_closure()</span></code></a> for a mutable in-memory merge.</p>
+<p>As a <em>closure</em> view (vs <a class="reference internal" href="#ontoenv.OntoEnv.get_union" title="ontoenv.OntoEnv.get_union"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_union()</span></code></a>), this returns the <strong>same
+triple set</strong> as <a class="reference internal" href="#ontoenv.OntoEnv.copy_closure" title="ontoenv.OntoEnv.copy_closure"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_closure()</span></code></a> — a single flattened,
+de-duplicated graph. The persistent rdf5d path applies these transforms
+lazily over the mmap scan:</p>
+<ul class="simple">
+<li><p>resolved <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> (targets inside the closure) are stripped,</p></li>
+<li><p>ontology declarations are collapsed onto the root (and the root is
+declared <code class="docutils literal notranslate"><span class="pre">a</span> <span class="pre">owl:Ontology</span></code> if it did not declare itself),</p></li>
+<li><p>SHACL <code class="docutils literal notranslate"><span class="pre">sh:prefixes</span></code> / <code class="docutils literal notranslate"><span class="pre">sh:declare</span></code> are consolidated onto the root.</p></li>
+</ul>
+<p>Set <code class="docutils literal notranslate"><span class="pre">remove_owl_imports=False</span></code> to keep resolved <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">rewrite_sh_prefixes=False</span></code> to leave SHACL prefixes untouched
+(ontology declarations are still collapsed onto the root).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_dataset">
+<span class="sig-name descname"><span class="pre">get_dataset</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_dataset" title="Link to this definition">¶</a></dt>
+<dd><p>Return a read-only store-backed Dataset view of the environment.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_dependencies">
+<span class="sig-name descname"><span class="pre">get_dependencies</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">graph_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fetch_missing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_dependencies" title="Link to this definition">¶</a></dt>
+<dd><p>Get the dependency closure of a given graph and return it as a new graph.</p>
+<p>This method will look for <cite>owl:imports</cite> statements in the provided <cite>graph</cite>,
+then find those ontologies within the <cite>OntoEnv</cite> and compute the full
+dependency closure. The triples of all ontologies in the closure are
+returned as a new graph. The original <cite>graph</cite> is never modified.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>graph</strong> (<a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.graph/#rdflib.graph.Graph" title="(in RDFLib v0.0.0)"><em>rdflib.Graph</em></a>) – The graph to find dependencies for.</p></li>
+<li><p><strong>graph_name</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em>) – If provided, all <code class="docutils literal notranslate"><span class="pre">owl:Ontology</span></code> declarations
+from the closure are replaced with a single one for this URI and
+<code class="docutils literal notranslate"><span class="pre">sh:prefixes</span></code> are rewritten to point at it. If <code class="docutils literal notranslate"><span class="pre">None</span></code> (default),
+each ontology in the closure retains its own <code class="docutils literal notranslate"><span class="pre">owl:Ontology</span></code>
+declaration (a proper union of the closure graphs); <code class="docutils literal notranslate"><span class="pre">sh:prefixes</span></code>
+are left distributed and no root is imposed.</p></li>
+<li><p><strong>recursion_depth</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – The maximum depth for recursive import resolution. A
+negative value (default) means no limit.</p></li>
+<li><p><strong>fetch_missing</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>) – If True, fetch ontologies that are not in the environment.
+In non-strict mode unavailable targets are recorded and skipped without leaving
+a recovery marker; strict mode returns an error.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A tuple containing the populated dependency graph and the sorted list of
+imported ontology IRIs.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.graph/#rdflib.graph.Graph" title="(in RDFLib v0.0.0)">rdflib.Graph</a>, <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#list" title="(in Python v3.14)">list</a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_graph">
+<span class="sig-name descname"><span class="pre">get_graph</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_graph" title="Link to this definition">¶</a></dt>
+<dd><p>Get a read-only store-backed view of the named graph as an
+<code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code>. Mutation raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>; use
+<a class="reference internal" href="#ontoenv.OntoEnv.copy_graph" title="ontoenv.OntoEnv.copy_graph"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_graph()</span></code></a> for a mutable in-memory copy.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_importers">
+<span class="sig-name descname"><span class="pre">get_importers</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_importers" title="Link to this definition">¶</a></dt>
+<dd><p>Get the names of all ontologies that import the given ontology</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_namespaces">
+<span class="sig-name descname"><span class="pre">get_namespaces</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ontology</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_closure</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_namespaces" title="Link to this definition">¶</a></dt>
+<dd><p>Get namespace prefix mappings.</p>
+<p>Prefixes are extracted from both parser-level declarations (<code class="docutils literal notranslate"><span class="pre">&#64;prefix</span></code>
+in Turtle, <code class="docutils literal notranslate"><span class="pre">PREFIX</span></code> in SPARQL-style syntaxes, XML namespace declarations)
+and SHACL <code class="docutils literal notranslate"><span class="pre">sh:declare</span></code> entries.  SHACL entries take precedence when the
+same prefix appears in both sources.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ontology</strong> – The IRI of the ontology to query.  If <code class="docutils literal notranslate"><span class="pre">None</span></code>, returns
+merged namespaces from every ontology in the environment.</p></li>
+<li><p><strong>include_closure</strong> – When <code class="docutils literal notranslate"><span class="pre">True</span></code>, namespaces from the full transitive
+<code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> closure of the ontology are included.  Ignored
+when <code class="docutils literal notranslate"><span class="pre">ontology</span></code> is <code class="docutils literal notranslate"><span class="pre">None</span></code>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A <code class="docutils literal notranslate"><span class="pre">dict[str,</span> <span class="pre">str]</span></code> mapping prefix names (e.g. <code class="docutils literal notranslate"><span class="pre">&quot;owl&quot;</span></code>) to
+namespace IRIs (e.g. <code class="docutils literal notranslate"><span class="pre">&quot;http://www.w3.org/2002/07/owl#&quot;</span></code>).</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_ontology">
+<span class="sig-name descname"><span class="pre">get_ontology</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_ontology" title="Link to this definition">¶</a></dt>
+<dd><p>Get the ontology metadata with the given URI</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_ontology_names">
+<span class="sig-name descname"><span class="pre">get_ontology_names</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_ontology_names" title="Link to this definition">¶</a></dt>
+<dd><p>Get the names of all ontologies in the OntoEnv</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.get_union">
+<span class="sig-name descname"><span class="pre">get_union</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uris</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_closures</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.get_union" title="Link to this definition">¶</a></dt>
+<dd><p>Return a read-only merged view over an explicitly listed set of
+ontology graphs, plus the list of ontology IRIs that contribute to
+the view (in the order they were resolved).</p>
+<p>The returned object is a <a class="reference internal" href="#ontoenv.ViewGraph" title="ontoenv.ViewGraph"><code class="xref py py-class docutils literal notranslate"><span class="pre">ontoenv.ViewGraph</span></code></a> — a lightweight,
+non-<code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> view that delegates triple-pattern lookups to the
+Rust backend scoped to the listed named graphs, so it behaves like a
+merged graph without materializing one. Mutation raises
+<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>; use <a class="reference internal" href="#ontoenv.OntoEnv.copy_union" title="ontoenv.OntoEnv.copy_union"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_union()</span></code></a> for a mutable in-memory merge.</p>
+<p>This is a <strong>raw</strong> merge: no closure transform is applied and triples
+are not de-duplicated across the named graphs (rdflib merged-graph
+semantics). For the cleaned, flattened imports closure of a single
+ontology, use <a class="reference internal" href="#ontoenv.OntoEnv.get_closure" title="ontoenv.OntoEnv.get_closure"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_closure()</span></code></a> instead.</p>
+<p>Set <code class="docutils literal notranslate"><span class="pre">include_closures=True</span></code> to expand each listed graph’s transitive
+<code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> closure into the view. This is the read-only equivalent
+of <a class="reference internal" href="#ontoenv.OntoEnv.copy_union" title="ontoenv.OntoEnv.copy_union"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_union()</span></code></a>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.import_dependencies">
+<span class="sig-name descname"><span class="pre">import_dependencies</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fetch_missing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.import_dependencies" title="Link to this definition">¶</a></dt>
+<dd><p>Import the dependencies referenced by <cite>owl:imports</cite> triples in <cite>graph</cite>.</p>
+<p>When <cite>fetch_missing</cite> is true, the environment attempts to download unresolved imports
+before computing the closure. In non-strict mode, unavailable imports are recorded and
+skipped, and the completed best-effort operation does not leave a recovery marker. In
+strict mode, an unavailable import aborts the operation. If at least one dependency
+resolves, its closure is merged into <cite>graph</cite> and all <cite>owl:imports</cite> statements are removed;
+if none resolve, <cite>graph</cite> is unchanged. The returned list contains the deduplicated ontology
+IRIs that were successfully imported.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.import_graph">
+<span class="sig-name descname"><span class="pre">import_graph</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">destination_graph</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.import_graph" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.is_offline">
+<span class="sig-name descname"><span class="pre">is_offline</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.is_offline" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.is_strict">
+<span class="sig-name descname"><span class="pre">is_strict</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.is_strict" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.iter_closure_triples">
+<span class="sig-name descname"><span class="pre">iter_closure_triples</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.iter_closure_triples" title="Link to this definition">¶</a></dt>
+<dd><p>Stream <code class="docutils literal notranslate"><span class="pre">(s,</span> <span class="pre">p,</span> <span class="pre">o)</span></code> triples across the transitive <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>
+closure of <em>uri</em>. Triples are <em>not</em> de-duplicated across named
+graphs; wrap in <code class="docutils literal notranslate"><span class="pre">set()</span></code> if you need set semantics.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.iter_triples">
+<span class="sig-name descname"><span class="pre">iter_triples</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.iter_triples" title="Link to this definition">¶</a></dt>
+<dd><p>Stream <code class="docutils literal notranslate"><span class="pre">(s,</span> <span class="pre">p,</span> <span class="pre">o)</span></code> triples for one named graph as rdflib terms,
+skipping the rdflib <code class="docutils literal notranslate"><span class="pre">Graph</span></code> wrapper entirely.</p>
+<p>Triples are read from the env once at call time; the iterator yields
+lazily after that. Use this when you only need to scan and don’t want
+to pay for hash-set insertion into an rdflib graph.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.list_closure">
+<span class="sig-name descname"><span class="pre">list_closure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recursion_depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Ellipsis</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.list_closure" title="Link to this definition">¶</a></dt>
+<dd><p>List the ontologies in the imports closure of the given ontology.</p>
+<p><code class="docutils literal notranslate"><span class="pre">uri</span></code> may be either:</p>
+<ul class="simple">
+<li><p>a string IRI of an ontology already in the environment, or</p></li>
+<li><p>an <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> that has not yet been added to the environment.
+In that case the closure is computed from the graph’s <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>
+declarations without modifying the environment.</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.missing_imports">
+<span class="sig-name descname"><span class="pre">missing_imports</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.missing_imports" title="Link to this definition">¶</a></dt>
+<dd><p>Return IRIs of imports that cannot be resolved in the environment.</p>
+<p><code class="docutils literal notranslate"><span class="pre">uri</span></code> may be:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">None</span></code> — scans every ontology and includes currently recorded
+best-effort fetch failures for transient caller graphs (de-duplicated).</p></li>
+<li><p>a string IRI of an ontology already in the environment — walks its
+full transitive closure and returns every unresolvable import IRI.</p></li>
+<li><p>an <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> not yet in the environment — extracts its direct
+<code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>, then for each import that <em>is</em> in the environment
+walks that import’s closure.  Imports absent from the environment
+are themselves reported as missing.</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.open">
+<span class="sig-name descname"><span class="pre">open</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph_store</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">read_only</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.open" title="Link to this definition">¶</a></dt>
+<dd><p>Open an existing environment without synchronizing its graph store.</p>
+<p>Omitted configuration preserves persisted settings. Explicit values
+override them; writable opens persist overrides and read-only opens
+keep them session-local.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.recover">
+<span class="sig-name descname"><span class="pre">recover</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph_store</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.recover" title="Link to this definition">¶</a></dt>
+<dd><p>Rebuild a catalog after an interrupted mutation.</p>
+<p>The attached graph store is authoritative. The recovery marker is
+removed only after every graph has been scanned and the new catalog
+has been published successfully.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.refresh_dataset">
+<span class="sig-name descname"><span class="pre">refresh_dataset</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dataset</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.refresh_dataset" title="Link to this definition">¶</a></dt>
+<dd><p>Refresh an existing read-only Dataset view from the current env.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.refresh_from_store">
+<span class="sig-name descname"><span class="pre">refresh_from_store</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graphs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.refresh_from_store" title="Link to this definition">¶</a></dt>
+<dd><p>Reconcile catalog metadata with the attached graph store.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.remote_cache_ttl_secs">
+<span class="sig-name descname"><span class="pre">remote_cache_ttl_secs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.remote_cache_ttl_secs" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.remove_alias">
+<span class="sig-name descname"><span class="pre">remove_alias</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alias_iri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.remove_alias" title="Link to this definition">¶</a></dt>
+<dd><p>Remove an alias.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>alias_iri</strong> – The alias IRI to remove</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.rename_graph_iri">
+<span class="sig-name descname"><span class="pre">rename_graph_iri</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uri</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">new_iri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.rename_graph_iri" title="Link to this definition">¶</a></dt>
+<dd><p>Rename the IRI of an ontology already in the environment.</p>
+<p>Reads the stored graph for <code class="docutils literal notranslate"><span class="pre">uri</span></code>, rewrites every occurrence of its
+current IRI to <code class="docutils literal notranslate"><span class="pre">new_iri</span></code> (subject and object positions, excluding
+<code class="docutils literal notranslate"><span class="pre">owl:versionIRI</span></code> values), stores the result under the new name,
+removes the old named graph, and rebuilds the import dependency graph.</p>
+<p>Returns the new IRI string.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.requires_ontology_names">
+<span class="sig-name descname"><span class="pre">requires_ontology_names</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.requires_ontology_names" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.resolution_policy">
+<span class="sig-name descname"><span class="pre">resolution_policy</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.resolution_policy" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.resolve_alias">
+<span class="sig-name descname"><span class="pre">resolve_alias</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alias_iri</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.resolve_alias" title="Link to this definition">¶</a></dt>
+<dd><p>Get the canonical IRI for an alias.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>alias_iri</strong> – The alias IRI to resolve</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The canonical IRI if the input is an alias, or None if it’s not an alias</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.set_offline">
+<span class="sig-name descname"><span class="pre">set_offline</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">offline</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.set_offline" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.set_remote_cache_ttl_secs">
+<span class="sig-name descname"><span class="pre">set_remote_cache_ttl_secs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ttl_secs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.set_remote_cache_ttl_secs" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.set_require_ontology_names">
+<span class="sig-name descname"><span class="pre">set_require_ontology_names</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">require</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.set_require_ontology_names" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.set_resolution_policy">
+<span class="sig-name descname"><span class="pre">set_resolution_policy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">policy</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.set_resolution_policy" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.set_strict">
+<span class="sig-name descname"><span class="pre">set_strict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">strict</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.set_strict" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.set_use_cached_ontologies">
+<span class="sig-name descname"><span class="pre">set_use_cached_ontologies</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">enabled</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.set_use_cached_ontologies" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.snapshot_as_dataset">
+<span class="sig-name descname"><span class="pre">snapshot_as_dataset</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">backend</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'auto'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">store</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.snapshot_as_dataset" title="Link to this definition">¶</a></dt>
+<dd><p>Deprecated alias for <a class="reference internal" href="#ontoenv.OntoEnv.get_dataset" title="ontoenv.OntoEnv.get_dataset"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_dataset()</span></code></a> / <a class="reference internal" href="#ontoenv.OntoEnv.copy_dataset" title="ontoenv.OntoEnv.copy_dataset"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_dataset()</span></code></a>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.store_path">
+<span class="sig-name descname"><span class="pre">store_path</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.store_path" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.temporary_snapshot">
+<span class="sig-name descname"><span class="pre">temporary_snapshot</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.temporary_snapshot" title="Link to this definition">¶</a></dt>
+<dd><p>Return an isolated in-memory copy of this environment.</p>
+<p>The catalog metadata and every graph are copied at the time of this
+call. Changes to either environment afterwards are independent, and
+the returned environment never writes a <code class="docutils literal notranslate"><span class="pre">.ontoenv</span></code> directory.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.to_rdflib_dataset">
+<span class="sig-name descname"><span class="pre">to_rdflib_dataset</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'auto'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.to_rdflib_dataset" title="Link to this definition">¶</a></dt>
+<dd><p>Deprecated alias for <a class="reference internal" href="#ontoenv.OntoEnv.get_dataset" title="ontoenv.OntoEnv.get_dataset"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_dataset()</span></code></a> / <a class="reference internal" href="#ontoenv.OntoEnv.copy_dataset" title="ontoenv.OntoEnv.copy_dataset"><code class="xref py py-meth docutils literal notranslate"><span class="pre">copy_dataset()</span></code></a>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.update">
+<span class="sig-name descname"><span class="pre">update</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">location</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">all</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.update" title="Link to this definition">¶</a></dt>
+<dd><p>Refresh known ontology sources, or one explicit source and its imports.</p>
+<p>A provided source replaces its existing stored graph automatically.
+<cite>force=true</cite> bypasses timestamp and cache-age checks. <cite>all</cite> is retained
+as a deprecated compatibility alias for <cite>force</cite>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnv.uses_cached_ontologies">
+<span class="sig-name descname"><span class="pre">uses_cached_ontologies</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.OntoEnv.uses_cached_ontologies" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">OntoEnvStore</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.store/#rdflib.store.Store" title="(in RDFLib v0.0.0)"><code class="xref py py-class docutils literal notranslate"><span class="pre">Store</span></code></a></p>
+<p>A read-only rdflib <code class="docutils literal notranslate"><span class="pre">Store</span></code> backed by an OntoEnv snapshot.</p>
+<p>SPARQL queries are executed by the Rust backend rather than rdflib’s
+Python query engine. Writes (<code class="docutils literal notranslate"><span class="pre">add</span></code>, <code class="docutils literal notranslate"><span class="pre">addN</span></code>, <code class="docutils literal notranslate"><span class="pre">remove</span></code>) raise
+<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> — snapshots are immutable; mutate the underlying
+<a class="reference internal" href="#ontoenv.OntoEnv" title="ontoenv.OntoEnv"><code class="xref py py-class docutils literal notranslate"><span class="pre">ontoenv.OntoEnv</span></code></a> and call <code class="xref py py-func docutils literal notranslate"><span class="pre">refresh_dataset_from_env()</span></code> instead.</p>
+<p>Construct via <a class="reference internal" href="#ontoenv.OntoEnvStore.from_env" title="ontoenv.OntoEnvStore.from_env"><code class="xref py py-meth docutils literal notranslate"><span class="pre">from_env()</span></code></a> or, more commonly, via
+<code class="docutils literal notranslate"><span class="pre">env.get_dataset()</span></code>. Creating an <code class="docutils literal notranslate"><span class="pre">OntoEnvStore()</span></code> directly
+yields an empty store, which is mostly useful as the rdflib plugin
+<code class="docutils literal notranslate"><span class="pre">Graph(store='ontoenv')</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>configuration</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>identifier</strong> (<em>Identifier</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.add">
+<span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">triple</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">context</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quoted</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.add"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.add" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>triple</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>]</em>)</p></li>
+<li><p><strong>context</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>quoted</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.addN">
+<span class="sig-name descname"><span class="pre">addN</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">quads</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.addN"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.addN" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>quads</strong> (<a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable" title="(in Python v3.14)"><em>Iterable</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>]</em><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.add_graph">
+<span class="sig-name descname"><span class="pre">add_graph</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.add_graph"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.add_graph" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>graph</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.bind">
+<span class="sig-name descname"><span class="pre">bind</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">prefix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">namespace</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">override</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.bind"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.bind" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>prefix</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>namespace</strong> (<a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.URIRef" title="(in RDFLib v0.0.0)"><em>rdflib.URIRef</em></a>)</p></li>
+<li><p><strong>override</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">commit_pending_transaction</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.close"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.close" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>commit_pending_transaction</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.commit">
+<span class="sig-name descname"><span class="pre">commit</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.commit"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.commit" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.context_aware">
+<span class="sig-name descname"><span class="pre">context_aware</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><span class="pre">bool</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#ontoenv.OntoEnvStore.context_aware" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.contexts">
+<span class="sig-name descname"><span class="pre">contexts</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">triple</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.contexts"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.contexts" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>triple</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>] </em><em>| </em><em>None</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Generator" title="(in Python v3.14)"><em>Generator</em></a>[<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a> | None, None, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.destroy">
+<span class="sig-name descname"><span class="pre">destroy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">configuration</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.destroy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.destroy" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>configuration</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.formula_aware">
+<span class="sig-name descname"><span class="pre">formula_aware</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><span class="pre">bool</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#ontoenv.OntoEnvStore.formula_aware" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.from_env">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_env</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">env</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'auto'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.from_env"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.from_env" title="Link to this definition">¶</a></dt>
+<dd><p>Build a new <code class="docutils literal notranslate"><span class="pre">OntoEnvStore</span></code> and bind it to a snapshot of <code class="docutils literal notranslate"><span class="pre">env</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>env</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>mode</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Literal" title="(in Python v3.14)"><em>Literal</em></a><em>[</em><em>'auto'</em><em>, </em><em>'rdf5d'</em><em>, </em><em>'copy'</em><em>]</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#ontoenv.OntoEnvStore" title="ontoenv.rdflib_store.OntoEnvStore"><em>OntoEnvStore</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.graph_aware">
+<span class="sig-name descname"><span class="pre">graph_aware</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><span class="pre">bool</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#ontoenv.OntoEnvStore.graph_aware" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.namespace">
+<span class="sig-name descname"><span class="pre">namespace</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">prefix</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.namespace"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.namespace" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>prefix</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>URIRef | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.namespaces">
+<span class="sig-name descname"><span class="pre">namespaces</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.namespaces"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.namespaces" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable" title="(in Python v3.14)"><em>Iterable</em></a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, <a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.URIRef" title="(in RDFLib v0.0.0)">rdflib.URIRef</a>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.open">
+<span class="sig-name descname"><span class="pre">open</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">configuration</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">create</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.open"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.open" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>configuration</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>create</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.prefix">
+<span class="sig-name descname"><span class="pre">prefix</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">namespace</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.prefix"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.prefix" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>namespace</strong> (<a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.URIRef" title="(in RDFLib v0.0.0)"><em>rdflib.URIRef</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a> | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.query">
+<span class="sig-name descname"><span class="pre">query</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">query</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">initNs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">initBindings</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">queryGraph</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.query"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.query" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>query</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>initNs</strong> (<a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><em>Mapping</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>]</em>)</p></li>
+<li><p><strong>initBindings</strong> (<a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><em>Mapping</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>]</em>)</p></li>
+<li><p><strong>queryGraph</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>kwargs</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.query/#rdflib.query.Result" title="(in RDFLib v0.0.0)">rdflib.query.Result</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.refresh_from_env">
+<span class="sig-name descname"><span class="pre">refresh_from_env</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">env</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.refresh_from_env"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.refresh_from_env" title="Link to this definition">¶</a></dt>
+<dd><p>Rebind this store to a fresh snapshot of <code class="docutils literal notranslate"><span class="pre">env</span></code>.</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">mode</span></code> is omitted, the previously chosen backend is reused (or
+<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> on first call). Namespace bindings are cleared and
+re-populated from <code class="docutils literal notranslate"><span class="pre">env.get_namespaces()</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>env</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>mode</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Literal" title="(in Python v3.14)"><em>Literal</em></a><em>[</em><em>'auto'</em><em>, </em><em>'rdf5d'</em><em>, </em><em>'copy'</em><em>] </em><em>| </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.remove">
+<span class="sig-name descname"><span class="pre">remove</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">triple_pattern</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">context</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.remove"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.remove" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>triple_pattern</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><em>Identifier</em><em> | </em><em>None</em><em>, </em><em>Identifier</em><em> | </em><em>None</em><em>, </em><em>Identifier</em><em> | </em><em>None</em><em>]</em>)</p></li>
+<li><p><strong>context</strong> (<em>Any</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.remove_graph">
+<span class="sig-name descname"><span class="pre">remove_graph</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">graph</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.remove_graph"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.remove_graph" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>graph</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.rollback">
+<span class="sig-name descname"><span class="pre">rollback</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.rollback"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.rollback" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.transaction_aware">
+<span class="sig-name descname"><span class="pre">transaction_aware</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><span class="pre">bool</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#ontoenv.OntoEnvStore.transaction_aware" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.triples">
+<span class="sig-name descname"><span class="pre">triples</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">triple_pattern</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">context</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.triples"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.triples" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>triple_pattern</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><em>Identifier</em><em> | </em><em>None</em><em>, </em><em>Identifier</em><em> | </em><em>None</em><em>, </em><em>Identifier</em><em> | </em><em>None</em><em>]</em>)</p></li>
+<li><p><strong>context</strong> (<em>Any</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>Generator[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[Identifier, Identifier, Identifier], Generator[Any | None, None, None]], None, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.OntoEnvStore.update">
+<span class="sig-name descname"><span class="pre">update</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">update</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">initNs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">initBindings</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">queryGraph</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#OntoEnvStore.update"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.OntoEnvStore.update" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>update</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>initNs</strong> (<a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><em>Mapping</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>]</em>)</p></li>
+<li><p><strong>initBindings</strong> (<a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><em>Mapping</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.term/#rdflib.term.Identifier" title="(in RDFLib v0.0.0)"><em>rdflib.term.Identifier</em></a><em>]</em>)</p></li>
+<li><p><strong>queryGraph</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>kwargs</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ontoenv.Ontology">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">Ontology</span></span><a class="headerlink" href="#ontoenv.Ontology" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.Ontology.id">
+<span class="sig-name descname"><span class="pre">id</span></span><a class="headerlink" href="#ontoenv.Ontology.id" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.Ontology.imports">
+<span class="sig-name descname"><span class="pre">imports</span></span><a class="headerlink" href="#ontoenv.Ontology.imports" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.Ontology.last_updated">
+<span class="sig-name descname"><span class="pre">last_updated</span></span><a class="headerlink" href="#ontoenv.Ontology.last_updated" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.Ontology.location">
+<span class="sig-name descname"><span class="pre">location</span></span><a class="headerlink" href="#ontoenv.Ontology.location" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.Ontology.name">
+<span class="sig-name descname"><span class="pre">name</span></span><a class="headerlink" href="#ontoenv.Ontology.name" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.Ontology.namespace_map">
+<span class="sig-name descname"><span class="pre">namespace_map</span></span><a class="headerlink" href="#ontoenv.Ontology.namespace_map" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.Ontology.version_properties">
+<span class="sig-name descname"><span class="pre">version_properties</span></span><a class="headerlink" href="#ontoenv.Ontology.version_properties" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="ontoenv.StoreCapabilityError">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">StoreCapabilityError</span></span><a class="headerlink" href="#ontoenv.StoreCapabilityError" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/exceptions.html#RuntimeError" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">RuntimeError</span></code></a></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.StoreCapabilityError.add_note">
+<span class="sig-name descname"><span class="pre">add_note</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.StoreCapabilityError.add_note" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.add_note(note) –
+add a note to the exception</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.StoreCapabilityError.args">
+<span class="sig-name descname"><span class="pre">args</span></span><a class="headerlink" href="#ontoenv.StoreCapabilityError.args" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.StoreCapabilityError.with_traceback">
+<span class="sig-name descname"><span class="pre">with_traceback</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.StoreCapabilityError.with_traceback" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.with_traceback(tb) –
+set self.__traceback__ to tb and return self.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ontoenv.SyncReport">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">SyncReport</span></span><a class="headerlink" href="#ontoenv.SyncReport" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.SyncReport.added">
+<span class="sig-name descname"><span class="pre">added</span></span><a class="headerlink" href="#ontoenv.SyncReport.added" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.SyncReport.changed">
+<span class="sig-name descname"><span class="pre">changed</span></span><a class="headerlink" href="#ontoenv.SyncReport.changed" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.SyncReport.mode">
+<span class="sig-name descname"><span class="pre">mode</span></span><a class="headerlink" href="#ontoenv.SyncReport.mode" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.SyncReport.removed">
+<span class="sig-name descname"><span class="pre">removed</span></span><a class="headerlink" href="#ontoenv.SyncReport.removed" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.SyncReport.still_pending">
+<span class="sig-name descname"><span class="pre">still_pending</span></span><a class="headerlink" href="#ontoenv.SyncReport.still_pending" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.SyncReport.unchanged">
+<span class="sig-name descname"><span class="pre">unchanged</span></span><a class="headerlink" href="#ontoenv.SyncReport.unchanged" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="ontoenv.UnresolvedImportError">
+<em class="property"><span class="pre">exception</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">UnresolvedImportError</span></span><a class="headerlink" href="#ontoenv.UnresolvedImportError" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/exceptions.html#LookupError" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">LookupError</span></code></a></p>
+<p>A known owl:imports target could not be resolved or loaded.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.UnresolvedImportError.add_note">
+<span class="sig-name descname"><span class="pre">add_note</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.UnresolvedImportError.add_note" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.add_note(note) –
+add a note to the exception</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ontoenv.UnresolvedImportError.args">
+<span class="sig-name descname"><span class="pre">args</span></span><a class="headerlink" href="#ontoenv.UnresolvedImportError.args" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.UnresolvedImportError.with_traceback">
+<span class="sig-name descname"><span class="pre">with_traceback</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.UnresolvedImportError.with_traceback" title="Link to this definition">¶</a></dt>
+<dd><p>Exception.with_traceback(tb) –
+set self.__traceback__ to tb and return self.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">ViewGraph</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">backend</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">scope</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">namespaces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>Read-only, zero-copy view over a set of the snapshot’s named graphs.</p>
+<p>Unlike <a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.graph/#rdflib.graph.Graph" title="(in RDFLib v0.0.0)"><code class="xref py py-class docutils literal notranslate"><span class="pre">rdflib.Graph</span></code></a>, this class does <em>not</em> inherit from
+<code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code>. It delegates triple lookups, <code class="docutils literal notranslate"><span class="pre">__len__</span></code>, <code class="docutils literal notranslate"><span class="pre">__contains__</span></code>
+and SPARQL directly to the Rust backend, reading straight from the rdf5d
+mmap snapshot without materializing a copy.</p>
+<p>Two flavours, distinguished by how the backend is configured:</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#ontoenv.OntoEnv.get_closure" title="ontoenv.OntoEnv.get_closure"><code class="xref py py-meth docutils literal notranslate"><span class="pre">ontoenv.OntoEnv.get_closure()</span></code></a> returns a view whose backend
+carries a <em>closure patch</em>. It presents a <strong>single flattened,
+de-duplicated graph</strong> with the same triple set as
+<a class="reference internal" href="#ontoenv.OntoEnv.copy_closure" title="ontoenv.OntoEnv.copy_closure"><code class="xref py py-meth docutils literal notranslate"><span class="pre">ontoenv.OntoEnv.copy_closure()</span></code></a> (resolved <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>
+stripped, ontology declarations collapsed onto the root, SHACL
+<code class="docutils literal notranslate"><span class="pre">sh:prefixes</span></code>/<code class="docutils literal notranslate"><span class="pre">sh:declare</span></code> consolidated). Cross-graph duplicate
+triples collapse, and SPARQL sees one graph.</p></li>
+<li><p><a class="reference internal" href="#ontoenv.OntoEnv.get_union" title="ontoenv.OntoEnv.get_union"><code class="xref py py-meth docutils literal notranslate"><span class="pre">ontoenv.OntoEnv.get_union()</span></code></a> returns a raw merge: every triple
+of each named graph in scope, with no transform and no cross-graph
+de-duplication (rdflib merged-graph semantics).</p></li>
+</ul>
+<p>Construct via <code class="docutils literal notranslate"><span class="pre">env.get_closure(uri)</span></code> or <code class="docutils literal notranslate"><span class="pre">env.get_union(uris)</span></code> rather
+than directly. <code class="docutils literal notranslate"><span class="pre">env.get_graph(uri)</span></code> still returns a plain
+<a class="reference external" href="https://rdflib.readthedocs.io/en/stable/apidocs/rdflib.graph/#rdflib.graph.Graph" title="(in RDFLib v0.0.0)"><code class="xref py py-class docutils literal notranslate"><span class="pre">rdflib.Graph</span></code></a>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>backend</strong> (<em>Any</em>) – A <code class="xref py py-class docutils literal notranslate"><span class="pre">ontoenv._native._RdfLibStoreBackend</span></code> instance
+bound to an env snapshot. For a closure view this is a dedicated
+backend sharing the same mmap snapshot with a closure patch
+attached; for a union view it is the shared (raw) backend.</p></li>
+<li><p><strong>scope</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>...</em><em>] </em><em>| </em><em>None</em>) – Tuple of graph IRIs to scope against, or <code class="docutils literal notranslate"><span class="pre">None</span></code> for
+all graphs in the backend.</p></li>
+<li><p><strong>namespaces</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><em>dict</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>] </em><em>| </em><em>None</em>) – Optional dict of <code class="docutils literal notranslate"><span class="pre">{prefix:</span> <span class="pre">namespace}</span></code> bindings.</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.add">
+<span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">triple</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.add"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.add" title="Link to this definition">¶</a></dt>
+<dd><p>ViewGraph is read-only; mutate the <a class="reference internal" href="#ontoenv.OntoEnv" title="ontoenv.OntoEnv"><code class="xref py py-class docutils literal notranslate"><span class="pre">ontoenv.OntoEnv</span></code></a> instead.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>triple</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.addN">
+<span class="sig-name descname"><span class="pre">addN</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">quads</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.addN"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.addN" title="Link to this definition">¶</a></dt>
+<dd><p>ViewGraph is read-only; mutate the <a class="reference internal" href="#ontoenv.OntoEnv" title="ontoenv.OntoEnv"><code class="xref py py-class docutils literal notranslate"><span class="pre">ontoenv.OntoEnv</span></code></a> instead.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>quads</strong> (<a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable" title="(in Python v3.14)"><em>Iterable</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>]</em><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.bind">
+<span class="sig-name descname"><span class="pre">bind</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">prefix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">namespace</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">override</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.bind"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.bind" title="Link to this definition">¶</a></dt>
+<dd><p>Bind a prefix to a namespace.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>prefix</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>namespace</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>override</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.namespace">
+<span class="sig-name descname"><span class="pre">namespace</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">prefix</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.namespace"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.namespace" title="Link to this definition">¶</a></dt>
+<dd><p>Resolve a prefix to a namespace IRI.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>prefix</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a> | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.namespaces">
+<em class="property"><span class="pre">property</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">namespaces</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><span class="pre">dict</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#ontoenv.ViewGraph.namespaces" title="Link to this definition">¶</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">{prefix:</span> <span class="pre">namespace}</span></code> bindings.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.objects">
+<span class="sig-name descname"><span class="pre">objects</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">subject</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">predicate</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.objects"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.objects" title="Link to this definition">¶</a></dt>
+<dd><p>Yield unique objects matching the pattern.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>subject</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>predicate</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Generator" title="(in Python v3.14)"><em>Generator</em></a>[<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>, None, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.predicates">
+<span class="sig-name descname"><span class="pre">predicates</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">subject</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">object</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.predicates"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.predicates" title="Link to this definition">¶</a></dt>
+<dd><p>Yield unique predicates matching the pattern.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>subject</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>object</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Generator" title="(in Python v3.14)"><em>Generator</em></a>[<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>, None, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.prefix">
+<span class="sig-name descname"><span class="pre">prefix</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">namespace</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.prefix"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.prefix" title="Link to this definition">¶</a></dt>
+<dd><p>Resolve a namespace IRI to a prefix.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>namespace</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a> | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.query">
+<span class="sig-name descname"><span class="pre">query</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">query_text</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">init_bindings</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.query"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.query" title="Link to this definition">¶</a></dt>
+<dd><p>Run a SPARQL query scoped to this view’s graphs.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>query_text</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>init_bindings</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><em>dict</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>] </em><em>| </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.remove">
+<span class="sig-name descname"><span class="pre">remove</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">triple</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.remove"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.remove" title="Link to this definition">¶</a></dt>
+<dd><p>ViewGraph is read-only; mutate the <a class="reference internal" href="#ontoenv.OntoEnv" title="ontoenv.OntoEnv"><code class="xref py py-class docutils literal notranslate"><span class="pre">ontoenv.OntoEnv</span></code></a> instead.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>triple</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.serialize">
+<span class="sig-name descname"><span class="pre">serialize</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">destination</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">format</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'turtle'</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.serialize"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.serialize" title="Link to this definition">¶</a></dt>
+<dd><p>Serialize triples in this view, matching rdflib’s Graph.serialize signature.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>destination</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>format</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>kwargs</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#bytes" title="(in Python v3.14)">bytes</a> | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.subjects">
+<span class="sig-name descname"><span class="pre">subjects</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">predicate</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">object</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.subjects"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.subjects" title="Link to this definition">¶</a></dt>
+<dd><p>Yield unique subjects matching the pattern.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>predicate</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>object</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Generator" title="(in Python v3.14)"><em>Generator</em></a>[<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>, None, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ontoenv.ViewGraph.triples">
+<span class="sig-name descname"><span class="pre">triples</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">subject</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">predicate</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">obj</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/ontoenv/rdflib_store.html#ViewGraph.triples"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ontoenv.ViewGraph.triples" title="Link to this definition">¶</a></dt>
+<dd><p>Iterate <code class="docutils literal notranslate"><span class="pre">(s,</span> <span class="pre">p,</span> <span class="pre">o)</span></code> triples matching the pattern.</p>
+<p>Accepts both the rdflib convention <code class="docutils literal notranslate"><span class="pre">triples((s,</span> <span class="pre">p,</span> <span class="pre">o))</span></code> (a single
+3-tuple) and the three-arg form <code class="docutils literal notranslate"><span class="pre">triples(s,</span> <span class="pre">p,</span> <span class="pre">o)</span></code>. Any term may be
+<code class="docutils literal notranslate"><span class="pre">None</span></code> (unbound).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>subject</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>predicate</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>obj</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Generator" title="(in Python v3.14)"><em>Generator</em></a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>, <a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>, <a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>], None, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ontoenv.is_debug_build">
+<span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">is_debug_build</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.is_debug_build" title="Link to this definition">¶</a></dt>
+<dd><p>Whether the native extension was compiled in debug mode (unoptimized).</p>
+<p>Benchmarking or perf-sensitive use against a debug build is misleading:
+the per-triple Rust callbacks (<cite>__next__</cite>, term decoding) run 5-10x
+slower than release, so backends that cross the FFI boundary per triple
+(e.g. <cite>ontoenv-get</cite>’s <cite>ViewGraph</cite>) appear massively regressed relative
+to pure-Python backends (<cite>ontoenv-copy</cite>, <cite>rdflib-memory</cite>) that are
+unaffected by the Rust build profile.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ontoenv.run_cli">
+<span class="sig-prename descclassname"><span class="pre">ontoenv.</span></span><span class="sig-name descname"><span class="pre">run_cli</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">args</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ontoenv.run_cli" title="Link to this definition">¶</a></dt>
+<dd><p>Run the Rust CLI implementation and return its process-style exit code.</p>
+</dd></dl>
+
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../explanation/index.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Explanation</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="graph-store.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Graph store protocol</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Generated API</a><ul>
+<li><a class="reference internal" href="#ontoenv.CatalogRecoveryError"><code class="docutils literal notranslate"><span class="pre">CatalogRecoveryError</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.CatalogRecoveryError.add_note"><code class="docutils literal notranslate"><span class="pre">CatalogRecoveryError.add_note()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.CatalogRecoveryError.args"><code class="docutils literal notranslate"><span class="pre">CatalogRecoveryError.args</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.CatalogRecoveryError.with_traceback"><code class="docutils literal notranslate"><span class="pre">CatalogRecoveryError.with_traceback()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.ExternalStoreChangedError"><code class="docutils literal notranslate"><span class="pre">ExternalStoreChangedError</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.ExternalStoreChangedError.add_note"><code class="docutils literal notranslate"><span class="pre">ExternalStoreChangedError.add_note()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ExternalStoreChangedError.args"><code class="docutils literal notranslate"><span class="pre">ExternalStoreChangedError.args</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ExternalStoreChangedError.with_traceback"><code class="docutils literal notranslate"><span class="pre">ExternalStoreChangedError.with_traceback()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv"><code class="docutils literal notranslate"><span class="pre">OntoEnv</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.add"><code class="docutils literal notranslate"><span class="pre">OntoEnv.add()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.add_alias"><code class="docutils literal notranslate"><span class="pre">OntoEnv.add_alias()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.add_no_imports"><code class="docutils literal notranslate"><span class="pre">OntoEnv.add_no_imports()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.adopt"><code class="docutils literal notranslate"><span class="pre">OntoEnv.adopt()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.close"><code class="docutils literal notranslate"><span class="pre">OntoEnv.close()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.connect"><code class="docutils literal notranslate"><span class="pre">OntoEnv.connect()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.copy_closure"><code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_closure()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.copy_dataset"><code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_dataset()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.copy_graph"><code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_graph()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.copy_union"><code class="docutils literal notranslate"><span class="pre">OntoEnv.copy_union()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.create"><code class="docutils literal notranslate"><span class="pre">OntoEnv.create()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.dump"><code class="docutils literal notranslate"><span class="pre">OntoEnv.dump()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.flush"><code class="docutils literal notranslate"><span class="pre">OntoEnv.flush()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_aliases_for"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_aliases_for()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_closure"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_closure()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_dataset"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_dataset()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_dependencies"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_dependencies()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_graph"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_graph()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_importers"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_importers()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_namespaces"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_namespaces()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_ontology"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_ontology()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_ontology_names"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_ontology_names()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.get_union"><code class="docutils literal notranslate"><span class="pre">OntoEnv.get_union()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.import_dependencies"><code class="docutils literal notranslate"><span class="pre">OntoEnv.import_dependencies()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.import_graph"><code class="docutils literal notranslate"><span class="pre">OntoEnv.import_graph()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.is_offline"><code class="docutils literal notranslate"><span class="pre">OntoEnv.is_offline()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.is_strict"><code class="docutils literal notranslate"><span class="pre">OntoEnv.is_strict()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.iter_closure_triples"><code class="docutils literal notranslate"><span class="pre">OntoEnv.iter_closure_triples()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.iter_triples"><code class="docutils literal notranslate"><span class="pre">OntoEnv.iter_triples()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.list_closure"><code class="docutils literal notranslate"><span class="pre">OntoEnv.list_closure()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.missing_imports"><code class="docutils literal notranslate"><span class="pre">OntoEnv.missing_imports()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.open"><code class="docutils literal notranslate"><span class="pre">OntoEnv.open()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.recover"><code class="docutils literal notranslate"><span class="pre">OntoEnv.recover()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.refresh_dataset"><code class="docutils literal notranslate"><span class="pre">OntoEnv.refresh_dataset()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.refresh_from_store"><code class="docutils literal notranslate"><span class="pre">OntoEnv.refresh_from_store()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.remote_cache_ttl_secs"><code class="docutils literal notranslate"><span class="pre">OntoEnv.remote_cache_ttl_secs()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.remove_alias"><code class="docutils literal notranslate"><span class="pre">OntoEnv.remove_alias()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.rename_graph_iri"><code class="docutils literal notranslate"><span class="pre">OntoEnv.rename_graph_iri()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.requires_ontology_names"><code class="docutils literal notranslate"><span class="pre">OntoEnv.requires_ontology_names()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.resolution_policy"><code class="docutils literal notranslate"><span class="pre">OntoEnv.resolution_policy()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.resolve_alias"><code class="docutils literal notranslate"><span class="pre">OntoEnv.resolve_alias()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.set_offline"><code class="docutils literal notranslate"><span class="pre">OntoEnv.set_offline()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.set_remote_cache_ttl_secs"><code class="docutils literal notranslate"><span class="pre">OntoEnv.set_remote_cache_ttl_secs()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.set_require_ontology_names"><code class="docutils literal notranslate"><span class="pre">OntoEnv.set_require_ontology_names()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.set_resolution_policy"><code class="docutils literal notranslate"><span class="pre">OntoEnv.set_resolution_policy()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.set_strict"><code class="docutils literal notranslate"><span class="pre">OntoEnv.set_strict()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.set_use_cached_ontologies"><code class="docutils literal notranslate"><span class="pre">OntoEnv.set_use_cached_ontologies()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.snapshot_as_dataset"><code class="docutils literal notranslate"><span class="pre">OntoEnv.snapshot_as_dataset()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.store_path"><code class="docutils literal notranslate"><span class="pre">OntoEnv.store_path()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.temporary_snapshot"><code class="docutils literal notranslate"><span class="pre">OntoEnv.temporary_snapshot()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.to_rdflib_dataset"><code class="docutils literal notranslate"><span class="pre">OntoEnv.to_rdflib_dataset()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.update"><code class="docutils literal notranslate"><span class="pre">OntoEnv.update()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnv.uses_cached_ontologies"><code class="docutils literal notranslate"><span class="pre">OntoEnv.uses_cached_ontologies()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.add"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.add()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.addN"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.addN()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.add_graph"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.add_graph()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.bind"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.bind()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.close"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.close()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.commit"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.commit()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.context_aware"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.context_aware</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.contexts"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.contexts()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.destroy"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.destroy()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.formula_aware"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.formula_aware</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.from_env"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.from_env()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.graph_aware"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.graph_aware</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.namespace"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.namespace()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.namespaces"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.namespaces()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.open"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.open()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.prefix"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.prefix()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.query"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.query()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.refresh_from_env"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.refresh_from_env()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.remove"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.remove()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.remove_graph"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.remove_graph()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.rollback"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.rollback()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.transaction_aware"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.transaction_aware</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.triples"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.triples()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.OntoEnvStore.update"><code class="docutils literal notranslate"><span class="pre">OntoEnvStore.update()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.Ontology"><code class="docutils literal notranslate"><span class="pre">Ontology</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.Ontology.id"><code class="docutils literal notranslate"><span class="pre">Ontology.id</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.Ontology.imports"><code class="docutils literal notranslate"><span class="pre">Ontology.imports</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.Ontology.last_updated"><code class="docutils literal notranslate"><span class="pre">Ontology.last_updated</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.Ontology.location"><code class="docutils literal notranslate"><span class="pre">Ontology.location</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.Ontology.name"><code class="docutils literal notranslate"><span class="pre">Ontology.name</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.Ontology.namespace_map"><code class="docutils literal notranslate"><span class="pre">Ontology.namespace_map</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.Ontology.version_properties"><code class="docutils literal notranslate"><span class="pre">Ontology.version_properties</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.StoreCapabilityError"><code class="docutils literal notranslate"><span class="pre">StoreCapabilityError</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.StoreCapabilityError.add_note"><code class="docutils literal notranslate"><span class="pre">StoreCapabilityError.add_note()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.StoreCapabilityError.args"><code class="docutils literal notranslate"><span class="pre">StoreCapabilityError.args</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.StoreCapabilityError.with_traceback"><code class="docutils literal notranslate"><span class="pre">StoreCapabilityError.with_traceback()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.SyncReport"><code class="docutils literal notranslate"><span class="pre">SyncReport</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.SyncReport.added"><code class="docutils literal notranslate"><span class="pre">SyncReport.added</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.SyncReport.changed"><code class="docutils literal notranslate"><span class="pre">SyncReport.changed</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.SyncReport.mode"><code class="docutils literal notranslate"><span class="pre">SyncReport.mode</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.SyncReport.removed"><code class="docutils literal notranslate"><span class="pre">SyncReport.removed</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.SyncReport.still_pending"><code class="docutils literal notranslate"><span class="pre">SyncReport.still_pending</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.SyncReport.unchanged"><code class="docutils literal notranslate"><span class="pre">SyncReport.unchanged</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.UnresolvedImportError"><code class="docutils literal notranslate"><span class="pre">UnresolvedImportError</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.UnresolvedImportError.add_note"><code class="docutils literal notranslate"><span class="pre">UnresolvedImportError.add_note()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.UnresolvedImportError.args"><code class="docutils literal notranslate"><span class="pre">UnresolvedImportError.args</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.UnresolvedImportError.with_traceback"><code class="docutils literal notranslate"><span class="pre">UnresolvedImportError.with_traceback()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph"><code class="docutils literal notranslate"><span class="pre">ViewGraph</span></code></a><ul>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.add"><code class="docutils literal notranslate"><span class="pre">ViewGraph.add()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.addN"><code class="docutils literal notranslate"><span class="pre">ViewGraph.addN()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.bind"><code class="docutils literal notranslate"><span class="pre">ViewGraph.bind()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.namespace"><code class="docutils literal notranslate"><span class="pre">ViewGraph.namespace()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.namespaces"><code class="docutils literal notranslate"><span class="pre">ViewGraph.namespaces</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.objects"><code class="docutils literal notranslate"><span class="pre">ViewGraph.objects()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.predicates"><code class="docutils literal notranslate"><span class="pre">ViewGraph.predicates()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.prefix"><code class="docutils literal notranslate"><span class="pre">ViewGraph.prefix()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.query"><code class="docutils literal notranslate"><span class="pre">ViewGraph.query()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.remove"><code class="docutils literal notranslate"><span class="pre">ViewGraph.remove()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.serialize"><code class="docutils literal notranslate"><span class="pre">ViewGraph.serialize()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.subjects"><code class="docutils literal notranslate"><span class="pre">ViewGraph.subjects()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.ViewGraph.triples"><code class="docutils literal notranslate"><span class="pre">ViewGraph.triples()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#ontoenv.is_debug_build"><code class="docutils literal notranslate"><span class="pre">is_debug_build()</span></code></a></li>
+<li><a class="reference internal" href="#ontoenv.run_cli"><code class="docutils literal notranslate"><span class="pre">run_cli()</span></code></a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=1c28bd9a"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/expand-nav.js?v=c9702942"></script>
+    </body>
+</html>

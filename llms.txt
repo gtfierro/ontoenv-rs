@@ -1,0 +1,4790 @@
+Building from source
+********************
+
+
+Building the crates
+===================
+
+Rust 1.88 or newer is required.
+
+   git clone https://github.com/gtfierro/ontoenv-rs
+   cd ontoenv-rs
+
+   cargo build -p ontoenv-cli --release
+   ./target/release/ontoenv --help
+
+   cargo test
+
+The workspace holds four crates:
+
+"lib"
+   "ontoenv" — the core environment, import resolution, and dependency
+   graph.
+
+"cli"
+   "ontoenv-cli" — the command-line front end.
+
+"python"
+   The PyO3 bindings published to PyPI as "ontoenv".
+
+"rdf5d"
+   The on-disk RDF format used for graph storage and the metadata
+   catalog.
+
+
+Building the Python bindings
+============================
+
+Python 3.11 or newer.
+
+   cd python
+   uv run maturin develop
+
+   uv run pytest
+
+
+Building the docs
+=================
+
+The documentation has its own "pyproject.toml" under "docs/" so its
+tooling stays separate from the project’s.
+
+   ./builddocs          # sync deps, build the extension, render HTML
+   ./builddocs llms     # also render docs/_build/llms.txt for LLM ingestion
+
+Or by hand:
+
+   cd docs
+   uv sync
+   uv run sphinx-build -M html . _build
+   open _build/html/index.html
+
+
+How the docs are organized
+==========================
+
+The structure follows Diátaxis. When adding a page, put it in the
+section matching what the reader is doing:
+
+"tutorials/"
+   Learning. A guaranteed-to-work path through a task, for someone who
+   has not used OntoEnv before. No alternatives, no caveats, no edge
+   cases.
+
+"how-to/"
+   Working. One page per goal, assuming competence. Terse; link out
+   for background rather than explaining inline.
+
+"reference/"
+   Looking things up. Complete, dry, and organized by the shape of the
+   API rather than by task. Tables over prose.
+
+"explanation/"
+   Understanding. Why things are the way they are. This is where
+   design rationale, trade-offs, and edge cases belong — keep them out
+   of the other three.
+
+The most common mistake is letting explanation leak into a how-to, or
+reference detail into a tutorial. If a paragraph starts with “note
+that” or “the reason for this is”, it probably belongs in
+"explanation/".
+Concepts
+********
+
+
+Ontologies are identified by IRI, not by location
+=================================================
+
+An RDF ontology declares its own name:
+
+   <https://example.org/site> a owl:Ontology .
+
+That IRI is the ontology’s identity. It is not a URL you are promised
+to be able to fetch, and it need not resemble the path of the file
+containing it. Two copies of the same ontology in different
+directories declare the same IRI; a file renamed on disk still
+declares the same IRI.
+
+Imports are written in the same currency:
+
+   <https://example.org/site> owl:imports <https://example.org/sensors> .
+
+This says *what* is needed, not *where* it is. Something has to close
+that gap, and that something is what OntoEnv is.
+
+
+An environment is a name-to-location index
+==========================================
+
+An environment is a directory — ".ontoenv/" by default — holding two
+things:
+
+**The graphs themselves**, in a compact binary format (rdf5d) that can
+be memory-mapped and read without parsing RDF text.
+
+**A catalog** describing them: for each ontology, its canonical IRI,
+where it came from, any aliases, its namespace prefixes, and its
+"owl:imports" targets.
+
+The catalog is the interesting half. Because it records the import
+relationships explicitly, OntoEnv can answer “what does this ontology
+need?” by walking a graph in memory, rather than by re-parsing files.
+It is also small — it holds facts *about* ontologies, not their
+triples — which is why reopening an environment takes about the same
+time whether it holds a thousand triples or a million.
+
+
+Discovery: how ontologies get in
+================================
+
+Three routes:
+
+* "init <dir>" / "search_directories=" — walk a directory, parse every
+  file matching the include filters, record the IRI each one declares.
+
+* "add <path-or-url>" — register one ontology, then follow its
+  "owl:imports" and register those too, recursively.
+
+* "update()" — revisit sources already known to the environment and
+  re-read the ones that changed.
+
+Remote ontologies are fetched over HTTP and cached on disk with a TTL,
+so the second run of a program does not re-download anything.
+
+
+Closures
+========
+
+The transitive closure of an ontology is that ontology plus everything
+it imports, plus everything *those* import, and so on. It is the set
+of graphs you need in order to interpret the first one.
+
+OntoEnv does not hand you a raw concatenation of that set. A closure
+is *flattened*:
+
+* **Resolved ``owl:imports`` statements are removed.** They have
+  already been followed. Leaving them in invites a downstream consumer
+  to follow them again — probably over the network, probably to a
+  different version.
+
+* **Ontology declarations are collapsed onto the root.** A merged
+  graph with twelve "owl:Ontology" subjects is ambiguous about what it
+  *is*. The result declares one ontology: the root you asked for.
+
+* **SHACL prefix declarations are consolidated** onto the root, so
+  "sh:prefixes" still resolves in the merged graph.
+
+* **Duplicate triples appear once.**
+
+The result is a single self-contained graph. That is usually what you
+want when handing a closure to a reasoner, a validator, or a
+colleague.
+
+When you want the other thing — exactly the graphs you named,
+untouched — that is a **union**: "ontoenv union" /
+"env.get_union(...)". Unions do not strip imports, do not collapse
+declarations, and do not de-duplicate across graphs.
+
+
+Aliases and canonical IRIs
+==========================
+
+Real ontologies get published at more than one IRI: with and without a
+version suffix, over "http" and "https", at a vanity domain and a
+permanent one. An alias maps an extra IRI onto an ontology already in
+the environment.
+
+An alias may only point at a canonical IRI, never at another alias —
+so resolution is always a single hop and chains cannot form. Aliases
+resolve transparently everywhere an IRI is accepted.
+
+
+Resolution policy
+=================
+
+When two files declare the same ontology IRI, something has to choose.
+The resolution policy decides:
+
+"default"
+   Prefer the first-registered definition.
+
+"latest"
+   Prefer the most recently updated source.
+
+"version"
+   Prefer the highest "owl:versionIRI" / version property.
+
+"ontoenv doctor" reports duplicate IRIs so you can decide whether the
+duplication is intentional at all.
+
+
+Strict mode
+===========
+
+By default an unresolvable import is a warning: OntoEnv assembles what
+it can and tells you what is missing. In strict mode it is an error.
+
+Non-strict is the right default for exploration — a closure missing
+one obscure vocabulary is usually still useful. Strict is the right
+setting for CI, where silently incomplete output is worse than a
+failure.
+
+
+Persistent and temporary environments
+=====================================
+
+A persistent environment writes to ".ontoenv/" and reopens quickly
+because of its saved catalog. A temporary one ("--temporary" /
+"OntoEnv(temporary=True)") keeps graphs and catalog in memory, leaves
+nothing behind, and starts from scratch every time. The API is
+otherwise identical.
+
+To experiment with an existing environment without changing it, create
+an explicit snapshot instead: "env.temporary_snapshot()" in Python (or
+"env.new_temporary()" in Rust). A snapshot copies the current catalog
+and graph content into a separate in-memory environment; later changes
+are independent in both directions. A "root" supplied to
+"OntoEnv(temporary=True)" is only a configuration base for source
+paths; it does not select or load a saved environment.
+
+Persistent environments allow one writer at a time. Any number of
+readers can open the same environment read-only.
+
+See also:
+
+  Views and copies for what a closure gives you in Python, and Opening
+  an environment for the ways to open an environment.
+Explanation
+***********
+
+Concepts
+   Ontologies, IRIs, imports, closures, and the environment that ties
+   them together. Read this first if the vocabulary is unfamiliar.
+
+Views and copies
+   Why every read method comes in a "get_*" and a "copy_*" flavour,
+   what a closure view actually contains, and how to choose.
+
+Opening an environment
+   There are five ways to open an environment. What each one refuses
+   to do, and why "connect" is almost always the right answer.
+
+Staying in sync
+   OntoEnv never reads your files behind your back. What "update()"
+   and "refresh_from_store()" each reconcile, and why they are
+   separate.
+
+Performance
+   Benchmarks against in-memory rdflib and Oxigraph, plus the indexing
+   that explains the results.
+Opening an environment
+**********************
+
+
+Short answer: use "connect"
+===========================
+
+   env = OntoEnv.connect("./ontology-env")
+
+"connect" creates the environment if it is missing and reopens it
+quickly if it exists. That covers ordinary application startup, and
+most programs never need anything else.
+
+The rest of this page is about the other four entry points, which
+exist so a program can *refuse* the lifecycle states it does not
+expect.
+
++--------------------------+----------------------------------------+----------------------------------------+
+| Entry point              | Use when                               | If the environment already exists / is |
+|                          |                                        | missing                                |
+|==========================|========================================|========================================|
+| "OntoEnv.connect(path)"  | Normal startup                         | Reopens it / creates it                |
++--------------------------+----------------------------------------+----------------------------------------+
+| "OntoEnv.create(path)"   | Setup must create a new one            | Fails unless "overwrite=True" /        |
+|                          |                                        | creates it                             |
++--------------------------+----------------------------------------+----------------------------------------+
+| "OntoEnv.open(path)"     | Deployment already prepared it         | Opens it / fails                       |
++--------------------------+----------------------------------------+----------------------------------------+
+| "OntoEnv.adopt(path,     | A custom store is already populated    | Fails unless "overwrite=True" /        |
+| store)"                  |                                        | indexes the store                      |
++--------------------------+----------------------------------------+----------------------------------------+
+| "OntoEnv.recover(path)"  | Startup raised "CatalogRecoveryError"  | Rebuilds the index from the graph      |
+|                          |                                        | store                                  |
++--------------------------+----------------------------------------+----------------------------------------+
+| "OntoEnv(temporary=True  | Nothing should be saved                | Always a fresh in-memory environment   |
+| )"                       |                                        |                                        |
++--------------------------+----------------------------------------+----------------------------------------+
+
+
+Why failing is a feature
+========================
+
+"connect" is forgiving because in most programs “the environment is
+not there yet” is not an error — it is the first run.
+
+But sometimes it is an error, and a very informative one. If your
+deployment pipeline is supposed to have built the environment, a
+process that silently creates an empty one instead will start up fine
+and then behave as though every ontology vanished.
+"OntoEnv.open(path)" turns that into an immediate, obvious failure at
+the point where the assumption actually broke.
+
+The same reasoning applies in reverse. A setup command or a test
+fixture that means to create a *new* environment should not quietly
+adopt whatever was left over from a previous run.
+"OntoEnv.create(path)" fails instead, and "overwrite=True" says you
+meant it.
+
+Each named method encodes an assumption. Reach for one when violating
+that assumption should stop your program.
+
+
+Connect does not read your files
+================================
+
+This surprises people, so it is worth stating plainly:
+
+   env = OntoEnv.connect("./ontology-env", search_directories=["./ontologies"])
+   env.update()   # <- this is what reads ./ontologies
+
+"connect" loads the saved catalog. "update" scans sources. Keeping
+them apart is what makes restarts cheap: a service that restarts a
+hundred times does not re-parse every RDF file a hundred times, and
+the one time you *do* want a rescan, you asked for it.
+
+The first "connect" on a brand-new environment creates the directory,
+saves settings, and initializes empty storage. It still does not scan
+— the environment is genuinely empty until "update()" or "add()" runs.
+
+Staying in sync covers the refresh side in full.
+
+
+"recreate=True" is not a reconnect
+==================================
+
+The direct constructor accepts "recreate=True", and it is destructive:
+
+   env = OntoEnv(path=".demo-env", recreate=True, search_directories=["./brick"])
+
+Each call deletes ".demo-env/.ontoenv/", creates fresh storage, and
+immediately scans "./brick". The saved catalog and all cached graphs
+are gone. (The surrounding directory and your source files are
+untouched.)
+
+That is occasionally what you want, but it is not “open my
+environment”. The non-destructive equivalent is:
+
+   with OntoEnv.connect(".demo-env", search_directories=["./brick"]) as env:
+       env.update()
+
+And when you do mean the destructive version, the named form says so
+out loud:
+
+   env = OntoEnv.create(".demo-env", overwrite=True, search_directories=["./brick"])
+
+One more constructor behavior worth knowing:
+"OntoEnv(path="./project")" without "recreate" searches "./project"
+*and its parents* for an existing ".ontoenv" directory, opens what it
+finds, and raises "FileNotFoundError" otherwise. Convenient
+interactively; too implicit for application code, where "connect" or
+"open" name the path and the intent.
+
+The constructor remains supported and is used internally. For new
+code, the named methods are clearer.
+
+
+Configuration on reopen
+=======================
+
+Settings persist with the environment. When you reopen it:
+
+* **Omitting an option keeps the saved value.**
+
+* **Passing a value overrides it** — including "False", ""default"",
+  and "[]", which are real overrides rather than “unset”.
+
+   OntoEnv.connect("./env")                        # everything as saved
+   OntoEnv.connect("./env", strict=True)           # override strict, keep the rest
+   OntoEnv.connect("./env", search_directories=[]) # explicitly clear search paths
+
+Booleans are effectively tri-state on reopen: "None" preserves, "True"
+and "False" both override. This applies to "strict", "offline",
+"require_ontology_names", "use_cached_ontologies",
+"remote_cache_ttl_secs", "resolution_policy", search directories, and
+every filter list. "OntoEnv.open" behaves identically.
+
+A writable connection saves overrides. A read-only one applies them to
+that session only — a read-only worker cannot change what the writer
+configured.
+
+Changing configuration never triggers a scan. Runtime modes such as
+"offline" and "strict" take effect immediately; changed discovery
+paths and filters apply on the next "update()".
+
+
+How long should the object live?
+================================
+
+The "with" statement controls exactly one thing: when "close()" is
+called. It changes nothing about what OntoEnv saves or how it behaves.
+
+For a script, that automatic cleanup is convenient. For a server, it
+is the wrong shape entirely — connect once at startup, keep the object
+in application state, close it at shutdown. See Use OntoEnv in a long-
+running service.
+
+
+Deprecated: "create_or_use_cached"
+==================================
+
+   env = OntoEnv("./env", create_or_use_cached=True)   # deprecated
+   env = OntoEnv.connect("./env")                      # equivalent, supported
+
+"create_or_use_cached=True" had the same create-or-reopen intent but
+no vocabulary for the other lifecycle states, and no way to say
+anything about synchronization. It emits "DeprecationWarning"
+throughout 0.6.x and is planned for removal in 0.7.
+Performance
+***********
+
+Two claims underpin the 0.6 API: that reopening an environment is
+cheap regardless of how much data is in it, and that read-only views
+beat materialized graphs for most query workloads. This page shows the
+measurements and explains what produces them.
+
+
+The headline
+============
+
+* **Reopening scales with ontology count, not triple count.** About 10
+  ms either way.
+
+* **Views win big on SPARQL, tie on iteration, and lose slightly on
+  microsecond triple lookups.**
+
+If you only take one thing away: prefer "get_*" in read paths, and
+reach for "copy_*" when you need to mutate.
+
+
+Warm starts
+===========
+
+"python/bench_catalog_warm_start.py" adopts synthetic one-graph stores
+holding 1 and 124,000 triples, then repeatedly reopens each catalog-
+backed environment.
+
+Both averaged about 10 ms per open — 9.75 ms and 9.95 ms — on an Apple
+Silicon development machine, and neither warm loop ever called
+"get_graph".
+
+   cd python
+   uv run python bench_catalog_warm_start.py
+
+That near-identical result is the point. Open cost tracks the number
+of catalog records, not the size of the graphs they describe, because
+a warm open reads the catalog and nothing else. It is what makes
+"connect" cheap enough to call at every process start.
+
+
+Views versus copies
+===================
+
+"python/bench_rdflib_store.py" loads Brick 1.4.4 and its imports
+closure (15 graphs, ~237k triples) and times the same operations
+across four "rdflib"-compatible backends:
+
+"ontoenv-get"
+   "env.get_closure(...)" — a read-only zero-copy view over the on-
+   disk rdf5d store via "mmap", with in-memory permutation indexes.
+
+"ontoenv-copy"
+   "env.copy_closure(...)" — a mutable in-memory "rdflib.Graph"
+   materialized from the same closure.
+
+"rdflib-memory"
+   The default rdflib "Memory" store, loaded from the same triples.
+
+"oxigraph"
+   The "oxrdflib" store, loaded from the same triples. Optional;
+   skipped if "oxrdflib" is not installed.
+
+   cd python
+   uv run python bench_rdflib_store.py \
+       --brick https://brickschema.org/schema/1.4.4/Brick.ttl \
+       --repeat 3
+
+   # Or point at a local file for offline runs:
+   uv run python bench_rdflib_store.py --brick ../brick/Brick.ttl
+
+
+Results
+=======
+
+Best of two runs on an Apple Silicon laptop. Your absolute numbers
+will differ; the *shape* of the comparison should not.
+
++----------------------+----------------------+----------------------+----------------------+----------------------+
+| Workload             | ontoenv-get          | ontoenv-copy         | rdflib-memory        | oxigraph             |
+|======================|======================|======================|======================|======================|
+| Iterate all triples  | **131 ms**           | 154 ms               | 135 ms               | 784 ms               |
++----------------------+----------------------+----------------------+----------------------+----------------------+
+| Match "?s            | 0.07 ms              | 0.04 ms              | 0.04 ms              | 0.13 ms              |
+| owl:imports ?o"      |                      |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+----------------------+
+| Match                | 0.12 ms              | 0.05 ms              | 0.05 ms              | 0.25 ms              |
+| "brick:Equipment ?p  |                      |                      |                      |                      |
+| ?o"                  |                      |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+----------------------+
+| Match "?s ?p         | 1.53 ms              | 1.48 ms              | 1.33 ms              | 5.02 ms              |
+| owl:Class"           |                      |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+----------------------+
+| SPARQL "COUNT" of    | **1.41 ms**          | 114 ms               | 110 ms               | 5.30 ms              |
+| "rdf:type"           |                      |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+----------------------+
+| SPARQL               | **0.57 ms**          | 4.46 ms              | 4.32 ms              | 0.47 ms              |
+| "rdfs:subClassOf*"   |                      |                      |                      |                      |
+| of "brick:Equipment" |                      |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+----------------------+
+| SPARQL "SELECT ...   | **5.48 ms**          | 10.99 ms             | 10.52 ms             | 5.50 ms              |
+| rdfs:label ... LIMIT |                      |                      |                      |                      |
+| 1000"                |                      |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+----------------------+
+
+Bold marks where "ontoenv-get" beats the in-memory baseline.
+
+Measurements cover steady-state reads. Backend construction — view
+creation, closure materialization, loading the reference stores —
+happens before the timed region, and each workload gets one untimed
+warm-up. If startup or one-shot export latency is your actual
+question, measure that end to end instead.
+
+
+Reading the results
+===================
+
+**``ontoenv-copy`` ≈ ``rdflib-memory`` everywhere.** "copy_closure"
+materializes into a vanilla rdflib "Memory" store, so it inherits the
+same query engine and the same profile. That equivalence is
+deliberate: choosing a copy costs you nothing beyond the
+materialization itself.
+
+**Views win outright on SPARQL with small result sets.** The whole
+query plan runs against the rdf5d-backed dataset via "spareval",
+joining on integer term IDs and never crossing the FFI boundary for
+individual triples. "COUNT rdf:type" is ~78× faster than in-memory
+rdflib (1.4 ms vs 110 ms); a "LIMIT 1000" label scan is ~1.9× faster.
+
+**Full iteration matches in-memory.** 131 ms vs 135 ms across ~237k
+triples. The all-unbound path streams directly from the snapshot’s
+term-ID iterator with a u64-keyed cache for Python terms, building no
+intermediate term objects per row.
+
+**Microsecond lookups still favour rdflib.** "owl:imports" matching is
+0.07 ms as a view against 0.04 ms in memory. A Python hash table is
+hard to beat when the work is a single dictionary probe. If that is
+your dominant access pattern, benchmark before assuming a view helps.
+
+**Oxigraph remains a strong SPARQL backend**, but "ontoenv-get"
+matches or beats it on every query workload here, at the cost of
+slower loads and much slower full iteration on Oxigraph’s side. Reach
+for Oxigraph when the same data serves many queries and you can
+amortize the load.
+
+
+Where the speed comes from
+==========================
+
+**Permutation indexes.** Binding an rdf5d snapshot eagerly builds four
+posting-list indexes, held in memory for the life of the snapshot:
+
+* "PSO" and "POS" for a **bound predicate**
+
+* "SPO" for a **bound subject** with unbound predicate
+
+* "OSP" for a **bound object** with unbound predicate
+
+A triple pattern with any bound term reads the matching posting list
+instead of scanning every triple in every graph of the closure. Only
+the fully unbound pattern scans directly.
+
+The builds run in parallel threads at bind time — tens of milliseconds
+per permutation for the Brick closure — so the cost lands once, up
+front, rather than on the first query of each pattern shape. Because
+an index is built from the snapshot you just opened, there is nothing
+to invalidate: no staleness checks, no sidecar files. Older versions
+wrote a "store.r5tu.idx" sidecar; it is unused now and removed on the
+next flush.
+
+The indexes cost roughly a few times the on-disk snapshot’s size in
+RAM, and are discarded when the snapshot drops. There is no
+configuration.
+
+**Property-path closure rewriting.** The query layer also precomputes,
+in memory and lazily on first use, the transitive closure of three
+predicates: "rdfs:subClassOf", "rdfs:subPropertyOf", and "owl:sameAs".
+
+At query time the evaluator intercepts "?x P+ ?y" and "?x P* ?y"
+patterns whose predicate is in that list and substitutes a
+materialized "VALUES" block before handing the query to spareval.
+Supported shapes: "P+", "P*", "^P+", "^P*" for a single IRI "P". That
+is why "subClassOf*" runs in 0.57 ms against 4.32 ms for in-memory
+rdflib.
+
+The rewrite bails out — leaving the path for spareval to evaluate
+normally — when the predicate is not in the precomputed list, when the
+path is a sequence, alternative, or negated property set rather than a
+direct "P+"/"P*" of one IRI, or when both endpoints of the path are
+variables.
+
+   from ontoenv import OntoEnv
+
+   # Permutation indexes are built when the rdf5d snapshot is bound.
+   env = OntoEnv.connect("./ontology-env")
+   env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
+   env.flush()
+
+   # The property-closure table stays lazy: the first supported path query
+   # builds it, and later queries reuse it.
+   view, _ = env.get_closure("https://brickschema.org/schema/1.4/Brick")
+
+
+Rules of thumb
+==============
+
+* Reach for "get_*" to keep memory low, for SPARQL that returns small
+  result sets ("COUNT", aggregations, "LIMIT"), and when you want a
+  read path that structurally cannot mutate the environment.
+
+* Reach for "copy_*" when you need to mutate, or need an API only a
+  real "rdflib.Graph" implements.
+
+* Prefer "get_*" for the supported recursive property paths — the
+  closure table exists specifically to accelerate them.
+
+* Reach for Oxigraph when one dataset will serve many SPARQL queries
+  and the load cost amortizes.
+Staying in sync
+***************
+
+OntoEnv has a saved view of the world, and the world moves. Files get
+edited, remote ontologies get republished, and — if you supplied your
+own graph store — something else may write into that store directly.
+
+There are two reconciliation operations, and they solve genuinely
+different problems.
+
++----------------------------+---------------------------------------+---------------------------------------+
+|                            | "env.update()"                        | "env.refresh_from_store()"            |
+|============================|=======================================|=======================================|
+| Reconciles                 | Ontology **sources**: files and URLs  | Graphs changed **directly in a custom |
+|                            |                                       | store**                               |
++----------------------------+---------------------------------------+---------------------------------------+
+| Reads                      | The filesystem and the network        | Your "graph_store" object             |
++----------------------------+---------------------------------------+---------------------------------------+
+| Follows "owl:imports"      | Yes                                   | No                                    |
++----------------------------+---------------------------------------+---------------------------------------+
+| Relevant when              | Always                                | Only with "graph_store="              |
++----------------------------+---------------------------------------+---------------------------------------+
+
+Both exist because they answer different questions. “Has "site.ttl"
+changed on disk, and if so what does it import now?” is not the same
+question as “did another process write into my database while I wasn’t
+looking?” Collapsing them into one call would mean every restart
+either checks the network or scans your whole backend.
+
+
+Refreshing sources
+==================
+
+   env.update()                                  # changed files + expired remotes
+   env.update(force=True)                        # every known source, regardless
+   env.update("https://example.org/site.ttl")    # one source
+   env.update("https://example.org/site.ttl", force=True)
+
+"update()" checks the configured search directories for new, changed,
+and removed files, and re-fetches remote ontologies whose cached
+copies have outlived the TTL. It follows "owl:imports" throughout, so
+dependencies stay current along with the ontologies that pulled them
+in.
+
+With a location argument it updates that one source and replaces its
+stored graph, again following imports.
+
+Whether "update" touches the network at all depends on the
+environment’s "offline" and cache settings. See Work offline and
+control caching.
+
+
+Why connect doesn’t do this for you
+===================================
+
+Because reading files and fetching URLs is expensive, and startup is
+exactly when you least want to pay for it.
+
+A service that restarts under load would otherwise re-parse every
+ontology on every restart. Keeping "update()" explicit means the cost
+is scheduled by you — at deploy time, on a timer, from an admin
+endpoint — rather than imposed by the library.
+
+
+Reconciling a custom store
+==========================
+
+This section only matters if you passed "graph_store=".
+
+Changes made **through** "env" update your store and OntoEnv’s catalog
+together; nothing extra is needed. Changes made **directly to the
+store** are different, because OntoEnv did not see them happen.
+
+How much OntoEnv can do about that depends entirely on what your store
+can tell it:
+
+**The store reports per-graph revisions** ("graph_revisions()").
+OntoEnv rereads only the graphs that actually changed. This is the
+good case, and the reason that optional method is worth implementing.
+
+**The store reports that it changed, but not which graphs**
+("store_state()" only). OntoEnv raises rather than guessing, and asks
+you to request "sync="full"" explicitly.
+
+**The store reports nothing.** OntoEnv trusts its saved catalog until
+you ask for a refresh.
+
+That middle case is a deliberate design choice. "sync="auto"" will
+never silently turn a normal restart into a full scan of your database
+— if the only correct action is expensive, you get to decide when to
+pay for it.
+
+   report = env.refresh_from_store()                    # incremental
+   report = env.refresh_from_store(graphs=[iri, ...])   # exactly these
+   report = env.refresh_from_store(full=True)           # forget and rebuild
+
+   print(report.added, report.changed, report.removed)
+
+
+Targeted refreshes are exact
+============================
+
+"graphs=" is an exact set of backend graph IDs. OntoEnv does not
+expand it — if you name a root, you get the root, not its imports. To
+refresh a root along with the closure already recorded for it, compose
+the two calls:
+
+   report = env.refresh_from_store(graphs=env.list_closure(root))
+
+That works when a known closure was rewritten together. But if the
+external edit introduced a *new* imported graph, that graph is not in
+the old closure yet, so a targeted refresh will not see it. An
+incremental refresh finds it when the store reports per-graph changes;
+otherwise "full=True" is the answer.
+
+A targeted refresh also says nothing about graphs it did not look at.
+The report lists those as still pending, and a later connection will
+still detect that the store and the catalog have drifted.
+
+
+Synchronization at connect time
+===============================
+
+"sync=" controls the same machinery during "connect":
+
+""auto"" (default)
+   Create or index on first use, reuse the saved catalog on restart,
+   incorporate external changes when the store can identify them.
+   Never reads ontology sources.
+
+""full""
+   Reread every graph in the store. For known out-of-band changes the
+   store cannot identify.
+
+""catalog""
+   Use the saved catalog without reading graph contents at all. For
+   controlled deployments where another part of the system guarantees
+   the saved view is correct.
+
+None of these fetch ontology sources. After connecting, call
+"update()" when files and URLs should be refreshed too.
+
+
+When commits are interrupted
+============================
+
+A mutation writes graphs, then publishes the updated catalog. If a
+process dies between those steps, a "catalog.pending" marker remains
+and the next open raises "CatalogRecoveryError" rather than trusting a
+catalog that might not describe every graph.
+
+Normal completed mutations remove the marker as part of their commit —
+including best-effort ones. In non-strict mode,
+"import_dependencies(..., fetch_missing=True)" and
+"get_dependencies(..., fetch_missing=True)" may skip imports they
+cannot reach, but the partial result they *did* commit is a complete,
+valid commit. So a recovery marker always means an interrupted or
+failed write, never merely a missing import.
+
+See Recover an interrupted environment.
+Views and copies
+****************
+
+Every read method on "OntoEnv" comes in two flavours:
+
++-----------------------------------+-----------------------------------+------------------------------------+
+| View (read-only)                  | Copy (mutable)                    | Scope                              |
+|===================================|===================================|====================================|
+| "get_graph(iri)"                  | "copy_graph(iri)"                 | one ontology                       |
++-----------------------------------+-----------------------------------+------------------------------------+
+| "get_closure(iri)"                | "copy_closure(iri)"               | ontology + transitive imports      |
++-----------------------------------+-----------------------------------+------------------------------------+
+| "get_union(iris)"                 | "copy_union(iris, root)"          | an explicit set of graphs          |
++-----------------------------------+-----------------------------------+------------------------------------+
+| "get_dataset()"                   | "copy_dataset()"                  | the whole environment              |
++-----------------------------------+-----------------------------------+------------------------------------+
+
+
+Why the split exists
+====================
+
+Before 0.6, "get_closure" materialized the whole closure into an in-
+memory "rdflib.Graph". For the Brick 1.4.4 closure that is roughly
+237,000 triples built one Python object at a time — and most callers
+then ran a single query against it and threw it away.
+
+The view path skips that. It reads term IDs straight out of the
+memory-mapped on-disk snapshot and only builds Python objects for the
+terms you actually touch. A "COUNT" query over that closure runs in
+about 1.4 ms as a view versus 110 ms as a materialized graph, because
+the whole query plan executes in Rust over integer term IDs and never
+crosses the FFI boundary per triple.
+
+Copies did not go away — they are just no longer the default for
+reads.
+
+
+What a view is
+==============
+
+"get_graph" returns an "rdflib.Graph" backed by OntoEnv’s storage.
+Mutating it raises "ValueError".
+
+"get_closure" and "get_union" return an "ontoenv.ViewGraph", which
+deliberately does **not** subclass "rdflib.Graph". It implements the
+parts of the interface that make sense read-only:
+
+* "triples(...)", "subjects"/"predicates"/"objects", iteration
+
+* "len()", "in", "bool()"
+
+* "query(...)" — SPARQL scoped to the view’s graphs
+
+* "bind" / "namespace" / "prefix" / "namespaces"
+
+* "serialize(format=...)"
+
+"add", "addN", and "remove" raise "ValueError". If a library you are
+calling requires a real "rdflib.Graph", use "copy_closure" — that is
+exactly the case copies are for.
+
+
+Same content either way
+=======================
+
+A "get_closure" view and a "copy_closure" graph contain the **same
+triple set**: imports stripped, ontology declarations collapsed onto
+the root, SHACL prefixes consolidated, duplicates removed. The only
+difference is where the triples live and whether you can change them.
+
+Unions are the exception, and asymmetrically so. "get_union" is always
+a raw merge. "copy_union" defaults to a raw merge too, but accepts
+"rewrite_sh_prefixes=True" and "remove_owl_imports=True" to opt into
+the closure transforms — with "root" naming the ontology those
+transforms collapse onto.
+
+
+Choosing
+========
+
+**Use a view when** you are querying, counting, iterating, or
+serializing; when the graph is large; when you are in a request
+handler; or when you want a compile-time guarantee that this code path
+cannot modify the environment.
+
+**Use a copy when** you need to add or remove triples, or when you
+need an "rdflib.Graph" API a view does not implement.
+
+For repeated microsecond-scale "triples()" lookups with bound terms, a
+plain in-memory rdflib graph is still marginally faster than a view —
+rdflib’s hash lookup is hard to beat at that scale. If that is your
+access pattern, measure before paying for a copy anyway.
+
+
+Skipping graphs entirely
+========================
+
+When you only want to stream triples, both wrappers are overhead:
+
+   for s, p, o in env.iter_closure_triples(iri):
+       ...
+
+These iterators yield "(s, p, o)" tuples of rdflib terms with no
+"Graph" object involved. Note that closure iteration is **not** de-
+duplicated across named graphs — unlike a "ViewGraph", which is.
+
+See also: Performance for the measurements behind this page.
+Choose what gets loaded
+***********************
+
+Pointing OntoEnv at a directory picks up every RDF file underneath it,
+including test fixtures, drafts, and vendored copies. Two independent
+filter layers narrow that down.
+
++----------------------+----------------------+--------------------------------+--------------------------------+
+| Layer                | Matches on           | CLI flags                      | Python arguments               |
+|======================|======================|================================|================================|
+| File filters         | File paths,          | "-i/--includes",               | "includes=", "excludes="       |
+|                      | gitignore-style      | "-e/--excludes"                |                                |
+|                      | globs                |                                |                                |
++----------------------+----------------------+--------------------------------+--------------------------------+
+| Ontology filters     | Ontology IRIs,       | "--include-ontology", "--      | "include_ontologies=",         |
+|                      | regular expressions  | exclude-ontology"              | "exclude_ontologies="          |
++----------------------+----------------------+--------------------------------+--------------------------------+
+
+File filters run first and decide what gets parsed. Ontology filters
+run after parsing, once the declared IRI is known.
+
+
+Filter by file path
+===================
+
+Globs support "*", "?", and "**". A bare directory expands to "dir/**"
+automatically.
+
+   # Only Turtle files
+   $ ontoenv init ./ontologies --includes '*.ttl'
+
+   # Everything except the test fixtures
+   $ ontoenv init . --excludes 'lib/tests' 'target'
+
+   env = OntoEnv.connect(
+       "./ontology-env",
+       search_directories=["."],
+       includes=["*.ttl", "*.xml"],
+       excludes=["lib/tests", "target"],
+   )
+   env.update()
+
+The default include list is "['*.ttl', '*.xml', '*.n3']".
+
+
+Filter by ontology IRI
+======================
+
+Use these when the file layout does not tell you what you need to know
+— for example when one directory holds both your ontologies and
+vendored ones.
+
+Includes act as a whitelist: if any include pattern is set, an
+ontology must match one of them. Excludes run last and prune whatever
+slipped through.
+
+   $ ontoenv init . \
+       --include-ontology '^https://example\.com/' \
+       --exclude-ontology 'experimental'
+
+   env = OntoEnv.connect(
+       "./ontology-env",
+       search_directories=["."],
+       include_ontologies=[r"^https://example\.com/"],
+       exclude_ontologies=[r"experimental"],
+   )
+
+These are regular expressions, not globs, and they are matched against
+the full ontology IRI.
+
+
+Reject files without an ontology declaration
+============================================
+
+By default a file with no "owl:Ontology" declaration is skipped with a
+warning. To make it an error:
+
+   $ ontoenv init ./ontologies --require-ontology-names
+
+   env = OntoEnv.connect("./ontology-env", require_ontology_names=True)
+
+
+Change filters on an existing environment
+=========================================
+
+Filters are saved in ".ontoenv/config.json" and re-applied by every
+later command. Path-based lists can be edited through "ontoenv
+config":
+
+   $ ontoenv config list
+   $ ontoenv config add locations ./more-ontologies
+   $ ontoenv config remove locations ./old-path
+   $ ontoenv config add includes '*.n3'
+
+"locations", "includes", and "excludes" are list-valued, so they take
+"config add" / "config remove" rather than "config set". The ontology-
+IRI regex lists ("include_ontologies", "exclude_ontologies") have no
+"config" support — edit ".ontoenv/config.json" directly, or pass the
+flags on the next command.
+
+From Python, passing a value to "connect" overrides the saved one;
+omitting it keeps the saved one. Passing an empty list is an explicit
+override that clears the setting:
+
+   # Keep everything as saved
+   env = OntoEnv.connect("./ontology-env")
+
+   # Override the saved search directories
+   env = OntoEnv.connect("./ontology-env", search_directories=["./vendor"])
+
+   # Explicitly clear them
+   env = OntoEnv.connect("./ontology-env", search_directories=[])
+
+Changing filters does not rescan anything by itself. The new settings
+apply on the next "update()":
+
+   env = OntoEnv.connect("./ontology-env", excludes=["vendor"])
+   env.update()   # now the exclusion takes effect
+
+See also: Configuration for every setting and its default.
+Diagnose import problems
+************************
+
+
+Start with "doctor"
+===================
+
+   $ ontoenv doctor
+
+This checks for the three problems that cause most confusion:
+
+* two files declaring the **same ontology IRI**
+
+* files with **no ``owl:Ontology`` declaration**, which are skipped
+
+* the same prefix bound to **conflicting namespaces** in different
+  files
+
+
+“An import is not resolving”
+============================
+
+   $ ontoenv list missing
+
+Every IRI listed here is an "owl:imports" target that nothing in the
+environment provides. From Python:
+
+   for iri in env.missing_imports():
+       print(iri)
+
+Common causes, in rough order of likelihood:
+
+1. **The file is there but was filtered out.** Check your includes and
+   excludes with "ontoenv config list". See Choose what gets loaded.
+
+2. **The file has no ontology declaration**, so OntoEnv never learned
+   which IRI it provides. "ontoenv doctor" reports these.
+
+3. **The declared IRI differs from the imported IRI** — a version
+   suffix, or "http" versus "https". Compare "ontoenv list ontologies"
+   against the import target. Fix it with an alias (Rename and alias
+   ontologies).
+
+4. **You are offline** and the ontology is remote. Check with "ontoenv
+   status".
+
+To make a missing import a hard error instead of a warning:
+
+   $ ontoenv update --strict
+
+   env.set_strict(True)
+
+In Python, an unresolved import passed to "copy_graph" raises
+"ontoenv.UnresolvedImportError", which subclasses "LookupError". An
+IRI that was never declared or attempted anywhere raises a plain
+"ValueError", so you can catch the two cases separately:
+
+   from ontoenv import UnresolvedImportError
+
+   try:
+       g = env.copy_graph(iri)
+   except UnresolvedImportError as e:
+       log.warning("known import could not be resolved: %s", e)
+   except ValueError:
+       log.error("no such ontology: %s", iri)
+
+
+“Why is this ontology in my environment?”
+=========================================
+
+   $ ontoenv why https://brickschema.org/schema/Brick
+
+"why" prints every import path that reaches that IRI, each running
+from the most distant importer down to the target. This is how you
+find the one file that dragged in a whole subtree.
+
+From Python, for direct importers only:
+
+   env.get_importers("https://brickschema.org/schema/Brick")
+
+
+“What is actually in this closure?”
+===================================
+
+   names = env.list_closure("https://example.org/site")
+   print(names)
+
+   # Or with the merged view:
+   view, names = env.get_closure("https://example.org/site")
+
+To limit how deep import resolution goes:
+
+   view, names = env.get_closure("https://example.org/site", recursion_depth=2)
+
+
+Visualize the dependency graph
+==============================
+
+   # Whole environment (requires Graphviz)
+   $ ontoenv dep-graph
+
+   # Limited to one root and its subgraph
+   $ ontoenv dep-graph https://example.org/site --output site_deps.pdf
+
+
+Inspect the raw state
+=====================
+
+   $ ontoenv status            # summary: location, count, active settings
+   $ ontoenv status --json     # same, machine-readable
+   $ ontoenv dump              # every ontology and its metadata
+   $ ontoenv dump brick        # filtered by name
+
+For prefix conflicts specifically:
+
+   $ ontoenv namespaces
+   $ ontoenv namespaces https://example.org/site --closure
+
+
+Turn up the logging
+===================
+
+   $ ontoenv -v update       # info level
+   $ ontoenv --debug update  # debug level
+How-to guides
+*************
+
+-[ Controlling what is in the environment ]-
+
+Choose what gets loaded
+   Glob and regex filters, so scanning a directory does not pull in
+   test fixtures, drafts, or half the web.
+
+Work offline and control caching
+   Run with no network, and control how long cached remote ontologies
+   are trusted.
+
+Rename and alias ontologies
+   Store a third-party ontology under your own IRI, or route several
+   IRIs to one canonical graph.
+
+-[ Using an environment from code ]-
+
+Use OntoEnv in a long-running service
+   Connect once at startup, share the environment across requests, and
+   handle multiple worker processes.
+
+Query with SPARQL
+   Run SPARQL against a closure, a single graph, or the whole
+   environment as an "rdflib" dataset.
+
+Use your own graph storage
+   Route graph reads and writes through your own storage instead of
+   OntoEnv’s, and keep the two in sync.
+
+-[ When something is wrong ]-
+
+Recover an interrupted environment
+   Fix a "CatalogRecoveryError" after an interrupted write.
+
+Diagnose import problems
+   Track down a missing import, a duplicate ontology IRI, or an
+   ontology you did not expect to be there.
+Query with SPARQL
+*****************
+
+OntoEnv evaluates SPARQL in Rust, reading directly from its on-disk
+storage. You get to that engine through ordinary "rdflib" entry
+points. Pick the scope you need:
+
++------------------------------------+-----------------------------------+-----------------------------------+
+| You want to query                  | Use                               | Returns                           |
+|====================================|===================================|===================================|
+| One ontology plus its imports      | "env.get_closure(iri)"            | a read-only "ViewGraph"           |
++------------------------------------+-----------------------------------+-----------------------------------+
+| An explicit set of graphs          | "env.get_union(iris)"             | a read-only "ViewGraph"           |
++------------------------------------+-----------------------------------+-----------------------------------+
+| The whole environment, named       | "env.get_dataset()"               | a read-only "rdflib.Dataset"      |
+| graphs intact                      |                                   |                                   |
++------------------------------------+-----------------------------------+-----------------------------------+
+
+
+Query an imports closure
+========================
+
+   view, imported = env.get_closure("https://brickschema.org/schema/1.4/Brick")
+
+   rows = view.query("""
+       PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+       PREFIX brick: <https://brickschema.org/schema/Brick#>
+       SELECT ?sub WHERE { ?sub rdfs:subClassOf* brick:Equipment }
+   """)
+
+   for row in rows:
+       print(row.sub)
+
+The query is scoped to the graphs in the closure and sees them as one
+flattened graph. Nothing is materialized in Python.
+
+Recursive property paths on "rdfs:subClassOf", "rdfs:subPropertyOf",
+and "owl:sameAs" are answered from a precomputed transitive-closure
+table, which is why the query above is fast. See Performance.
+
+
+Query across named graphs
+=========================
+
+When you need to know *which* graph a triple came from, use the
+dataset view:
+
+   dataset = env.get_dataset()
+
+   rows = dataset.query("""
+       SELECT ?g (COUNT(*) AS ?triples) WHERE {
+           GRAPH ?g { ?s ?p ?o }
+       } GROUP BY ?g
+   """)
+
+   for row in rows:
+       print(row.g, int(row.triples))
+
+Each named graph is keyed by its ontology IRI, and the namespaces
+OntoEnv knows about are already bound. To pull one graph out of the
+dataset:
+
+   from rdflib import URIRef
+
+   brick = dataset.graph(URIRef("https://brickschema.org/schema/1.4/Brick"))
+   print(len(brick))
+
+A dataset reflects the environment as of the moment you asked for it.
+After mutating the environment, ask again or refresh in place:
+
+   env.add("./ontologies/new.ttl")
+   env.flush()
+   env.refresh_dataset(dataset)
+
+
+Query a set of graphs you choose
+================================
+
+   view, graph_iris = env.get_union([
+       "https://example.org/a",
+       "https://example.org/b",
+   ])
+
+   # Expand each listed graph's transitive imports too
+   view, graph_iris = env.get_union(
+       ["https://example.org/a"],
+       include_closures=True,
+   )
+
+Unlike "get_closure", a union is a **raw** merge: no import stripping,
+no ontology-declaration collapsing, and no de-duplication across
+graphs. Use it when you want exactly the graphs you named and nothing
+done to them.
+
+
+Use the rdflib plugin
+=====================
+
+Importing "ontoenv" registers an "rdflib" store plugin named
+""ontoenv"":
+
+   from rdflib import Graph
+   import ontoenv   # registers the plugin
+
+   graph = Graph(store="ontoenv")
+
+This is useful when a library you do not control constructs graphs by
+store name.
+
+
+Query from the command line
+===========================
+
+The CLI has no "query" subcommand. Export the graph you want and query
+it with your usual tooling:
+
+   $ ontoenv closure https://example.org/site closure.ttl
+
+
+What is not supported
+=====================
+
+* **SPARQL Update.** The exposed store is a read-only snapshot. Mutate
+  the environment through "OntoEnv" methods, then take a fresh view.
+
+* **Writing through the store.** "add", "addN", and "remove" raise
+  "ValueError" on both "ViewGraph" and "OntoEnvStore".
+
+For a mutable graph you can query with rdflib’s own engine, use
+"copy_closure" or "copy_dataset".
+
+See also:
+
+  ViewGraph and OntoEnvStore for the full "ViewGraph" and
+  "OntoEnvStore" surface, and "python/demo_rdflib_store.py" in the
+  repository for a runnable example.
+Recover an interrupted environment
+**********************************
+
+
+The symptom
+===========
+
+A command or a "connect" call fails with a recovery error:
+
+   $ ontoenv status
+   Error: OntoEnv recovery required: interrupted mutation marker at
+   ./.ontoenv/catalog.pending; run `ontoenv recover` or call OntoEnv::recover
+   to rebuild the catalog
+
+In Python this surfaces as "ontoenv.CatalogRecoveryError".
+
+This means a process was killed between writing a graph and publishing
+the updated index. The graphs are fine; the index may not describe all
+of them. OntoEnv refuses to trust it rather than serving you a stale
+view.
+
+
+The fix
+=======
+
+   $ ontoenv recover
+   Recovered catalog at ./.ontoenv with 12 ontology records.
+
+   from ontoenv import OntoEnv, CatalogRecoveryError
+
+   try:
+       env = OntoEnv.connect("./ontology-env")
+   except CatalogRecoveryError:
+       env = OntoEnv.recover("./ontology-env")
+
+With a custom graph store, pass it:
+
+   env = OntoEnv.recover("./ontology-env", graph_store=store)
+
+Recovery scans every stored graph and publishes a replacement index.
+It is much slower than a normal open, so it is not something OntoEnv
+does for you automatically.
+
+"ontoenv recover" uses the same environment discovery as every other
+command: it walks up from the current directory and honours
+"ONTOENV_DIR".
+
+Warning:
+
+  Do not delete ".ontoenv/catalog.pending" by hand. The marker is what
+  tells OntoEnv the index is untrustworthy; removing it makes a
+  possibly incomplete index look valid. "recover" removes it only
+  after the replacement index is successfully published.
+
+
+If recovery fails
+=================
+
+Recovery requires a stable, fully readable snapshot of the backend. It
+aborts and leaves the marker in place if a graph cannot be read or the
+backend changes mid-scan — so the operation is always safe to retry.
+
+Stop anything else writing to the environment, then run it again.
+
+
+When this is *not* the problem
+==============================
+
+A missing "owl:imports" target does **not** leave a recovery marker.
+In non-strict mode, "import_dependencies(..., fetch_missing=True)" and
+"get_dependencies(..., fetch_missing=True)" are best-effort: they skip
+what they cannot reach and commit the partial result cleanly.
+
+So a recovery marker always means an interrupted or failed commit,
+never merely an unresolved import. For missing imports, see Diagnose
+import problems.
+
+Recovery is unavailable for temporary environments ("--temporary" /
+"OntoEnv(temporary=True)"), which have nothing persisted to recover
+from.
+
+
+Start over instead
+==================
+
+If you would rather rebuild from your source files than recover:
+
+   $ ontoenv reset
+   $ ontoenv init ./ontologies
+
+"reset" deletes ".ontoenv/" entirely, including cached remote
+ontologies, which will be re-downloaded.
+Rename and alias ontologies
+***************************
+
+Two different problems, two different tools:
+
+* **Rename** — you want an ontology stored under a *different* IRI
+  than the one it declares. The old IRI stops working.
+
+* **Alias** — you want an *additional* IRI to resolve to an existing
+  ontology. Both IRIs keep working.
+
+
+Store an ontology under your own IRI
+====================================
+
+Use "--rename" / "rename=" when loading a third-party ontology that
+you want addressed by a local or canonical IRI, without editing the
+source file.
+
+   $ ontoenv add ./vendor/upstream.ttl \
+       --rename https://my-org.com/local/upstream
+
+   # Same, without following owl:imports
+   $ ontoenv add ./vendor/upstream.ttl \
+       --rename https://my-org.com/local/upstream \
+       --no-imports
+
+   name = env.add(
+       "./vendor/upstream.ttl",
+       rename="https://my-org.com/local/upstream",
+   )
+   # name == 'https://my-org.com/local/upstream'
+
+   # add_no_imports takes the same argument
+   env.add_no_imports("./vendor/upstream.ttl", rename="https://my-org.com/local/upstream")
+
+
+What the rename rewrites
+========================
+
+Every occurrence of the original IRI in the stored graph is rewritten,
+in both subject and object position, with one deliberate exception:
+
++----------------------------------------------------+----------------------------------------------------+
+| Before                                             | After                                              |
+|====================================================|====================================================|
+| "<original> a owl:Ontology"                        | "<new> a owl:Ontology"                             |
++----------------------------------------------------+----------------------------------------------------+
+| "<original> owl:imports <X>"                       | "<new> owl:imports <X>"                            |
++----------------------------------------------------+----------------------------------------------------+
+| "<original> sh:prefixes <original>"                | "<new> sh:prefixes <new>"                          |
++----------------------------------------------------+----------------------------------------------------+
+| "<X> sh:prefixes <original>"                       | "<X> sh:prefixes <new>"                            |
++----------------------------------------------------+----------------------------------------------------+
+| "<original> owl:versionIRI <original>"             | "<new> owl:versionIRI <original>"                  |
++----------------------------------------------------+----------------------------------------------------+
+
+The last row is the exception: the subject is rewritten but the
+version IRI *value* is preserved, because it identifies which upstream
+version you loaded.
+
+Warning:
+
+  After a rename the original IRI is no longer addressable. Other
+  ontologies that "owl:imports" the original IRI will not resolve to
+  the renamed copy — re-add or update them, or add an alias.
+
+
+Rename an ontology already in the environment
+=============================================
+
+   new_iri = env.rename_graph_iri(
+       "https://example.org/old",
+       "https://example.org/new",
+   )
+
+This applies the same rewrite rules to the stored graph and rebuilds
+the import dependency graph so existing imports point at the new name.
+
+
+Route several IRIs to one graph
+===============================
+
+An alias is a second name for an ontology already in the environment.
+Use it when the same ontology is published under more than one IRI, or
+when a consumer imports a URL that redirects to your canonical
+version.
+
+   env.add_alias(
+       "https://example.org/legacy/site",
+       "https://example.org/site",
+   )
+
+   env.resolve_alias("https://example.org/legacy/site")
+   # 'https://example.org/site'
+
+   env.get_aliases_for("https://example.org/site")
+   # ['https://example.org/legacy/site']
+
+   env.is_canonical_iri("https://example.org/legacy/site")
+   # False
+
+   env.remove_alias("https://example.org/legacy/site")
+
+Aliases resolve transparently: "get_graph", "get_closure", "uri in
+env", and "env[uri]" all accept an alias and return the canonical
+graph.
+
+An alias may only point at a canonical IRI, never at another alias.
+That rule keeps resolution to a single hop and makes alias chains
+impossible.
+Use your own graph storage
+**************************
+
+If you already manage graph storage — a database, a triplestore, an
+in-memory dict — you can have OntoEnv read and write through it
+instead of its built-in storage. OntoEnv keeps doing import
+resolution, naming, and closure lookup; your object holds the triples.
+
+Note:
+
+  This is not the same thing as the "rdflib" store integration. A
+  "graph_store=" object is *storage OntoEnv writes into*;
+  "OntoEnvStore" is an "rdflib.store.Store" that *reads out of* an
+  environment. See Query with SPARQL for the latter.
+
+
+Write a store
+=============
+
+Implement four methods. Graphs are always passed as "rdflib.Graph"
+instances.
+
+   from rdflib import Graph
+
+
+   class DictGraphStore:
+       def __init__(self) -> None:
+           self.graphs: dict[str, Graph] = {}
+
+       def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
+           if not overwrite and iri in self.graphs:
+               return
+           self.graphs[iri] = graph
+
+       def get_graph(self, iri: str) -> Graph:
+           return self.graphs[iri]
+
+       def remove_graph(self, iri: str) -> None:
+           del self.graphs[iri]
+
+       def graph_ids(self) -> list[str]:
+           return list(self.graphs.keys())
+
+
+Register it
+===========
+
+   store = DictGraphStore()
+   env = OntoEnv.connect("./ontology-env", graph_store=store)
+
+   env.add("./ontologies/site.ttl")
+   print(store.graph_ids())
+   # ['https://example.org/site', 'https://example.org/sensors']
+
+Changes you make through "env" update your store and OntoEnv’s index
+together. No separate synchronization call is needed.
+
+For a scratch environment with no saved index:
+
+   env = OntoEnv(graph_store=store, temporary=True)
+
+Warning:
+
+  "graph_store=" cannot be combined with "recreate=True" or the
+  deprecated "create_or_use_cached=True".
+
+
+Connect to a store that already has graphs
+==========================================
+
+On the first connection to a populated store, OntoEnv reads each graph
+once to learn its ontology IRI, imports, aliases, and namespaces. It
+does not fetch network imports while doing so. Later connections reuse
+the saved index.
+
+   env = OntoEnv.connect("./ontology-env", graph_store=store)
+
+To make that first-time indexing an explicit step rather than
+something "connect" decides:
+
+   env = OntoEnv.adopt("./ontology-env", graph_store=store)
+
+For a *temporary* environment with a pre-populated store, there is no
+saved index to fall back on, so ask for the scan directly:
+
+   env = OntoEnv(graph_store=store, temporary=True)
+   env.refresh_from_store(full=True)
+
+
+Pick up changes made behind OntoEnv’s back
+==========================================
+
+When something else writes into your store, OntoEnv did not see it
+happen. How it finds out depends on what your store can report.
+
+Add these optional methods to make incremental refresh possible:
+
+   def store_state(self) -> dict[str, str]:
+       """Opaque `id` and `revision` — O(1) drift detection."""
+       return {"id": self.store_id, "revision": str(self.revision)}
+
+   def graph_revisions(self) -> dict[str, str]:
+       """Opaque revision per graph — enables incremental refresh."""
+       return {iri: self.revisions[iri] for iri in self.graphs}
+
+With "graph_revisions", a plain refresh reads only what changed:
+
+   report = env.refresh_from_store()
+   print(report.added, report.changed, report.removed)
+
+To check specific graphs and nothing else:
+
+   report = env.refresh_from_store(graphs=["https://example.org/site"])
+
+   # A root plus the imports closure already recorded for it:
+   root = "https://example.org/site"
+   report = env.refresh_from_store(graphs=env.list_closure(root))
+
+"graphs" is an exact set of backend graph IDs — OntoEnv does not
+expand it. A targeted refresh deliberately says nothing about other
+changed graphs; the report lists those as still pending.
+
+To forget the saved index and rebuild it from everything currently in
+the store:
+
+   report = env.refresh_from_store(full=True)
+
+Pass "graphs=" or "full=True", not both.
+
+
+Choose synchronization at connect time
+======================================
+
++----------------------+----------------------------------------------------------------------------------+
+| "sync="              | Behavior                                                                         |
+|======================|==================================================================================|
+| ""auto"" (default)   | Create or index on first use; reuse the saved index on restart; incorporate      |
+|                      | external changes when the store can identify them.                               |
++----------------------+----------------------------------------------------------------------------------+
+| ""full""             | Reread every graph. Use after out-of-band changes your store cannot identify.    |
++----------------------+----------------------------------------------------------------------------------+
+| ""catalog""          | Use the saved index without reading graph contents at all.                       |
++----------------------+----------------------------------------------------------------------------------+
+
+If the store reports that it changed but cannot say *which* graphs
+changed, "connect" raises rather than silently scanning everything.
+Make the cost explicit:
+
+   env = OntoEnv.connect("./ontology-env", graph_store=store, sync="full")
+
+That refusal is the point: a normal restart never quietly turns into a
+full scan of your database.
+
+Store synchronization never touches ontology *sources*. It does not
+read files or fetch URLs — use "env.update()" for that. Staying in
+sync explains why these are separate.
+
+
+Optional extras
+===============
+
+   def copy_graph(self, iri: str) -> Graph:
+       """Detached mutable copy, used by copy_graph/copy_closure/copy_union/copy_dataset.
+       Falls back to get_graph() when absent."""
+
+   def size(self) -> dict[str, int]:
+       """{"num_graphs": ..., "num_triples": ...} for diagnostics."""
+
+Implement "copy_graph" when your store distinguishes a live view from
+a detached snapshot — a database cursor versus an in-memory copy, for
+instance.
+
+See also: Graph store protocol for the complete protocol.
+Use OntoEnv in a long-running service
+*************************************
+
+A web server or daemon should treat the environment as a resource it
+owns for its whole lifetime: connect once at startup, share the
+object, close it at shutdown.
+
+
+The pattern
+===========
+
+   from ontoenv import OntoEnv
+
+   # Startup
+   app.state.ontoenv = OntoEnv.connect("/srv/ontology-env")
+
+   # Request handling — reuse the same object
+   @app.get("/closure/{iri:path}")
+   def closure(iri: str):
+       view, imported = app.state.ontoenv.get_closure(iri)
+       return {"graphs": imported, "triples": len(view)}
+
+   # Shutdown
+   app.state.ontoenv.close()
+
+Do not connect per request. Reopening the environment repeats work
+that "connect" is designed to do once, and it makes it much harder to
+reason about who owns the underlying storage.
+
+The "with" statement is only sugar for calling "close()"; it changes
+nothing about how the environment behaves. Use it in scripts, not
+here.
+
+
+Refresh sources without restarting
+==================================
+
+"connect" does not read your ontology files — that is always an
+explicit call. To pick up changes while the process runs:
+
+   env.update()                 # rescan search directories, refresh expired remotes
+   env.update(force=True)       # reread every known source regardless of age
+   env.update("https://example.org/site.ttl")   # just this one source
+
+All three follow "owl:imports", so dependencies are refreshed along
+with the ontologies that led to them.
+
+Run this on a timer or from an admin endpoint. Reads happening
+concurrently continue to see a consistent view.
+
+
+Multiple worker processes
+=========================
+
+A persistent environment allows **one writer at a time**. In a multi-
+process server, pick one process to own writes and give the rest read-
+only connections:
+
+   # In the single writer (or a separate provisioning step)
+   env = OntoEnv.connect("/srv/ontology-env")
+   env.update()
+
+   # In each read-only worker
+   env = OntoEnv.connect("/srv/ontology-env", read_only=True)
+
+Read-only connections never write to the environment directory.
+Configuration passed to a read-only connect applies to that session
+only and is not persisted.
+
+
+Fail fast if the environment is not there
+=========================================
+
+"connect" creates a missing environment, which is usually what you
+want. If deployment is supposed to have prepared the environment
+already and a missing one indicates a broken deploy, say so
+explicitly:
+
+   env = OntoEnv.open("/srv/ontology-env", read_only=True)
+
+"open" raises if the environment does not exist, and never creates,
+scans, or reconciles anything.
+
+Opening an environment compares all five entry points.
+
+
+Handle recovery at startup
+==========================
+
+If a previous process was killed between writing a graph and
+committing its index, "connect" raises "CatalogRecoveryError". Decide
+up front whether your service repairs itself or refuses to start:
+
+   from ontoenv import OntoEnv, CatalogRecoveryError
+
+   try:
+       env = OntoEnv.connect("/srv/ontology-env")
+   except CatalogRecoveryError:
+       log.warning("recovering ontology environment after interrupted write")
+       env = OntoEnv.recover("/srv/ontology-env")
+
+Recovery rescans every stored graph, so it is much slower than a
+normal connect. See Recover an interrupted environment.
+
+
+Keep memory low
+===============
+
+Prefer "get_*" over "copy_*" in request handlers. A view reads from
+the on-disk snapshot and costs almost nothing per request; a copy
+materializes the whole closure into Python memory every time.
+
+   # Good — read-only view, no materialization
+   view, _ = env.get_closure(iri)
+   rows = view.query("SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }")
+
+   # Only when the caller must mutate or export the graph
+   g, _ = env.copy_closure(iri)
+
+For streaming responses, skip the graph wrapper entirely:
+
+   for s, p, o in env.iter_closure_triples(iri):
+       yield serialize(s, p, o)
+
+See also:
+
+  Views and copies and Performance for the numbers behind this advice.
+Work offline and control caching
+********************************
+
+OntoEnv fetches remote ontologies over HTTP and caches them on disk.
+This page covers turning the network off entirely and tuning how long
+cached copies are trusted.
+
+
+Turn off all network access
+===========================
+
+Offline mode makes OntoEnv use only what is already on disk.
+Unresolvable remote imports are reported rather than fetched.
+
+   $ ontoenv init ./ontologies --offline
+   $ ontoenv update -o
+
+   env = OntoEnv.connect("./ontology-env", offline=True)
+
+   # Or toggle it on an open environment:
+   env.set_offline(True)
+   print(env.is_offline())
+
+Offline mode is saved with the environment, so later commands stay
+offline until you change it back:
+
+   $ ontoenv update --offline=false
+
+
+Set the cache lifetime
+======================
+
+A cached remote ontology is re-fetched by "update" once it is older
+than "remote_cache_ttl_secs". The default is 86,400 seconds (24
+hours).
+
+   # For one command
+   $ ontoenv update --remote-cache-ttl-secs 604800
+
+   # Persisted as the environment default
+   $ ontoenv config set remote_cache_ttl_secs 604800
+
+   env = OntoEnv.connect("./ontology-env", remote_cache_ttl_secs=604800)
+
+   env.set_remote_cache_ttl_secs(604800)
+   print(env.remote_cache_ttl_secs())
+
+
+Refresh regardless of the cache
+===============================
+
+To re-read every known source even if its cached copy looks current:
+
+   $ ontoenv update --all
+
+   env.update(force=True)
+
+To force just one source:
+
+   env.update("https://example.org/site.ttl", force=True)
+
+
+Prepare an environment for an offline machine
+=============================================
+
+Build the environment somewhere with a network, then copy the whole
+directory:
+
+   # On a networked machine
+   $ ontoenv init ./ontologies
+   $ ontoenv add https://brickschema.org/schema/1.4.4/Brick.ttl
+   $ ontoenv status
+
+   # Ship .ontoenv/ along with your project, then on the target machine:
+   $ ontoenv status --offline
+
+Everything OntoEnv needs — the graphs and the index describing them —
+lives under ".ontoenv/". On the offline machine, set "offline" so an
+accidental "update" cannot try to reach the network.
+
+Verify nothing is missing before you go offline:
+
+   $ ontoenv list missing
+
+An empty result means every "owl:imports" in the environment resolves
+to something already stored.
+OntoEnv
+*******
+
+
+Overview
+========
+
+OntoEnv is a tool for managing knowledge graphs, ontologies, and their
+interdependencies. It is designed to handle the part you would
+otherwise do by hand: an ontology declares "owl:imports", those
+imports declare their own, and before long a single file needs a dozen
+others — some local, some on the web, some moved or renamed since they
+were published.
+
+OntoEnv keeps an *environment*: a directory of ontologies it has
+discovered, plus everything it learned about them — canonical names,
+source locations, namespace prefixes, and the import graph connecting
+them. Ask for one ontology and you can get its complete imports
+closure as a single graph, in milliseconds, without re-parsing
+anything.
+
+
+The minimum you need to know
+============================
+
+Point OntoEnv at a directory, then ask for a closure. That is the
+whole idea.
+
+   $ pip install ontoenv
+   $ ontoenv init ./ontologies                              # build the environment
+   $ ontoenv closure https://example.org/site closure.ttl   # export IRI + its imports
+
+The same thing from Python:
+
+   from ontoenv import OntoEnv
+
+   env = OntoEnv.connect("./ontology-env", search_directories=["./ontologies"])
+   env.update()
+
+   view, imported = env.get_closure("https://example.org/site")
+   print(f"{len(imported)} graphs, {len(view)} triples")
+
+Two rules explain most of the rest of the API: "connect" opens an
+environment but never reads your files — "update" does that,
+explicitly. And "get_*" returns a fast read-only view, while "copy_*"
+returns a mutable "rdflib" graph.
+
+
+Where to go next
+================
+
+
+What you get
+============
+
+* **Import resolution** — follows "owl:imports" to fetch and cache
+  every transitive dependency, local or remote.
+
+* **A queryable dependency graph** — ask for a closure, find every
+  importer of an ontology, or detect cycles.
+
+* **Fast restarts** — the environment is stored in a compact binary
+  format and reopens in milliseconds without re-parsing RDF.
+
+* **Read-only views** — query a 200k-triple closure through SPARQL
+  without materializing it in memory.
+
+* **Three front ends** — a CLI, Python bindings with native "rdflib"
+  interop, and the underlying Rust crate.
+
+
+Upgrading
+=========
+
+Coming from 0.5? Migrating from 0.5 to 0.6 lists the API changes you
+need to make. The full release history is in the Changelog.
+
+======================================================================
+
+Need a plain-text snapshot for LLM ingestion? Grab llms.txt.
+Migrating from 0.5 to 0.6
+*************************
+
+Existing 0.5 environments migrate automatically the first time 0.6
+opens them. The code changes below are the ones you have to make
+yourself.
+
+Two changes account for most of it: reads now return read-only views
+instead of mutable graphs, and opening an environment has an explicit
+lifecycle vocabulary.
+
+
+At a glance
+===========
+
++----------------------------------------------+----------------------------------------------+--------------+
+| 0.5                                          | 0.6                                          | Status       |
+|==============================================|==============================================|==============|
+| "env.get_graph(iri)" then mutate             | "env.copy_graph(iri)"                        | breaking     |
++----------------------------------------------+----------------------------------------------+--------------+
+| "env.get_closure(iri)" then mutate           | "env.copy_closure(iri)"                      | breaking     |
++----------------------------------------------+----------------------------------------------+--------------+
+| "OntoEnv(..., create_or_use_cached=True)"    | "OntoEnv.connect(path)"                      | deprecated   |
++----------------------------------------------+----------------------------------------------+--------------+
+| "OntoEnv(..., init_from_store=True)"         | "OntoEnv.adopt(path, store)"                 | deprecated   |
++----------------------------------------------+----------------------------------------------+--------------+
+| "env.update(all=True)"                       | "env.update(force=True)"                     | deprecated   |
++----------------------------------------------+----------------------------------------------+--------------+
+| "env.snapshot_as_dataset(...)"               | "env.get_dataset()" / "env.copy_dataset()"   | deprecated   |
++----------------------------------------------+----------------------------------------------+--------------+
+| "env.to_rdflib_dataset(...)"                 | "env.get_dataset()" / "env.copy_dataset()"   | deprecated   |
++----------------------------------------------+----------------------------------------------+--------------+
+| "refresh_dataset_from_env(dataset, env)"     | "env.refresh_dataset(dataset)"               | moved        |
++----------------------------------------------+----------------------------------------------+--------------+
+
+
+Views and copies
+================
+
+"get_graph" and "get_closure" no longer materialize their result,
+which avoids building a large in-memory graph for reads that only
+query it. Code that mutates the returned graph must switch to the
+matching copy method:
+
+   # 0.5: graph = env.get_graph(iri); graph.add(...)
+   graph = env.copy_graph(iri)
+   graph.add(...)
+
+   # 0.5: closure, names = env.get_closure(iri); closure.add(...)
+   closure, names = env.copy_closure(iri)
+   closure.add(...)
+
+"get_closure" and "get_union" return an "ontoenv.ViewGraph", which
+does **not** subclass "rdflib.Graph". If you pass the result to
+something that requires a real "rdflib.Graph", use "copy_closure".
+
+The same distinction applies at dataset scope: "get_dataset" for a
+view, "copy_dataset" for a mutable copy.
+
+Note:
+
+  "get_union" is a **raw** merge and "copy_union" now defaults to one
+  too — "rewrite_sh_prefixes" and "remove_owl_imports" both default to
+  "False" there. "copy_closure" still defaults both to "True". If you
+  relied on "copy_union" applying the closure transforms, pass them
+  explicitly.
+
+Background: Views and copies.
+
+
+Lifecycle
+=========
+
+Use "connect" for normal startup:
+
+   env = OntoEnv.connect("./ontology-env", graph_store=store)
+
+It creates an empty environment on first use, adopts a populated
+custom store, and warm-opens from the saved catalog afterwards.
+"create", "open", and "adopt" express narrower requirements.
+
+Replace "init_from_store=True" with "OntoEnv.adopt(path, store)". Use
+"env.refresh_from_store(full=True)" only when an already-open
+environment must deliberately rescan its whole backend.
+
+"create_or_use_cached=True" now emits "DeprecationWarning". The shim
+remains through 0.6.x; removal is planned for 0.7.
+
+Background: Opening an environment.
+
+
+Refreshing
+==========
+
+"env.update()" refreshes ontology files and URLs. It now takes an
+optional source to update just that one, and "force=True" replaces the
+deprecated "all=True".
+
+"env.refresh_from_store()" reconciles graphs changed directly in a
+custom backend. The two are deliberately separate — see Staying in
+sync.
+
+
+Recovery
+========
+
+If a process is interrupted between a backend mutation and catalog
+publication, startup raises "CatalogRecoveryError". Rebuild without
+deleting OntoEnv-owned files:
+
+   env = OntoEnv.recover("./ontology-env", graph_store=store)
+
+For the built-in store, "ontoenv recover" does the same from the
+command line. Recovery scans one stable backend snapshot; if the
+backend changes or a graph cannot be read during the scan, it fails
+and leaves its marker so it can be retried safely.
+
+See Recover an interrupted environment.
+
+
+Configuration on reopen
+=======================
+
+"OntoEnv.open" and "OntoEnv.connect" preserve every persisted setting
+whose option you omit. Explicit values — including "False",
+""default"", and empty lists — override. Writable connections save
+overrides; read-only ones apply them for that session only.
+
+This covers strict, offline, name validation, cache settings,
+resolution policy, remote cache TTL, search directories, and every
+filter list. Overrides do not trigger an implicit scan; discovery
+settings take effect on the next "update()".
+
+
+Missing imports
+===============
+
+A known unresolved "owl:imports" target passed to "copy_graph" now
+raises "ontoenv.UnresolvedImportError", a "LookupError". This includes
+direct and indirect imports declared by catalogued ontologies and
+targets attempted while fetching dependencies for a transient caller
+graph.
+
+An IRI that was never declared or attempted anywhere remains a plain
+"ValueError", so you no longer need to catch "ValueError" broadly for
+expected missing imports.
+
+Non-strict import loading remains best-effort. Completed
+"import_dependencies(..., fetch_missing=True)" and
+"get_dependencies(..., fetch_missing=True)" calls commit their partial
+results and leave no recovery marker even when imports remain
+unavailable. A marker now means only an interrupted or failed commit.
+
+
+Rust API
+========
+
+"GraphIO::union_graph" returns "(Dataset, Vec<FailedImport>)" and is
+always best-effort: per-id errors are recorded and the offending id
+skipped, but the rest of the union is still assembled. Previously
+failures were dropped silently.
+
+"OntoEnv::get_union_graph" consumes that list — in strict mode any
+failure becomes an error; in non-strict mode the partial union is
+returned with "UnionGraph.failed_imports" populated.
+
+
+Toolchain
+=========
+
+Python 3.11 or newer. Building the Rust crates from source requires
+Rust 1.88 or newer, matching rdf5d’s edition 2024 and the resolved
+dependency floor.
+Generated API
+*************
+
+Auto-generated signatures and docstrings for the "ontoenv" module. See
+Python API reference for the same surface organized by purpose.
+
+exception ontoenv.CatalogRecoveryError
+
+   Bases: "RuntimeError"
+
+   The catalog cannot be opened because an interrupted mutation
+   requires *ontoenv recover* or OntoEnv.recover().
+
+   add_note()
+
+      Exception.add_note(note) – add a note to the exception
+
+   args
+
+   with_traceback()
+
+      Exception.with_traceback(tb) – set self.__traceback__ to tb and
+      return self.
+
+exception ontoenv.ExternalStoreChangedError
+
+   Bases: "RuntimeError"
+
+   add_note()
+
+      Exception.add_note(note) – add a note to the exception
+
+   args
+
+   with_traceback()
+
+      Exception.with_traceback(tb) – set self.__traceback__ to tb and
+      return self.
+
+class ontoenv.OntoEnv(path=None, recreate=False, create_or_use_cached=False, read_only=False, search_directories=None, require_ontology_names=None, strict=None, offline=None, use_cached_ontologies=None, resolution_policy=None, root=Ellipsis, includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=False, remote_cache_ttl_secs=None, graph_store=None, init_from_store=False)
+
+   Bases: "object"
+
+   A high-level API for managing and querying RDF ontologies.
+
+   The OntoEnv class provides methods for:
+
+   * Adding ontologies from files, URLs, or in-memory graphs
+
+   * Managing imports and resolving the dependency closure
+
+   * Creating merged views over ontology closures
+
+   * Managing aliases for ontology IRIs
+
+   Use "OntoEnv.connect(path)" for the normal persistent lifecycle. It
+   creates a missing environment or efficiently reopens an existing
+   one. Call "update()" when configured ontology files or URLs should
+   be discovered or refreshed. Use "OntoEnv(temporary=True)" for
+   unsaved in-memory work.
+
+   "OntoEnv.create", "open", "adopt", and "recover" provide narrower
+   lifecycle contracts. The direct constructor’s "recreate=True"
+   option deletes and rebuilds the target ".ontoenv" directory; it is
+   not equivalent to "connect".
+
+   -[ Example ]-
+
+      from ontoenv import OntoEnv
+
+      with OntoEnv.connect("./ontology-env") as env:
+          # Add an ontology
+          env.add("http://example.com/ontology.ttl")
+
+          # Add an alias - multiple IRIs can refer to one ontology
+          env.add_alias(
+              "http://example.com/B-alias",
+              "http://example.com/B",
+          )
+
+          # Resolve an alias to its canonical IRI
+          canonical = env.resolve_alias("http://example.com/B-alias")
+
+          # Get the closure (all imported ontologies)
+          graph, iris = env.get_closure("http://example.com/ontology")
+
+   The OntoEnv uses a snapshot-based approach for consistency:
+   operations see a consistent view of the environment, and the
+   underlying store can be updated without affecting existing queries.
+
+   add(location, overwrite=False, fetch_imports=True, force=False, rename=None)
+
+      Add a new ontology to the OntoEnv
+
+   add_alias(alias_iri, canonical_iri)
+
+      Add an alias for a canonical ontology IRI.
+
+      The alias will route to the same graph as the canonical IRI.
+      Aliases only point to canonical IRIs (not other aliases) to
+      avoid chains.
+
+      Parameters:
+         * **alias_iri** – The alias IRI to add
+
+         * **canonical_iri** – The canonical IRI that the alias should
+           point to
+
+      -[ Example ]-
+
+         env.add_alias("http://example.com/B-alias", "http://example.com/B")
+
+      After this, "env.get_graph("http://example.com/B-alias")" will
+      return the same graph as
+      "env.get_graph("http://example.com/B")".
+
+   add_no_imports(location, overwrite=False, force=False, rename=None)
+
+      Add a new ontology to the OntoEnv without exploring owl:imports.
+
+   adopt(graph_store, overwrite=False, **options)
+
+   close()
+
+   connect(graph_store=None, sync='auto', read_only=False, **options)
+
+      Connect to a persistent environment.
+
+      *sync=”auto”* reconciles direct graph-store changes when the
+      backend can identify them. It does not refresh ontology source
+      files or URLs; call *update()* after connecting for source
+      refresh.
+
+      Omitted configuration preserves persisted settings. Explicit
+      values override them; writable connections persist overrides and
+      read-only connections keep them session-local.
+
+   copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=Ellipsis)
+
+      Copy the imports closure of *uri* into a mutable graph and
+      return it alongside the closure list.
+
+      The first element of the returned tuple is either the provided
+      *graph* after mutation or a brand-new *rdflib.Graph*. The second
+      element is an ordered list of ontology IRIs in the resolved
+      closure starting with *uri*. Set *rewrite_sh_prefixes* or
+      *remove_owl_imports* to control post-processing of the merged
+      triples.
+
+      Works correctly with custom "graph_store=" backends: each graph
+      in the closure is fetched via the backend’s "get_graph" rather
+      than the internal oxigraph store.
+
+   copy_dataset(dataset=None)
+
+      Copy the environment into a mutable in-memory "rdflib.Dataset".
+
+      If *dataset* is provided, quads are added to it and the same
+      object is returned. Otherwise a new "rdflib.Dataset" is created.
+
+      Works correctly with custom "graph_store=" backends: every named
+      graph is materialised via the backend’s "get_graph" path rather
+      than the internal oxigraph store.
+
+   copy_graph(uri, graph=None)
+
+      Copy the named graph into a mutable in-memory "rdflib.Graph".
+
+      If *graph* is provided, triples are added to it and the same
+      object is returned. Otherwise a new "rdflib.Graph" is created.
+
+      Works correctly with custom "graph_store=" backends: triples are
+      fetched via the backend’s "get_graph" method rather than the
+      internal oxigraph store, so the returned graph always reflects
+      what the Python store holds.
+
+      Raises "UnresolvedImportError" when *uri* is a currently known
+      unresolved import. An arbitrary unknown graph IRI raises
+      "ValueError"; parsing and backend failures retain their own
+      error types.
+
+   copy_union(uris, root, graph=None, include_closures=False, rewrite_sh_prefixes=False, remove_owl_imports=False, recursion_depth=Ellipsis)
+
+      Copy the union of explicitly listed ontology graphs into a
+      mutable graph.
+
+      Set "include_closures=True" to include each listed graph’s
+      transitive "owl:imports" closure. The "root" IRI is used for
+      ontology declaration cleanup and optional SHACL prefix
+      rewriting; it does not need to be one of the listed graphs.
+
+      As a *union* (vs "copy_closure()"), this defaults to a raw merge
+      with no transform applied — matching "get_union()". Pass
+      "remove_owl_imports=True" / "rewrite_sh_prefixes=True" to opt
+      into the closure transforms.
+
+      Use "get_union()" for a read-only store-backed view that avoids
+      materializing triples.
+
+      Works correctly with custom "graph_store=" backends: each graph
+      is fetched via the backend’s "copy_graph" when available,
+      otherwise "get_graph".
+
+   create(graph_store=None, **options)
+
+   dump(includes=None)
+
+      Print the contents of the OntoEnv
+
+   flush()
+
+      Flush pending changes and rebind cached Graph views to the new
+      snapshot. Graphs returned by prior *get_graph* calls share the
+      cached Dataset’s store, so they observe post-flush state without
+      re-fetching.
+
+   get_aliases_for(canonical_iri)
+
+      List all aliases that point to a given canonical IRI.
+
+      Parameters:
+         **canonical_iri** – The canonical IRI to list aliases for
+
+      Returns:
+         A list of all alias IRIs that point to the given canonical
+         IRI
+
+   get_closure(uri, recursion_depth=Ellipsis, remove_owl_imports=True, rewrite_sh_prefixes=True)
+
+      Return a read-only merged view over the transitive "owl:imports"
+      closure of *uri*, plus the list of ontology IRIs that contribute
+      to the view (root first, in BFS order).
+
+      The returned object is a "ontoenv.ViewGraph" — a lightweight,
+      non-"rdflib.Graph" view that delegates triple-pattern lookups to
+      the Rust backend scoped to the closure’s named graphs, so it
+      behaves like a merged graph. Persistent rdf5d environments apply
+      the transform without materializing triples; temporary and
+      custom-store environments use a normalized in-memory fallback.
+      Mutation raises "ValueError"; use "copy_closure()" for a mutable
+      in-memory merge.
+
+      As a *closure* view (vs "get_union()"), this returns the **same
+      triple set** as "copy_closure()" — a single flattened, de-
+      duplicated graph. The persistent rdf5d path applies these
+      transforms lazily over the mmap scan:
+
+      * resolved "owl:imports" (targets inside the closure) are
+        stripped,
+
+      * ontology declarations are collapsed onto the root (and the
+        root is declared "a owl:Ontology" if it did not declare
+        itself),
+
+      * SHACL "sh:prefixes" / "sh:declare" are consolidated onto the
+        root.
+
+      Set "remove_owl_imports=False" to keep resolved "owl:imports",
+      or "rewrite_sh_prefixes=False" to leave SHACL prefixes untouched
+      (ontology declarations are still collapsed onto the root).
+
+   get_dataset()
+
+      Return a read-only store-backed Dataset view of the environment.
+
+   get_dependencies(graph, graph_name=None, recursion_depth=Ellipsis, fetch_missing=False)
+
+      Get the dependency closure of a given graph and return it as a
+      new graph.
+
+      This method will look for *owl:imports* statements in the
+      provided *graph*, then find those ontologies within the
+      *OntoEnv* and compute the full dependency closure. The triples
+      of all ontologies in the closure are returned as a new graph.
+      The original *graph* is never modified.
+
+      Parameters:
+         * **graph** (*rdflib.Graph*) – The graph to find dependencies
+           for.
+
+         * **graph_name** (*Optional**[**str**]*) – If provided, all
+           "owl:Ontology" declarations from the closure are replaced
+           with a single one for this URI and "sh:prefixes" are
+           rewritten to point at it. If "None" (default), each
+           ontology in the closure retains its own "owl:Ontology"
+           declaration (a proper union of the closure graphs);
+           "sh:prefixes" are left distributed and no root is imposed.
+
+         * **recursion_depth** (*int*) – The maximum depth for
+           recursive import resolution. A negative value (default)
+           means no limit.
+
+         * **fetch_missing** (*bool*) – If True, fetch ontologies that
+           are not in the environment. In non-strict mode unavailable
+           targets are recorded and skipped without leaving a recovery
+           marker; strict mode returns an error.
+
+      Returns:
+         A tuple containing the populated dependency graph and the
+         sorted list of imported ontology IRIs.
+
+      Return type:
+         tuple[rdflib.Graph, list[str]]
+
+   get_graph(uri)
+
+      Get a read-only store-backed view of the named graph as an
+      "rdflib.Graph". Mutation raises "ValueError"; use "copy_graph()"
+      for a mutable in-memory copy.
+
+   get_importers(uri)
+
+      Get the names of all ontologies that import the given ontology
+
+   get_namespaces(ontology=None, include_closure=False)
+
+      Get namespace prefix mappings.
+
+      Prefixes are extracted from both parser-level declarations
+      ("@prefix" in Turtle, "PREFIX" in SPARQL-style syntaxes, XML
+      namespace declarations) and SHACL "sh:declare" entries.  SHACL
+      entries take precedence when the same prefix appears in both
+      sources.
+
+      Parameters:
+         * **ontology** – The IRI of the ontology to query.  If
+           "None", returns merged namespaces from every ontology in
+           the environment.
+
+         * **include_closure** – When "True", namespaces from the full
+           transitive "owl:imports" closure of the ontology are
+           included.  Ignored when "ontology" is "None".
+
+      Returns:
+         A "dict[str, str]" mapping prefix names (e.g. ""owl"") to
+         namespace IRIs (e.g. ""http://www.w3.org/2002/07/owl#"").
+
+   get_ontology(uri)
+
+      Get the ontology metadata with the given URI
+
+   get_ontology_names()
+
+      Get the names of all ontologies in the OntoEnv
+
+   get_union(uris, include_closures=False, recursion_depth=Ellipsis)
+
+      Return a read-only merged view over an explicitly listed set of
+      ontology graphs, plus the list of ontology IRIs that contribute
+      to the view (in the order they were resolved).
+
+      The returned object is a "ontoenv.ViewGraph" — a lightweight,
+      non-"rdflib.Graph" view that delegates triple-pattern lookups to
+      the Rust backend scoped to the listed named graphs, so it
+      behaves like a merged graph without materializing one. Mutation
+      raises "ValueError"; use "copy_union()" for a mutable in-memory
+      merge.
+
+      This is a **raw** merge: no closure transform is applied and
+      triples are not de-duplicated across the named graphs (rdflib
+      merged-graph semantics). For the cleaned, flattened imports
+      closure of a single ontology, use "get_closure()" instead.
+
+      Set "include_closures=True" to expand each listed graph’s
+      transitive "owl:imports" closure into the view. This is the
+      read-only equivalent of "copy_union()".
+
+   import_dependencies(graph, recursion_depth=Ellipsis, fetch_missing=False)
+
+      Import the dependencies referenced by *owl:imports* triples in
+      *graph*.
+
+      When *fetch_missing* is true, the environment attempts to
+      download unresolved imports before computing the closure. In
+      non-strict mode, unavailable imports are recorded and skipped,
+      and the completed best-effort operation does not leave a
+      recovery marker. In strict mode, an unavailable import aborts
+      the operation. If at least one dependency resolves, its closure
+      is merged into *graph* and all *owl:imports* statements are
+      removed; if none resolve, *graph* is unchanged. The returned
+      list contains the deduplicated ontology IRIs that were
+      successfully imported.
+
+   import_graph(destination_graph, uri, recursion_depth=Ellipsis)
+
+   is_offline()
+
+   is_strict()
+
+   iter_closure_triples(uri, recursion_depth=Ellipsis)
+
+      Stream "(s, p, o)" triples across the transitive "owl:imports"
+      closure of *uri*. Triples are *not* de-duplicated across named
+      graphs; wrap in "set()" if you need set semantics.
+
+   iter_triples(uri)
+
+      Stream "(s, p, o)" triples for one named graph as rdflib terms,
+      skipping the rdflib "Graph" wrapper entirely.
+
+      Triples are read from the env once at call time; the iterator
+      yields lazily after that. Use this when you only need to scan
+      and don’t want to pay for hash-set insertion into an rdflib
+      graph.
+
+   list_closure(uri, recursion_depth=Ellipsis)
+
+      List the ontologies in the imports closure of the given
+      ontology.
+
+      "uri" may be either:
+
+      * a string IRI of an ontology already in the environment, or
+
+      * an "rdflib.Graph" that has not yet been added to the
+        environment. In that case the closure is computed from the
+        graph’s "owl:imports" declarations without modifying the
+        environment.
+
+   missing_imports(uri=None)
+
+      Return IRIs of imports that cannot be resolved in the
+      environment.
+
+      "uri" may be:
+
+      * "None" — scans every ontology and includes currently recorded
+        best-effort fetch failures for transient caller graphs (de-
+        duplicated).
+
+      * a string IRI of an ontology already in the environment — walks
+        its full transitive closure and returns every unresolvable
+        import IRI.
+
+      * an "rdflib.Graph" not yet in the environment — extracts its
+        direct "owl:imports", then for each import that *is* in the
+        environment walks that import’s closure.  Imports absent from
+        the environment are themselves reported as missing.
+
+   open(graph_store=None, read_only=False, **options)
+
+      Open an existing environment without synchronizing its graph
+      store.
+
+      Omitted configuration preserves persisted settings. Explicit
+      values override them; writable opens persist overrides and read-
+      only opens keep them session-local.
+
+   recover(graph_store=None, **options)
+
+      Rebuild a catalog after an interrupted mutation.
+
+      The attached graph store is authoritative. The recovery marker
+      is removed only after every graph has been scanned and the new
+      catalog has been published successfully.
+
+   refresh_dataset(dataset)
+
+      Refresh an existing read-only Dataset view from the current env.
+
+   refresh_from_store(graphs=None, full=False)
+
+      Reconcile catalog metadata with the attached graph store.
+
+   remote_cache_ttl_secs()
+
+   remove_alias(alias_iri)
+
+      Remove an alias.
+
+      Parameters:
+         **alias_iri** – The alias IRI to remove
+
+   rename_graph_iri(uri, new_iri)
+
+      Rename the IRI of an ontology already in the environment.
+
+      Reads the stored graph for "uri", rewrites every occurrence of
+      its current IRI to "new_iri" (subject and object positions,
+      excluding "owl:versionIRI" values), stores the result under the
+      new name, removes the old named graph, and rebuilds the import
+      dependency graph.
+
+      Returns the new IRI string.
+
+   requires_ontology_names()
+
+   resolution_policy()
+
+   resolve_alias(alias_iri)
+
+      Get the canonical IRI for an alias.
+
+      Parameters:
+         **alias_iri** – The alias IRI to resolve
+
+      Returns:
+         The canonical IRI if the input is an alias, or None if it’s
+         not an alias
+
+   set_offline(offline)
+
+   set_remote_cache_ttl_secs(ttl_secs)
+
+   set_require_ontology_names(require)
+
+   set_resolution_policy(policy)
+
+   set_strict(strict)
+
+   set_use_cached_ontologies(enabled)
+
+   snapshot_as_dataset(backend='auto', store=None)
+
+      Deprecated alias for "get_dataset()" / "copy_dataset()".
+
+   store_path()
+
+   temporary_snapshot()
+
+      Return an isolated in-memory copy of this environment.
+
+      The catalog metadata and every graph are copied at the time of
+      this call. Changes to either environment afterwards are
+      independent, and the returned environment never writes a
+      ".ontoenv" directory.
+
+   to_rdflib_dataset(mode='auto')
+
+      Deprecated alias for "get_dataset()" / "copy_dataset()".
+
+   update(location=None, *, force=False, all=None)
+
+      Refresh known ontology sources, or one explicit source and its
+      imports.
+
+      A provided source replaces its existing stored graph
+      automatically. *force=true* bypasses timestamp and cache-age
+      checks. *all* is retained as a deprecated compatibility alias
+      for *force*.
+
+   uses_cached_ontologies()
+
+class ontoenv.OntoEnvStore(*args, **kwargs)
+
+   Bases: "Store"
+
+   A read-only rdflib "Store" backed by an OntoEnv snapshot.
+
+   SPARQL queries are executed by the Rust backend rather than
+   rdflib’s Python query engine. Writes ("add", "addN", "remove")
+   raise "ValueError" — snapshots are immutable; mutate the underlying
+   "ontoenv.OntoEnv" and call "refresh_dataset_from_env()" instead.
+
+   Construct via "from_env()" or, more commonly, via
+   "env.get_dataset()". Creating an "OntoEnvStore()" directly yields
+   an empty store, which is mostly useful as the rdflib plugin
+   "Graph(store='ontoenv')".
+
+   Parameters:
+      * **configuration** (*str** | **None*)
+
+      * **identifier** (*Identifier** | **None*)
+
+   add(triple, context, quoted=False)
+
+      Parameters:
+         * **triple** (*tuple**[**rdflib.term.Identifier**,
+           **rdflib.term.Identifier**, **rdflib.term.Identifier**]*)
+
+         * **context** (*Any*)
+
+         * **quoted** (*bool*)
+
+      Return type:
+         None
+
+   addN(quads)
+
+      Parameters:
+         **quads** (*Iterable**[**tuple**[**rdflib.term.Identifier**,
+         **rdflib.term.Identifier**, **rdflib.term.Identifier**,
+         **Any**]**]*)
+
+      Return type:
+         None
+
+   add_graph(graph)
+
+      Parameters:
+         **graph** (*Any*)
+
+      Return type:
+         None
+
+   bind(prefix, namespace, override=True)
+
+      Parameters:
+         * **prefix** (*str*)
+
+         * **namespace** (*rdflib.URIRef*)
+
+         * **override** (*bool*)
+
+      Return type:
+         None
+
+   close(commit_pending_transaction=False)
+
+      Parameters:
+         **commit_pending_transaction** (*bool*)
+
+      Return type:
+         None
+
+   commit()
+
+      Return type:
+         None
+
+   context_aware: bool = True
+
+   contexts(triple=None)
+
+      Parameters:
+         **triple** (*tuple**[**rdflib.term.Identifier**,
+         **rdflib.term.Identifier**, **rdflib.term.Identifier**] **|
+         **None*)
+
+      Return type:
+         *Generator*[*Any* | None, None, None]
+
+   destroy(configuration)
+
+      Parameters:
+         **configuration** (*str*)
+
+      Return type:
+         None
+
+   formula_aware: bool = False
+
+   classmethod from_env(env, mode='auto')
+
+      Build a new "OntoEnvStore" and bind it to a snapshot of "env".
+
+      Parameters:
+         * **env** (*Any*)
+
+         * **mode** (*Literal**[**'auto'**, **'rdf5d'**, **'copy'**]*)
+
+      Return type:
+         *OntoEnvStore*
+
+   graph_aware: bool = True
+
+   namespace(prefix)
+
+      Parameters:
+         **prefix** (*str*)
+
+      Return type:
+         URIRef | None
+
+   namespaces()
+
+      Return type:
+         *Iterable*[tuple[str, rdflib.URIRef]]
+
+   open(configuration, create=False)
+
+      Parameters:
+         * **configuration** (*str** | **None*)
+
+         * **create** (*bool*)
+
+      Return type:
+         int
+
+   prefix(namespace)
+
+      Parameters:
+         **namespace** (*rdflib.URIRef*)
+
+      Return type:
+         str | None
+
+   query(query, initNs, initBindings, queryGraph, **kwargs)
+
+      Parameters:
+         * **query** (*Any*)
+
+         * **initNs** (*Mapping**[**str**, **Any**]*)
+
+         * **initBindings** (*Mapping**[**str**,
+           **rdflib.term.Identifier**]*)
+
+         * **queryGraph** (*str*)
+
+         * **kwargs** (*Any*)
+
+      Return type:
+         rdflib.query.Result
+
+   refresh_from_env(env, mode=None)
+
+      Rebind this store to a fresh snapshot of "env".
+
+      If "mode" is omitted, the previously chosen backend is reused
+      (or ""auto"" on first call). Namespace bindings are cleared and
+      re-populated from "env.get_namespaces()".
+
+      Parameters:
+         * **env** (*Any*)
+
+         * **mode** (*Literal**[**'auto'**, **'rdf5d'**, **'copy'**]
+           **| **None*)
+
+      Return type:
+         None
+
+   remove(triple_pattern, context=None)
+
+      Parameters:
+         * **triple_pattern** (*tuple**[**Identifier** | **None**,
+           **Identifier** | **None**, **Identifier** | **None**]*)
+
+         * **context** (*Any** | **None*)
+
+      Return type:
+         None
+
+   remove_graph(graph)
+
+      Parameters:
+         **graph** (*Any*)
+
+      Return type:
+         None
+
+   rollback()
+
+      Return type:
+         None
+
+   transaction_aware: bool = False
+
+   triples(triple_pattern, context=None)
+
+      Parameters:
+         * **triple_pattern** (*tuple**[**Identifier** | **None**,
+           **Identifier** | **None**, **Identifier** | **None**]*)
+
+         * **context** (*Any** | **None*)
+
+      Return type:
+         Generator[tuple[tuple[Identifier, Identifier, Identifier],
+         Generator[Any | None, None, None]], None, None]
+
+   update(update, initNs, initBindings, queryGraph, **kwargs)
+
+      Parameters:
+         * **update** (*Any*)
+
+         * **initNs** (*Mapping**[**str**, **Any**]*)
+
+         * **initBindings** (*Mapping**[**str**,
+           **rdflib.term.Identifier**]*)
+
+         * **queryGraph** (*str*)
+
+         * **kwargs** (*Any*)
+
+      Return type:
+         None
+
+class ontoenv.Ontology
+
+   Bases: "object"
+
+   id
+
+   imports
+
+   last_updated
+
+   location
+
+   name
+
+   namespace_map
+
+   version_properties
+
+exception ontoenv.StoreCapabilityError
+
+   Bases: "RuntimeError"
+
+   add_note()
+
+      Exception.add_note(note) – add a note to the exception
+
+   args
+
+   with_traceback()
+
+      Exception.with_traceback(tb) – set self.__traceback__ to tb and
+      return self.
+
+class ontoenv.SyncReport
+
+   Bases: "object"
+
+   added
+
+   changed
+
+   mode
+
+   removed
+
+   still_pending
+
+   unchanged
+
+exception ontoenv.UnresolvedImportError
+
+   Bases: "LookupError"
+
+   A known owl:imports target could not be resolved or loaded.
+
+   add_note()
+
+      Exception.add_note(note) – add a note to the exception
+
+   args
+
+   with_traceback()
+
+      Exception.with_traceback(tb) – set self.__traceback__ to tb and
+      return self.
+
+class ontoenv.ViewGraph(backend, scope=None, namespaces=None)
+
+   Bases: "object"
+
+   Read-only, zero-copy view over a set of the snapshot’s named
+   graphs.
+
+   Unlike "rdflib.Graph", this class does *not* inherit from
+   "rdflib.Graph". It delegates triple lookups, "__len__",
+   "__contains__" and SPARQL directly to the Rust backend, reading
+   straight from the rdf5d mmap snapshot without materializing a copy.
+
+   Two flavours, distinguished by how the backend is configured:
+
+   * "ontoenv.OntoEnv.get_closure()" returns a view whose backend
+     carries a *closure patch*. It presents a **single flattened, de-
+     duplicated graph** with the same triple set as
+     "ontoenv.OntoEnv.copy_closure()" (resolved "owl:imports"
+     stripped, ontology declarations collapsed onto the root, SHACL
+     "sh:prefixes"/"sh:declare" consolidated). Cross-graph duplicate
+     triples collapse, and SPARQL sees one graph.
+
+   * "ontoenv.OntoEnv.get_union()" returns a raw merge: every triple
+     of each named graph in scope, with no transform and no cross-
+     graph de-duplication (rdflib merged-graph semantics).
+
+   Construct via "env.get_closure(uri)" or "env.get_union(uris)"
+   rather than directly. "env.get_graph(uri)" still returns a plain
+   "rdflib.Graph".
+
+   Parameters:
+      * **backend** (*Any*) – A "ontoenv._native._RdfLibStoreBackend"
+        instance bound to an env snapshot. For a closure view this is
+        a dedicated backend sharing the same mmap snapshot with a
+        closure patch attached; for a union view it is the shared
+        (raw) backend.
+
+      * **scope** (*tuple**[**str**, **...**] **| **None*) – Tuple of
+        graph IRIs to scope against, or "None" for all graphs in the
+        backend.
+
+      * **namespaces** (*dict**[**str**, **str**] **| **None*) –
+        Optional dict of "{prefix: namespace}" bindings.
+
+   add(triple)
+
+      ViewGraph is read-only; mutate the "ontoenv.OntoEnv" instead.
+
+      Parameters:
+         **triple** (*tuple**[**Any**, **Any**, **Any**]*)
+
+      Return type:
+         None
+
+   addN(quads)
+
+      ViewGraph is read-only; mutate the "ontoenv.OntoEnv" instead.
+
+      Parameters:
+         **quads** (*Iterable**[**tuple**[**Any**, **Any**, **Any**,
+         **Any**]**]*)
+
+      Return type:
+         None
+
+   bind(prefix, namespace, override=True)
+
+      Bind a prefix to a namespace.
+
+      Parameters:
+         * **prefix** (*str*)
+
+         * **namespace** (*str*)
+
+         * **override** (*bool*)
+
+      Return type:
+         None
+
+   namespace(prefix)
+
+      Resolve a prefix to a namespace IRI.
+
+      Parameters:
+         **prefix** (*str*)
+
+      Return type:
+         str | None
+
+   property namespaces: dict[str, str]
+
+      "{prefix: namespace}" bindings.
+
+   objects(subject=None, predicate=None)
+
+      Yield unique objects matching the pattern.
+
+      Parameters:
+         * **subject** (*Any*)
+
+         * **predicate** (*Any*)
+
+      Return type:
+         *Generator*[*Any*, None, None]
+
+   predicates(subject=None, object=None)
+
+      Yield unique predicates matching the pattern.
+
+      Parameters:
+         * **subject** (*Any*)
+
+         * **object** (*Any*)
+
+      Return type:
+         *Generator*[*Any*, None, None]
+
+   prefix(namespace)
+
+      Resolve a namespace IRI to a prefix.
+
+      Parameters:
+         **namespace** (*str*)
+
+      Return type:
+         str | None
+
+   query(query_text, init_bindings=None)
+
+      Run a SPARQL query scoped to this view’s graphs.
+
+      Parameters:
+         * **query_text** (*str*)
+
+         * **init_bindings** (*dict**[**str**, **Any**] **| **None*)
+
+      Return type:
+         *Any*
+
+   remove(triple)
+
+      ViewGraph is read-only; mutate the "ontoenv.OntoEnv" instead.
+
+      Parameters:
+         **triple** (*tuple**[**Any**, **Any**, **Any**]*)
+
+      Return type:
+         None
+
+   serialize(destination=None, format='turtle', **kwargs)
+
+      Serialize triples in this view, matching rdflib’s
+      Graph.serialize signature.
+
+      Parameters:
+         * **destination** (*Any** | **None*)
+
+         * **format** (*str*)
+
+         * **kwargs** (*Any*)
+
+      Return type:
+         bytes | str
+
+   subjects(predicate=None, object=None)
+
+      Yield unique subjects matching the pattern.
+
+      Parameters:
+         * **predicate** (*Any*)
+
+         * **object** (*Any*)
+
+      Return type:
+         *Generator*[*Any*, None, None]
+
+   triples(subject=None, predicate=None, obj=None)
+
+      Iterate "(s, p, o)" triples matching the pattern.
+
+      Accepts both the rdflib convention "triples((s, p, o))" (a
+      single 3-tuple) and the three-arg form "triples(s, p, o)". Any
+      term may be "None" (unbound).
+
+      Parameters:
+         * **subject** (*Any*)
+
+         * **predicate** (*Any*)
+
+         * **obj** (*Any*)
+
+      Return type:
+         *Generator*[tuple[*Any*, *Any*, *Any*], None, None]
+
+ontoenv.is_debug_build()
+
+   Whether the native extension was compiled in debug mode
+   (unoptimized).
+
+   Benchmarking or perf-sensitive use against a debug build is
+   misleading: the per-triple Rust callbacks (*__next__*, term
+   decoding) run 5-10x slower than release, so backends that cross the
+   FFI boundary per triple (e.g. *ontoenv-get*’s *ViewGraph*) appear
+   massively regressed relative to pure-Python backends (*ontoenv-
+   copy*, *rdflib-memory*) that are unaffected by the Rust build
+   profile.
+
+ontoenv.run_cli(args)
+
+   Run the Rust CLI implementation and return its process-style exit
+   code.
+CLI reference
+*************
+
+   cargo install --locked ontoenv-cli    # with a Rust toolchain
+   pip install ontoenv                   # or as part of the Python package
+
+Every command locates the nearest ".ontoenv/" directory by walking up
+from the current working directory. Set "ONTOENV_DIR" to override
+that.
+
+
+Global flags
+============
+
+Accepted by every subcommand.
+
++------------------------------------+--------------------------------------------------------------------+
+| Flag                               | Meaning                                                            |
+|====================================|====================================================================|
+| "-i", "--includes <GLOB>..."       | gitignore-style globs on file paths. Supports "**" and "?"; a bare |
+|                                    | directory expands to "dir/**". Default: "['*.ttl', '*.xml',        |
+|                                    | '*.n3']".                                                          |
++------------------------------------+--------------------------------------------------------------------+
+| "-e", "--excludes <GLOB>..."       | Globs on file paths to exclude.                                    |
++------------------------------------+--------------------------------------------------------------------+
+| "--include-ontology <REGEX>..."    | Regex whitelist on ontology IRIs, applied after parsing.           |
++------------------------------------+--------------------------------------------------------------------+
+| "--exclude-ontology <REGEX>..."    | Regex exclusions on ontology IRIs, applied after includes.         |
++------------------------------------+--------------------------------------------------------------------+
+| "-o", "--offline[=true|false]"     | Skip all network access.                                           |
++------------------------------------+--------------------------------------------------------------------+
+| "--strict[=true|false]"            | Treat missing imports as errors instead of warnings.               |
++------------------------------------+--------------------------------------------------------------------+
+| "--require-ontology-               | Reject files that lack an "owl:Ontology" declaration.              |
+| names[=true|false]"                |                                                                    |
++------------------------------------+--------------------------------------------------------------------+
+| "--remote-cache-ttl-secs <SECS>"   | Max age of a cached remote ontology before re-fetch. Default       |
+|                                    | 86400.                                                             |
++------------------------------------+--------------------------------------------------------------------+
+| "-t", "--temporary"                | Keep everything in memory; write no ".ontoenv/".                   |
++------------------------------------+--------------------------------------------------------------------+
+| "-p", "--policy <POLICY>"          | Resolution policy when several files declare the same ontology     |
+|                                    | IRI: "default", "latest", or "version".                            |
++------------------------------------+--------------------------------------------------------------------+
+| "-v", "--verbose"                  | Log at info level.                                                 |
++------------------------------------+--------------------------------------------------------------------+
+| "--debug"                          | Log at debug level.                                                |
++------------------------------------+--------------------------------------------------------------------+
+
+Omitted mode flags preserve their saved values when the environment
+already exists. Boolean flags take explicit values — "--
+offline=false", "--strict=false", "--require-ontology-names=false" —
+so a saved "true" can be turned off. Explicit changes are persisted
+without rescanning.
+
+
+Creating and updating
+=====================
+
+-[ "ontoenv init [LOCATION]..." ]-
+
+Create the environment under ".ontoenv/". Directory arguments are
+scanned immediately; with none, the current directory is used.
+
+"--overwrite"
+   Rebuild in place if an environment already exists.
+
+   $ ontoenv init ./ontologies ./vendor
+   $ ontoenv init ./ontologies --overwrite
+   $ ontoenv init . --includes '*.ttl' --exclude-ontology 'experimental'
+
+-[ "ontoenv add <LOCATION>" ]-
+
+Register one ontology from a file path or URL, following "owl:imports"
+by default.
+
+"--no-imports"
+   Do not follow "owl:imports".
+
+"--rename <IRI>"
+   Store the graph under *IRI* instead of the one it declares. See
+   Rename and alias ontologies.
+
+   $ ontoenv add ./ontologies/site.ttl
+   $ ontoenv add https://brickschema.org/schema/Brick --no-imports
+   $ ontoenv add ./vendor/upstream.ttl --rename https://my-org.com/local/upstream
+
+-[ "ontoenv update" ]-
+
+Re-ingest modified local files and re-fetch stale remote ontologies,
+following imports throughout.
+
+"-a", "--all"
+   Refresh everything regardless of modification times or cache age.
+
+"-q", "--quiet"
+   Suppress per-ontology output.
+
+"--json"
+   Machine-readable output.
+
+   $ ontoenv update
+   $ ontoenv update --all
+   $ ontoenv update --remote-cache-ttl-secs 604800
+
+-[ "ontoenv recover" ]-
+
+Rebuild the catalog from the persistent graph store after an
+interrupted mutation. Removes ".ontoenv/catalog.pending" only once the
+replacement catalog is published. Unavailable with "--temporary". See
+Recover an interrupted environment.
+
+-[ "ontoenv reset" ]-
+
+Delete ".ontoenv/" entirely, including cached remote ontologies.
+
+"-f", "--force"
+   Skip the confirmation prompt.
+
+
+Exporting graphs
+================
+
+Three commands write graph data. They differ in scope and in what they
+do to the result.
+
++------------------+--------------------------------+--------------------------------+--------------------------+
+| Command          | Returns                        | Imports                        | Output                   |
+|==================|================================|================================|==========================|
+| "get"            | one stored graph               | not followed                   | "STDOUT" or "--output"   |
++------------------+--------------------------------+--------------------------------+--------------------------+
+| "closure"        | ontology + transitive imports, | fully resolved and merged      | "[DESTINATION]", default |
+|                  | flattened                      |                                | "output.ttl"             |
++------------------+--------------------------------+--------------------------------+--------------------------+
+| "union"          | an explicit list of graphs,    | only with "--include-closures" | "--output", default      |
+|                  | raw                            |                                | "output.ttl"             |
++------------------+--------------------------------+--------------------------------+--------------------------+
+
+-[ "ontoenv get <ONTOLOGY>" ]-
+
+"-l", "--location <PATH|URL>"
+   Disambiguate when several sources provide the same IRI.
+
+"--output <FILE>"
+   Write to a file instead of "STDOUT".
+
+"-f", "--format <FORMAT>"
+   "turtle" (default), "ntriples", "rdfxml", or "jsonld".
+
+   $ ontoenv get https://brickschema.org/schema/Brick
+   $ ontoenv get https://brickschema.org/schema/Brick --output brick.ttl --format turtle
+
+-[ "ontoenv closure <ONTOLOGY> [DESTINATION]" ]-
+
+"--keep-owl-imports"
+   Keep resolved "owl:imports" statements (removed by default).
+
+"--no-rewrite-sh-prefixes"
+   Do not consolidate SHACL "sh:prefixes" onto the root (rewritten by
+   default).
+
+"--recursion-depth <N>"
+   "<0" unlimited (default), "0" no imports, ">0" that many levels.
+
+   $ ontoenv closure https://brickschema.org/schema/Brick brick_closure.ttl
+   $ ontoenv closure https://brickschema.org/schema/Brick out.ttl --keep-owl-imports
+
+-[ "ontoenv union --root <ROOT> <ONTOLOGY>..." ]-
+
+"--root <IRI>"
+   Required. The IRI used as the root for ontology-declaration and
+   SHACL prefix cleanup.
+
+"--include-closures"
+   Also expand each listed graph’s transitive imports.
+
+"--keep-owl-imports", "--no-rewrite-sh-prefixes", "--recursion-depth
+<N>"
+   As for "closure".
+
+"--output <FILE>"
+   Destination, default "output.ttl".
+
+   $ ontoenv union --root https://example.org/C \
+       https://example.org/A https://example.org/B --output merged.ttl
+
+   $ ontoenv union --root https://example.org/C --include-closures \
+       --recursion-depth 2 https://example.org/A --output merged_with_deps.ttl
+
+
+Inspecting the environment
+==========================
+
+-[ "ontoenv status" ]-
+
+Summary: where ".ontoenv/" lives, how many ontologies are loaded, when
+it was last updated, and the on-disk store size. "--json" for machine-
+readable output.
+
+-[ "ontoenv list <SUBCOMMAND>" ]-
+
+"ontologies"
+   Declared ontology IRIs.
+
+"locations"
+   Source URLs the ontologies came from, as "file://" or "http(s)://"
+   URLs. Use "ontoenv dump" to see which location belongs to which
+   IRI.
+
+"missing"
+   "owl:imports" targets nothing in the environment resolves.
+
+"--json" is accepted.
+
+-[ "ontoenv dump [CONTAINS]" ]-
+
+Print every stored ontology and its metadata to "STDOUT". An optional
+substring filters by name.
+
+-[ "ontoenv why [ONTOLOGIES]..." ]-
+
+Print every import path leading to each given IRI, from the most
+distant importer down to the target. "--json" is accepted.
+
+-[ "ontoenv doctor" ]-
+
+Check for duplicate ontology IRIs, files with no "owl:Ontology"
+declaration, and conflicting namespace prefixes. "--json" is accepted.
+
+-[ "ontoenv namespaces [ONTOLOGY]" ]-
+
+Print prefix-to-IRI mappings taken from "@prefix"/"PREFIX"
+declarations and SHACL "sh:declare" entries. With no argument, merges
+every ontology in the environment.
+
+"--closure"
+   Include namespaces from the ontology’s transitive imports.
+
+"--json"
+   Output a JSON object instead of "prefix: namespace" lines.
+
+-[ "ontoenv dep-graph [ROOTS]... --output <FILE>" ]-
+
+Render the import dependency graph as a PDF. Requires Graphviz. With
+root IRIs, limits the render to their subgraph.
+
+"--output <FILE>"
+   Destination, default "dep_graph.pdf". There is no short form — "-o"
+   is the global "--offline" flag.
+
+-[ "ontoenv version" ]-
+
+Print the version of the installed binary.
+
+
+Configuration
+=============
+
+-[ "ontoenv config <SUBCOMMAND>" ]-
+
+"list"
+   Show every persisted key and value.
+
+"get <KEY>" / "set <KEY> <VALUE>" / "unset <KEY>"
+   Read, write, or revert one key.
+
+"add <KEY> <VALUE>" / "remove <KEY> <VALUE>"
+   Modify a list-valued key.
+
+   $ ontoenv config list
+   $ ontoenv config set remote_cache_ttl_secs 604800
+   $ ontoenv config add locations ./more-ontologies
+   $ ontoenv config remove locations ./old-path
+
+"add"/"remove" handle "locations", "includes", and "excludes". The
+ontology-IRI regex lists must be edited in ".ontoenv/config.json"
+directly.
+
+See Configuration for every key and its default.
+Configuration
+*************
+
+Settings live in ".ontoenv/config.json" and are re-applied by every
+command and every reopen. They can be set at init time, changed with
+"ontoenv config", passed to a Python lifecycle method, or changed at
+runtime with a "set_*" method.
+
+
+Settings
+========
+
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| Key                      | Type         | Default            | CLI flag               | Python argument          |
+|==========================|==============|====================|========================|==========================|
+| "locations"              | list[path]   | "[]"               | "init <DIR>..."        | "search_directories="    |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "includes"               | list[glob]   | "['*.ttl','*.xml'  | "-i", "--includes"     | "includes="              |
+|                          |              | ,'*.n3']"          |                        |                          |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "excludes"               | list[glob]   | "[]"               | "-e", "--excludes"     | "excludes="              |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "include_ontologies"     | list[regex]  | "[]"               | "--include-ontology"   | "include_ontologies="    |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "exclude_ontologies"     | list[regex]  | "[]"               | "--exclude-ontology"   | "exclude_ontologies="    |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "offline"                | bool         | "false"            | "-o", "--offline"      | "offline="               |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "strict"                 | bool         | "false"            | "--strict"             | "strict="                |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "require_ontology_names" | bool         | "false"            | "--require-ontology-   | "require_ontology_names  |
+|                          |              |                    | names"                 | ="                       |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "use_cached_ontologies"  | bool         | "false"            | —                      | "use_cached_ontologies=" |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "remote_cache_ttl_secs"  | int          | "86400"            | "--remote-cache-ttl-   | "remote_cache_ttl_secs=" |
+|                          |              |                    | secs"                  |                          |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "resolution_policy"      | string       | ""default""        | "-p", "--policy"       | "resolution_policy="     |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "temporary"              | bool         | "false"            | "-t", "--temporary"    | "temporary="             |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+| "root"                   | path         | "".""              | —                      | "root="                  |
++--------------------------+--------------+--------------------+------------------------+--------------------------+
+
+-[ Notes ]-
+
+"includes" / "excludes"
+   gitignore-style globs matched against **file paths**, before
+   parsing. A bare directory expands to "dir/**".
+
+"include_ontologies" / "exclude_ontologies"
+   Regular expressions matched against **ontology IRIs**, after
+   parsing. Includes act as a whitelist; excludes run last.
+
+"resolution_policy"
+   Which definition wins when several files declare the same ontology
+   IRI. ""default"" prefers the first registered, ""latest"" the most
+   recently updated, ""version"" the highest version property.
+
+"use_cached_ontologies"
+   When enabled, discovery is skipped at init time; the environment
+   fills only from explicit "add" and "update" calls.
+
+"remote_cache_ttl_secs"
+   How long a cached remote ontology is trusted before "update" re-
+   fetches it.
+
+
+Setting values from the CLI
+===========================
+
+   $ ontoenv config list
+   $ ontoenv config get locations
+
+Scalar keys use "set" and "unset":
+
+   $ ontoenv config set offline true
+   $ ontoenv config set strict false
+   $ ontoenv config set require_ontology_names true
+   $ ontoenv config set resolution_policy latest
+   $ ontoenv config set remote_cache_ttl_secs 604800
+   $ ontoenv config unset remote_cache_ttl_secs
+
+"set" accepts exactly those five keys. List keys use "add" and
+"remove":
+
+   $ ontoenv config add locations ./more-ontologies
+   $ ontoenv config remove locations ./old-path
+   $ ontoenv config add includes '*.n3'
+   $ ontoenv config add excludes 'vendor'
+
+"add"/"remove" accept "locations", "includes", and "excludes".
+"include_ontologies" and "exclude_ontologies" have no "config"
+subcommand support — pass the flags on a command, or edit
+".ontoenv/config.json".
+
+
+Setting values from Python
+==========================
+
+At open time, any key can be passed as a keyword argument:
+
+   env = OntoEnv.connect(
+       "./ontology-env",
+       search_directories=["./ontologies"],
+       includes=["*.ttl"],
+       exclude_ontologies=[r"experimental"],
+       offline=True,
+       remote_cache_ttl_secs=604800,
+   )
+
+At runtime, the "set_*" methods change and persist a setting on an
+open, writable environment:
+
+   env.set_offline(True)
+   env.set_strict(False)
+   env.set_require_ontology_names(True)
+   env.set_use_cached_ontologies(True)
+   env.set_remote_cache_ttl_secs(604800)
+   env.set_resolution_policy("latest")
+
+Each has a matching getter — "is_offline()", "is_strict()",
+"requires_ontology_names()", "uses_cached_ontologies()",
+"remote_cache_ttl_secs()", "resolution_policy()".
+
+
+Override rules on reopen
+========================
+
+When reopening an existing environment:
+
+* **Omitting** an option keeps the saved value.
+
+* **Passing** a value overrides it. "False", ""default"", and "[]" are
+  genuine overrides, not “unset”.
+
+* A **writable** connection persists the override; a **read-only** one
+  applies it to that session only.
+
+   OntoEnv.connect("./env")                          # everything as saved
+   OntoEnv.connect("./env", strict=True)             # override one setting
+   OntoEnv.connect("./env", search_directories=[])   # explicitly clear
+
+On the CLI, boolean flags take explicit values so a saved "true" can
+be turned off:
+
+   $ ontoenv update --offline=false --strict=false
+
+Changing configuration never triggers a scan or re-ingestion. Runtime
+modes apply immediately; changed discovery paths and filters apply on
+the next "update()".
+
+
+Environment variables
+=====================
+
+"ONTOENV_DIR"
+   Path to the environment to use, overriding the walk-up-from-cwd
+   search. It may name the ".ontoenv" directory itself or the root
+   containing it.
+
+"RUST_LOG"
+   Standard Rust log filter. "-v" sets it to "info" and "--debug" to
+   "debug".
+Graph store protocol
+********************
+
+The interface a "graph_store=" object must satisfy for OntoEnv to
+route all graph reads and writes through it. For task-oriented
+guidance see Use your own graph storage.
+
+Graphs are always passed and returned as "rdflib.Graph" instances.
+
+
+Required methods
+================
+
++----------------------------------------------------+----------------------------------------------------+
+| Signature                                          | Contract                                           |
+|====================================================|====================================================|
+| "add_graph(iri: str, graph: Graph, overwrite: bool | Store *graph* under *iri*. With "overwrite=False", |
+| = False) -> None"                                  | leave an existing graph untouched.                 |
++----------------------------------------------------+----------------------------------------------------+
+| "get_graph(iri: str) -> Graph"                     | Return the graph for *iri*, for read-only access.  |
+|                                                    | Backs every "get_*" method.                        |
++----------------------------------------------------+----------------------------------------------------+
+| "remove_graph(iri: str) -> None"                   | Delete the graph for *iri*.                        |
++----------------------------------------------------+----------------------------------------------------+
+| "graph_ids() -> list[str]"                         | Return every currently stored IRI.                 |
++----------------------------------------------------+----------------------------------------------------+
+
+
+Optional methods
+================
+
++------------------------------------------+--------------------------------------------------------------+
+| Signature                                | Effect when implemented                                      |
+|==========================================|==============================================================|
+| "copy_graph(iri: str) -> Graph"          | Used by "copy_graph", "copy_closure", "copy_union", and      |
+|                                          | "copy_dataset" to obtain a detached mutable copy. Falls back |
+|                                          | to "get_graph" when absent. Implement it when your store     |
+|                                          | distinguishes a live view from a snapshot.                   |
++------------------------------------------+--------------------------------------------------------------+
+| "size() -> dict[str, int]"               | Returns "{"num_graphs": ..., "num_triples": ...}" for        |
+|                                          | diagnostics.                                                 |
++------------------------------------------+--------------------------------------------------------------+
+| "store_state() -> dict[str, str]"        | Returns opaque "id" and "revision" strings, enabling O(1)    |
+|                                          | identity and external-drift detection.                       |
++------------------------------------------+--------------------------------------------------------------+
+| "graph_revisions() -> dict[str, str]"    | Returns an opaque revision per graph, enabling incremental   |
+|                                          | refresh of only what changed.                                |
++------------------------------------------+--------------------------------------------------------------+
+
+Which optional methods you implement determines what OntoEnv can do
+about changes made outside it:
+
++------------------------------------------+--------------------------------------------------------------+
+| Implemented                              | Behavior on "connect(sync="auto")"                           |
+|==========================================|==============================================================|
+| "graph_revisions"                        | Reads only added and changed graphs; removes deleted ones.   |
++------------------------------------------+--------------------------------------------------------------+
+| "store_state" only                       | Detects drift, cannot localize it; raises and asks for       |
+|                                          | "sync="full"".                                               |
++------------------------------------------+--------------------------------------------------------------+
+| Neither                                  | Trusts the saved catalog until you request a refresh.        |
++------------------------------------------+--------------------------------------------------------------+
+
+
+Constraints
+===========
+
+* "graph_store=" cannot be combined with "recreate=True" or with the
+  deprecated "create_or_use_cached=True".
+
+* Recovery for a custom store must go through "OntoEnv.recover(path,
+  graph_store=store)"; the "ontoenv recover" CLI command only handles
+  the built-in persistent store.
+
+* A temporary environment with a custom store has no saved catalog, so
+  a pre-populated store needs an explicit
+  "refresh_from_store(full=True)".
+
+
+Minimal implementation
+======================
+
+   from rdflib import Graph
+   from ontoenv import OntoEnv
+
+
+   class DictGraphStore:
+       def __init__(self) -> None:
+           self.graphs: dict[str, Graph] = {}
+
+       def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
+           if not overwrite and iri in self.graphs:
+               return
+           self.graphs[iri] = graph
+
+       def get_graph(self, iri: str) -> Graph:
+           return self.graphs[iri]
+
+       def remove_graph(self, iri: str) -> None:
+           del self.graphs[iri]
+
+       def graph_ids(self) -> list[str]:
+           return list(self.graphs.keys())
+
+       def size(self) -> dict[str, int]:
+           return {
+               "num_graphs": len(self.graphs),
+               "num_triples": sum(len(g) for g in self.graphs.values()),
+           }
+
+
+   store = DictGraphStore()
+   env = OntoEnv(graph_store=store, temporary=True)
+   env.add("./ontologies/site.ttl")
+   print(store.graph_ids())
+
+
+Synchronization API
+===================
+
+"env.refresh_from_store(graphs=None, full=False)" returns a
+"SyncReport" with "added", "changed", and "removed" attributes.
+
+* No arguments — incremental, driven by "graph_revisions()".
+
+* "graphs=[...]" — exactly those backend graph IDs; never expanded.
+
+* "full=True" — rescan everything. Cannot be combined with "graphs".
+
+Store synchronization never reads ontology source files or URLs and
+never fetches imports. Use "env.update()" for that. See Staying in
+sync.
+Reference
+*********
+
+CLI reference
+   Every "ontoenv" subcommand and global flag.
+
+Python API reference
+   The "OntoEnv" class, grouped by purpose: lifecycle, ingestion,
+   reading, aliases, configuration.
+
+Configuration
+   Every setting, its default, and how to set it from the CLI or
+   Python.
+
+ViewGraph and OntoEnvStore
+   "ViewGraph" and "OntoEnvStore" — the read-only "rdflib" surfaces.
+
+Graph store protocol
+   The protocol a custom "graph_store=" object must implement.
+
+Generated API
+   Auto-generated signatures and docstrings for the whole Python
+   module.
+
+Rust API
+   Crate documentation on docs.rs.
+Python API reference
+********************
+
+   pip install ontoenv    # Python 3.11+
+
+The package exposes the Rust core through PyO3 bindings, with native
+rdflib interop. Pre-built wheels are published on PyPI; no Rust
+toolchain is required.
+
+This page groups the API by purpose. Generated API has the generated
+signatures and docstrings.
+
+
+Opening an environment
+======================
+
++--------------------------------------------+------------------------------------------------------------+
+| Call                                       | Behavior                                                   |
+|============================================|============================================================|
+| "OntoEnv.connect(path, *,                  | Create if missing, reopen if present. The normal entry     |
+| graph_store=None, sync="auto",             | point.                                                     |
+| read_only=False, **options)"               |                                                            |
++--------------------------------------------+------------------------------------------------------------+
+| "OntoEnv.create(path, *, graph_store=None, | Create a new environment; fails if one exists unless       |
+| **options)"                                | "overwrite=True".                                          |
++--------------------------------------------+------------------------------------------------------------+
+| "OntoEnv.open(path, *, graph_store=None,   | Open an existing environment; fails if missing. Never      |
+| read_only=False, **options)"               | synchronizes.                                              |
++--------------------------------------------+------------------------------------------------------------+
+| "OntoEnv.adopt(path, graph_store, *,       | Index an already-populated custom store for the first      |
+| overwrite=False, **options)"               | time.                                                      |
++--------------------------------------------+------------------------------------------------------------+
+| "OntoEnv.recover(path, *,                  | Rebuild the catalog after "CatalogRecoveryError".          |
+| graph_store=None, **options)"              |                                                            |
++--------------------------------------------+------------------------------------------------------------+
+| "OntoEnv(temporary=True, **options)"       | In-memory environment; nothing is persisted.               |
++--------------------------------------------+------------------------------------------------------------+
+
+"sync" accepts ""auto"" (default), ""full"", or ""catalog"" — see
+Staying in sync.
+
+"**options" accepts any key from Configuration. On reopen, an omitted
+option preserves its saved value; an explicit value — including
+"False", ""default"", and "[]" — overrides it. Writable connections
+persist overrides; read-only ones keep them session-local.
+
+-[ Direct constructor ]-
+
+   OntoEnv(path=None, recreate=False, read_only=False, temporary=False,
+           search_directories=None, includes=None, excludes=None,
+           include_ontologies=None, exclude_ontologies=None,
+           strict=None, offline=None, require_ontology_names=None,
+           use_cached_ontologies=None, resolution_policy=None,
+           remote_cache_ttl_secs=None, graph_store=None, root=".")
+
+Supported and used internally, but the named methods above express
+intent more clearly. Note that "recreate=True" **deletes and
+rebuilds** the target ".ontoenv" directory — it is not a reconnect.
+
+Deprecated since version 0.6: "create_or_use_cached=True" emits
+"DeprecationWarning"; use "OntoEnv.connect(path)". Removal planned for
+0.7.
+
+Deprecated since version 0.6: "init_from_store=True"; use
+"OntoEnv.adopt(path, graph_store)".
+
+
+Closing
+-------
+
+* "env.close()" — release resources.
+
+* "env.flush()" — write pending changes to storage.
+
+* "with OntoEnv.connect(...) as env:" — calls "close()" on exit.
+
+
+Adding ontologies
+=================
+
++------------------------------------------------+--------------------------------------------------------+
+| Method                                         | Returns / notes                                        |
+|================================================|========================================================|
+| "add(location, overwrite=False,                | The ontology’s IRI. *location* is a path, URL, or      |
+| fetch_imports=True, force=False, rename=None)" | "rdflib.Graph".                                        |
++------------------------------------------------+--------------------------------------------------------+
+| "add_no_imports(location, overwrite=False,     | As "add" but never follows "owl:imports".              |
+| force=False, rename=None)"                     |                                                        |
++------------------------------------------------+--------------------------------------------------------+
+| "rename_graph_iri(uri, new_iri)"               | The new IRI. Rewrites the stored graph and rebuilds    |
+|                                                | the import graph.                                      |
++------------------------------------------------+--------------------------------------------------------+
+
+"rename=" rewrites every occurrence of the declared IRI in the stored
+graph, except "owl:versionIRI" values. See Rename and alias
+ontologies.
+
+
+Refreshing
+==========
+
++------------------------------------------------+--------------------------------------------------------+
+| Method                                         | Reconciles                                             |
+|================================================|========================================================|
+| "update(location=None, *, force=False)"        | Ontology **sources** — files and URLs — following      |
+|                                                | their imports. Without *location*, all configured      |
+|                                                | sources.                                               |
++------------------------------------------------+--------------------------------------------------------+
+| "refresh_from_store(graphs=None, full=False)"  | Graphs changed **directly in a custom store**. Returns |
+|                                                | a "SyncReport" with "added", "changed", "removed".     |
++------------------------------------------------+--------------------------------------------------------+
+
+"graphs=" is an exact set of backend graph IDs and is never expanded.
+"full=True" cannot be combined with it.
+
+Deprecated since version 0.6: "update(all=True)"; use
+"update(force=True)".
+
+
+Reading graphs
+==============
+
+Every read comes in a read-only view and a mutable copy. See Views and
+copies.
+
++------------------------------------------+--------------------------------------------------------------+
+| Method                                   | Returns                                                      |
+|==========================================|==============================================================|
+| "get_graph(uri)"                         | Read-only store-backed "rdflib.Graph". Mutation raises       |
+|                                          | "ValueError".                                                |
++------------------------------------------+--------------------------------------------------------------+
+| "copy_graph(uri, graph=None)"            | Mutable "rdflib.Graph". Raises "UnresolvedImportError" for a |
+|                                          | known unresolved import, "ValueError" for an unknown IRI.    |
++------------------------------------------+--------------------------------------------------------------+
+| "get_closure(uri, recursion_depth=-1,    | "(ViewGraph, closure_names)" — flattened, de-duplicated view |
+| remove_owl_imports=True,                 | over the ontology and its transitive imports.                |
+| rewrite_sh_prefixes=True)"               |                                                              |
++------------------------------------------+--------------------------------------------------------------+
+| "copy_closure(uri, graph=None,           | "(Graph, closure_iris)" — same triple set, materialized and  |
+| rewrite_sh_prefixes=True,                | mutable.                                                     |
+| remove_owl_imports=True,                 |                                                              |
+| recursion_depth=-1)"                     |                                                              |
++------------------------------------------+--------------------------------------------------------------+
+| "get_union(uris, include_closures=False, | "(ViewGraph, graph_iris)" — **raw** merge of the listed      |
+| recursion_depth=-1)"                     | graphs; no transform, no cross-graph de-duplication.         |
++------------------------------------------+--------------------------------------------------------------+
+| "copy_union(uris, root, graph=None,      | "(Graph, graph_iris)" — raw by default; pass the transform   |
+| include_closures=False,                  | flags to opt in, with *root* driving declaration and prefix  |
+| rewrite_sh_prefixes=False,               | cleanup.                                                     |
+| remove_owl_imports=False,                |                                                              |
+| recursion_depth=-1)"                     |                                                              |
++------------------------------------------+--------------------------------------------------------------+
+| "get_dataset()"                          | Read-only "rdflib.Dataset" view of the whole environment.    |
++------------------------------------------+--------------------------------------------------------------+
+| "copy_dataset(dataset=None)"             | Mutable "rdflib.Dataset" copy.                               |
++------------------------------------------+--------------------------------------------------------------+
+| "refresh_dataset(dataset)"               | Re-snapshot the environment into an existing store-backed    |
+|                                          | dataset.                                                     |
++------------------------------------------+--------------------------------------------------------------+
+
+Deprecated since version 0.6: "snapshot_as_dataset(...)" and
+"to_rdflib_dataset(...)"; use "get_dataset()" / "copy_dataset()".
+
+
+Streaming
+---------
+
+* "iter_triples(uri)" — "(s, p, o)" rdflib terms for one graph.
+
+* "iter_closure_triples(uri, recursion_depth=-1)" — the same across a
+  closure. **Not** de-duplicated across named graphs.
+
+
+Merging into a caller’s graph
+-----------------------------
+
+* "import_graph(destination_graph, uri, recursion_depth=-1)" — merge
+  the closure of *uri* into *destination_graph* in place.
+
+* "import_dependencies(graph, recursion_depth=-1,
+  fetch_missing=False)" — resolve *graph*’s own "owl:imports" and
+  merge them into it. Returns the merged IRIs.
+
+* "get_dependencies(graph, graph_name=None, recursion_depth=-1,
+  fetch_missing=False)" — "(Graph, closure_iris)"; same resolution
+  without modifying the caller’s graph. *graph_name* overrides the IRI
+  used for "sh:prefixes" rewriting.
+
+With "fetch_missing=True", strict mode aborts on an unavailable import
+while non-strict mode records and skips it. A completed best-effort
+call leaves no recovery marker.
+
+
+Inspecting
+==========
+
++------------------------------------------------+--------------------------------------------------------+
+| Method                                         | Returns                                                |
+|================================================|========================================================|
+| "get_ontology_names()"                         | Every ontology IRI in the environment.                 |
++------------------------------------------------+--------------------------------------------------------+
+| "get_ontology(uri)"                            | An "Ontology" metadata object.                         |
++------------------------------------------------+--------------------------------------------------------+
+| "get_importers(uri)"                           | IRIs that *directly* import *uri*.                     |
++------------------------------------------------+--------------------------------------------------------+
+| "list_closure(uri, recursion_depth=-1)"        | Closure IRIs. *uri* may be a string IRI or an          |
+|                                                | "rdflib.Graph" not yet in the environment.             |
++------------------------------------------------+--------------------------------------------------------+
+| "missing_imports(uri=None)"                    | Unresolvable "owl:imports" targets. "None" covers the  |
+|                                                | whole environment; a string IRI walks that ontology’s  |
+|                                                | closure; a "Graph" checks its direct imports.          |
++------------------------------------------------+--------------------------------------------------------+
+| "get_namespaces(ontology=None,                 | Prefix → namespace mapping.                            |
+| include_closure=False)"                        |                                                        |
++------------------------------------------------+--------------------------------------------------------+
+| "store_path()"                                 | Filesystem path of the graph store, if any.            |
++------------------------------------------------+--------------------------------------------------------+
+| "dump(includes=None)"                          | Print the environment state to stdout.                 |
++------------------------------------------------+--------------------------------------------------------+
+
+"Ontology" exposes "id", "name", "imports", "location",
+"last_updated", "version_properties", and "namespace_map".
+
+
+Aliases
+=======
+
+* "add_alias(alias_iri, canonical_iri)" — an alias may only point at a
+  canonical IRI, never another alias.
+
+* "remove_alias(alias_iri)"
+
+* "resolve_alias(alias_iri)" → canonical IRI or "None"
+
+* "get_aliases_for(canonical_iri)" → list of aliases
+
+* "is_canonical_iri(iri)" → "bool"
+
+Aliases resolve transparently in "get_graph", "get_closure", "uri in
+env", and "env[uri]".
+
+
+Runtime configuration
+=====================
+
+Each setting has a getter and a setter. These change an open, writable
+environment and persist the change.
+
++----------------------------------------------------+----------------------------------------------------+
+| Getter                                             | Setter                                             |
+|====================================================|====================================================|
+| "is_offline()"                                     | "set_offline(bool)"                                |
++----------------------------------------------------+----------------------------------------------------+
+| "is_strict()"                                      | "set_strict(bool)"                                 |
++----------------------------------------------------+----------------------------------------------------+
+| "requires_ontology_names()"                        | "set_require_ontology_names(bool)"                 |
++----------------------------------------------------+----------------------------------------------------+
+| "remote_cache_ttl_secs()"                          | "set_remote_cache_ttl_secs(int)"                   |
++----------------------------------------------------+----------------------------------------------------+
+| "uses_cached_ontologies()"                         | "set_use_cached_ontologies(bool)"                  |
++----------------------------------------------------+----------------------------------------------------+
+| "resolution_policy()"                              | "set_resolution_policy("default" | "latest" |      |
+|                                                    | "version")"                                        |
++----------------------------------------------------+----------------------------------------------------+
+
+Reconfiguration never triggers an implicit scan. Runtime modes apply
+immediately; changed discovery paths and filters apply on the next
+"update()".
+
+
+Container protocols
+===================
+
+   len(env)              # number of ontologies
+   uri in env            # True if uri resolves — canonical name, alias, or source URL
+   env[uri]              # shorthand for env.get_graph(uri)
+   for name in env: ...  # iterate ontology IRIs
+
+   with OntoEnv.connect("./env") as env:
+       ...
+
+"bool(env)" is always "True"; use "env is None" to test for absence.
+
+
+Exceptions
+==========
+
++------------------------------------+--------------------------------------------------------------------+
+| Exception                          | Raised when                                                        |
+|====================================|====================================================================|
+| "UnresolvedImportError"            | A *known* unresolved "owl:imports" target is passed to             |
+| ("LookupError")                    | "copy_graph". Covers direct and indirect imports declared by       |
+|                                    | catalogued ontologies, and targets attempted while fetching        |
+|                                    | dependencies for a transient graph.                                |
++------------------------------------+--------------------------------------------------------------------+
+| "CatalogRecoveryError"             | Startup found an interrupted-mutation marker. See Recover an       |
+| ("RuntimeError")                   | interrupted environment.                                           |
++------------------------------------+--------------------------------------------------------------------+
+| "ExternalStoreChangedError"        | A custom store changed in a way OntoEnv will not reconcile on its  |
+| ("RuntimeError")                   | own — it reports drift it cannot localize to specific graphs, its  |
+|                                    | identity does not match the saved catalog, or it changed during a  |
+|                                    | scan. Retry with "sync="full"" or "refresh_from_store(full=True)". |
++------------------------------------+--------------------------------------------------------------------+
+| "StoreCapabilityError"             | An operation needs an optional store method the object does not    |
+| ("RuntimeError")                   | implement.                                                         |
++------------------------------------+--------------------------------------------------------------------+
+| "ValueError"                       | Mutating a read-only view, or looking up an IRI that was never     |
+|                                    | declared or attempted.                                             |
++------------------------------------+--------------------------------------------------------------------+
+
+An unknown IRI stays a plain "ValueError" precisely so that catching
+"UnresolvedImportError" for expected missing imports does not also
+swallow genuine lookup mistakes.
+ViewGraph and OntoEnvStore
+**************************
+
+The read-only "rdflib" surfaces. Both keep SPARQL parsing (spargebra)
+and evaluation ("spareval") in Rust, reading triples from the rdf5d
+on-disk format via "mmap" where one is available.
+
+For task-oriented guidance see Query with SPARQL.
+
+Note:
+
+  "OntoEnvStore" is an "rdflib.store.Store" that reads *out of* an
+  environment. It is unrelated to "OntoEnv(graph_store=...)", which is
+  storage OntoEnv writes *into* — see Graph store protocol.
+
+
+"ViewGraph"
+===========
+
+Returned by "env.get_closure(uri)" and "env.get_union(uris)". A
+lightweight read-only view over a fixed set of named graphs in the
+snapshot.
+
+It deliberately does **not** subclass "rdflib.Graph". Triple-pattern
+lookups, "len", "in", and "query()" are delegated to the Rust backend
+scoped to the view’s graphs.
+
+-[ Supported ]-
+
++------------------------------------------------+--------------------------------------------------------+
+| Member                                         | Notes                                                  |
+|================================================|========================================================|
+| "triples(subject=None, predicate=None,         | Returns an iterator of "(s, p, o)".                    |
+| obj=None)"                                     |                                                        |
++------------------------------------------------+--------------------------------------------------------+
+| "__iter__", "__contains__", "__len__",         | Iteration is de-duplicated across the view’s graphs.   |
+| "__bool__", "__repr__"                         |                                                        |
++------------------------------------------------+--------------------------------------------------------+
+| "subjects(...)", "predicates(...)",            | Pattern-restricted and de-duplicated.                  |
+| "objects(...)"                                 |                                                        |
++------------------------------------------------+--------------------------------------------------------+
+| "query(query, init_bindings=None)"             | SPARQL scoped to the view’s graphs.                    |
++------------------------------------------------+--------------------------------------------------------+
+| "bind(prefix, namespace, override=True)"       | Namespace binding.                                     |
++------------------------------------------------+--------------------------------------------------------+
+| "namespace(prefix)", "prefix(namespace)",      | Namespace lookup.                                      |
+| "namespaces()"                                 |                                                        |
++------------------------------------------------+--------------------------------------------------------+
+| "serialize(format="turtle")"                   | Returns a string.                                      |
++------------------------------------------------+--------------------------------------------------------+
+
+-[ Not supported ]-
+
+"add", "addN", and "remove" raise "ValueError". Use "copy_closure" or
+"copy_union" for a mutable merge.
+
+-[ Backing storage ]-
+
+Persistent local environments read closures directly from the rdf5d
+mmap snapshot. Temporary environments and those using a custom
+"graph_store=" normalize the closure into a private in-memory read
+snapshot instead.
+
+   view, names = env.get_closure("https://example.org/site")
+
+   len(view)
+   for s, p, o in view: ...
+   list(view.subjects(predicate=RDF.type, object=OWL.Ontology))
+   view.query("SELECT ?s WHERE { ?s a owl:Ontology }")
+
+Note that "env.get_graph(uri)" returns a read-only "rdflib.Graph", not
+a "ViewGraph".
+
+
+"OntoEnvStore"
+==============
+
+An "rdflib.store.Store" implementation exposing an environment as
+normal "rdflib.Graph" / "rdflib.Dataset" objects. It is registered as
+the rdflib plugin name ""ontoenv"" once the "ontoenv" package is
+imported.
+
+-[ Supported ]-
+
+* "triples"
+
+* "contexts"
+
+* "len(graph)"
+
+* namespace binding: "bind", "namespaces"
+
+* SPARQL "SELECT", "ASK", and graph-producing queries via "query()"
+
+-[ Not supported ]-
+
+* "add", "addN", "remove" — raise "ValueError". The exposed store is a
+  read-only snapshot; mutate the "OntoEnv" and take a fresh snapshot.
+
+* SPARQL Update.
+
+-[ Constructors ]-
+
+   dataset = env.get_dataset()             # usual route
+
+   from rdflib import Graph
+   import ontoenv                          # registers the plugin
+   graph = Graph(store="ontoenv")
+
+"env.get_dataset()" binds the environment’s known namespaces and keys
+each named graph by its ontology IRI. It chooses storage
+automatically: a zero-copy rdf5d view over ".ontoenv/store.r5tu" when
+one exists — unavailable for temporary environments and those with a
+custom "graph_store=" — and an in-memory copy otherwise.
+
+A dataset reflects the environment as of the call. After mutating the
+environment:
+
+   env.flush()
+   env.refresh_dataset(dataset)      # or call env.get_dataset() again
+
+Use "env.copy_dataset()" for a mutable in-memory copy.
+
+
+Query behavior
+==============
+
+SPARQL executed through "rdflib" on either surface is parsed by
+"spargebra", evaluated by "spareval", and converted back into rdflib
+"Result" objects.
+
+   graph.query("SELECT ?o WHERE { <urn:s> <urn:p> ?o }")
+   dataset.query("SELECT ?g ?s WHERE { GRAPH ?g { ?s ?p ?o } }")
+
+"rdflib" passes graph-selection hints into the store, so dataset-level
+queries such as "GRAPH ?g" and union-style dataset queries work
+without a second query engine.
+
+Indexing and property-path acceleration are described in Performance.
+
+-[ Runnable example ]-
+
+"python/demo_rdflib_store.py" in the repository.
+Your first environment
+**********************
+
+In this tutorial you will build an OntoEnv environment from scratch,
+watch it resolve an "owl:imports" chain, and export the result as a
+single file. Everything runs locally except one optional step at the
+end.
+
+You will need about 10 minutes.
+
+   $ ontoenv init ./ontologies              # build an environment from a directory
+   $ ontoenv list ontologies                # see what it found
+   $ ontoenv closure <IRI> out.ttl          # export an ontology + all its imports
+
+Everything below is that, slowed down.
+
+
+Install the CLI
+===============
+
+The command-line tool ships two ways. Pick whichever is easier for
+you:
+
+   # With a Rust toolchain:
+   cargo install --locked ontoenv-cli
+
+   # Or as part of the Python package (no Rust needed):
+   pip install ontoenv
+
+Check that it worked:
+
+   $ ontoenv version
+   ontoenv 0.6.0 @ 90f61b73604620bb5582b18e1d2d9dcd004b2fea
+
+
+Create some ontologies
+======================
+
+Make a directory with two small ontology files. The first describes a
+building; the second describes sensors and is imported by the first.
+
+   mkdir -p tutorial/ontologies
+   cd tutorial
+
+Save this as "ontologies/sensors.ttl":
+
+   @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+   @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+   @prefix sen:  <https://example.org/sensors#> .
+
+   <https://example.org/sensors> a owl:Ontology .
+
+   sen:Sensor       a owl:Class ; rdfs:label "Sensor" .
+   sen:Thermometer  a owl:Class ; rdfs:subClassOf sen:Sensor .
+
+And this as "ontologies/site.ttl":
+
+   @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+   @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+   @prefix sen:  <https://example.org/sensors#> .
+   @prefix site: <https://example.org/site#> .
+
+   <https://example.org/site> a owl:Ontology ;
+       owl:imports <https://example.org/sensors> .
+
+   site:Room a owl:Class ; rdfs:label "Room" .
+   site:hasSensor a owl:ObjectProperty ;
+       rdfs:domain site:Room ;
+       rdfs:range sen:Sensor .
+
+Note what "site.ttl" does *not* contain: any mention of where
+"https://example.org/sensors" lives. That is the problem OntoEnv
+exists to solve. The import names an IRI, and something has to work
+out which file that IRI corresponds to.
+
+
+Initialize the environment
+==========================
+
+Run "init" and tell it which directory to scan:
+
+   $ ontoenv init ./ontologies
+   Initialized environment with 2 unique ontologies (2 records).
+
+Two things just happened. OntoEnv walked "./ontologies", parsed every
+RDF file it found, and recorded the ontology IRI each file declares.
+It also created a ".ontoenv/" directory to hold what it learned.
+
+Every later command finds that directory by walking up from wherever
+you are, so you can work from any subdirectory of "tutorial/".
+
+
+See what was discovered
+=======================
+
+   $ ontoenv list ontologies
+   https://example.org/sensors
+   https://example.org/site
+
+   $ ontoenv list locations
+   file:///home/you/tutorial/ontologies/sensors.ttl
+   file:///home/you/tutorial/ontologies/site.ttl
+
+OntoEnv now knows that the IRI "https://example.org/sensors" — the one
+"site.ttl" imports — comes from the file "ontologies/sensors.ttl". It
+made that connection by reading the "owl:Ontology" declaration inside
+each file, not by guessing from filenames. To see the pairing
+directly, use "ontoenv dump".
+
+For a summary of the environment itself:
+
+   $ ontoenv status
+   Environment Path: /home/you/tutorial/.ontoenv
+   Number of Ontologies: 2
+   Last Updated: 2026-07-27 12:39:57 -06:00
+   Store Size: 6.00 KiB
+
+
+Trace an import
+===============
+
+Ask which ontologies depend on "sensors":
+
+   $ ontoenv why https://example.org/sensors
+   Why https://example.org/sensors:
+   https://example.org/site -> https://example.org/sensors
+
+"why" prints every import path that reaches the given IRI, running
+from the most distant importer down to the target. With one import
+there is only one path; in a real project this is how you find out why
+some unexpected ontology ended up in your environment.
+
+
+Export a closure
+================
+
+Now for the payoff. Ask for "site" plus everything it transitively
+imports, merged into a single file:
+
+   $ ontoenv closure https://example.org/site closure.ttl
+
+Open "closure.ttl". It contains the triples from *both* files. Two
+details are worth noticing:
+
+* The "owl:imports" statement is gone. It was resolved, so keeping it
+  would invite a consumer to try resolving it again.
+
+* There is a single "owl:Ontology" declaration, for
+  "https://example.org/site". The declarations from the imported
+  graphs were collapsed onto that root.
+
+That is what OntoEnv means by a closure: not a raw concatenation, but
+a flattened graph that stands on its own. If you want the raw merge
+instead, Views and copies explains the difference and "ontoenv union"
+gives you it.
+
+To get just one graph, without its imports:
+
+   $ ontoenv get https://example.org/site
+
+With no output file, "get" writes to standard output.
+
+
+Add an ontology from the web
+============================
+
+So far everything has been local. Add a published ontology and OntoEnv
+will fetch it, then follow its imports and fetch those too:
+
+   $ ontoenv add https://brickschema.org/schema/1.4.4/Brick.ttl
+   $ ontoenv list ontologies
+
+You now have Brick and its dependencies alongside your own files.
+Remote ontologies are cached on disk, so a second run does not re-
+download them — Work offline and control caching covers how long the
+cache is trusted and how to work with no network at all.
+
+
+Check for problems
+==================
+
+   $ ontoenv doctor
+   No issues found.
+
+"doctor" looks for the mistakes that actually bite: two files
+declaring the same ontology IRI, files with no "owl:Ontology"
+declaration at all, and prefixes bound to conflicting namespaces.
+
+   $ ontoenv list missing
+
+This lists imports nothing in the environment can resolve — usually a
+typo, a dead URL, or a file you have not added yet.
+
+
+Clean up
+========
+
+   $ ontoenv reset
+
+This removes ".ontoenv/" and everything OntoEnv put in it. Your
+ontology files are untouched.
+
+
+What you learned
+================
+
+* An environment maps ontology IRIs to the places those ontologies
+  live.
+
+* "init" builds one from a directory; "add" registers individual files
+  or URLs and follows their imports.
+
+* "closure" exports an ontology merged with its transitive imports,
+  cleaned up so the result stands alone.
+
+* "why", "doctor", and "list missing" tell you what the import graph
+  looks like and where it is broken.
+
+
+Next steps
+==========
+
+* OntoEnv from Python — the same workflow from Python, with SPARQL at
+  the end.
+
+* Choose what gets loaded — glob and regex filters for when scanning a
+  whole directory pulls in too much.
+
+* CLI reference — every command and flag.
+Tutorials
+*********
+
+These pages are for *learning*. They take a single path through the
+tool and skip the alternatives so nothing gets in the way. Once you
+know your way around, the How-to guides cover specific jobs and the
+Reference lists everything.
+
+-[ Start here ]-
+
+Your first environment
+   Install the CLI, build an environment from a directory of ontology
+   files, and export a complete imports closure. About 10 minutes.
+
+OntoEnv from Python
+   Do the same thing from Python, then query the result with SPARQL.
+   About 10 minutes. Does not require the CLI tutorial, but they
+   complement each other.
+OntoEnv from Python
+*******************
+
+This tutorial builds the same environment as Your first environment,
+but from Python, and ends by running a SPARQL query against a resolved
+imports closure.
+
+About 10 minutes. You do not need to have done the CLI tutorial first.
+
+   from ontoenv import OntoEnv
+
+   env = OntoEnv.connect("./ontology-env")   # 1. open (creating it if needed)
+   name = env.add("./ontologies/site.ttl")   # 2. register an ontology
+   view, imported = env.get_closure(name)    # 3. read it plus its imports
+   env.close()                               # 4. release resources
+
+Everything below is that, slowed down.
+
+
+Install
+=======
+
+   pip install ontoenv    # Python 3.11+
+
+Wheels are pre-built, so no Rust toolchain is required. You will also
+want "rdflib", which comes along as a dependency.
+
+
+Create some ontologies
+======================
+
+Make a working directory with two ontology files:
+
+   mkdir -p tutorial/ontologies
+   cd tutorial
+
+"ontologies/sensors.ttl":
+
+   @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+   @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+   @prefix sen:  <https://example.org/sensors#> .
+
+   <https://example.org/sensors> a owl:Ontology .
+
+   sen:Sensor       a owl:Class ; rdfs:label "Sensor" .
+   sen:Thermometer  a owl:Class ; rdfs:subClassOf sen:Sensor .
+
+"ontologies/site.ttl":
+
+   @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+   @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+   @prefix sen:  <https://example.org/sensors#> .
+   @prefix site: <https://example.org/site#> .
+
+   <https://example.org/site> a owl:Ontology ;
+       owl:imports <https://example.org/sensors> .
+
+   site:Room a owl:Class ; rdfs:label "Room" .
+   site:hasSensor a owl:ObjectProperty ;
+       rdfs:domain site:Room ;
+       rdfs:range sen:Sensor .
+
+"site.ttl" imports "https://example.org/sensors" by IRI. Nothing in
+the file says where that ontology lives; resolving that is OntoEnv’s
+job.
+
+
+Connect to an environment
+=========================
+
+   from ontoenv import OntoEnv
+
+   env = OntoEnv.connect(
+       "./ontology-env",
+       search_directories=["./ontologies"],
+   )
+   env.update()
+
+   print(env.get_ontology_names())
+   # ['https://example.org/sensors', 'https://example.org/site']
+
+Two calls, two distinct jobs:
+
+"connect" opens the environment at "./ontology-env", creating it if it
+is not there. It is deliberately cheap — it does not read your
+ontology files.
+
+"update" is what scans "search_directories" for new and changed files,
+parses them, and follows their imports. Keeping these separate means
+restarting your program does not re-read every file on disk.
+
+Run the script a second time. "connect" reopens the saved environment
+directly, and "update" finds nothing new to do.
+
+
+Read a single graph
+===================
+
+   g = env.get_graph("https://example.org/site")
+   print(len(g))   # just the triples in site.ttl
+
+"get_graph" returns a read-only "rdflib.Graph" backed by OntoEnv’s
+storage. Nothing is copied, so this is fast even for large ontologies
+— but adding or removing triples raises "ValueError". When you want a
+graph you can edit, ask for a copy:
+
+   from rdflib import Literal, URIRef
+
+   g = env.copy_graph("https://example.org/site")
+   g.add((URIRef("https://example.org/site#Room"),
+          URIRef("http://www.w3.org/2000/01/rdf-schema#comment"),
+          Literal("A room")))
+
+This read-only-by-default, copy-on-request split runs through the
+whole API: every "get_*" method returns a view, and every "copy_*"
+method materializes a mutable "rdflib" object. Views and copies covers
+when each is the right choice.
+
+
+Resolve the imports closure
+===========================
+
+   view, imported = env.get_closure("https://example.org/site")
+
+   print(imported)
+   # ['https://example.org/site', 'https://example.org/sensors']
+   print(len(view))   # triples from both graphs, merged
+
+"get_closure" returns two things: a read-only view over the ontology
+plus all its transitive imports, and the list of graphs that went into
+it.
+
+The view is not a raw concatenation. Resolved "owl:imports" statements
+are stripped out, the imported graphs’ ontology declarations are
+collapsed onto the root, and duplicate triples appear once. It is a
+single flattened graph that stands on its own.
+
+As with single graphs, "copy_closure" gives you the same content as a
+mutable "rdflib.Graph":
+
+   g, imported = env.copy_closure("https://example.org/site")
+   g.serialize("closure.ttl", format="turtle")
+
+
+Query it with SPARQL
+====================
+
+The view supports "query()" directly, and the query executes in Rust
+against OntoEnv’s storage rather than in rdflib’s Python engine:
+
+   view, _ = env.get_closure("https://example.org/site")
+
+   rows = view.query("""
+       PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+       PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+       SELECT ?cls ?label WHERE {
+           ?cls a owl:Class .
+           OPTIONAL { ?cls rdfs:label ?label }
+       }
+   """)
+
+   for row in rows:
+       print(row.cls, row.label)
+
+The query sees classes from *both* files, because the closure merged
+them. That is the point: you write one query against one graph and the
+import resolution has already happened.
+
+
+Add an ontology from the web
+============================
+
+   name = env.add("https://brickschema.org/schema/1.4.4/Brick.ttl")
+   print(name)   # 'https://brickschema.org/schema/1.4/Brick'
+
+   view, imported = env.get_closure(name)
+   print(f"{len(imported)} graphs, {len(view)} triples")
+
+"add" fetches the URL, follows its "owl:imports", fetches those, and
+returns the ontology’s canonical IRI — which, as here, is often not
+the same as the URL you downloaded it from. Remote copies are cached
+on disk.
+
+
+Close the environment
+=====================
+
+   env.close()
+
+Or let a "with" block do it:
+
+   with OntoEnv.connect("./ontology-env") as env:
+       view, imported = env.get_closure("https://example.org/site")
+       print(len(view))
+
+The context manager is a convenience for scripts, not a requirement. A
+long-running server should connect once at startup and close at
+shutdown — see Use OntoEnv in a long-running service.
+
+
+Skip persistence entirely
+=========================
+
+For a notebook or a test where nothing should be written to disk:
+
+   env = OntoEnv(temporary=True)
+   env.add("./ontologies/site.ttl")
+
+A temporary environment keeps everything in memory and leaves no files
+behind. It also has no saved index, so it starts from nothing every
+time.
+
+
+What you learned
+================
+
+* "OntoEnv.connect(path)" opens or creates a persistent environment;
+  "update()" is the separate, explicit step that reads source files.
+
+* "get_*" returns fast read-only views; "copy_*" returns mutable
+  "rdflib" objects.
+
+* "get_closure" merges an ontology with its transitive imports into
+  one flattened graph, and that view answers SPARQL queries directly.
+
+* "OntoEnv(temporary=True)" gives you the same API with nothing
+  persisted.
+
+
+Next steps
+==========
+
+* Use OntoEnv in a long-running service — connecting once and sharing
+  the environment across requests.
+
+* Query with SPARQL — using the environment as an "rdflib" store and
+  querying across named graphs.
+
+* Python API reference — every method, grouped by what it does.
