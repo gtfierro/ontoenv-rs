@@ -719,3 +719,42 @@ def test_connect_rejects_invalid_policy_and_temporary_mode(tmp_path: Path) -> No
         OntoEnv.connect(tmp_path, sync="sometimes")
     with pytest.raises(ValueError, match="persistent environments"):
         OntoEnv.connect(tmp_path, temporary=True)
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"temporary": True, "recreate": True}, "temporary and recreate"),
+        (
+            {"temporary": True, "create_or_use_cached": True},
+            "temporary and create_or_use_cached",
+        ),
+        ({"recreate": True, "create_or_use_cached": True}, "cannot be combined"),
+        ({"recreate": True, "read_only": True}, "requires a writable"),
+        ({"init_from_store": True}, "requires graph_store"),
+    ],
+)
+def test_constructor_rejects_incompatible_lifecycle_options(
+    tmp_path: Path, options: dict[str, bool], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        OntoEnv(tmp_path, **options)
+
+
+def test_temporary_snapshot_copies_graphs_without_persistence(tmp_path: Path) -> None:
+    original = OntoEnv.create(tmp_path)
+    iri = "https://example.org/original"
+    graph = Graph()
+    graph.add((URIRef(iri), RDF.type, OWL.Ontology))
+    original.add(graph)
+
+    snapshot = original.temporary_snapshot()
+    assert snapshot.store_path() is None
+    assert iri in snapshot.get_ontology_names()
+
+    added_iri = "https://example.org/snapshot-only"
+    added = Graph()
+    added.add((URIRef(added_iri), RDF.type, OWL.Ontology))
+    snapshot.add(added)
+    assert added_iri in snapshot.get_ontology_names()
+    assert added_iri not in original.get_ontology_names()

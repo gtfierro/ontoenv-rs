@@ -3838,6 +3838,31 @@ impl OntoEnv {
         graph_store: Option<Py<PyAny>>,
         init_from_store: bool,
     ) -> PyResult<Self> {
+        if temporary && recreate {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "temporary and recreate cannot be combined; a temporary environment is always new",
+            ));
+        }
+        if temporary && create_or_use_cached {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "temporary and create_or_use_cached cannot be combined; use OntoEnv(temporary=True) for an empty environment or temporary_snapshot() for a copy",
+            ));
+        }
+        if recreate && create_or_use_cached {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "recreate and create_or_use_cached cannot be combined",
+            ));
+        }
+        if recreate && read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "recreate requires a writable environment",
+            ));
+        }
+        if init_from_store && graph_store.is_none() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "init_from_store requires graph_store",
+            ));
+        }
         if init_from_store && !EXPLICIT_ADOPT.with(Cell::get) {
             PyErr::warn(
                 _py,
@@ -4019,6 +4044,26 @@ impl OntoEnv {
             inner: inner.clone(),
             cache: Arc::new(Mutex::new(DatasetCache::default())),
             read_only,
+        })
+    }
+
+    /// Return an isolated in-memory copy of this environment.
+    ///
+    /// The catalog metadata and every graph are copied at the time of this
+    /// call. Changes to either environment afterwards are independent, and
+    /// the returned environment never writes a ``.ontoenv`` directory.
+    fn temporary_snapshot(&self) -> PyResult<Self> {
+        let inner = self.inner.clone();
+        let guard = inner.lock().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        let snapshot = env.new_temporary().map_err(anyhow_to_pyerr)?;
+        drop(guard);
+        Ok(OntoEnv {
+            inner: Arc::new(Mutex::new(Some(snapshot))),
+            cache: Arc::new(Mutex::new(DatasetCache::default())),
+            read_only: false,
         })
     }
 

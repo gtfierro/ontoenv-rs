@@ -180,10 +180,18 @@ class OntoEnv:
         ``create_or_use_cached=True`` is deprecated and emits
         ``DeprecationWarning``. Use :meth:`OntoEnv.connect` instead. The
         compatibility option is planned for removal in 0.7.
+
+        ``temporary=True`` always creates an empty in-memory environment. Use
+        :meth:`temporary_snapshot` to make an isolated in-memory copy of an
+        existing environment.
         """
         ...
 
     def __repr__(self) -> str: ...
+
+    def temporary_snapshot(self) -> "OntoEnv":
+        """Return an isolated in-memory copy of this environment and its graphs."""
+        ...
 
     def update(
         self,

@@ -1784,7 +1784,13 @@ fn test_init_path_no_env_error() -> Result<()> {
 fn test_init_temporary() -> Result<()> {
     let dir = new_tempdir("ontoenv_temporary")?;
     let env_path = dir.path().join("temp_env_root");
-    // Temporary envs shouldn't persist to disk relative to root
+    // A temporary environment must not alter an existing persistent catalog,
+    // including an interrupted-mutation marker.
+    let persistent_dir = env_path.join(".ontoenv");
+    fs::create_dir_all(&persistent_dir)?;
+    let pending_path = persistent_dir.join("catalog.pending");
+    let pending_contents = b"persistent sentinel";
+    fs::write(&pending_path, pending_contents)?;
 
     let cfg = Config::builder()
         .root(env_path.clone())
@@ -1792,12 +1798,10 @@ fn test_init_temporary() -> Result<()> {
         .includes(&["*.ttl"])
         .excludes(&[] as &[&str])
         .temporary(true)
+        .use_cached_ontologies(CacheMode::Enabled)
         .build()?;
 
     let mut env = OntoEnv::init(cfg, false)?; // recreate doesn't matter much for temp
-
-    // .ontoenv directory should NOT be created at the root
-    assert!(!env_path.join(".ontoenv").exists());
 
     // store_path() should return None for temporary envs
     assert!(env.store_path().is_none());
@@ -1811,8 +1815,7 @@ fn test_init_temporary() -> Result<()> {
     )?;
     let location = OntologyLocation::File(dummy_ont_path);
 
-    let add_result = env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache);
-    assert!(add_result.is_ok()); // Should succeed in memory
+    let id = env.add(location, Overwrite::Preserve, RefreshStrategy::UseCache)?;
 
     // Verify the ontology was added (in memory)
     assert_eq!(env.ontologies().len(), 1);
@@ -1821,6 +1824,14 @@ fn test_init_temporary() -> Result<()> {
             NamedNodeRef::new("urn:dummy_temp")?.into()
         ))
         .is_some());
+
+    let snapshot = env.new_temporary()?;
+    assert_eq!(snapshot.io().io_type(), "memory");
+    assert_eq!(snapshot.get_graph(&id)?, env.get_graph(&id)?);
+
+    assert_eq!(fs::read(&pending_path)?, pending_contents);
+    assert!(!persistent_dir.join("ontoenv.json").exists());
+    assert!(!persistent_dir.join("catalog.r5tu").exists());
 
     teardown(dir);
     Ok(())

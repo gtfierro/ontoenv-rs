@@ -134,6 +134,14 @@ of its saved catalog. A temporary one (``--temporary`` /
 nothing behind, and starts from scratch every time. The API is otherwise
 identical.
 
+To experiment with an existing environment without changing it, create an
+explicit snapshot instead: ``env.temporary_snapshot()`` in Python (or
+``env.new_temporary()`` in Rust). A snapshot copies the current catalog and
+graph content into a separate in-memory environment; later changes are
+independent in both directions. A ``root`` supplied to
+``OntoEnv(temporary=True)`` is only a configuration base for source paths; it
+does not select or load a saved environment.
+
 Persistent environments allow one writer at a time. Any number of readers can
 open the same environment read-only.
 

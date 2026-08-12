@@ -1512,14 +1512,17 @@ impl OntoEnv {
     }
 
     pub fn new_temporary(&self) -> Result<Self> {
-        // Clone the environment into an in-memory store for safe experimentation.
-        let io: Box<dyn GraphIO> = Box::new(crate::io::MemoryGraphIO::new(
-            self.config.offline,
-            self.config.strict,
-        )?);
+        // Snapshot both catalog metadata and graph content into an in-memory
+        // backend.  Cloning metadata alone would leave graph identifiers that
+        // cannot be resolved from the temporary store.
+        let mut io = crate::io::MemoryGraphIO::new(self.config.offline, self.config.strict)?;
+        for id in self.io.graph_ids()? {
+            io.add_graph(id.clone(), self.io.copy_graph(&id)?)?;
+        }
         let mut config = self.config.clone();
         config.temporary = true;
-        Self::new(self.env.clone(), io, config)
+        config.external_graph_store = None;
+        Self::new(self.env.clone(), Box::new(io), config)
     }
 
     fn ontology_filters(&self) -> Result<OntologyFilters> {
