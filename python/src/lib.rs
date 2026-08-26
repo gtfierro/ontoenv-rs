@@ -30,6 +30,7 @@ use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{
     prelude::*,
+    sync::MutexExt,
     types::{
         IntoPyDict, PyBool, PyDict, PyList, PySet, PyString, PyStringMethods, PyTuple, PyType,
     },
@@ -46,13 +47,51 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LockResult, Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
 
 thread_local! {
     static EXPLICIT_ADOPT: Cell<bool> = const { Cell::new(false) };
     static CONNECT_SYNC: Cell<Option<ConnectSync>> = const { Cell::new(None) };
     static RECOVER: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Acquire a [`Mutex`] without staying attached to the Python interpreter for
+/// the duration of the wait.
+///
+/// Several critical sections in this module re-enter Python while holding a
+/// mutex: the store read paths build rdflib terms under the backend lock, the
+/// streaming iterators construct `URIRef`/`Literal` under the shared term
+/// cache, and [`PythonGraphIO`] calls back into a Python graph store under its
+/// own lock. Constructing an rdflib term runs Python bytecode, so CPython is
+/// free to hand the interpreter to another thread part-way through. If that
+/// other thread then blocks in `Mutex::lock` it stays attached, and the thread
+/// holding the mutex can never re-attach to finish and release it. Neither
+/// side can move, and because the waiter is holding the interpreter every
+/// other thread in the process wedges behind them.
+///
+/// `lock_py_attached` detaches before blocking and re-attaches once the lock is
+/// acquired, which breaks the cycle. Use these in place of `Mutex::lock` for
+/// every mutex reachable from `#[pymethods]`.
+trait LockPy<T> {
+    /// Lock from a thread that already holds a [`Python`] token.
+    fn lock_py(&self, py: Python<'_>) -> LockResult<MutexGuard<'_, T>>;
+
+    /// Lock from a context without a [`Python`] token in scope, attaching to
+    /// the interpreter just long enough to perform the detached wait.
+    fn lock_detached(&self) -> LockResult<MutexGuard<'_, T>>;
+}
+
+impl<T> LockPy<T> for Mutex<T> {
+    #[inline]
+    fn lock_py(&self, py: Python<'_>) -> LockResult<MutexGuard<'_, T>> {
+        self.lock_py_attached(py)
+    }
+
+    #[inline]
+    fn lock_detached(&self) -> LockResult<MutexGuard<'_, T>> {
+        Python::attach(|py| self.lock_py_attached(py))
+    }
 }
 
 pyo3::create_exception!(
@@ -952,7 +991,7 @@ impl PythonGraphIO {
     {
         let store = self
             .store
-            .lock()
+            .lock_detached()
             .map_err(|_| anyhow!("Failed to lock python graph store"))?;
         Python::attach(|py| {
             let bound = store.clone_ref(py).into_bound(py);
@@ -1595,7 +1634,11 @@ fn snapshot_named_graphs(snapshot: &Snapshot) -> Result<Vec<NamedOrBlankNode>> {
 /// quads (the `copy` backend). `EnvSnapshotRdf5d` holds an mmap-backed view of
 /// a `.ontoenv/store.r5tu` file (the `rdf5d` backend). Rebinding the store
 /// (via `refresh_from_env`) swaps the variant.
-#[derive(Debug)]
+///
+/// Cloning yields another handle onto the same snapshot — every field is an
+/// `Arc` or a path — so a read path can lift the backend out of its mutex and
+/// release the lock before it starts building rdflib objects.
+#[derive(Debug, Clone)]
 enum RdfLibStoreBackend {
     EnvSnapshotMaterialized {
         dataset: Arc<OxDataset>,
@@ -1877,6 +1920,23 @@ struct PyRdfLibStoreBackend {
     term_cache: Arc<Mutex<HashMap<u64, Py<PyAny>>>>,
 }
 
+impl PyRdfLibStoreBackend {
+    /// Lift the current backend out of the mutex so the read paths can work
+    /// against it with the lock released.
+    ///
+    /// Every read path turns snapshot rows into rdflib objects, which runs
+    /// Python code. Holding the mutex across that would serialize concurrent
+    /// readers on this store for the whole scan, and it is the shape that
+    /// deadlocks a threaded caller: one thread stuck mid-construction waiting
+    /// to re-enter the interpreter, another holding the interpreter waiting
+    /// for the mutex. The clone is a few `Arc` bumps, and it also pins the
+    /// snapshot a scan started against, so a concurrent `bind_*` rebind can no
+    /// longer block (or be blocked by) an in-flight read.
+    fn backend_handle(&self) -> RdfLibStoreBackend {
+        self.backend.lock_detached().unwrap().clone()
+    }
+}
+
 #[pymethods]
 impl PyRdfLibStoreBackend {
     #[new]
@@ -1915,12 +1975,12 @@ impl PyRdfLibStoreBackend {
                 .map_err(anyhow_to_pyerr)?;
             dataset.insert(&Quad::new(subject, predicate, object, graph_name));
         }
-        let mut backend = self.backend.lock().unwrap();
+        let mut backend = self.backend.lock_detached().unwrap();
         *backend = RdfLibStoreBackend::EnvSnapshotMaterialized {
             dataset: Arc::new(dataset),
         };
         // Term ids are snapshot-specific; a new snapshot invalidates the cache.
-        self.term_cache.lock().unwrap().clear();
+        self.term_cache.lock_detached().unwrap().clear();
         Ok(())
     }
 
@@ -1936,7 +1996,7 @@ impl PyRdfLibStoreBackend {
         })?;
         let inner = py_env.inner.clone();
         drop(py_env);
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env_rs = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -1962,12 +2022,12 @@ impl PyRdfLibStoreBackend {
         }
         drop(guard);
 
-        let mut backend = self.backend.lock().unwrap();
+        let mut backend = self.backend.lock_detached().unwrap();
         *backend = RdfLibStoreBackend::EnvSnapshotMaterialized {
             dataset: Arc::new(dataset),
         };
         // Term ids are snapshot-specific; a new snapshot invalidates the cache.
-        self.term_cache.lock().unwrap().clear();
+        self.term_cache.lock_detached().unwrap().clear();
         Ok(())
     }
 
@@ -1978,19 +2038,19 @@ impl PyRdfLibStoreBackend {
         // Eagerly build permutation indexes so the cost is paid once at bind
         // time, not billed to the first query of each pattern shape.
         snapshot.build_indexes();
-        let mut backend = self.backend.lock().unwrap();
+        let mut backend = self.backend.lock_detached().unwrap();
         *backend = RdfLibStoreBackend::EnvSnapshotRdf5d {
             store_path: PathBuf::from(store_path),
             snapshot: Arc::new(snapshot),
             patch: None,
         };
         // Term ids are snapshot-specific; a new snapshot invalidates the cache.
-        self.term_cache.lock().unwrap().clear();
+        self.term_cache.lock_detached().unwrap().clear();
         Ok(())
     }
 
     fn backend_kind(&self) -> String {
-        let backend = self.backend.lock().unwrap();
+        let backend = self.backend.lock_detached().unwrap();
         match &*backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { .. } => "copy".to_string(),
             RdfLibStoreBackend::EnvSnapshotRdf5d { .. } => "rdf5d".to_string(),
@@ -2090,9 +2150,9 @@ impl PyRdfLibStoreBackend {
             None => None,
         };
 
-        let backend = self.backend.lock().unwrap();
+        let backend = self.backend_handle();
         let ctors = RdflibCtors::new(py)?;
-        match &*backend {
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut by_triple: HashMap<Triple, Vec<GraphName>> = HashMap::new();
                 for quad in dataset.quads_for_pattern(
@@ -2224,9 +2284,9 @@ impl PyRdfLibStoreBackend {
         predicate: Option<&Bound<'_, PyAny>>,
         object: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Vec<Py<PyAny>>> {
-        let backend = self.backend.lock().unwrap();
+        let backend = self.backend_handle();
         let rdflib = PyModule::import(py, "rdflib")?;
-        match &*backend {
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut contexts = HashSet::new();
                 if let (Some(subject), Some(predicate), Some(object)) = (subject, predicate, object)
@@ -2315,8 +2375,8 @@ impl PyRdfLibStoreBackend {
             }
             None => None,
         };
-        let backend = self.backend.lock().unwrap();
-        Ok(match &*backend {
+        let backend = self.backend_handle();
+        Ok(match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => match graph_name {
                 Some(graph_name) => dataset
                     .quads_for_pattern(None, None, None, Some(graph_name.as_ref()))
@@ -2386,9 +2446,9 @@ impl PyRdfLibStoreBackend {
             .map(|value| term_from_python(value).map_err(anyhow_to_pyerr))
             .transpose()?;
 
-        let backend = self.backend.lock().unwrap();
+        let backend = self.backend_handle();
         let ctors = RdflibCtors::new(py)?;
-        match &*backend {
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut by_triple: HashMap<Triple, Vec<GraphName>> = HashMap::new();
                 for name in &graph_names {
@@ -2507,8 +2567,8 @@ impl PyRdfLibStoreBackend {
         py: Python<'_>,
         graph_names: Vec<String>,
     ) -> PyResult<Py<PyAny>> {
-        let backend = self.backend.lock().unwrap();
-        match &*backend {
+        let backend = self.backend_handle();
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut triples: Vec<Triple> = Vec::new();
                 for name in &graph_names {
@@ -2576,8 +2636,8 @@ impl PyRdfLibStoreBackend {
     /// union backend reports the stored triple count with no cross-graph
     /// de-duplication, matching its iteration semantics.
     fn len_in_graphs(&self, graph_names: Vec<String>) -> PyResult<usize> {
-        let backend = self.backend.lock().unwrap();
-        match &*backend {
+        let backend = self.backend_handle();
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut seen: HashSet<Triple> = HashSet::new();
                 for name in &graph_names {
@@ -2635,8 +2695,8 @@ impl PyRdfLibStoreBackend {
             .map_err(anyhow_to_pyerr)?;
         let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
 
-        let backend = self.backend.lock().unwrap();
-        match &*backend {
+        let backend = self.backend_handle();
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 for name in &graph_names {
                     let gn = match NamedNode::new(name) {
@@ -2724,8 +2784,8 @@ impl PyRdfLibStoreBackend {
             .parse_query(query)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let evaluator = QueryEvaluator::new();
-        let backend = self.backend.lock().unwrap();
-        match &*backend {
+        let backend = self.backend_handle();
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let dataset = (**dataset).clone();
                 let named_graphs = dataset_named_graphs(&dataset);
@@ -2862,8 +2922,8 @@ impl PyRdfLibStoreBackend {
             .parse_query(query)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let evaluator = QueryEvaluator::new();
-        let backend = self.backend.lock().unwrap();
-        match &*backend {
+        let backend = self.backend_handle();
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let dataset = (**dataset).clone();
                 let scoped = filter_named_graphs(&dataset_named_graphs(&dataset), &graph_names);
@@ -3024,8 +3084,8 @@ impl PyRdfLibStoreBackend {
         &self,
         config: &ClosureViewConfig,
     ) -> PyResult<Option<PyRdfLibStoreBackend>> {
-        let backend = self.backend.lock().unwrap();
-        match &*backend {
+        let backend = self.backend_handle();
+        match &backend {
             RdfLibStoreBackend::EnvSnapshotRdf5d {
                 snapshot,
                 store_path,
@@ -3210,27 +3270,46 @@ struct StoreTriplesIter {
     remaining: usize,
 }
 
-impl StoreTriplesIter {
-    #[allow(clippy::wrong_self_convention)]
-    fn to_py_term(
-        &self,
-        py: Python<'_>,
-        map: &mut HashMap<u64, Py<PyAny>>,
-        id: u64,
-    ) -> PyResult<Py<PyAny>> {
-        if let Some(cached) = map.get(&id) {
-            return Ok(cached.clone_ref(py));
+/// Resolve three snapshot term ids to rdflib objects through the backend-wide
+/// term cache.
+///
+/// The cache is locked once for the three lookups, then released: any term that
+/// has to be built is built with the lock down. `URIRef`/`Literal` construction
+/// runs Python code, so CPython can hand the interpreter to another thread
+/// part-way through it — and if this lock were still held, that thread would
+/// block on it while holding the interpreter the builder needs to get back.
+/// Nothing in the process would move again.
+///
+/// Two threads racing to build the same id is harmless: the terms are
+/// interchangeable, so whichever insert lands first wins and the other is
+/// dropped.
+fn cached_snapshot_terms(
+    py: Python<'_>,
+    snapshot: &Snapshot,
+    ctors: &RdflibCtors,
+    term_cache: &Mutex<HashMap<u64, Py<PyAny>>>,
+    ids: [u64; 3],
+) -> PyResult<[Py<PyAny>; 3]> {
+    let mut terms: [Option<Py<PyAny>>; 3] = [None, None, None];
+    {
+        let cache = term_cache.lock_py(py).unwrap();
+        for (slot, id) in terms.iter_mut().zip(ids) {
+            *slot = cache.get(&id).map(|term| term.clone_ref(py));
         }
-        let decoded = self
-            .snapshot
-            .file()
-            .decoded_term(id)
-            .map_err(r5error_to_pyerr)?;
-        let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
-        map.insert(id, obj.clone_ref(py));
-        Ok(obj)
     }
+    for (slot, id) in terms.iter_mut().zip(ids) {
+        if slot.is_some() {
+            continue;
+        }
+        let decoded = snapshot.file().decoded_term(id).map_err(r5error_to_pyerr)?;
+        let term = decoded_term_to_python_with(py, ctors, decoded)?.unbind();
+        let mut cache = term_cache.lock_py(py).unwrap();
+        *slot = Some(cache.entry(id).or_insert(term).clone_ref(py));
+    }
+    Ok(terms.map(|slot| slot.expect("every id is resolved above")))
+}
 
+impl StoreTriplesIter {
     fn graph_to_py(&mut self, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
         if let Some(cached) = self.graph_cache.get(name) {
             return Ok(cached.clone_ref(py));
@@ -3252,12 +3331,14 @@ impl StoreTriplesIter {
             return Ok(None);
         };
         self.remaining = self.remaining.saturating_sub(1);
-        let mut cache = self.term_cache.lock().unwrap();
-        let s = self.to_py_term(py, &mut cache, s_id)?;
-        let p = self.to_py_term(py, &mut cache, p_id)?;
-        let o = self.to_py_term(py, &mut cache, o_id)?;
-        drop(cache);
-        let triple_obj = PyTuple::new(py, [s, p, o])?;
+        let terms = cached_snapshot_terms(
+            py,
+            &self.snapshot,
+            &self.ctors,
+            &self.term_cache,
+            [s_id, p_id, o_id],
+        )?;
+        let triple_obj = PyTuple::new(py, terms)?;
         let ctx_list = PyList::empty(py);
         for name in &contexts {
             let v = self.graph_to_py(py, name)?;
@@ -3291,28 +3372,6 @@ struct Rdf5dTripleIdIter {
     remaining: usize,
 }
 
-impl Rdf5dTripleIdIter {
-    #[allow(clippy::wrong_self_convention)]
-    fn to_py_term(
-        &self,
-        py: Python<'_>,
-        map: &mut HashMap<u64, Py<PyAny>>,
-        id: u64,
-    ) -> PyResult<Py<PyAny>> {
-        if let Some(cached) = map.get(&id) {
-            return Ok(cached.clone_ref(py));
-        }
-        let decoded = self
-            .snapshot
-            .file()
-            .decoded_term(id)
-            .map_err(r5error_to_pyerr)?;
-        let obj = decoded_term_to_python_with(py, &self.ctors, decoded)?.unbind();
-        map.insert(id, obj.clone_ref(py));
-        Ok(obj)
-    }
-}
-
 #[pymethods]
 impl Rdf5dTripleIdIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -3324,14 +3383,16 @@ impl Rdf5dTripleIdIter {
             return Ok(None);
         };
         self.remaining = self.remaining.saturating_sub(1);
-        // One lock per triple; the cache is shared across `triples()` calls
-        // so term construction amortizes to once per distinct term id, ever.
-        let mut cache = self.term_cache.lock().unwrap();
-        let s = self.to_py_term(py, &mut cache, s_id)?;
-        let p = self.to_py_term(py, &mut cache, p_id)?;
-        let o = self.to_py_term(py, &mut cache, o_id)?;
-        drop(cache);
-        let tuple = PyTuple::new(py, [s, p, o])?;
+        // The cache is shared across `triples()` calls, so term construction
+        // amortizes to once per distinct term id, ever.
+        let terms = cached_snapshot_terms(
+            py,
+            &self.snapshot,
+            &self.ctors,
+            &self.term_cache,
+            [s_id, p_id, o_id],
+        )?;
+        let tuple = PyTuple::new(py, terms)?;
         Ok(Some(tuple.unbind()))
     }
 
@@ -3447,7 +3508,7 @@ impl OntoEnv {
 
     fn current_snapshot_store_path(&self) -> PyResult<Option<PathBuf>> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -3473,16 +3534,16 @@ impl OntoEnv {
     /// Mark the cached Dataset (if any) as stale. Subsequent reads via
     /// [`Self::cached_view_dataset`] will rebuild before returning.
     fn bump_generation(&self) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock_detached().unwrap();
         cache.generation = cache.generation.wrapping_add(1);
     }
 
     fn cached_view_dataset_exists(&self) -> bool {
-        self.cache.lock().unwrap().cached.is_some()
+        self.cache.lock_detached().unwrap().cached.is_some()
     }
 
     fn cached_view_dataset_is_stale(&self) -> bool {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock_detached().unwrap();
         cache
             .cached
             .as_ref()
@@ -3490,7 +3551,7 @@ impl OntoEnv {
     }
 
     fn mark_cached_view_dataset_current(&self) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock_detached().unwrap();
         let generation = cache.generation;
         if let Some((cached_generation, _)) = cache.cached.as_mut() {
             *cached_generation = generation;
@@ -3504,7 +3565,7 @@ impl OntoEnv {
     /// to fetch them again.
     fn refresh_cached_view_dataset(&self, py: Python<'_>) -> PyResult<()> {
         let (target_generation, dataset) = {
-            let cache = self.cache.lock().unwrap();
+            let cache = self.cache.lock_detached().unwrap();
             let Some((_, dataset)) = &cache.cached else {
                 return Ok(());
             };
@@ -3539,7 +3600,7 @@ impl OntoEnv {
             store.call_method1("refresh_from_env", (env_obj,))?;
         }
 
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock_detached().unwrap();
         if cache.generation == target_generation {
             cache.cached = Some((target_generation, dataset));
         }
@@ -3551,7 +3612,7 @@ impl OntoEnv {
     /// `Py<PyAny>` is a fresh reference the caller can pass to Python.
     fn cached_view_dataset(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let current_gen = {
-            let cache = self.cache.lock().unwrap();
+            let cache = self.cache.lock_detached().unwrap();
             if let Some((cached_gen, ds)) = &cache.cached {
                 if *cached_gen == cache.generation {
                     return Ok(ds.clone_ref(py));
@@ -3568,7 +3629,7 @@ impl OntoEnv {
         // unflushed-add cases.
         {
             let inner = self.inner.clone();
-            let mut guard = inner.lock().unwrap();
+            let mut guard = inner.lock_detached().unwrap();
             if let Some(env) = guard.as_mut() {
                 env.flush().map_err(anyhow_to_pyerr)?;
             }
@@ -3577,7 +3638,7 @@ impl OntoEnv {
         // Build outside the cache lock: dataset construction re-enters Python.
         let dataset = self.build_cached_view_dataset(py)?;
 
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock_detached().unwrap();
         // Only install if no newer generation snuck in while we were building.
         if cache.generation == current_gen {
             cache.cached = Some((current_gen, dataset.clone_ref(py)));
@@ -4054,7 +4115,7 @@ impl OntoEnv {
     /// the returned environment never writes a ``.ontoenv`` directory.
     fn temporary_snapshot(&self) -> PyResult<Self> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4109,7 +4170,7 @@ impl OntoEnv {
         let force = force || legacy_all.unwrap_or(false);
         let resolved = location.map(ontology_location_from_py).transpose()?;
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_mut() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -4145,7 +4206,7 @@ impl OntoEnv {
         graphs: Option<Vec<String>>,
         full: bool,
     ) -> PyResult<PySyncReport> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4160,13 +4221,13 @@ impl OntoEnv {
 
     // fn is_read_only(&self) -> PyResult<bool> {
     //     let inner = self.inner.clone();
-    //     let env = inner.lock().unwrap();
+    //     let env = inner.lock_detached().unwrap();
     //     Ok(env.is_read_only())
     // }
 
     fn __repr__(&self) -> PyResult<String> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
             let stats = env.stats().map_err(anyhow_to_pyerr)?;
             Ok(format!(
@@ -4189,7 +4250,7 @@ impl OntoEnv {
         recursion_depth: i32,
     ) -> PyResult<()> {
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4345,7 +4406,7 @@ impl OntoEnv {
             let iri = NamedNode::new(&uri_str)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
-            let mut guard = inner.lock().unwrap();
+            let mut guard = inner.lock_detached().unwrap();
             let env = guard.as_mut().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
@@ -4371,7 +4432,7 @@ impl OntoEnv {
             let imports = extract_imports_from_py_graph(py, uri)?;
 
             let inner = self.inner.clone();
-            let mut guard = inner.lock().unwrap();
+            let mut guard = inner.lock_detached().unwrap();
             let env = guard.as_mut().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
@@ -4434,7 +4495,7 @@ impl OntoEnv {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4525,7 +4586,7 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4581,7 +4642,7 @@ impl OntoEnv {
     #[pyo3(signature = (includes=None))]
     fn dump(&self, _py: Python, includes: Option<String>) -> PyResult<()> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
             env.dump(includes.as_deref());
             Ok(())
@@ -4635,7 +4696,7 @@ impl OntoEnv {
         }
 
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4800,7 +4861,7 @@ impl OntoEnv {
         }
 
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4949,7 +5010,7 @@ impl OntoEnv {
         rename: Option<&str>,
     ) -> PyResult<String> {
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -4981,7 +5042,7 @@ impl OntoEnv {
         rename: Option<&str>,
     ) -> PyResult<String> {
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5016,7 +5077,7 @@ impl OntoEnv {
         let new_iri_node = NamedNode::new(new_iri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = guard
             .as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5049,7 +5110,7 @@ impl OntoEnv {
     ///     the same graph as ``env.get_graph("http://example.com/B")``.
     fn add_alias(&self, alias_iri: &str, canonical_iri: &str) -> PyResult<()> {
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = self.get_env(&mut guard)?;
         env.add_alias(alias_iri, canonical_iri)
             .map_err(anyhow_to_pyerr)?;
@@ -5062,7 +5123,7 @@ impl OntoEnv {
     ///     alias_iri: The alias IRI to remove
     fn remove_alias(&self, alias_iri: &str) -> PyResult<()> {
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let env = self.get_env(&mut guard)?;
         env.remove_alias(alias_iri).map_err(anyhow_to_pyerr)?;
         Ok(())
@@ -5077,7 +5138,7 @@ impl OntoEnv {
     ///     The canonical IRI if the input is an alias, or None if it's not an alias
     fn resolve_alias(&self, alias_iri: &str) -> PyResult<Option<String>> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = self.get_env_ref(&guard)?;
         Ok(env.resolve_alias(alias_iri).map(|id| id.to_uri_string()))
     }
@@ -5091,7 +5152,7 @@ impl OntoEnv {
     ///     A list of all alias IRIs that point to the given canonical IRI
     fn get_aliases_for(&self, canonical_iri: &str) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = self.get_env_ref(&guard)?;
         Ok(env.get_aliases_for(canonical_iri))
     }
@@ -5101,7 +5162,7 @@ impl OntoEnv {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5125,7 +5186,7 @@ impl OntoEnv {
     #[pyo3(signature = (uri = None))]
     fn missing_imports(&self, py: Python, uri: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5190,7 +5251,7 @@ impl OntoEnv {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5218,7 +5279,7 @@ impl OntoEnv {
             let iri = NamedNode::new(uri_string.clone())
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
-            let guard = inner.lock().unwrap();
+            let guard = inner.lock_detached().unwrap();
             let env = guard.as_ref().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
@@ -5274,7 +5335,7 @@ impl OntoEnv {
             let iri = NamedNode::new(uri)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
-            let guard = inner.lock().unwrap();
+            let guard = inner.lock_detached().unwrap();
             let env = guard.as_ref().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
@@ -5315,7 +5376,7 @@ impl OntoEnv {
         // through the read path, and expose that snapshot as read-only.
         let materialized_dataset = {
             let inner = self.inner.clone();
-            let guard = inner.lock().unwrap();
+            let guard = inner.lock_detached().unwrap();
             let env = guard.as_ref().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
@@ -5389,7 +5450,7 @@ impl OntoEnv {
                 .collect::<PyResult<_>>()?;
 
             let inner = self.inner.clone();
-            let guard = inner.lock().unwrap();
+            let guard = inner.lock_detached().unwrap();
             let env = guard.as_ref().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
@@ -5440,7 +5501,7 @@ impl OntoEnv {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5464,7 +5525,7 @@ impl OntoEnv {
         let iri = NamedNode::new(uri)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5507,7 +5568,7 @@ impl OntoEnv {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let source_graph = {
             let inner = self.inner.clone();
-            let guard = inner.lock().unwrap();
+            let guard = inner.lock_detached().unwrap();
             let env = guard.as_ref().ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
@@ -5576,7 +5637,7 @@ impl OntoEnv {
         include_closure: bool,
     ) -> PyResult<HashMap<String, String>> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5598,7 +5659,7 @@ impl OntoEnv {
     /// Get the names of all ontologies in the OntoEnv
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -5714,7 +5775,7 @@ impl OntoEnv {
     // Config accessors
     fn is_offline(&self) -> PyResult<bool> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
             Ok(env.is_offline())
         } else {
@@ -5731,7 +5792,7 @@ impl OntoEnv {
             ));
         }
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_mut() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5746,7 +5807,7 @@ impl OntoEnv {
 
     fn is_strict(&self) -> PyResult<bool> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
             Ok(env.is_strict())
         } else {
@@ -5763,7 +5824,7 @@ impl OntoEnv {
             ));
         }
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_mut() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5778,7 +5839,7 @@ impl OntoEnv {
 
     fn requires_ontology_names(&self) -> PyResult<bool> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
             Ok(env.requires_ontology_names())
         } else {
@@ -5795,7 +5856,7 @@ impl OntoEnv {
             ));
         }
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_mut() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5810,7 +5871,7 @@ impl OntoEnv {
 
     fn remote_cache_ttl_secs(&self) -> PyResult<u64> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_ref() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5826,7 +5887,7 @@ impl OntoEnv {
             ));
         }
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_mut() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5841,7 +5902,7 @@ impl OntoEnv {
 
     fn uses_cached_ontologies(&self) -> PyResult<bool> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_ref() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5857,7 +5918,7 @@ impl OntoEnv {
             ));
         }
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_mut() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5872,7 +5933,7 @@ impl OntoEnv {
 
     fn resolution_policy(&self) -> PyResult<String> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
             Ok(env.resolution_policy().to_string())
         } else {
@@ -5889,7 +5950,7 @@ impl OntoEnv {
             ));
         }
         let inner = self.inner.clone();
-        let mut guard = inner.lock().unwrap();
+        let mut guard = inner.lock_detached().unwrap();
         let Some(env) = guard.as_mut() else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "OntoEnv is closed",
@@ -5904,7 +5965,7 @@ impl OntoEnv {
 
     pub fn store_path(&self) -> PyResult<Option<String>> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
             match env.store_path() {
                 Some(path) => {
@@ -5925,7 +5986,7 @@ impl OntoEnv {
     pub fn close(&mut self, py: Python<'_>) -> PyResult<()> {
         py.detach(|| {
             let inner = self.inner.clone();
-            let mut guard = inner.lock().unwrap();
+            let mut guard = inner.lock_detached().unwrap();
             if let Some(env) = guard.as_mut() {
                 if !self.read_only {
                     env.save_to_directory().map_err(anyhow_to_pyerr)?;
@@ -5934,7 +5995,7 @@ impl OntoEnv {
             }
             *guard = None;
             // Release any cached Dataset so its store doesn't outlive the env.
-            self.cache.lock().unwrap().cached = None;
+            self.cache.lock_detached().unwrap().cached = None;
             Ok(())
         })
     }
@@ -5947,7 +6008,7 @@ impl OntoEnv {
         let cached_dataset_is_stale = self.cached_view_dataset_is_stale();
         let result = py.detach(|| {
             let inner = self.inner.clone();
-            let mut guard = inner.lock().unwrap();
+            let mut guard = inner.lock_detached().unwrap();
             if let Some(env) = guard.as_mut() {
                 let before = if track_cached_snapshot {
                     env.store_path().and_then(snapshot_signature)
@@ -5999,7 +6060,7 @@ impl OntoEnv {
     /// ``len(env)`` — number of ontologies in the environment.
     fn __len__(&self) -> PyResult<usize> {
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
@@ -6013,7 +6074,7 @@ impl OntoEnv {
             return Ok(false);
         };
         let inner = self.inner.clone();
-        let guard = inner.lock().unwrap();
+        let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;

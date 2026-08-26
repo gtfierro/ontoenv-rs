@@ -298,5 +298,87 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
         self.assertIn("ok", results)
 
 
+# Run out-of-process: if the store-backed view ever regresses to holding a Rust
+# mutex across rdflib term construction, the interpreter itself wedges and even
+# the thread doing the `join()` never runs again. A subprocess with a timeout is
+# the only way to fail instead of hanging the suite.
+_VIEW_ITER_SCRIPT = """
+import sys, threading
+sys.setswitchinterval(1e-6)
+from pathlib import Path
+from ontoenv import OntoEnv
+
+env_dir, ttl = sys.argv[1], sys.argv[2]
+env = OntoEnv(path=Path(env_dir), recreate=True, offline=True)
+env.add(ttl)
+env.flush()
+view, _ = env.get_union(list(env.get_ontology_names()))
+
+failures = []
+
+def scan():
+    try:
+        for _ in range(3):
+            for _triple in view.triples((None, None, None)):
+                pass
+    except BaseException as exc:  # noqa: BLE001
+        failures.append(repr(exc))
+
+threads = [threading.Thread(target=scan) for _ in range(4)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+assert not failures, failures
+"""
+
+
+def _write_wide_ttl(path, triples=20000):
+    """A graph with many distinct terms, so concurrent scans race on cache misses."""
+    with open(path, "w") as f:
+        f.write("@prefix ex: <urn:example:> .\n")
+        f.write("<urn:example:wide> a <http://www.w3.org/2002/07/owl#Ontology> .\n")
+        for i in range(triples):
+            f.write(f'ex:s{i} ex:p{i % 97} "value {i}" .\n')
+
+
+class TestViewGraphThreadConcurrency(unittest.TestCase):
+    """Two threads iterating one store-backed view must not wedge the process.
+
+    The view decodes term ids into rdflib objects behind a shared cache. Term
+    construction runs Python code, so a thread can lose the interpreter
+    part-way through it; if the cache lock were held across that, the thread
+    that picks up the interpreter blocks on the lock and the holder can never
+    get the interpreter back to release it. Nothing in the process moves after
+    that, and it happens silently.
+    """
+
+    def test_concurrent_view_iteration_does_not_deadlock(self):
+        import subprocess
+        import sys
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ttl = os.path.join(tmp, "wide.ttl")
+            _write_wide_ttl(ttl)
+            env_dir = os.path.join(tmp, "env")
+            os.makedirs(env_dir)
+            try:
+                proc = subprocess.run(
+                    [sys.executable, "-c", _VIEW_ITER_SCRIPT, env_dir, ttl],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except subprocess.TimeoutExpired:
+                self.fail(
+                    "concurrent iteration over a store-backed view deadlocked "
+                    "(worker did not exit within 180s)"
+                )
+            self.assertEqual(
+                proc.returncode, 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

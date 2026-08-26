@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Fixed
+- Iterating a store-backed view (`get_union`/`get_closure`, `OntoEnvStore`)
+  from more than one Python thread could deadlock the whole interpreter. The
+  read paths held a Rust mutex — the shared term cache, and the backend handle
+  itself — while re-entering Python to build `URIRef`/`Literal` objects. A
+  thread that lost the interpreter mid-construction could not get it back
+  because another thread was blocking on the mutex with the GIL held, so every
+  thread in the process stopped, silently and permanently. Locks are now taken
+  detached from the interpreter, and no lock is held across rdflib term
+  construction.
+
 ## [0.6.2] — 2026-08-12
 
 ### Added
