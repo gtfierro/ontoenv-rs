@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-08-26
+
 ### Fixed
 - Iterating a store-backed view (`get_union`/`get_closure`, `OntoEnvStore`)
   from more than one Python thread could deadlock the whole interpreter. The
