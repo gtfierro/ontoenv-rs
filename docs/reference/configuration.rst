@@ -115,7 +115,8 @@ Setting values from the CLI
    $ ontoenv config list
    $ ontoenv config get locations
 
-Scalar keys use ``set`` and ``unset``:
+Scalar keys use ``set`` and ``unset``. Each line below is an independent
+example; the final line restores the TTL to its default:
 
 .. code-block:: console
 
@@ -126,7 +127,8 @@ Scalar keys use ``set`` and ``unset``:
    $ ontoenv config set remote_cache_ttl_secs 604800
    $ ontoenv config unset remote_cache_ttl_secs
 
-``set`` accepts exactly those five keys. List keys use ``add`` and ``remove``:
+``set`` accepts exactly those five keys. List keys use ``add`` and ``remove``;
+the lines below are also independent examples:
 
 .. code-block:: console
 
@@ -183,22 +185,28 @@ When reopening an existing environment:
 - A **writable** connection persists the override; a **read-only** one applies
   it to that session only.
 
+The following are alternative calls, not a sequence of simultaneous
+connections:
+
 .. code-block:: python
 
    OntoEnv.connect("./env")                          # everything as saved
    OntoEnv.connect("./env", strict=True)             # override one setting
    OntoEnv.connect("./env", search_directories=[])   # explicitly clear
 
-On the CLI, boolean flags take explicit values so a saved ``true`` can be
-turned off:
+On the CLI, use ``config set`` to change saved booleans without running another
+operation:
 
 .. code-block:: console
 
-   $ ontoenv update --offline=false --strict=false
+   $ ontoenv config set offline false
+   $ ontoenv config set strict false
 
-Changing configuration never triggers a scan or re-ingestion. Runtime modes
-apply immediately; changed discovery paths and filters apply on the next
-``update()``.
+These commands only write configuration. Runtime modes apply to the next
+command; changed discovery paths and filters apply on the next ``update``.
+Passing ``--offline=false`` or ``--strict=false`` directly to ``update`` also
+saves the values, but ``update`` still scans sources because that is the
+operation requested.
 
 Environment variables
 ---------------------

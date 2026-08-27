@@ -31,6 +31,8 @@ Filter by file path
 Globs support ``*``, ``?``, and ``**``. A bare directory expands to
 ``dir/**`` automatically.
 
+The following commands are alternatives. Each creates a new environment:
+
 .. code-block:: console
 
    # Only Turtle files
@@ -48,6 +50,9 @@ Globs support ``*``, ``?``, and ``**``. A bare directory expands to
        excludes=["lib/tests", "target"],
    )
    env.update()
+
+``connect`` saves the filters. ``update`` scans ``.`` and applies them to the
+paths it finds.
 
 The default include list is ``['*.ttl', '*.xml', '*.n3']``.
 
@@ -74,9 +79,11 @@ match one of them. Excludes run last and prune whatever slipped through.
        include_ontologies=[r"^https://example\.com/"],
        exclude_ontologies=[r"experimental"],
    )
+   env.update()
 
 These are regular expressions, not globs, and they are matched against the
-full ontology IRI.
+full ontology IRI. ``connect`` saves them; ``update`` scans and parses the
+candidate files before applying the IRI filters.
 
 Reject files without an ontology declaration
 --------------------------------------------
@@ -91,12 +98,17 @@ warning. To make it an error:
 .. code-block:: python
 
    env = OntoEnv.connect("./ontology-env", require_ontology_names=True)
+   env.update()
+
+``connect`` saves the requirement. ``update`` is the operation that scans the
+files and raises if one has no ontology declaration.
 
 Change filters on an existing environment
 -----------------------------------------
 
 Filters are saved in ``.ontoenv/config.json`` and re-applied by every later
-command. Path-based lists can be edited through ``ontoenv config``:
+command. The following are independent examples of inspecting and editing the
+path-based lists:
 
 .. code-block:: console
 
@@ -110,6 +122,10 @@ command. Path-based lists can be edited through ``ontoenv config``:
 ontology-IRI regex lists (``include_ontologies``, ``exclude_ontologies``) have
 no ``config`` support — edit ``.ontoenv/config.json`` directly, or pass the
 flags on the next command.
+
+These ``config`` commands do not scan sources. Run ``ontoenv update`` after
+editing the lists when the environment should be reconciled with the new
+settings.
 
 From Python, passing a value to ``connect`` overrides the saved one; omitting
 it keeps the saved one. Passing an empty list is an explicit override that

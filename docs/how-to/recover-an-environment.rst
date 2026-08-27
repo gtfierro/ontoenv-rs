@@ -15,9 +15,10 @@ A command or a ``connect`` call fails with a recovery error:
 
 In Python this surfaces as :class:`ontoenv.CatalogRecoveryError`.
 
-This means a process was killed between writing a graph and publishing the
-updated index. The graphs are fine; the index may not describe all of them.
-OntoEnv refuses to trust it rather than serving you a stale view.
+This means a process stopped between changing the graph store and publishing
+the updated index. The store may contain changes that the index does not
+describe. OntoEnv refuses to use that index until recovery scans the stored
+graphs and replaces it.
 
 The fix
 -------
@@ -90,5 +91,8 @@ If you would rather rebuild from your source files than recover:
    $ ontoenv reset
    $ ontoenv init ./ontologies
 
-``reset`` deletes ``.ontoenv/`` entirely, including cached remote ontologies,
-which will be re-downloaded.
+These commands form a destructive sequence. ``reset`` asks for confirmation,
+then deletes ``.ontoenv/`` entirely, including its catalog, stored graphs, and
+cached remote ontologies. ``init`` creates a new environment, scans
+``./ontologies``, and follows its imports; remote imports must be downloaded
+again. The source files under ``./ontologies`` are not deleted.

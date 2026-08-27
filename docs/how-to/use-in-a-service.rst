@@ -10,19 +10,30 @@ The pattern
 
 .. code-block:: python
 
+   from contextlib import asynccontextmanager
+
+   from fastapi import FastAPI
    from ontoenv import OntoEnv
 
-   # Startup
-   app.state.ontoenv = OntoEnv.connect("/srv/ontology-env")
 
-   # Request handling — reuse the same object
+   @asynccontextmanager
+   async def lifespan(app: FastAPI):
+       # Startup: open the environment and make it available to handlers.
+       env = OntoEnv.connect("/srv/ontology-env")
+       app.state.ontoenv = env
+       try:
+           yield
+       finally:
+           # Shutdown: flush pending writes and release the environment lock.
+           env.close()
+
+
+   app = FastAPI(lifespan=lifespan)
+
    @app.get("/closure/{iri:path}")
    def closure(iri: str):
        view, imported = app.state.ontoenv.get_closure(iri)
        return {"graphs": imported, "triples": len(view)}
-
-   # Shutdown
-   app.state.ontoenv.close()
 
 Do not connect per request. Reopening the environment repeats work that
 ``connect`` is designed to do once, and it makes it much harder to reason
@@ -52,22 +63,28 @@ continue to see a consistent view.
 Multiple worker processes
 -------------------------
 
-A persistent environment allows **one writer at a time**. In a multi-process
-server, pick one process to own writes and give the rest read-only
-connections:
+A persistent environment allows either **one writer** or **multiple read-only
+connections** at a time. A read-only process waits while a writer holds the
+environment lock. For a multi-process server, prepare the environment in a
+writable process, close it, and then start the read-only workers:
 
 .. code-block:: python
 
-   # In the single writer (or a separate provisioning step)
-   env = OntoEnv.connect("/srv/ontology-env")
-   env.update()
+   # Provisioning: this process must finish and close before workers connect.
+   with OntoEnv.connect("/srv/ontology-env") as env:
+       env.update()
 
-   # In each read-only worker
-   env = OntoEnv.connect("/srv/ontology-env", read_only=True)
+   # Worker startup: several processes can hold shared read-only locks.
+   env = OntoEnv.open("/srv/ontology-env", read_only=True)
 
 Read-only connections never write to the environment directory. Configuration
-passed to a read-only connect applies to that session only and is not
-persisted.
+passed while opening a read-only connection applies to that session only and
+is not persisted.
+
+To update sources later, stop or drain the read-only workers, open one writable
+connection, run ``update()``, close it, and then reopen the workers. A
+long-lived writer cannot update alongside read-only worker processes because
+it holds the exclusive lock.
 
 Fail fast if the environment is not there
 -----------------------------------------
@@ -83,7 +100,7 @@ one indicates a broken deploy, say so explicitly:
 ``open`` raises if the environment does not exist, and never creates, scans,
 or reconciles anything.
 
-:doc:`../explanation/lifecycle` compares all five entry points.
+:doc:`../explanation/lifecycle` compares all six entry points.
 
 Handle recovery at startup
 --------------------------
@@ -102,15 +119,15 @@ your service repairs itself or refuses to start:
        log.warning("recovering ontology environment after interrupted write")
        env = OntoEnv.recover("/srv/ontology-env")
 
-Recovery rescans every stored graph, so it is much slower than a normal
-connect. See :doc:`recover-an-environment`.
+Recovery reads every stored graph and rebuilds the catalog; ``connect``
+normally reads the existing catalog. See :doc:`recover-an-environment`.
 
 Keep memory low
 ---------------
 
-Prefer ``get_*`` over ``copy_*`` in request handlers. A view reads from the
-on-disk snapshot and costs almost nothing per request; a copy materializes the
-whole closure into Python memory every time.
+Prefer ``get_*`` over ``copy_*`` in request handlers that do not mutate the
+result. A view reads from the on-disk snapshot; a copy materializes the whole
+closure in Python memory on every call.
 
 .. code-block:: python
 

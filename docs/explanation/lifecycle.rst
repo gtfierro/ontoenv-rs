@@ -3,19 +3,22 @@ Opening an environment
 
 .. _choosing-an-environment-lifecycle:
 
-Short answer: use ``connect``
------------------------------
+Use ``connect`` when either state is valid
+------------------------------------------
 
 .. code-block:: python
 
    env = OntoEnv.connect("./ontology-env")
 
-``connect`` creates the environment if it is missing and reopens it quickly if
-it exists. That covers ordinary application startup, and most programs never
-need anything else.
+``connect`` creates the environment if it is missing and reopens it if it
+exists. Use a different entry point when one of those states should be an
+error.
 
-The rest of this page is about the other four entry points, which exist so a
+The rest of this page is about the other five entry points, which exist so a
 program can *refuse* the lifecycle states it does not expect.
+
+The design question is not how many constructors an environment needs. It is
+which startup mistakes should stop the program immediately.
 
 .. list-table::
    :header-rows: 1
@@ -43,40 +46,46 @@ program can *refuse* the lifecycle states it does not expect.
      - Nothing should be saved
      - Always a fresh in-memory environment
 
-Why failing is a feature
-------------------------
+Choose which assumption to enforce
+----------------------------------
 
-``connect`` is forgiving because in most programs "the environment is not
-there yet" is not an error — it is the first run.
+``connect`` accepts both an existing environment and a missing one.
 
-But sometimes it is an error, and a very informative one. If your deployment
+If a missing environment is an error, accepting both states hides useful
+information. If your deployment
 pipeline is supposed to have built the environment, a process that silently
 creates an empty one instead will start up fine and then behave as though
-every ontology vanished. ``OntoEnv.open(path)`` turns that into an immediate,
-obvious failure at the point where the assumption actually broke.
+every ontology vanished. ``OntoEnv.open(path)`` fails during startup instead.
 
 The same reasoning applies in reverse. A setup command or a test fixture that
 means to create a *new* environment should not quietly adopt whatever was left
 over from a previous run. ``OntoEnv.create(path)`` fails instead, and
 ``overwrite=True`` says you meant it.
 
-Each named method encodes an assumption. Reach for one when violating that
-assumption should stop your program.
+Each named method turns an assumption into a startup check. Use one of the
+specialized methods when violating its assumption should stop the program:
+
+- ``open`` requires an environment that was prepared already.
+- ``create`` requires a path that is safe to initialize.
+- ``adopt`` requires a populated external graph store.
+- ``recover`` requires evidence of an interrupted catalog mutation.
+
+Use ``connect`` when both “open the saved environment” and “this is the first
+run” are valid outcomes.
 
 Connect does not read your files
 --------------------------------
 
-This surprises people, so it is worth stating plainly:
+``connect`` and ``update`` perform separate operations:
 
 .. code-block:: python
 
    env = OntoEnv.connect("./ontology-env", search_directories=["./ontologies"])
    env.update()   # <- this is what reads ./ontologies
 
-``connect`` loads the saved catalog. ``update`` scans sources. Keeping them
-apart is what makes restarts cheap: a service that restarts a hundred times
-does not re-parse every RDF file a hundred times, and the one time you *do*
-want a rescan, you asked for it.
+``connect`` loads the saved catalog. ``update`` scans sources. A process can
+therefore reopen an environment without scanning its RDF files. Source content
+changes are not visible until ``update`` runs.
 
 The first ``connect`` on a brand-new environment creates the directory, saves
 settings, and initializes empty storage. It still does not scan — the

@@ -4,9 +4,8 @@ Explanation
 .. raw:: html
 
    <div class="oe-section-intro">
-     Background reading. These pages are about <em>why</em> OntoEnv works the
-     way it does — useful when a design decision surprises you, and safe to
-     skip until then.
+     Design constraints, implementation choices, and the consequences visible
+     through the OntoEnv API.
    </div>
 
 :doc:`concepts`

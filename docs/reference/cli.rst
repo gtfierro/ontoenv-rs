@@ -51,7 +51,10 @@ Accepted by every subcommand.
 Omitted mode flags preserve their saved values when the environment already
 exists. Boolean flags take explicit values — ``--offline=false``,
 ``--strict=false``, ``--require-ontology-names=false`` — so a saved ``true``
-can be turned off. Explicit changes are persisted without rescanning.
+can be turned off. Explicit values are persisted. A flag does not add an
+extra scan, but the selected subcommand still performs its documented work;
+for example, ``ontoenv update --offline=false`` saves the setting and then
+updates sources.
 
 Creating and updating
 ---------------------
@@ -62,7 +65,10 @@ Create the environment under ``.ontoenv/``. Directory arguments are scanned
 immediately; with none, the current directory is used.
 
 ``--overwrite``
-   Rebuild in place if an environment already exists.
+   Delete the existing ``.ontoenv/`` directory, then create and populate a new
+   one. Source files outside ``.ontoenv/`` are not deleted.
+
+Each line below is an independent example:
 
 .. code-block:: console
 
@@ -81,6 +87,8 @@ default.
    Store the graph under *IRI* instead of the one it declares. See
    :doc:`../how-to/rename-and-alias`.
 
+Each line below is an independent example:
+
 .. code-block:: console
 
    $ ontoenv add ./ontologies/site.ttl
@@ -98,6 +106,8 @@ imports throughout.
    Suppress per-ontology output.
 ``--json``
    Machine-readable output.
+
+Each line below is an independent example:
 
 .. code-block:: console
 
@@ -266,6 +276,8 @@ Configuration
    Read, write, or revert one key.
 ``add <KEY> <VALUE>`` / ``remove <KEY> <VALUE>``
    Modify a list-valued key.
+
+Each line below is an independent example:
 
 .. code-block:: console
 

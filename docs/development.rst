@@ -88,3 +88,51 @@ put it in the section matching what the reader is doing:
 The most common mistake is letting explanation leak into a how-to, or
 reference detail into a tutorial. If a paragraph starts with "note that" or
 "the reason for this is", it probably belongs in ``explanation/``.
+
+How the docs should sound
+-------------------------
+
+Write for a reader who has a real ontology and wants to know what OntoEnv will
+do with it. Start with the useful fact, command, or decision. Introduce the
+underlying model once the reader has something concrete to attach it to.
+
+Across all four sections:
+
+- Prefer short paragraphs with one claim each.
+- Use concrete verbs. Say that a command scans files, downloads an ontology,
+  writes configuration, or deletes an environment.
+- Show the result of an important command, not just the command itself.
+- Introduce each command with the operation it performs. When a block contains
+  several commands, say whether they are alternatives or a sequence, and
+  describe the state changed by each step.
+- State defaults, persistence, network access, mutation, and failure behavior
+  when they could change a reader's decision.
+- Keep examples internally consistent and small enough to understand in one
+  sitting.
+- Do not call a task simple or easy. Show the shortest reliable path instead.
+- Distinguish guarantees from advice. Use "does" for behavior and "we
+  recommend" for a judgment.
+- Avoid slogans, superlatives, and unqualified comparisons. Replace claims
+  such as "fast", "powerful", or "covers most uses" with a mechanism, a
+  measurement, or nothing.
+- Do not advertise OntoEnv to the reader. Describe the problem it addresses,
+  its behavior, and its limits; let the reader decide whether it fits.
+
+The four sections use the same plain language for different ends:
+
+``tutorials/``
+   Move through a working example. After each important step, show enough
+   output for the reader to confirm that they are on track.
+
+``how-to/``
+   Put the canonical command or code first. Then cover verification and the
+   failure cases a competent user is likely to meet.
+
+``reference/``
+   Use a predictable order: signature, behavior, arguments, return value,
+   side effects, errors, example, and related operations. Omit headings that
+   genuinely do not apply.
+
+``explanation/``
+   Name the design question, the constraints, the choice OntoEnv makes, and
+   the consequences of that choice. Be direct about costs and limitations.

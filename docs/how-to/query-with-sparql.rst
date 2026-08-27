@@ -43,7 +43,8 @@ flattened graph. Nothing is materialized in Python.
 
 Recursive property paths on ``rdfs:subClassOf``, ``rdfs:subPropertyOf``, and
 ``owl:sameAs`` are answered from a precomputed transitive-closure table, which
-is why the query above is fast. See :doc:`../explanation/performance`.
+avoids materializing the closure as a Python graph. See
+:doc:`../explanation/performance` for measurements and their scope.
 
 Query across named graphs
 -------------------------
@@ -82,6 +83,11 @@ mutating the environment, ask again or refresh in place:
    env.flush()
    env.refresh_dataset(dataset)
 
+These calls form a sequence. ``add`` changes the environment, ``flush``
+publishes the pending store snapshot, and ``refresh_dataset`` rebinds the
+existing dataset to that snapshot. Without the final call, ``dataset`` remains
+the point-in-time view returned earlier.
+
 Query a set of graphs you choose
 --------------------------------
 
@@ -105,17 +111,21 @@ when you want exactly the graphs you named and nothing done to them.
 Use the rdflib plugin
 ---------------------
 
-Importing ``ontoenv`` registers an ``rdflib`` store plugin named ``"ontoenv"``:
+Importing ``ontoenv`` registers an ``rdflib`` store plugin named ``"ontoenv"``.
+Constructing the plugin by name creates an empty store; it cannot infer which
+environment to read. Bind it explicitly:
 
 .. code-block:: python
 
-   from rdflib import Graph
+   from rdflib import Dataset
    import ontoenv   # registers the plugin
 
-   graph = Graph(store="ontoenv")
+   dataset = Dataset(store="ontoenv")
+   dataset.store.refresh_from_env(env)
 
-This is useful when a library you do not control constructs graphs by store
-name.
+Use ``env.get_dataset()`` when you control construction. The plugin form is
+for code that requires an rdflib store name; ``refresh_from_env`` supplies the
+environment that plugin registration alone cannot provide.
 
 Query from the command line
 ---------------------------

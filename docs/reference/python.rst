@@ -9,11 +9,22 @@ The package exposes the Rust core through `PyO3 <https://pyo3.rs>`_ bindings,
 with native `rdflib <https://rdflib.readthedocs.io>`_ interop. Pre-built
 wheels are published on PyPI; no Rust toolchain is required.
 
-This page groups the API by purpose. :doc:`api` has the generated signatures
-and docstrings.
+This page groups the public API by purpose and documents behavior not
+represented in a signature: source access, mutation, persistence, and errors.
+:doc:`api` contains generated signatures and docstrings.
 
 Opening an environment
 ----------------------
+
+Use ``connect`` when both an existing and a missing environment are valid:
+
+.. code-block:: python
+
+   env = OntoEnv.connect("./ontology-env")
+
+With the default store, it creates an empty environment on the first run and
+reopens the saved catalog on later runs. It does not scan ontology files or
+fetch URLs; call ``update`` when source content should be refreshed.
 
 .. list-table::
    :header-rows: 1
@@ -22,7 +33,7 @@ Opening an environment
    * - Call
      - Behavior
    * - ``OntoEnv.connect(path, *, graph_store=None, sync="auto", read_only=False, **options)``
-     - Create if missing, reopen if present. The normal entry point.
+     - Create if missing; reopen if present.
    * - ``OntoEnv.create(path, *, graph_store=None, **options)``
      - Create a new environment; fails if one exists unless
        ``overwrite=True``.
@@ -35,13 +46,27 @@ Opening an environment
    * - ``OntoEnv(temporary=True, **options)``
      - In-memory environment; nothing is persisted.
 
+.. rubric:: Storage and source access
+
+``connect`` may reconcile graphs changed directly in a custom store, according
+to ``sync``. It never refreshes configured files or URLs. ``open`` reads the
+saved catalog without reconciling the store. ``adopt`` and ``recover`` scan
+graphs already present in the attached store, but do not follow remote
+imports. ``create`` writes a new empty catalog. A temporary environment writes
+nothing to disk.
+
 ``sync`` accepts ``"auto"`` (default), ``"full"``, or ``"catalog"`` — see
 :doc:`../explanation/staying-in-sync`.
+
+.. rubric:: Configuration persistence
 
 ``**options`` accepts any key from :doc:`configuration`. On reopen, an omitted
 option preserves its saved value; an explicit value — including ``False``,
 ``"default"``, and ``[]`` — overrides it. Writable connections persist
 overrides; read-only ones keep them session-local.
+
+For the design tradeoffs between these entry points, see
+:doc:`../explanation/lifecycle`.
 
 .. rubric:: Direct constructor
 
@@ -116,38 +141,48 @@ Refreshing
 Reading graphs
 --------------
 
-Every read comes in a read-only view and a mutable copy. See
-:doc:`../explanation/views-and-copies`.
+Every read comes in two forms. ``get_*`` returns a store-backed, read-only
+view. ``copy_*`` allocates a mutable ``rdflib`` object. See
+:doc:`../explanation/views-and-copies` for the cost and ownership model.
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 34 22 44
 
    * - Method
-     - Returns
+     - Result
+     - Behavior and errors
    * - ``get_graph(uri)``
-     - Read-only store-backed ``rdflib.Graph``. Mutation raises
-       ``ValueError``.
+     - ``ViewGraph``
+     - Store-backed and read-only. Mutation raises ``ValueError``.
    * - ``copy_graph(uri, graph=None)``
-     - Mutable ``rdflib.Graph``. Raises ``UnresolvedImportError`` for a known
-       unresolved import, ``ValueError`` for an unknown IRI.
+     - ``rdflib.Graph``
+     - Allocates a mutable copy. Raises ``UnresolvedImportError`` for a known
+       unresolved import and ``ValueError`` for an unknown IRI.
    * - ``get_closure(uri, recursion_depth=-1, remove_owl_imports=True, rewrite_sh_prefixes=True)``
-     - ``(ViewGraph, closure_names)`` — flattened, de-duplicated view over the
-       ontology and its transitive imports.
+     - ``(ViewGraph, closure_names)``
+     - Flattened, de-duplicated view over the ontology and its transitive
+       imports.
    * - ``copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)``
-     - ``(Graph, closure_iris)`` — same triple set, materialized and mutable.
+     - ``(Graph, closure_iris)``
+     - Materializes the same triple set as a mutable graph.
    * - ``get_union(uris, include_closures=False, recursion_depth=-1)``
-     - ``(ViewGraph, graph_iris)`` — **raw** merge of the listed graphs; no
-       transform, no cross-graph de-duplication.
+     - ``(ViewGraph, graph_iris)``
+     - **Raw** merge of the listed graphs; no transform or cross-graph
+       de-duplication.
    * - ``copy_union(uris, root, graph=None, include_closures=False, rewrite_sh_prefixes=False, remove_owl_imports=False, recursion_depth=-1)``
-     - ``(Graph, graph_iris)`` — raw by default; pass the transform flags to
-       opt in, with *root* driving declaration and prefix cleanup.
+     - ``(Graph, graph_iris)``
+     - Raw and mutable by default. Transform flags opt into declaration and
+       prefix cleanup, using *root* as the root ontology.
    * - ``get_dataset()``
-     - Read-only ``rdflib.Dataset`` view of the whole environment.
+     - ``rdflib.Dataset``
+     - Read-only view of the whole environment.
    * - ``copy_dataset(dataset=None)``
-     - Mutable ``rdflib.Dataset`` copy.
+     - ``rdflib.Dataset``
+     - Allocates a mutable copy.
    * - ``refresh_dataset(dataset)``
-     - Re-snapshot the environment into an existing store-backed dataset.
+     - ``None``
+     - Re-snapshots the environment into an existing store-backed dataset.
 
 .. deprecated:: 0.6
    ``snapshot_as_dataset(...)`` and ``to_rdflib_dataset(...)``; use

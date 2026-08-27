@@ -1,29 +1,32 @@
 OntoEnv from Python
 ===================
 
-This tutorial builds the same environment as :doc:`first-environment`, but
-from Python, and ends by running a SPARQL query against a resolved imports
-closure.
-
-About 10 minutes. You do not need to have done the CLI tutorial first.
+This tutorial builds the same environment as :doc:`first-environment` from
+Python, then runs a SPARQL query over its resolved imports closure. It does
+not depend on the CLI tutorial.
 
 .. raw:: html
 
    <div class="oe-minimum">
-     <h3>The minimum you need to know</h3>
-     <p>Four calls cover almost every use of the Python API:</p>
+     <h3>Basic workflow</h3>
+     <p>This tutorial uses four calls:</p>
    </div>
 
 .. code-block:: python
 
    from ontoenv import OntoEnv
 
-   env = OntoEnv.connect("./ontology-env")   # 1. open (creating it if needed)
-   name = env.add("./ontologies/site.ttl")   # 2. register an ontology
-   view, imported = env.get_closure(name)    # 3. read it plus its imports
-   env.close()                               # 4. release resources
+   env = OntoEnv.connect(                     # 1. open (creating if needed)
+       "./ontology-env",
+       search_directories=["./ontologies"],
+   )
+   env.update()                               # 2. scan the source directory
+   view, imported = env.get_closure(          # 3. read a resolved closure
+       "https://example.org/site"
+   )
+   env.close()                                # 4. release resources
 
-Everything below is that, slowed down.
+The rest of the tutorial explains the state each call creates or reads.
 
 Install
 -------
@@ -94,17 +97,17 @@ Connect to an environment
    print(env.get_ontology_names())
    # ['https://example.org/sensors', 'https://example.org/site']
 
-Two calls, two distinct jobs:
+These calls have separate responsibilities:
 
 ``connect`` opens the environment at ``./ontology-env``, creating it if it is
-not there. It is deliberately cheap — it does not read your ontology files.
+not there. It reads the saved catalog but does not read the ontology files.
 
 ``update`` is what scans ``search_directories`` for new and changed files,
 parses them, and follows their imports. Keeping these separate means restarting
 your program does not re-read every file on disk.
 
-Run the script a second time. ``connect`` reopens the saved environment
-directly, and ``update`` finds nothing new to do.
+On a later run, ``connect`` reopens the saved environment. ``update`` checks
+the sources and does no parsing if nothing has changed.
 
 Read a single graph
 -------------------
@@ -115,9 +118,8 @@ Read a single graph
    print(len(g))   # just the triples in site.ttl
 
 ``get_graph`` returns a read-only ``rdflib.Graph`` backed by OntoEnv's
-storage. Nothing is copied, so this is fast even for large ontologies — but
-adding or removing triples raises ``ValueError``. When you want a graph you
-can edit, ask for a copy:
+storage. It does not copy the graph. Adding or removing triples raises
+``ValueError``. Use ``copy_graph`` when the caller needs to modify it:
 
 .. code-block:: python
 
@@ -131,7 +133,7 @@ can edit, ask for a copy:
 This read-only-by-default, copy-on-request split runs through the whole API:
 every ``get_*`` method returns a view, and every ``copy_*`` method materializes
 a mutable ``rdflib`` object. :doc:`../explanation/views-and-copies` covers when
-each is the right choice.
+to use each one.
 
 Resolve the imports closure
 ---------------------------
@@ -148,9 +150,9 @@ Resolve the imports closure
 all its transitive imports, and the list of graphs that went into it.
 
 The view is not a raw concatenation. Resolved ``owl:imports`` statements are
-stripped out, the imported graphs' ontology declarations are collapsed onto
-the root, and duplicate triples appear once. It is a single flattened graph
-that stands on its own.
+removed, ontology declarations from imported graphs are collapsed onto the
+root, and duplicates appear once. The resulting graph can be passed to a
+consumer without requiring it to resolve the original imports again.
 
 As with single graphs, ``copy_closure`` gives you the same content as a
 mutable ``rdflib.Graph``:
@@ -183,8 +185,8 @@ OntoEnv's storage rather than in rdflib's Python engine:
        print(row.cls, row.label)
 
 The query sees classes from *both* files, because the closure merged them.
-That is the point: you write one query against one graph and the import
-resolution has already happened.
+The query is scoped to the resolved closure, so it sees classes from both
+source files without application code traversing the import graph.
 
 Add an ontology from the web
 ----------------------------
@@ -228,17 +230,19 @@ For a notebook or a test where nothing should be written to disk:
 .. code-block:: python
 
    env = OntoEnv(temporary=True)
+   env.add("./ontologies/sensors.ttl", fetch_imports=False)
    env.add("./ontologies/site.ttl")
 
-A temporary environment keeps everything in memory and leaves no files behind.
-It also has no saved index, so it starts from nothing every time.
+The first ``add`` registers the graph that ``site.ttl`` imports. The second can
+therefore resolve that import without accessing the network. Both graphs and
+the dependency index remain in memory; no ``.ontoenv/`` directory is written.
 
-What you learned
-----------------
+What the example did
+--------------------
 
 - ``OntoEnv.connect(path)`` opens or creates a persistent environment;
   ``update()`` is the separate, explicit step that reads source files.
-- ``get_*`` returns fast read-only views; ``copy_*`` returns mutable
+- ``get_*`` returns store-backed read-only views; ``copy_*`` returns mutable
   ``rdflib`` objects.
 - ``get_closure`` merges an ontology with its transitive imports into one
   flattened graph, and that view answers SPARQL queries directly.

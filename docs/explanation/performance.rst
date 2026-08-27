@@ -1,21 +1,24 @@
 Performance
 ===========
 
-Two claims underpin the 0.6 API: that reopening an environment is cheap
-regardless of how much data is in it, and that read-only views beat
-materialized graphs for most query workloads. This page shows the measurements
-and explains what produces them.
+The 0.6 API separates catalog access from graph access, and views from
+materialized graphs. Those choices have measurable consequences: reopening an
+environment should depend on catalog size rather than RDF triple count, while
+a view trades Python object allocation for a read-only interface. This page
+states the measurements, their scope, and the implementation details that
+produce them.
 
-The headline
-------------
+Summary of the benchmark
+------------------------
 
-- **Reopening scales with ontology count, not triple count.** About 10 ms
-  either way.
-- **Views win big on SPARQL, tie on iteration, and lose slightly on
-  microsecond triple lookups.**
+- **Warm open took about 10 ms** for both one-graph catalogs tested, containing
+  1 and 124,000 triples respectively.
+- **For the tested views,** SPARQL took less time than the in-memory rdflib
+  baseline, full iteration took a similar amount of time, and individual
+  triple lookups took more time.
 
-If you only take one thing away: prefer ``get_*`` in read paths, and reach for
-``copy_*`` when you need to mutate.
+In ordinary read paths, start with ``get_*``. Use ``copy_*`` where mutation or
+the complete ``rdflib.Graph`` API is part of the requirement.
 
 Warm starts
 -----------
@@ -32,10 +35,11 @@ development machine, and neither warm loop ever called ``get_graph``.
    cd python
    uv run python bench_catalog_warm_start.py
 
-That near-identical result is the point. Open cost tracks the number of
-catalog records, not the size of the graphs they describe, because a warm open
-reads the catalog and nothing else. It is what makes ``connect`` cheap enough
-to call at every process start.
+The near-identical result is consistent with the intended boundary: warm-open
+cost tracks catalog records, not the size of the graphs they describe. A warm
+open reads the catalog and does not call ``get_graph``. This makes
+``connect`` suitable for normal process startup; it does not characterize the
+cost of later graph operations.
 
 Views versus copies
 -------------------
@@ -72,8 +76,9 @@ Views versus copies
 Results
 -------
 
-Best of two runs on an Apple Silicon laptop. Your absolute numbers will differ;
-the *shape* of the comparison should not.
+The table reports the lower time from two runs on an Apple Silicon laptop.
+Absolute times depend on hardware, RDF input, query shape, and dependency
+versions. The results apply to this dataset and these workloads.
 
 .. list-table::
    :header-rows: 1
@@ -119,7 +124,8 @@ the *shape* of the comparison should not.
      - 10.52 ms
      - 5.50 ms
 
-Bold marks where ``ontoenv-get`` beats the in-memory baseline.
+Bold marks measurements where ``ontoenv-get`` was lower than the
+``rdflib-memory`` baseline.
 
 Measurements cover steady-state reads. Backend construction — view creation,
 closure materialization, loading the reference stores — happens before the
@@ -132,14 +138,15 @@ Reading the results
 
 **``ontoenv-copy`` ≈ ``rdflib-memory`` everywhere.** ``copy_closure``
 materializes into a vanilla rdflib ``Memory`` store, so it inherits the same
-query engine and the same profile. That equivalence is deliberate: choosing a
-copy costs you nothing beyond the materialization itself.
+query engine and the same profile. The timed region excludes the earlier
+materialization step.
 
-**Views win outright on SPARQL with small result sets.** The whole query plan
-runs against the rdf5d-backed dataset via ``spareval``, joining on integer
-term IDs and never crossing the FFI boundary for individual triples.
-``COUNT rdf:type`` is ~78× faster than in-memory rdflib (1.4 ms vs 110 ms);
-a ``LIMIT 1000`` label scan is ~1.9× faster.
+**The view had lower times for the SPARQL queries with small result sets.** The
+whole query plan runs against the rdf5d-backed dataset via ``spareval``,
+joining on integer term IDs and never crossing the FFI boundary for individual
+triples.
+``COUNT rdf:type`` took 1.4 ms through the view and 110 ms through in-memory
+rdflib. The ``LIMIT 1000`` label scan took 5.5 ms and 10.5 ms respectively.
 
 **Full iteration matches in-memory.** 131 ms vs 135 ms across ~237k triples.
 The all-unbound path streams directly from the snapshot's term-ID iterator
@@ -147,19 +154,19 @@ with a u64-keyed cache for Python terms, building no intermediate term objects
 per row.
 
 **Microsecond lookups still favour rdflib.** ``owl:imports`` matching is
-0.07 ms as a view against 0.04 ms in memory. A Python hash table is hard to
-beat when the work is a single dictionary probe. If that is your dominant
-access pattern, benchmark before assuming a view helps.
+0.07 ms as a view against 0.04 ms in memory. The in-memory implementation can
+answer this pattern with a dictionary lookup. If that is your dominant access
+pattern, benchmark it directly.
 
-**Oxigraph remains a strong SPARQL backend**, but ``ontoenv-get`` matches or
-beats it on every query workload here, at the cost of slower loads and much
-slower full iteration on Oxigraph's side. Reach for Oxigraph when the same
-data serves many queries and you can amortize the load.
+**Oxigraph had similar times for two of the SPARQL workloads.** In this
+benchmark, its load and full-iteration times were higher. If one dataset serves
+many queries, measure the complete workload, including loading and
+concurrency.
 
 .. _sidecar-index:
 
-Where the speed comes from
---------------------------
+Implementation details affecting the results
+---------------------------------------------
 
 **Permutation indexes.** Binding an rdf5d snapshot eagerly builds four
 posting-list indexes, held in memory for the life of the snapshot:
@@ -215,12 +222,12 @@ of one IRI, or when both endpoints of the path are variables.
 Rules of thumb
 --------------
 
-- Reach for ``get_*`` to keep memory low, for SPARQL that returns small result
-  sets (``COUNT``, aggregations, ``LIMIT``), and when you want a read path
-  that structurally cannot mutate the environment.
-- Reach for ``copy_*`` when you need to mutate, or need an API only a real
-  ``rdflib.Graph`` implements.
-- Prefer ``get_*`` for the supported recursive property paths — the closure
-  table exists specifically to accelerate them.
-- Reach for Oxigraph when one dataset will serve many SPARQL queries and the
-  load cost amortizes.
+- Use ``get_*`` to keep memory low, for SPARQL returning small result sets
+  (``COUNT``, aggregations, ``LIMIT``), and where code must not mutate the
+  environment.
+- Use ``copy_*`` when mutation or an API exclusive to ``rdflib.Graph`` is
+  required.
+- For the supported recursive property paths, benchmark ``get_*`` first; the
+  closure table specifically accelerates those shapes.
+- For an application serving many queries from one loaded dataset, compare
+  Oxigraph under representative load and concurrency.

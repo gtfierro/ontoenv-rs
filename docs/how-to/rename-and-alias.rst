@@ -67,7 +67,8 @@ The last row is the exception: the subject is rewritten but the version IRI
 
    After a rename the original IRI is no longer addressable. Other ontologies
    that ``owl:imports`` the original IRI will not resolve to the renamed copy
-   — re-add or update them, or add an alias.
+   until you edit their sources to import the new IRI and then update or re-add
+   them, or add an alias from the original IRI to the renamed graph.
 
 Rename an ontology already in the environment
 ---------------------------------------------
@@ -106,6 +107,10 @@ consumer imports a URL that redirects to your canonical version.
    # False
 
    env.remove_alias("https://example.org/legacy/site")
+
+The calls above demonstrate the alias lifecycle in order: create it, resolve
+it, inspect it, and remove it. Omit ``remove_alias`` when the alias should
+remain in the environment.
 
 Aliases resolve transparently: ``get_graph``, ``get_closure``, ``uri in env``,
 and ``env[uri]`` all accept an alias and return the canonical graph.

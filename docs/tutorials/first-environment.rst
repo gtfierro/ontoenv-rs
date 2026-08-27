@@ -1,31 +1,27 @@
 Your first environment
 ======================
 
-In this tutorial you will build an OntoEnv environment from scratch, watch it
-resolve an ``owl:imports`` chain, and export the result as a single file.
-Everything runs locally except one optional step at the end.
+This tutorial builds an environment from two local files, resolves their
+``owl:imports`` relationship, and exports the result as one graph. The final
+step fetches a remote ontology; it is optional. Everything before that step
+runs locally.
 
-You will need about 10 minutes.
+At a glance
+-----------
 
-.. raw:: html
-
-   <div class="oe-minimum">
-     <h3>The minimum you need to know</h3>
-     <p>Three commands cover most day-to-day use:</p>
-   </div>
+The local workflow creates an environment, inspects the ontology IRIs it
+recorded, and exports one ontology with its imports:
 
 .. code-block:: console
 
-   $ ontoenv init ./ontologies              # build an environment from a directory
-   $ ontoenv list ontologies                # see what it found
-   $ ontoenv closure <IRI> out.ttl          # export an ontology + all its imports
-
-Everything below is that, slowed down.
+   $ ontoenv init ./ontologies              # scan files and create .ontoenv/
+   $ ontoenv list ontologies                # print the recorded ontology IRIs
+   $ ontoenv closure <IRI> out.ttl          # write the IRI and its imports to out.ttl
 
 Install the CLI
 ---------------
 
-The command-line tool ships two ways. Pick whichever is easier for you:
+Install the command-line tool through Cargo or PyPI:
 
 .. code-block:: bash
 
@@ -98,9 +94,11 @@ Run ``init`` and tell it which directory to scan:
    $ ontoenv init ./ontologies
    Initialized environment with 2 unique ontologies (2 records).
 
-Two things just happened. OntoEnv walked ``./ontologies``, parsed every RDF
-file it found, and recorded the ontology IRI each file declares. It also
-created a ``.ontoenv/`` directory to hold what it learned.
+``init`` walked ``./ontologies``, parsed each matching RDF file, and recorded
+the ontology IRI that each file declares. It also created ``.ontoenv/``, which
+holds the graphs and the catalog used to find them later.
+
+The environment now contains two graphs and the IRI declared by each one.
 
 Every later command finds that directory by walking up from wherever you are,
 so you can work from any subdirectory of ``tutorial/``.
@@ -118,11 +116,10 @@ See what was discovered
    file:///home/you/tutorial/ontologies/sensors.ttl
    file:///home/you/tutorial/ontologies/site.ttl
 
-OntoEnv now knows that the IRI ``https://example.org/sensors`` — the one
-``site.ttl`` imports — comes from the file ``ontologies/sensors.ttl``. It made
-that connection by reading the ``owl:Ontology`` declaration inside each file,
-not by guessing from filenames. To see the pairing directly, use ``ontoenv
-dump``.
+The environment now maps ``https://example.org/sensors`` — the IRI imported by
+``site.ttl`` — to ``ontologies/sensors.ttl``. That mapping comes from the
+``owl:Ontology`` declaration in the file, not from its filename. ``ontoenv
+dump`` shows the complete mapping.
 
 For a summary of the environment itself:
 
@@ -153,8 +150,8 @@ ended up in your environment.
 Export a closure
 ----------------
 
-Now for the payoff. Ask for ``site`` plus everything it transitively imports,
-merged into a single file:
+Request ``site`` and every ontology reachable through its imports, merged into
+a single file:
 
 .. code-block:: console
 
@@ -169,10 +166,13 @@ are worth noticing:
   ``https://example.org/site``. The declarations from the imported graphs were
   collapsed onto that root.
 
-That is what OntoEnv means by a closure: not a raw concatenation, but a
-flattened graph that stands on its own. If you want the raw merge instead,
-:doc:`../explanation/views-and-copies` explains the difference and
-``ontoenv union`` gives you it.
+This is OntoEnv's closure representation: a flattened graph intended for a
+consumer that should not resolve imports again. For the unmodified merge,
+use ``ontoenv union``; :doc:`../explanation/views-and-copies` describes the
+difference.
+
+At this point the local example is complete: one command resolved the import
+edge and produced a graph that can be handed to another RDF tool.
 
 To get just one graph, without its imports:
 
@@ -193,7 +193,10 @@ fetch it, then follow its imports and fetch those too:
    $ ontoenv add https://brickschema.org/schema/1.4.4/Brick.ttl
    $ ontoenv list ontologies
 
-You now have Brick and its dependencies alongside your own files. Remote
+The first command downloads Brick, follows its imports, and stores the graphs.
+The second prints every ontology IRI now recorded in the environment, so the
+output includes Brick and its dependencies alongside the two local graphs.
+Remote
 ontologies are cached on disk, so a second run does not re-download them —
 :doc:`../how-to/work-offline` covers how long the cache is trusted and how to
 work with no network at all.
@@ -206,16 +209,16 @@ Check for problems
    $ ontoenv doctor
    No issues found.
 
-``doctor`` looks for the mistakes that actually bite: two files declaring the
-same ontology IRI, files with no ``owl:Ontology`` declaration at all, and
-prefixes bound to conflicting namespaces.
+``doctor`` checks for duplicate ontology IRIs, files with no ``owl:Ontology``
+declaration, and prefixes bound to conflicting namespaces.
 
 .. code-block:: console
 
    $ ontoenv list missing
 
-This lists imports nothing in the environment can resolve — usually a typo, a
-dead URL, or a file you have not added yet.
+This prints every ``owl:imports`` IRI that does not resolve to a graph in the
+environment. Common causes are a misspelled IRI, an unavailable URL, or a
+source that has not been added.
 
 Clean up
 --------
@@ -224,17 +227,17 @@ Clean up
 
    $ ontoenv reset
 
-This removes ``.ontoenv/`` and everything OntoEnv put in it. Your ontology
-files are untouched.
+``reset`` asks for confirmation. If confirmed, it removes ``.ontoenv/`` and
+everything OntoEnv put in it. Your ontology files are untouched.
 
-What you learned
-----------------
+What you built
+--------------
 
-- An environment maps ontology IRIs to the places those ontologies live.
+- The environment maps ontology IRIs to the places those ontologies live.
 - ``init`` builds one from a directory; ``add`` registers individual files or
   URLs and follows their imports.
-- ``closure`` exports an ontology merged with its transitive imports, cleaned
-  up so the result stands alone.
+- ``closure`` exports an ontology with its transitive imports, transformed so
+  a downstream consumer does not need to resolve the same imports again.
 - ``why``, ``doctor``, and ``list missing`` tell you what the import graph
   looks like and where it is broken.
 

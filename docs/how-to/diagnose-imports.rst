@@ -42,15 +42,25 @@ Common causes, in rough order of likelihood:
 4. **You are offline** and the ontology is remote. Check with
    ``ontoenv status``.
 
-To make a missing import a hard error instead of a warning:
+To rescan sources now, treating a missing import as an error:
 
 .. code-block:: console
 
    $ ontoenv update --strict
 
+``update`` scans configured sources and follows their imports. ``--strict``
+changes missing imports from warnings to errors and saves strict mode for later
+commands. To change only the saved setting, without scanning, run
+``ontoenv config set strict true`` instead.
+
 .. code-block:: python
 
    env.set_strict(True)
+   env.update()
+
+``set_strict`` changes the saved setting on the open environment. ``update``
+then scans sources under that policy. Omit the second call when you only want
+to change the setting for future operations.
 
 In Python, an unresolved import passed to ``copy_graph`` raises
 :class:`ontoenv.UnresolvedImportError`, which subclasses ``LookupError``. An
