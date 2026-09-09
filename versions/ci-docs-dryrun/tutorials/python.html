@@ -1,0 +1,572 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="How-to guides" href="../how-to/index.html"><link rel="prev" title="Your first environment" href="first-environment.html">
+
+    <!-- Generated with Sphinx 7.4.7 and Furo 2025.09.25 -->
+        <title>OntoEnv from Python - OntoEnv Documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=e49ed175" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">OntoEnv Documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  
+  <span class="sidebar-brand-text">OntoEnv Documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul class="current">
+<li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Tutorials</a><input aria-label="Toggle navigation of Tutorials" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="first-environment.html">Your first environment</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">OntoEnv from Python</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../how-to/index.html">How-to guides</a><input aria-label="Toggle navigation of How-to guides" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/choose-what-gets-loaded.html">Choose what gets loaded</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/work-offline.html">Work offline and control caching</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/rename-and-alias.html">Rename and alias ontologies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-in-a-service.html">Use OntoEnv in a long-running service</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/query-with-sparql.html">Query with SPARQL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-a-custom-graph-store.html">Use your own graph storage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/recover-an-environment.html">Recover an interrupted environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/diagnose-imports.html">Diagnose import problems</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../reference/index.html">Reference</a><input aria-label="Toggle navigation of Reference" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../reference/cli.html">CLI reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/python.html">Python API reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/configuration.html">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/rdflib-store.html">ViewGraph and OntoEnvStore</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/graph-store.html">Graph store protocol</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/api.html">Generated API</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../explanation/index.html">Explanation</a><input aria-label="Toggle navigation of Explanation" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/concepts.html">Concepts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/views-and-copies.html">Views and copies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/lifecycle.html">Opening an environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/staying-in-sync.html">Staying in sync</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/performance.html">Performance</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Project</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../migration-0.6.html">Migrating from 0.5 to 0.6</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development.html">Building from source</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://docs.rs/ontoenv">Rust API (docs.rs)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../changelog.html">Changelog</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../_sources/tutorials/python.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="ontoenv-from-python">
+<h1>OntoEnv from Python<a class="headerlink" href="#ontoenv-from-python" title="Link to this heading">¶</a></h1>
+<p>This tutorial builds the same environment as <a class="reference internal" href="first-environment.html"><span class="doc">Your first environment</span></a>, but
+from Python, and ends by running a SPARQL query against a resolved imports
+closure.</p>
+<p>About 10 minutes. You do not need to have done the CLI tutorial first.</p>
+<div class="oe-minimum">
+  <h3>The minimum you need to know</h3>
+  <p>Four calls cover almost every use of the Python API:</p>
+</div><div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ontoenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">OntoEnv</span>
+
+<span class="n">env</span> <span class="o">=</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;./ontology-env&quot;</span><span class="p">)</span>   <span class="c1"># 1. open (creating it if needed)</span>
+<span class="n">name</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;./ontologies/site.ttl&quot;</span><span class="p">)</span>   <span class="c1"># 2. register an ontology</span>
+<span class="n">view</span><span class="p">,</span> <span class="n">imported</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_closure</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>    <span class="c1"># 3. read it plus its imports</span>
+<span class="n">env</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>                               <span class="c1"># 4. release resources</span>
+</pre></div>
+</div>
+<p>Everything below is that, slowed down.</p>
+<section id="install">
+<h2>Install<a class="headerlink" href="#install" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>ontoenv<span class="w">    </span><span class="c1"># Python 3.11+</span>
+</pre></div>
+</div>
+<p>Wheels are pre-built, so no Rust toolchain is required. You will also want
+<code class="docutils literal notranslate"><span class="pre">rdflib</span></code>, which comes along as a dependency.</p>
+</section>
+<section id="create-some-ontologies">
+<h2>Create some ontologies<a class="headerlink" href="#create-some-ontologies" title="Link to this heading">¶</a></h2>
+<p>Make a working directory with two ontology files:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir<span class="w"> </span>-p<span class="w"> </span>tutorial/ontologies
+<span class="nb">cd</span><span class="w"> </span>tutorial
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">ontologies/sensors.ttl</span></code>:</p>
+<div class="highlight-turtle notranslate"><div class="highlight"><pre><span></span><span class="k">@prefix</span><span class="w"> </span><span class="nn">owl:</span><span class="w">  </span><span class="nv">&lt;http://www.w3.org/2002/07/owl#&gt;</span><span class="w"> </span><span class="p">.</span>
+<span class="k">@prefix</span><span class="w"> </span><span class="nn">rdfs:</span><span class="w"> </span><span class="nv">&lt;http://www.w3.org/2000/01/rdf-schema#&gt;</span><span class="w"> </span><span class="p">.</span>
+<span class="k">@prefix</span><span class="w"> </span><span class="nn">sen:</span><span class="w">  </span><span class="nv">&lt;https://example.org/sensors#&gt;</span><span class="w"> </span><span class="p">.</span>
+
+<span class="nv">&lt;https://example.org/sensors&gt;</span> <span class="kt">a</span> <span class="nn">owl</span><span class="p">:</span><span class="nt">Ontology</span> <span class="p">.</span>
+
+<span class="nn">sen</span><span class="p">:</span><span class="nt">Sensor</span>       <span class="kt">a</span> <span class="nn">owl</span><span class="p">:</span><span class="nt">Class</span> <span class="p">;</span> <span class="nn">rdfs</span><span class="p">:</span><span class="nt">label</span> <span class="s">&quot;Sensor&quot;</span> <span class="p">.</span>
+<span class="nn">sen</span><span class="p">:</span><span class="nt">Thermometer</span>  <span class="kt">a</span> <span class="nn">owl</span><span class="p">:</span><span class="nt">Class</span> <span class="p">;</span> <span class="nn">rdfs</span><span class="p">:</span><span class="nt">subClassOf</span> <span class="nn">sen</span><span class="p">:</span><span class="nt">Sensor</span> <span class="p">.</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">ontologies/site.ttl</span></code>:</p>
+<div class="highlight-turtle notranslate"><div class="highlight"><pre><span></span><span class="k">@prefix</span><span class="w"> </span><span class="nn">owl:</span><span class="w">  </span><span class="nv">&lt;http://www.w3.org/2002/07/owl#&gt;</span><span class="w"> </span><span class="p">.</span>
+<span class="k">@prefix</span><span class="w"> </span><span class="nn">rdfs:</span><span class="w"> </span><span class="nv">&lt;http://www.w3.org/2000/01/rdf-schema#&gt;</span><span class="w"> </span><span class="p">.</span>
+<span class="k">@prefix</span><span class="w"> </span><span class="nn">sen:</span><span class="w">  </span><span class="nv">&lt;https://example.org/sensors#&gt;</span><span class="w"> </span><span class="p">.</span>
+<span class="k">@prefix</span><span class="w"> </span><span class="nn">site:</span><span class="w"> </span><span class="nv">&lt;https://example.org/site#&gt;</span><span class="w"> </span><span class="p">.</span>
+
+<span class="nv">&lt;https://example.org/site&gt;</span> <span class="kt">a</span> <span class="nn">owl</span><span class="p">:</span><span class="nt">Ontology</span> <span class="p">;</span>
+    <span class="nn">owl</span><span class="p">:</span><span class="nt">imports</span> <span class="nv">&lt;https://example.org/sensors&gt;</span> <span class="p">.</span>
+
+<span class="nn">site</span><span class="p">:</span><span class="nt">Room</span> <span class="kt">a</span> <span class="nn">owl</span><span class="p">:</span><span class="nt">Class</span> <span class="p">;</span> <span class="nn">rdfs</span><span class="p">:</span><span class="nt">label</span> <span class="s">&quot;Room&quot;</span> <span class="p">.</span>
+<span class="nn">site</span><span class="p">:</span><span class="nt">hasSensor</span> <span class="kt">a</span> <span class="nn">owl</span><span class="p">:</span><span class="nt">ObjectProperty</span> <span class="p">;</span>
+    <span class="nn">rdfs</span><span class="p">:</span><span class="nt">domain</span> <span class="nn">site</span><span class="p">:</span><span class="nt">Room</span> <span class="p">;</span>
+    <span class="nn">rdfs</span><span class="p">:</span><span class="nt">range</span> <span class="nn">sen</span><span class="p">:</span><span class="nt">Sensor</span> <span class="p">.</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">site.ttl</span></code> imports <code class="docutils literal notranslate"><span class="pre">https://example.org/sensors</span></code> by IRI. Nothing in the
+file says where that ontology lives; resolving that is OntoEnv’s job.</p>
+</section>
+<section id="connect-to-an-environment">
+<h2>Connect to an environment<a class="headerlink" href="#connect-to-an-environment" title="Link to this heading">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ontoenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">OntoEnv</span>
+
+<span class="n">env</span> <span class="o">=</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span>
+    <span class="s2">&quot;./ontology-env&quot;</span><span class="p">,</span>
+    <span class="n">search_directories</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;./ontologies&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="n">env</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">env</span><span class="o">.</span><span class="n">get_ontology_names</span><span class="p">())</span>
+<span class="c1"># [&#39;https://example.org/sensors&#39;, &#39;https://example.org/site&#39;]</span>
+</pre></div>
+</div>
+<p>Two calls, two distinct jobs:</p>
+<p><code class="docutils literal notranslate"><span class="pre">connect</span></code> opens the environment at <code class="docutils literal notranslate"><span class="pre">./ontology-env</span></code>, creating it if it is
+not there. It is deliberately cheap — it does not read your ontology files.</p>
+<p><code class="docutils literal notranslate"><span class="pre">update</span></code> is what scans <code class="docutils literal notranslate"><span class="pre">search_directories</span></code> for new and changed files,
+parses them, and follows their imports. Keeping these separate means restarting
+your program does not re-read every file on disk.</p>
+<p>Run the script a second time. <code class="docutils literal notranslate"><span class="pre">connect</span></code> reopens the saved environment
+directly, and <code class="docutils literal notranslate"><span class="pre">update</span></code> finds nothing new to do.</p>
+</section>
+<section id="read-a-single-graph">
+<h2>Read a single graph<a class="headerlink" href="#read-a-single-graph" title="Link to this heading">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">g</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_graph</span><span class="p">(</span><span class="s2">&quot;https://example.org/site&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">g</span><span class="p">))</span>   <span class="c1"># just the triples in site.ttl</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">get_graph</span></code> returns a read-only <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code> backed by OntoEnv’s
+storage. Nothing is copied, so this is fast even for large ontologies — but
+adding or removing triples raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. When you want a graph you
+can edit, ask for a copy:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rdflib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">URIRef</span>
+
+<span class="n">g</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">copy_graph</span><span class="p">(</span><span class="s2">&quot;https://example.org/site&quot;</span><span class="p">)</span>
+<span class="n">g</span><span class="o">.</span><span class="n">add</span><span class="p">((</span><span class="n">URIRef</span><span class="p">(</span><span class="s2">&quot;https://example.org/site#Room&quot;</span><span class="p">),</span>
+       <span class="n">URIRef</span><span class="p">(</span><span class="s2">&quot;http://www.w3.org/2000/01/rdf-schema#comment&quot;</span><span class="p">),</span>
+       <span class="n">Literal</span><span class="p">(</span><span class="s2">&quot;A room&quot;</span><span class="p">)))</span>
+</pre></div>
+</div>
+<p>This read-only-by-default, copy-on-request split runs through the whole API:
+every <code class="docutils literal notranslate"><span class="pre">get_*</span></code> method returns a view, and every <code class="docutils literal notranslate"><span class="pre">copy_*</span></code> method materializes
+a mutable <code class="docutils literal notranslate"><span class="pre">rdflib</span></code> object. <a class="reference internal" href="../explanation/views-and-copies.html"><span class="doc">Views and copies</span></a> covers when
+each is the right choice.</p>
+</section>
+<section id="resolve-the-imports-closure">
+<h2>Resolve the imports closure<a class="headerlink" href="#resolve-the-imports-closure" title="Link to this heading">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">view</span><span class="p">,</span> <span class="n">imported</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_closure</span><span class="p">(</span><span class="s2">&quot;https://example.org/site&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">imported</span><span class="p">)</span>
+<span class="c1"># [&#39;https://example.org/site&#39;, &#39;https://example.org/sensors&#39;]</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">view</span><span class="p">))</span>   <span class="c1"># triples from both graphs, merged</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">get_closure</span></code> returns two things: a read-only view over the ontology plus
+all its transitive imports, and the list of graphs that went into it.</p>
+<p>The view is not a raw concatenation. Resolved <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> statements are
+stripped out, the imported graphs’ ontology declarations are collapsed onto
+the root, and duplicate triples appear once. It is a single flattened graph
+that stands on its own.</p>
+<p>As with single graphs, <code class="docutils literal notranslate"><span class="pre">copy_closure</span></code> gives you the same content as a
+mutable <code class="docutils literal notranslate"><span class="pre">rdflib.Graph</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">g</span><span class="p">,</span> <span class="n">imported</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">copy_closure</span><span class="p">(</span><span class="s2">&quot;https://example.org/site&quot;</span><span class="p">)</span>
+<span class="n">g</span><span class="o">.</span><span class="n">serialize</span><span class="p">(</span><span class="s2">&quot;closure.ttl&quot;</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;turtle&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="query-it-with-sparql">
+<h2>Query it with SPARQL<a class="headerlink" href="#query-it-with-sparql" title="Link to this heading">¶</a></h2>
+<p>The view supports <code class="docutils literal notranslate"><span class="pre">query()</span></code> directly, and the query executes in Rust against
+OntoEnv’s storage rather than in rdflib’s Python engine:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">view</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_closure</span><span class="p">(</span><span class="s2">&quot;https://example.org/site&quot;</span><span class="p">)</span>
+
+<span class="n">rows</span> <span class="o">=</span> <span class="n">view</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;</span>
+<span class="s2">    PREFIX owl:  &lt;http://www.w3.org/2002/07/owl#&gt;</span>
+<span class="s2">    SELECT ?cls ?label WHERE {</span>
+<span class="s2">        ?cls a owl:Class .</span>
+<span class="s2">        OPTIONAL { ?cls rdfs:label ?label }</span>
+<span class="s2">    }</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">cls</span><span class="p">,</span> <span class="n">row</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The query sees classes from <em>both</em> files, because the closure merged them.
+That is the point: you write one query against one graph and the import
+resolution has already happened.</p>
+</section>
+<section id="add-an-ontology-from-the-web">
+<h2>Add an ontology from the web<a class="headerlink" href="#add-an-ontology-from-the-web" title="Link to this heading">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">name</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;https://brickschema.org/schema/1.4.4/Brick.ttl&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>   <span class="c1"># &#39;https://brickschema.org/schema/1.4/Brick&#39;</span>
+
+<span class="n">view</span><span class="p">,</span> <span class="n">imported</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_closure</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">imported</span><span class="p">)</span><span class="si">}</span><span class="s2"> graphs, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">view</span><span class="p">)</span><span class="si">}</span><span class="s2"> triples&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">add</span></code> fetches the URL, follows its <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code>, fetches those, and
+returns the ontology’s canonical IRI — which, as here, is often not the same
+as the URL you downloaded it from. Remote copies are cached on disk.</p>
+</section>
+<section id="close-the-environment">
+<h2>Close the environment<a class="headerlink" href="#close-the-environment" title="Link to this heading">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">env</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Or let a <code class="docutils literal notranslate"><span class="pre">with</span></code> block do it:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;./ontology-env&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">env</span><span class="p">:</span>
+    <span class="n">view</span><span class="p">,</span> <span class="n">imported</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_closure</span><span class="p">(</span><span class="s2">&quot;https://example.org/site&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">view</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>The context manager is a convenience for scripts, not a requirement. A
+long-running server should connect once at startup and close at shutdown —
+see <a class="reference internal" href="../how-to/use-in-a-service.html"><span class="doc">Use OntoEnv in a long-running service</span></a>.</p>
+</section>
+<section id="skip-persistence-entirely">
+<h2>Skip persistence entirely<a class="headerlink" href="#skip-persistence-entirely" title="Link to this heading">¶</a></h2>
+<p>For a notebook or a test where nothing should be written to disk:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">env</span> <span class="o">=</span> <span class="n">OntoEnv</span><span class="p">(</span><span class="n">temporary</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">env</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;./ontologies/site.ttl&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>A temporary environment keeps everything in memory and leaves no files behind.
+It also has no saved index, so it starts from nothing every time.</p>
+</section>
+<section id="what-you-learned">
+<h2>What you learned<a class="headerlink" href="#what-you-learned" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv.connect(path)</span></code> opens or creates a persistent environment;
+<code class="docutils literal notranslate"><span class="pre">update()</span></code> is the separate, explicit step that reads source files.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">get_*</span></code> returns fast read-only views; <code class="docutils literal notranslate"><span class="pre">copy_*</span></code> returns mutable
+<code class="docutils literal notranslate"><span class="pre">rdflib</span></code> objects.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">get_closure</span></code> merges an ontology with its transitive imports into one
+flattened graph, and that view answers SPARQL queries directly.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OntoEnv(temporary=True)</span></code> gives you the same API with nothing persisted.</p></li>
+</ul>
+</section>
+<section id="next-steps">
+<h2>Next steps<a class="headerlink" href="#next-steps" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="../how-to/use-in-a-service.html"><span class="doc">Use OntoEnv in a long-running service</span></a> — connecting once and sharing the
+environment across requests.</p></li>
+<li><p><a class="reference internal" href="../how-to/query-with-sparql.html"><span class="doc">Query with SPARQL</span></a> — using the environment as an <code class="docutils literal notranslate"><span class="pre">rdflib</span></code>
+store and querying across named graphs.</p></li>
+<li><p><a class="reference internal" href="../reference/python.html"><span class="doc">Python API reference</span></a> — every method, grouped by what it does.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../how-to/index.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">How-to guides</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="first-environment.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Your first environment</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">OntoEnv from Python</a><ul>
+<li><a class="reference internal" href="#install">Install</a></li>
+<li><a class="reference internal" href="#create-some-ontologies">Create some ontologies</a></li>
+<li><a class="reference internal" href="#connect-to-an-environment">Connect to an environment</a></li>
+<li><a class="reference internal" href="#read-a-single-graph">Read a single graph</a></li>
+<li><a class="reference internal" href="#resolve-the-imports-closure">Resolve the imports closure</a></li>
+<li><a class="reference internal" href="#query-it-with-sparql">Query it with SPARQL</a></li>
+<li><a class="reference internal" href="#add-an-ontology-from-the-web">Add an ontology from the web</a></li>
+<li><a class="reference internal" href="#close-the-environment">Close the environment</a></li>
+<li><a class="reference internal" href="#skip-persistence-entirely">Skip persistence entirely</a></li>
+<li><a class="reference internal" href="#what-you-learned">What you learned</a></li>
+<li><a class="reference internal" href="#next-steps">Next steps</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=8fa8b3e9"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/expand-nav.js?v=c9702942"></script>
+    </body>
+</html>
