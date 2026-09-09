@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-09-09
+
 ### Changed
 - Ontology sources are now fetched and parsed concurrently. `add`, `update`,
   and `init` process the `owl:imports` graph in breadth-first waves: every
