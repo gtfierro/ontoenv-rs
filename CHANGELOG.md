@@ -20,7 +20,9 @@ All notable changes to this project are documented here. Releases follow [Semant
   read its metadata. Sources are parsed straight into a triple list, the
   `owl:Ontology` declaration, imports, version properties, and SHACL prefix
   declarations are extracted with linear scans, and the triples are bulk-loaded
-  into the destination store once. `Ontology::from_triples` exposes this path.
+  into the destination store once. Adopting or refreshing from an existing
+  backend uses the same extractor, so `Ontology::from_store` is gone;
+  `Ontology::from_triples` and `Ontology::from_graph` replace it.
 - One HTTP client is now shared by all fetches instead of being rebuilt (TLS
   configuration, root certificates, connection pool) for every request, so
   consecutive requests to the same host reuse their connection.

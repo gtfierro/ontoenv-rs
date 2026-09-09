@@ -7,10 +7,9 @@ use anyhow::Result;
 use chrono::prelude::*;
 use log::{debug, info, warn};
 use oxigraph::model::{
-    Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNode,
-    NamedOrBlankNodeRef, Term, TermRef, Triple,
+    Graph as OxigraphGraph, GraphName, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, TermRef,
+    Triple, TripleRef,
 };
-use oxigraph::store::Store;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
 use std::collections::{HashMap, HashSet};
@@ -582,261 +581,21 @@ impl Ontology {
         &self.namespace_map
     }
 
-    fn build_from_subject_in_store(
-        store: &Store,
-        graph_name: GraphNameRef,
-        ontology_subject: NamedOrBlankNode,
+    /// Creates an `Ontology` from a materialized graph. See [`Self::from_triples`].
+    pub fn from_graph(
+        graph: &OxigraphGraph,
         location: OntologyLocation,
-    ) -> Result<Self> {
-        debug!("got ontology name: {ontology_subject}");
-
-        // Extract SHACL prefix declarations into a namespace map for later reuse.
-        let mut namespace_map = HashMap::new();
-
-        let declare_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#declare");
-        let prefix_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#prefix");
-        let namespace_prop = NamedNode::new_unchecked("http://www.w3.org/ns/shacl#namespace");
-
-        let ontology_subject_ref = ontology_subject.as_ref();
-
-        // Walk sh:declare links off the ontology to find prefix/namespace pairs.
-        for decl_obj in store
-            .quads_for_pattern(
-                Some(ontology_subject_ref),
-                Some(declare_prop.as_ref()),
-                None,
-                Some(graph_name),
-            )
-            .filter_map(Result::ok)
-            .map(|q| q.object)
-        {
-            let decl_subj = match &decl_obj {
-                Term::NamedNode(n) => NamedOrBlankNode::NamedNode(n.clone()),
-                Term::BlankNode(b) => NamedOrBlankNode::BlankNode(b.clone()),
-                _ => continue,
-            };
-
-            let prefix_term = store
-                .quads_for_pattern(
-                    Some(decl_subj.as_ref()),
-                    Some(prefix_prop.as_ref()),
-                    None,
-                    Some(graph_name),
-                )
-                .filter_map(Result::ok)
-                .map(|q| q.object)
-                .next();
-            let namespace_term = store
-                .quads_for_pattern(
-                    Some(decl_subj.as_ref()),
-                    Some(namespace_prop.as_ref()),
-                    None,
-                    Some(graph_name),
-                )
-                .filter_map(Result::ok)
-                .map(|q| q.object)
-                .next();
-
-            if let (Some(Term::Literal(prefix_lit)), Some(Term::Literal(namespace_lit))) =
-                (prefix_term, namespace_term)
-            {
-                namespace_map.insert(
-                    prefix_lit.value().to_string(),
-                    namespace_lit.value().to_string(),
-                );
-            }
-        }
-
-        // Collect owl:imports objects from the ontology subject.
-        let imports: Vec<Term> = store
-            .quads_for_pattern(
-                Some(ontology_subject_ref),
-                Some(IMPORTS),
-                None,
-                Some(graph_name),
-            )
-            .filter_map(Result::ok)
-            .map(|q| q.object)
-            .collect::<Vec<_>>();
-
-        // Extract version properties directly on the ontology subject.
-        let mut version_properties: HashMap<NamedNode, String> =
-            ONTOLOGY_VERSION_IRIS
-                .iter()
-                .fold(HashMap::new(), |mut acc, &iri| {
-                    if let Some(o) = store
-                        .quads_for_pattern(
-                            Some(ontology_subject_ref),
-                            Some(iri),
-                            None,
-                            Some(graph_name),
-                        )
-                        .filter_map(Result::ok)
-                        .map(|q| q.object)
-                        .next()
-                    {
-                        match o {
-                            Term::NamedNode(s) => {
-                                acc.insert(iri.into(), s.to_string());
-                            }
-                            Term::Literal(lit) => {
-                                acc.insert(iri.into(), lit.to_string());
-                            }
-                            _ => (),
-                        }
-                    }
-                    acc
-                });
-
-        // Check for version properties in linked graph metadata nodes.
-        let graph_metadata: Vec<Term> = store
-            .quads_for_pattern(
-                Some(ontology_subject_ref),
-                Some(HAS_GRAPH_METADATA),
-                None,
-                Some(graph_name),
-            )
-            .filter_map(Result::ok)
-            .map(|q| q.object)
-            .collect::<Vec<_>>();
-        for value in graph_metadata {
-            let graph_iri = match value {
-                Term::NamedNode(s) => s,
-                _ => continue,
-            };
-            for iri in ONTOLOGY_VERSION_IRIS.iter() {
-                if let Some(value) = store
-                    .quads_for_pattern(
-                        Some(NamedOrBlankNodeRef::NamedNode(graph_iri.as_ref())),
-                        Some(*iri),
-                        None,
-                        Some(graph_name),
-                    )
-                    .filter_map(Result::ok)
-                    .map(|q| q.object)
-                    .next()
-                {
-                    match value {
-                        Term::NamedNode(s) => {
-                            version_properties.insert((*iri).into(), s.to_string());
-                        }
-                        Term::Literal(lit) => {
-                            version_properties.insert((*iri).into(), lit.to_string());
-                        }
-                        _ => (),
-                    }
-                }
-            }
-        }
-        // Log extracted version properties for debugging.
-        for (k, v) in version_properties.iter() {
-            debug!("{k}: {v}");
-        }
-
-        info!("Fetched graph {ontology_subject} from location: {location:?}");
-
-        let ontology_name: NamedNode = match ontology_subject {
-            NamedOrBlankNode::NamedNode(s) => s,
-            _ => panic!("Ontology name is not an IRI"),
-        };
-
-        // Convert import terms to NamedNodes and drop self-imports.
-        let imports: Vec<NamedNode> = imports
-            .iter()
-            .map(|t| match t {
-                Term::NamedNode(s) => s,
-                _ => panic!("Import is not an IRI"),
-            })
-            .filter(|s| **s != ontology_name)
-            .cloned()
-            .collect();
-
-        Ok(Ontology {
-            id: GraphIdentifier {
-                location: location.clone(),
-                name: ontology_name.clone(),
-            },
-            name: ontology_name,
-            imports,
-            location: Some(location),
-            version_properties,
-            last_updated: None,
-            namespace_map,
-            content_hash: None,
-        })
-    }
-
-    /// Creates an `Ontology` from a graph in a `Store`.
-    pub fn from_store(
-        store: &Store,
-        id: &GraphIdentifier,
         require_ontology_names: bool,
     ) -> Result<Self> {
-        // Build an Ontology by inspecting triples in the store for the given graph.
-        let graph_name = id.graphname()?;
-        let graph_name_ref = graph_name.as_ref();
-        let location = id.location().clone();
-
-        // get the rdf:type owl:Ontology declarations
-        let mut decls: Vec<NamedOrBlankNode> = store
-            .quads_for_pattern(
-                None,
-                Some(TYPE),
-                Some(ONTOLOGY.into()),
-                Some(graph_name_ref),
-            )
-            .filter_map(Result::ok)
-            .map(|q| q.subject)
-            .collect::<Vec<_>>();
-
-        // if decls is empty, then find all subjects of sh:declare
-        if decls.is_empty() {
-            decls.extend(
-                store
-                    .quads_for_pattern(None, Some(DECLARE), None, Some(graph_name_ref))
-                    .filter_map(Result::ok)
-                    .map(|t| t.subject),
-            );
-        }
-
-        if decls.len() > 1 {
-            warn!("Multiple ontology declarations found in {location}, using first one");
-        }
-
-        if decls.is_empty() {
-            if require_ontology_names {
-                return Err(anyhow::anyhow!(
-                    "No ontology declaration found in {}",
-                    location
-                ));
-            }
-            // Fall back to the location IRI when no explicit ontology declaration exists.
-            warn!("No ontology declaration found in {location}. Using this as the ontology name");
-            let ontology_subject = NamedOrBlankNode::NamedNode(location.to_iri());
-            Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
-        } else {
-            let decl = decls.into_iter().next().unwrap();
-            let ontology_subject = match decl {
-                NamedOrBlankNode::NamedNode(s) => NamedOrBlankNode::NamedNode(s),
-                _ => {
-                    // Blank nodes are not stable ontology identifiers; fail in strict mode.
-                    return Err(anyhow::anyhow!(
-                        "Ontology declaration subject is not a NamedNode, skipping."
-                    ));
-                }
-            };
-            Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
-        }
+        let triples: Vec<Triple> = graph.iter().map(TripleRef::into_owned).collect();
+        Self::from_triples(&triples, location, require_ontology_names)
     }
 
-    /// Creates an `Ontology` from an in-memory triple list without staging the
-    /// triples in a [`Store`].
+    /// Creates an `Ontology` from a parsed triple list.
     ///
-    /// This is the path used when sources are parsed off the main thread: a
-    /// handful of linear scans over the parsed triples replace the index
-    /// construction that a staging store would otherwise pay for, and the
-    /// caller can bulk-load the same triples straight into the destination
-    /// store afterwards.
+    /// A handful of linear scans extract the ontology declaration, imports,
+    /// version properties, and SHACL prefix declarations, so no store or
+    /// index has to be built just to read metadata.
     pub fn from_triples(
         triples: &[Triple],
         location: OntologyLocation,
@@ -934,34 +693,32 @@ impl Ontology {
         }
 
         // Pass 2: SHACL prefix declarations and linked graph-metadata nodes.
-        let mut declared: HashMap<NamedOrBlankNodeRef<'_>, (Option<String>, Option<String>)> =
-            HashMap::new();
+        let mut prefixes: HashMap<NamedOrBlankNodeRef<'_>, String> = HashMap::new();
+        let mut namespaces: HashMap<NamedOrBlankNodeRef<'_>, String> = HashMap::new();
         if !declare_nodes.is_empty() || !metadata_nodes.is_empty() {
             for triple in triples {
                 let subject = triple.subject.as_ref();
+                let predicate = triple.predicate.as_ref();
+                let object = triple.object.as_ref();
                 if declare_nodes.contains(&subject) {
-                    let predicate = triple.predicate.as_ref();
-                    if predicate == SH_PREFIX || predicate == SH_NAMESPACE {
-                        if let TermRef::Literal(lit) = triple.object.as_ref() {
-                            let entry = declared.entry(subject).or_default();
-                            let slot = if predicate == SH_PREFIX {
-                                &mut entry.0
-                            } else {
-                                &mut entry.1
-                            };
-                            if slot.is_none() {
-                                *slot = Some(lit.value().to_string());
-                            }
+                    if let TermRef::Literal(lit) = object {
+                        if predicate == SH_PREFIX {
+                            prefixes
+                                .entry(subject)
+                                .or_insert_with(|| lit.value().to_string());
+                        } else if predicate == SH_NAMESPACE {
+                            namespaces
+                                .entry(subject)
+                                .or_insert_with(|| lit.value().to_string());
                         }
                     }
                 }
                 if let NamedOrBlankNodeRef::NamedNode(n) = subject {
                     if metadata_nodes.contains(&n) {
-                        let predicate = triple.predicate.as_ref();
                         if let Some(iri) =
                             ONTOLOGY_VERSION_IRIS.iter().find(|iri| **iri == predicate)
                         {
-                            if let Some(value) = version_property_value(triple.object.as_ref()) {
+                            if let Some(value) = version_property_value(object) {
                                 // Graph metadata values take precedence over the
                                 // values declared directly on the ontology subject.
                                 version_properties.insert((*iri).into(), value);
@@ -971,9 +728,9 @@ impl Ontology {
                 }
             }
         }
-        let namespace_map: HashMap<String, String> = declared
-            .into_values()
-            .filter_map(|(prefix, namespace)| Some((prefix?, namespace?)))
+        let namespace_map: HashMap<String, String> = prefixes
+            .into_iter()
+            .filter_map(|(node, prefix)| Some((prefix, namespaces.remove(&node)?)))
             .collect();
 
         for (k, v) in version_properties.iter() {

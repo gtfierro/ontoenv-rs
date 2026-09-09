@@ -17,8 +17,8 @@ use chrono::prelude::*;
 use fs2::FileExt;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
-    Dataset, Graph, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, Quad, QuadRef,
-    TermRef, TripleRef,
+    Dataset, Graph, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNodeRef, QuadRef, TermRef,
+    TripleRef,
 };
 use oxigraph::store::Store;
 use petgraph::visit::EdgeRef;
@@ -27,7 +27,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::io::{GraphIO, ParsedOntology};
@@ -40,72 +40,76 @@ use petgraph::graph::{Graph as DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 
-#[derive(Clone, Debug)]
-enum PendingImport {
-    FromLocation {
-        location: OntologyLocation,
-        overwrite: Overwrite,
-        required: bool,
-        depth: usize,
-    },
-    FromBytes {
-        location: OntologyLocation,
-        overwrite: Overwrite,
-        required: bool,
-        depth: usize,
+/// Where a queued import's bytes come from.
+enum ImportSource {
+    /// Read from disk or the network when the wave is prepared.
+    Location,
+    /// Supplied by the caller (`add_from_bytes`).
+    Bytes {
         bytes: Vec<u8>,
         format: Option<RdfFormat>,
     },
 }
 
+/// What the import queue needs to know about a source besides its bytes.
+#[derive(Clone)]
+struct ImportJob {
+    location: OntologyLocation,
+    overwrite: Overwrite,
+    /// Whether a failure aborts the whole operation (strict mode).
+    required: bool,
+    /// Depth in the owl:imports traversal, for `max_import_depth`.
+    depth: usize,
+}
+
+/// A source waiting to be fetched and parsed.
+struct PendingImport {
+    job: ImportJob,
+    source: ImportSource,
+}
+
+/// A source after its fetch/parse stage, ready to be committed to the backend
+/// on the calling thread.
+struct PreparedImport {
+    job: ImportJob,
+    result: Result<ParsedOntology>,
+}
+
 impl PendingImport {
-    fn from_location(
-        location: OntologyLocation,
-        overwrite: Overwrite,
-        required: bool,
-        depth: usize,
-    ) -> Self {
-        Self::FromLocation {
-            location,
-            overwrite,
-            required,
-            depth,
+    fn new(location: OntologyLocation, overwrite: Overwrite, required: bool, depth: usize) -> Self {
+        Self {
+            job: ImportJob {
+                location,
+                overwrite,
+                required,
+                depth,
+            },
+            source: ImportSource::Location,
         }
     }
 
-    fn from_bytes(
-        location: OntologyLocation,
-        overwrite: Overwrite,
-        required: bool,
-        depth: usize,
-        bytes: Vec<u8>,
-        format: Option<RdfFormat>,
-    ) -> Self {
-        Self::FromBytes {
-            location,
-            overwrite,
-            required,
-            depth,
-            bytes,
-            format,
-        }
+    fn with_bytes(mut self, bytes: Vec<u8>, format: Option<RdfFormat>) -> Self {
+        self.source = ImportSource::Bytes { bytes, format };
+        self
     }
 
-    fn meta(&self) -> (&OntologyLocation, bool, usize) {
-        match self {
-            Self::FromLocation {
-                location,
-                required,
-                depth,
-                ..
-            }
-            | Self::FromBytes {
-                location,
-                required,
-                depth,
-                ..
-            } => (location, *required, *depth),
-        }
+    /// Run the backend-independent part of an import: read the source (from
+    /// disk, the network, or the bytes supplied by the caller) and parse it.
+    fn prepare(self, offline: bool, require_ontology_names: bool) -> PreparedImport {
+        let Self { job, source } = self;
+        let fetched = match source {
+            ImportSource::Bytes { bytes, format } => Ok((bytes, format)),
+            ImportSource::Location => crate::io::fetch_source(&job.location, offline),
+        };
+        let result = fetched.and_then(|(bytes, format)| {
+            crate::io::parse_ontology_source(
+                job.location.clone(),
+                bytes,
+                format,
+                require_ontology_names,
+            )
+        });
+        PreparedImport { job, result }
     }
 }
 
@@ -141,70 +145,6 @@ pub fn import_parallelism() -> usize {
 /// form the next wave, so traversal order is unaffected.
 fn max_wave_size() -> usize {
     import_parallelism().saturating_mul(4).max(8)
-}
-
-/// A queued import after its fetch/parse stage, ready to be committed to the
-/// backend on the calling thread.
-struct PreparedImport {
-    location: OntologyLocation,
-    overwrite: Overwrite,
-    required: bool,
-    depth: usize,
-    result: Result<ParsedOntology>,
-}
-
-impl PreparedImport {
-    /// Run the backend-independent part of an import: read the source (from
-    /// disk, the network, or the bytes supplied by the caller) and parse it.
-    fn prepare(job: PendingImport, offline: bool, require_ontology_names: bool) -> Self {
-        match job {
-            PendingImport::FromBytes {
-                location,
-                overwrite,
-                required,
-                depth,
-                bytes,
-                format,
-            } => {
-                let result = crate::io::parse_ontology_source(
-                    location.clone(),
-                    bytes,
-                    format,
-                    require_ontology_names,
-                );
-                Self {
-                    location,
-                    overwrite,
-                    required,
-                    depth,
-                    result,
-                }
-            }
-            PendingImport::FromLocation {
-                location,
-                overwrite,
-                required,
-                depth,
-            } => {
-                let result =
-                    crate::io::fetch_source(&location, offline).and_then(|(bytes, format)| {
-                        crate::io::parse_ontology_source(
-                            location.clone(),
-                            bytes,
-                            format,
-                            require_ontology_names,
-                        )
-                    });
-                Self {
-                    location,
-                    overwrite,
-                    required,
-                    depth,
-                    result,
-                }
-            }
-        }
-    }
 }
 
 /// Initializes logging for the ontoenv library.
@@ -1452,22 +1392,11 @@ impl OntoEnv {
 
     fn ontology_metadata_from_backend(&self, id: &GraphIdentifier) -> Result<Ontology> {
         let graph = self.io.get_graph(id)?;
-        let tmp_store = Store::new()?;
-        let graphname = id.graphname()?;
-        let quads = graph.iter().map(|triple| {
-            Ok::<_, oxigraph::store::StorageError>(Quad::new(
-                triple.subject.into_owned(),
-                triple.predicate.into_owned(),
-                triple.object.into_owned(),
-                graphname.clone(),
-            ))
-        });
-        let mut loader = tmp_store.bulk_loader();
-        loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
-        loader
-            .commit()
-            .map_err(|error| anyhow!(error.to_string()))?;
-        Ontology::from_store(&tmp_store, id, self.config.require_ontology_names)
+        Ontology::from_graph(
+            &graph,
+            id.location().clone(),
+            self.config.require_ontology_names,
+        )
     }
 
     /// Reads all graphs from the IO layer, derives `Ontology` metadata from each one, and
@@ -1484,23 +1413,9 @@ impl OntoEnv {
                 .io
                 .get_graph(id)
                 .map_err(|error| anyhow!("could not read graph {id}: {error}"))?;
-            // Copy the graph's triples into a temporary store under the correct named graph
-            // so that Ontology::from_store can locate the right graph context.
-            let tmp_store = Store::new()?;
-            let graphname = id.graphname()?;
-            let quads = graph.iter().map(|t| {
-                Ok::<_, oxigraph::store::StorageError>(Quad::new(
-                    t.subject.into_owned(),
-                    t.predicate.into_owned(),
-                    t.object.into_owned(),
-                    graphname.clone(),
-                ))
-            });
-            let mut loader = tmp_store.bulk_loader();
-            loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
-            loader.commit().map_err(|e| anyhow!(e.to_string()))?;
-            let ontology = Ontology::from_store(&tmp_store, id, require_ontology_names)
-                .map_err(|error| anyhow!("could not parse ontology from {id}: {error}"))?;
+            let ontology =
+                Ontology::from_graph(&graph, id.location().clone(), require_ontology_names)
+                    .map_err(|error| anyhow!("could not parse ontology from {id}: {error}"))?;
             ontologies.push(ontology);
         }
         let filters = self.ontology_filters()?;
@@ -2288,7 +2203,7 @@ impl OntoEnv {
         update_dependencies: bool,
         max_import_depth: Option<usize>,
     ) -> Result<GraphIdentifier> {
-        let seed = PendingImport::from_location(location, overwrite, self.config.strict, 0);
+        let seed = PendingImport::new(location, overwrite, self.config.strict, 0);
         self.add_with_seed_inner(seed, refresh, update_dependencies, max_import_depth)
     }
 
@@ -2303,8 +2218,8 @@ impl OntoEnv {
         update_dependencies: bool,
         max_import_depth: Option<usize>,
     ) -> Result<GraphIdentifier> {
-        let seed =
-            PendingImport::from_bytes(location, overwrite, self.config.strict, 0, bytes, format);
+        let seed = PendingImport::new(location, overwrite, self.config.strict, 0)
+            .with_bytes(bytes, format);
         self.add_with_seed_inner(seed, refresh, update_dependencies, max_import_depth)
     }
 
@@ -2315,8 +2230,7 @@ impl OntoEnv {
         update_dependencies: bool,
         max_import_depth: Option<usize>,
     ) -> Result<GraphIdentifier> {
-        let (location_ref, _, _) = seed.meta();
-        let location = location_ref.clone();
+        let location = seed.job.location.clone();
         // Reset per-call error tracking so stale failures do not leak across operations.
         self.failed_resolutions.clear();
         // Apply ontology filters early to keep store and env consistent.
@@ -2508,7 +2422,7 @@ impl OntoEnv {
         progress.announce_discovered(updated_files.len());
         let seeds: Vec<PendingImport> = updated_files
             .into_iter()
-            .map(|loc| PendingImport::from_location(loc, Overwrite::Allow, self.config.strict, 0))
+            .map(|loc| PendingImport::new(loc, Overwrite::Allow, self.config.strict, 0))
             .collect();
         // Force refresh when requested, otherwise reuse cached where possible.
         let refresh = if all {
@@ -2652,16 +2566,14 @@ impl OntoEnv {
         loop {
             let mut wave: Vec<PendingImport> = Vec::new();
             while wave.len() < max_wave_size() {
-                let Some(job) = queue.pop_front() else {
+                let Some(pending) = queue.pop_front() else {
                     break;
                 };
-                let (job_location_ref, _, job_depth) = job.meta();
-                let job_location = job_location_ref.clone();
-                if !seen.insert(job_location.clone()) {
+                if !seen.insert(pending.job.location.clone()) {
                     continue;
                 }
-                let Some(id) = self.reuse_cached_for_job(&job, refresh)? else {
-                    wave.push(job);
+                let Some(id) = self.reuse_cached_for_job(&pending, refresh)? else {
+                    wave.push(pending);
                     continue;
                 };
                 // Reused ontologies still contribute to the dependency graph.
@@ -2669,17 +2581,13 @@ impl OntoEnv {
                 record_id(&id);
                 if include_imports {
                     if let Ok(existing) = self.get_ontology(&id) {
-                        let imports = existing.imports;
-                        let import_count = imports.len();
-                        if import_count > 0 {
-                            progress.expanding(id.to_uri_string(), import_count);
-                            progress.add_discovered(import_count);
-                        }
-                        self.enqueue_imports_for_job(
-                            imports,
+                        self.enqueue_imports(
+                            &id,
+                            existing.imports,
                             &mut queue,
-                            job_depth,
+                            pending.job.depth,
                             max_import_depth,
+                            progress,
                         )?;
                     }
                 }
@@ -2689,51 +2597,38 @@ impl OntoEnv {
                 break;
             }
 
-            for prepared in self.prepare_wave(wave, progress) {
-                let PreparedImport {
-                    location: job_location,
-                    overwrite,
-                    required: job_required,
-                    depth: job_depth,
-                    result,
-                } = prepared;
+            for PreparedImport { job, result } in self.prepare_wave(wave, progress) {
                 let outcome = result.and_then(|parsed| {
-                    let ontology = self.io.add_parsed(parsed, overwrite)?;
-                    self.batch_state.mark_seen(&job_location);
+                    let ontology = self.io.add_parsed(parsed, job.overwrite)?;
+                    self.batch_state.mark_seen(&job.location);
                     Ok(ontology)
                 });
                 match outcome {
                     Ok(ontology) => {
-                        let imports = ontology.imports.clone();
                         let id = ontology.id().clone();
                         progress.tick_loaded();
                         if include_imports {
-                            let import_count = imports.len();
-                            if import_count > 0 {
-                                progress.expanding(id.to_uri_string(), import_count);
-                                progress.add_discovered(import_count);
-                            }
-                            self.enqueue_imports_for_job(
-                                imports,
+                            self.enqueue_imports(
+                                &id,
+                                ontology.imports.clone(),
                                 &mut queue,
-                                job_depth,
+                                job.depth,
                                 max_import_depth,
+                                progress,
                             )?;
                         }
                         fetched.push(ontology);
                         record_id(&id);
                     }
                     Err(err) => {
-                        let err_str = err.to_string();
-                        let enriched =
-                            format!("Failed to load ontology {}: {}", job_location, err_str);
-                        if job_required {
+                        let enriched = format!("Failed to load ontology {}: {}", job.location, err);
+                        if job.required {
                             return Err(anyhow!(enriched));
                         }
                         // Non-strict mode records errors but continues processing.
                         warn!("{}", enriched);
                         errors.push(enriched);
-                        if let OntologyLocation::Url(url) = &job_location {
+                        if let OntologyLocation::Url(url) = &job.location {
                             if let Ok(node) = NamedNode::new(url.clone()) {
                                 self.failed_resolutions.insert(node);
                             }
@@ -2752,18 +2647,16 @@ impl OntoEnv {
     /// source has to be fetched and parsed.
     fn reuse_cached_for_job(
         &mut self,
-        job: &PendingImport,
+        pending: &PendingImport,
         refresh: RefreshStrategy,
     ) -> Result<Option<GraphIdentifier>> {
-        let cached = match job {
-            PendingImport::FromBytes {
-                location, bytes, ..
-            } => self.try_reuse_cached_bytes(location, bytes.as_slice(), refresh)?,
-            PendingImport::FromLocation { location, .. } => {
-                self.try_reuse_cached(location, refresh)?
+        let location = &pending.job.location;
+        let cached = match &pending.source {
+            ImportSource::Bytes { bytes, .. } => {
+                self.try_reuse_cached_bytes(location, bytes, refresh)?
             }
+            ImportSource::Location => self.try_reuse_cached(location, refresh)?,
         };
-        let (location, _, _) = job.meta();
         if let Some(id) = cached {
             self.batch_state.mark_seen(location);
             return Ok(Some(id));
@@ -2771,8 +2664,8 @@ impl OntoEnv {
         Ok(self.reuse_if_seen_in_batch(location, refresh))
     }
 
-    /// Fetch and parse every job in a wave, concurrently when there is more
-    /// than one, returning the results in the wave's original order.
+    /// Fetch and parse every source in a wave on a pool of worker threads and
+    /// return the results in the wave's original order.
     ///
     /// Only pure work happens off-thread: reading files, HTTP retrieval, RDF
     /// parsing, and metadata extraction. The backend is never touched here.
@@ -2783,70 +2676,54 @@ impl OntoEnv {
     ) -> Vec<PreparedImport> {
         let offline = self.io.is_offline();
         let require_ontology_names = self.config.require_ontology_names;
-        let total = wave.len();
-        let workers = import_parallelism().min(total);
-
-        if workers <= 1 {
-            return wave
-                .into_iter()
-                .enumerate()
-                .map(|(index, job)| {
-                    let (location, _, _) = job.meta();
-                    progress.loading(location, total - index);
-                    PreparedImport::prepare(job, offline, require_ontology_names)
-                })
-                .collect();
+        if let Some(first) = wave.first() {
+            progress.loading(&first.job.location, wave.len());
         }
-
-        let jobs: Mutex<VecDeque<(usize, PendingImport)>> =
-            Mutex::new(wave.into_iter().enumerate().collect());
-        let (sender, receiver) = mpsc::channel::<(usize, PreparedImport)>();
-        let mut slots: Vec<Option<PreparedImport>> = (0..total).map(|_| None).collect();
+        let workers = import_parallelism().min(wave.len());
+        let pending: Mutex<VecDeque<_>> = Mutex::new(wave.into_iter().enumerate().collect());
+        let done: Mutex<Vec<(usize, PreparedImport)>> = Mutex::new(Vec::new());
         std::thread::scope(|scope| {
             for _ in 0..workers {
-                let jobs = &jobs;
-                let sender = sender.clone();
-                scope.spawn(move || loop {
-                    let next = jobs.lock().ok().and_then(|mut queue| queue.pop_front());
+                scope.spawn(|| loop {
+                    // Bind the popped job outside the `while let` so the lock
+                    // is released before the (slow) fetch and parse.
+                    let next = pending
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .pop_front();
                     let Some((index, job)) = next else {
                         break;
                     };
-                    let prepared = PreparedImport::prepare(job, offline, require_ontology_names);
-                    if sender.send((index, prepared)).is_err() {
-                        break;
-                    }
+                    let prepared = job.prepare(offline, require_ontology_names);
+                    done.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push((index, prepared));
                 });
             }
-            drop(sender);
-            let mut remaining = total;
-            for (index, prepared) in receiver {
-                progress.loading(&prepared.location, remaining);
-                remaining -= 1;
-                slots[index] = Some(prepared);
-            }
         });
-        slots
-            .into_iter()
-            .map(|slot| slot.expect("every wave job produces exactly one result"))
-            .collect()
+        let mut done = done.into_inner().unwrap_or_else(|e| e.into_inner());
+        done.sort_by_key(|(index, _)| *index);
+        done.into_iter().map(|(_, prepared)| prepared).collect()
     }
 
-    fn enqueue_imports_for_job(
+    /// Queue the imports of an ontology that was just loaded or reused, unless
+    /// the traversal depth limit has been reached.
+    fn enqueue_imports(
         &mut self,
+        id: &GraphIdentifier,
         imports: Vec<NamedNode>,
         queue: &mut VecDeque<PendingImport>,
-        job_depth: usize,
+        depth: usize,
         max_import_depth: Option<usize>,
+        progress: &mut ProgressReporter,
     ) -> Result<()> {
-        let should_traverse = max_import_depth
-            .map(|max_depth| job_depth < max_depth)
-            .unwrap_or(true);
-        if !should_traverse {
+        if max_import_depth.is_some_and(|max_depth| depth >= max_depth) || imports.is_empty() {
             return Ok(());
         }
-
+        progress.expanding(id.to_uri_string(), imports.len());
+        progress.add_discovered(imports.len());
         for import in imports {
-            self.queue_import_location(&import, queue, self.config.strict, job_depth + 1)?;
+            self.queue_import_location(&import, queue, self.config.strict, depth + 1)?;
         }
         Ok(())
     }
@@ -2869,7 +2746,7 @@ impl OntoEnv {
         // If the import is already known, reuse its resolved location.
         if let Some(existing) = self.env.get_ontology_by_name(import.into()) {
             if let Some(loc) = existing.location() {
-                queue.push_back(PendingImport::from_location(
+                queue.push_back(PendingImport::new(
                     loc.clone(),
                     Overwrite::Preserve,
                     strict,
@@ -2881,12 +2758,7 @@ impl OntoEnv {
 
         // Otherwise, treat the IRI as a location and enqueue it for retrieval.
         match OntologyLocation::from_str(iri) {
-            Ok(loc) => queue.push_back(PendingImport::from_location(
-                loc,
-                Overwrite::Preserve,
-                strict,
-                depth,
-            )),
+            Ok(loc) => queue.push_back(PendingImport::new(loc, Overwrite::Preserve, strict, depth)),
             Err(err) => {
                 self.failed_resolutions.insert(import.clone());
                 if strict {

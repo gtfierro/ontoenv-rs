@@ -273,35 +273,35 @@ fn add_ontology_to_store(
     )
 }
 
-fn copy_store_graph(store: &Store, graphname: &GraphName, dataset: &mut Dataset) -> Result<()> {
-    for quad in store.quads_for_pattern(None, None, None, Some(graphname.as_ref())) {
-        let quad = quad.map_err(|e| anyhow!("union_graph store error: {}", e))?;
+/// Append one graph's triples to `dataset` under `graphname`.
+fn insert_graph_triples(
+    dataset: &mut Dataset,
+    graphname: &GraphName,
+    triples: impl Iterator<Item = Result<Triple>>,
+) -> Result<()> {
+    for triple in triples {
+        let t = triple?;
         dataset.insert(QuadRef::new(
-            quad.subject.as_ref(),
-            quad.predicate.as_ref(),
-            quad.object.as_ref(),
+            t.subject.as_ref(),
+            t.predicate.as_ref(),
+            t.object.as_ref(),
             graphname.as_ref(),
         ));
     }
     Ok(())
 }
 
-fn copy_r5tu_graph(
-    file: &R5tuFile,
-    gid: u64,
+/// The triples of one named graph in `store`.
+fn store_graph_triples(
+    store: &Store,
     graphname: &GraphName,
-    dataset: &mut Dataset,
-) -> Result<()> {
-    for triple in file.oxigraph_triples(gid)? {
-        let triple = triple.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
-        dataset.insert(QuadRef::new(
-            triple.subject.as_ref(),
-            triple.predicate.as_ref(),
-            triple.object.as_ref(),
-            graphname.as_ref(),
-        ));
-    }
-    Ok(())
+) -> impl Iterator<Item = Result<Triple>> {
+    store
+        .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+        .map(|quad| {
+            quad.map(|q| Triple::new(q.subject, q.predicate, q.object))
+                .map_err(|e| anyhow!("union_graph store error: {e}"))
+        })
 }
 
 /// Assemble a union dataset for a lazily-loaded RDF5D backend.
@@ -318,26 +318,28 @@ fn r5tu_union_graph(
     ids: &[GraphIdentifier],
 ) -> (Dataset, Vec<FailedImport>) {
     let mut dataset = Dataset::new();
-    let mut failures: Vec<FailedImport> = Vec::new();
+    let mut failures = Vec::new();
     for id in ids {
-        let graphname = match id.graphname() {
-            Ok(gn) => gn,
-            Err(e) => {
-                failures.push(FailedImport::new(id.clone(), e.to_string()));
-                continue;
-            }
-        };
         let name = id.name().as_str();
         let resident = loaded_graphs
             .lock()
             .map(|loaded| loaded.contains(name))
             .unwrap_or(false);
-        let result = match (resident, r5_file, r5_index.get(name)) {
-            (false, Some(file), Some(info)) => {
-                copy_r5tu_graph(file, info.gid, &graphname, &mut dataset)
-            }
-            _ => copy_store_graph(store, &graphname, &mut dataset),
-        };
+        let result =
+            id.graphname()
+                .and_then(|graphname| match (resident, r5_file, r5_index.get(name)) {
+                    (false, Some(file), Some(info)) => {
+                        let triples = file
+                            .oxigraph_triples(info.gid)?
+                            .map(|t| t.map_err(|e| anyhow!("RDF5D read error: {e}")));
+                        insert_graph_triples(&mut dataset, &graphname, triples)
+                    }
+                    _ => insert_graph_triples(
+                        &mut dataset,
+                        &graphname,
+                        store_graph_triples(store, &graphname),
+                    ),
+                });
         if let Err(e) = result {
             failures.push(FailedImport::new(id.clone(), e.to_string()));
         }
@@ -494,45 +496,19 @@ pub trait GraphIO: Send + Sync {
     /// still assembled. Callers that need strict all-or-nothing semantics
     /// should check the failures list and error themselves.
     fn union_graph(&self, ids: &[GraphIdentifier]) -> (Dataset, Vec<FailedImport>) {
-        // Stream quads from the store directly into the Dataset. The previous
-        // implementation materialized an intermediate Graph per id, which paid
-        // for an extra hashmap insert per triple and an N-graph allocation.
         let mut dataset = Dataset::new();
-        let mut failures: Vec<FailedImport> = Vec::new();
+        let mut failures = Vec::new();
         for id in ids {
-            let graphname = match id.graphname() {
-                Ok(gn) => gn,
-                Err(e) => {
-                    failures.push(FailedImport::new(id.clone(), e.to_string()));
-                    continue;
-                }
-            };
-            // For persistent backends, ensure the named graph is in the in-memory store.
-            if let Err(e) = self.ensure_loaded(id) {
-                failures.push(FailedImport::new(id.clone(), e.to_string()));
-                continue;
-            }
-            let mut graph_failure: Option<Error> = None;
-            for quad in self
-                .store()
-                .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
-            {
-                match quad {
-                    Ok(q) => {
-                        dataset.insert(QuadRef::new(
-                            q.subject.as_ref(),
-                            q.predicate.as_ref(),
-                            q.object.as_ref(),
-                            graphname.as_ref(),
-                        ));
-                    }
-                    Err(e) => {
-                        graph_failure = Some(anyhow!("union_graph store error: {}", e));
-                        break;
-                    }
-                }
-            }
-            if let Some(e) = graph_failure {
+            let result = id.graphname().and_then(|graphname| {
+                // For persistent backends, ensure the named graph is in the in-memory store.
+                self.ensure_loaded(id)?;
+                insert_graph_triples(
+                    &mut dataset,
+                    &graphname,
+                    store_graph_triples(self.store(), &graphname),
+                )
+            });
+            if let Err(e) = result {
                 failures.push(FailedImport::new(id.clone(), e.to_string()));
             }
         }

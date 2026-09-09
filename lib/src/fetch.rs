@@ -4,9 +4,8 @@ use chrono::prelude::*;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfParser};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, LINK};
-use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 type FetchResponseParts = (
@@ -16,6 +15,8 @@ type FetchResponseParts = (
     String,
     reqwest::StatusCode,
 );
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct FetchOptions {
@@ -29,7 +30,7 @@ impl Default for FetchOptions {
     fn default() -> Self {
         Self {
             offline: false,
-            timeout: Duration::from_secs(30),
+            timeout: DEFAULT_TIMEOUT,
             accept_order: vec![
                 "text/turtle",
                 "application/rdf+xml",
@@ -252,24 +253,22 @@ fn is_generic_content_type(ct: Option<&str>) -> bool {
     }
 }
 
-/// Return a process-wide HTTP client for the given timeout.
+/// Return the HTTP client for the given timeout.
 ///
 /// Building a `reqwest` client is expensive (TLS configuration, root
-/// certificates, a connection pool) and clients are cheap to clone, so one is
-/// kept per distinct timeout and shared by every fetch. Sharing also lets
-/// consecutive requests to the same host reuse its connection.
+/// certificates, a connection pool) and clients are cheap to clone, so the
+/// one for the default timeout is built once per process and shared by every
+/// fetch. Sharing also lets requests to the same host reuse its connection.
 fn shared_client(timeout: Duration) -> Result<Client> {
-    static CLIENTS: OnceLock<Mutex<HashMap<Duration, Client>>> = OnceLock::new();
-    let clients = CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut clients = clients
-        .lock()
-        .map_err(|_| anyhow!("HTTP client registry lock poisoned"))?;
-    if let Some(client) = clients.get(&timeout) {
+    static DEFAULT_CLIENT: OnceLock<Client> = OnceLock::new();
+    if timeout != DEFAULT_TIMEOUT {
+        return Ok(Client::builder().timeout(timeout).build()?);
+    }
+    if let Some(client) = DEFAULT_CLIENT.get() {
         return Ok(client.clone());
     }
     let client = Client::builder().timeout(timeout).build()?;
-    clients.insert(timeout, client.clone());
-    Ok(client)
+    Ok(DEFAULT_CLIENT.get_or_init(|| client).clone())
 }
 
 pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
