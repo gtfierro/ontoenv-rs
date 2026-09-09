@@ -40,7 +40,9 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Install system dependencies
+        # See ci.yml: drop the runner image's third-party apt sources first.
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 

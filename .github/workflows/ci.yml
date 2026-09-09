@@ -54,7 +54,13 @@ jobs:
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+        # The runner image ships third-party apt sources (Chrome, Microsoft)
+        # whose index downloads intermittently fail with hash mismatches.
+        # Only Ubuntu's own archive is needed here.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/microsoft-prod.list
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
 
       - name: Clean build cache
         run: cargo clean
