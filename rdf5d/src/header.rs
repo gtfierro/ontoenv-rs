@@ -148,19 +148,61 @@ pub fn section_in_bounds(buf_len: usize, section: Section) -> bool {
     start <= buf_len && start.saturating_add(len) <= buf_len
 }
 
+const CRC32_POLY: u32 = 0xEDB8_8320;
+
+/// Slicing-by-8 lookup tables for IEEE CRC-32, generated at compile time.
+const CRC32_TABLES: [[u32; 256]; 8] = {
+    let mut tables = [[0u32; 256]; 8];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ CRC32_POLY
+            } else {
+                crc >> 1
+            };
+            bit += 1;
+        }
+        tables[0][i] = crc;
+        i += 1;
+    }
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = tables[0][i];
+        let mut t = 1;
+        while t < 8 {
+            crc = (crc >> 8) ^ tables[0][(crc & 0xFF) as usize];
+            tables[t][i] = crc;
+            t += 1;
+        }
+        i += 1;
+    }
+    tables
+};
+
 /// Compute IEEE CRC‑32.
+///
+/// Uses slicing-by-8 so that verifying a multi-megabyte snapshot at open time
+/// costs a few milliseconds rather than a bit-serial pass over every byte.
 pub fn crc32_ieee(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
-    for &b in data {
-        let mut x = (crc ^ (b as u32)) & 0xFF;
-        for _ in 0..8 {
-            let lsb = x & 1;
-            x >>= 1;
-            if lsb != 0 {
-                x ^= 0xEDB88320;
-            }
-        }
-        crc = (crc >> 8) ^ x;
+    let (chunks, remainder) = data.as_chunks::<8>();
+    for chunk in chunks {
+        let lo = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) ^ crc;
+        let hi = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+        crc = CRC32_TABLES[7][(lo & 0xFF) as usize]
+            ^ CRC32_TABLES[6][((lo >> 8) & 0xFF) as usize]
+            ^ CRC32_TABLES[5][((lo >> 16) & 0xFF) as usize]
+            ^ CRC32_TABLES[4][(lo >> 24) as usize]
+            ^ CRC32_TABLES[3][(hi & 0xFF) as usize]
+            ^ CRC32_TABLES[2][((hi >> 8) & 0xFF) as usize]
+            ^ CRC32_TABLES[1][((hi >> 16) & 0xFF) as usize]
+            ^ CRC32_TABLES[0][(hi >> 24) as usize];
+    }
+    for &b in remainder {
+        crc = (crc >> 8) ^ CRC32_TABLES[0][((crc ^ b as u32) & 0xFF) as usize];
     }
     crc ^ 0xFFFF_FFFF
 }
@@ -178,4 +220,56 @@ pub fn parse_footer(buf: &[u8]) -> Option<(u32, [u8; 12])> {
     }
     let crc = u32::from_le_bytes([buf[base], buf[base + 1], buf[base + 2], buf[base + 3]]);
     Some((crc, magic))
+}
+
+#[cfg(test)]
+mod crc_tests {
+    use super::crc32_ieee;
+
+    fn crc32_bitwise(data: &[u8]) -> u32 {
+        let mut crc: u32 = 0xFFFF_FFFF;
+        for &b in data {
+            let mut x = (crc ^ (b as u32)) & 0xFF;
+            for _ in 0..8 {
+                let lsb = x & 1;
+                x >>= 1;
+                if lsb != 0 {
+                    x ^= 0xEDB88320;
+                }
+            }
+            crc = (crc >> 8) ^ x;
+        }
+        crc ^ 0xFFFF_FFFF
+    }
+
+    #[test]
+    fn matches_reference_vectors() {
+        assert_eq!(crc32_ieee(b""), 0);
+        assert_eq!(crc32_ieee(b"123456789"), 0xCBF4_3926);
+        assert_eq!(
+            crc32_ieee(b"The quick brown fox jumps over the lazy dog"),
+            0x414F_A339
+        );
+    }
+
+    #[test]
+    fn matches_bitwise_implementation_for_all_lengths() {
+        let data: Vec<u8> = (0..4096u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+            .collect();
+        for len in 0..64 {
+            assert_eq!(
+                crc32_ieee(&data[..len]),
+                crc32_bitwise(&data[..len]),
+                "len {len}"
+            );
+        }
+        for len in [65, 100, 1000, 4095, 4096] {
+            assert_eq!(
+                crc32_ieee(&data[..len]),
+                crc32_bitwise(&data[..len]),
+                "len {len}"
+            );
+        }
+    }
 }

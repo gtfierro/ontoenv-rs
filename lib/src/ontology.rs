@@ -8,12 +8,12 @@ use chrono::prelude::*;
 use log::{debug, info, warn};
 use oxigraph::model::{
     Graph as OxigraphGraph, GraphName, GraphNameRef, NamedNode, NamedNodeRef, NamedOrBlankNode,
-    NamedOrBlankNodeRef, Term,
+    NamedOrBlankNodeRef, Term, TermRef, Triple,
 };
 use oxigraph::store::Store;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -490,6 +490,16 @@ impl Default for Ontology {
     }
 }
 
+/// Render a version-property object the same way the store-backed metadata
+/// extraction does: IRIs and literals in their N-Triples form, nothing else.
+fn version_property_value(object: TermRef<'_>) -> Option<String> {
+    match object {
+        TermRef::NamedNode(n) => Some(n.to_string()),
+        TermRef::Literal(lit) => Some(lit.to_string()),
+        _ => None,
+    }
+}
+
 impl Ontology {
     pub fn with_last_updated(&mut self, last_updated: DateTime<Utc>) {
         // Update timestamp after a successful refresh.
@@ -817,6 +827,173 @@ impl Ontology {
             };
             Self::build_from_subject_in_store(store, graph_name_ref, ontology_subject, location)
         }
+    }
+
+    /// Creates an `Ontology` from an in-memory triple list without staging the
+    /// triples in a [`Store`].
+    ///
+    /// This is the path used when sources are parsed off the main thread: a
+    /// handful of linear scans over the parsed triples replace the index
+    /// construction that a staging store would otherwise pay for, and the
+    /// caller can bulk-load the same triples straight into the destination
+    /// store afterwards.
+    pub fn from_triples(
+        triples: &[Triple],
+        location: OntologyLocation,
+        require_ontology_names: bool,
+    ) -> Result<Self> {
+        // Prefer explicit rdf:type owl:Ontology declarations, then fall back
+        // to sh:declare subjects, mirroring `from_store`.
+        let mut decls: Vec<NamedOrBlankNodeRef<'_>> = triples
+            .iter()
+            .filter(|t| {
+                t.predicate.as_ref() == TYPE && t.object.as_ref() == TermRef::NamedNode(ONTOLOGY)
+            })
+            .map(|t| t.subject.as_ref())
+            .collect();
+        if decls.is_empty() {
+            decls.extend(
+                triples
+                    .iter()
+                    .filter(|t| t.predicate.as_ref() == DECLARE)
+                    .map(|t| t.subject.as_ref()),
+            );
+        }
+        if decls.len() > 1 {
+            warn!("Multiple ontology declarations found in {location}, using first one");
+        }
+
+        let ontology_name = match decls.first() {
+            None => {
+                if require_ontology_names {
+                    return Err(anyhow::anyhow!(
+                        "No ontology declaration found in {}",
+                        location
+                    ));
+                }
+                warn!(
+                    "No ontology declaration found in {location}. Using this as the ontology name"
+                );
+                location.to_iri()
+            }
+            Some(NamedOrBlankNodeRef::NamedNode(name)) => name.into_owned(),
+            Some(_) => {
+                // Blank nodes are not stable ontology identifiers; fail in strict mode.
+                return Err(anyhow::anyhow!(
+                    "Ontology declaration subject is not a NamedNode, skipping."
+                ));
+            }
+        };
+        Self::build_from_subject_in_triples(triples, ontology_name, location)
+    }
+
+    fn build_from_subject_in_triples(
+        triples: &[Triple],
+        ontology_name: NamedNode,
+        location: OntologyLocation,
+    ) -> Result<Self> {
+        debug!("got ontology name: {ontology_name}");
+        let subject_ref = NamedOrBlankNodeRef::NamedNode(ontology_name.as_ref());
+
+        let mut imports: Vec<NamedNode> = Vec::new();
+        let mut declare_nodes: HashSet<NamedOrBlankNodeRef<'_>> = HashSet::new();
+        let mut metadata_nodes: HashSet<NamedNodeRef<'_>> = HashSet::new();
+        let mut version_properties: HashMap<NamedNode, String> = HashMap::new();
+
+        // Pass 1: everything hanging directly off the ontology subject.
+        for triple in triples.iter().filter(|t| t.subject.as_ref() == subject_ref) {
+            let predicate = triple.predicate.as_ref();
+            let object = triple.object.as_ref();
+            if predicate == IMPORTS {
+                match object {
+                    TermRef::NamedNode(import) if import != ontology_name.as_ref() => {
+                        imports.push(import.into_owned());
+                    }
+                    TermRef::NamedNode(_) => {}
+                    other => warn!("Ignoring non-IRI owl:imports value {other} in {location}"),
+                }
+            } else if predicate == DECLARE {
+                match object {
+                    TermRef::NamedNode(n) => {
+                        declare_nodes.insert(n.into());
+                    }
+                    TermRef::BlankNode(b) => {
+                        declare_nodes.insert(b.into());
+                    }
+                    _ => {}
+                }
+            } else if predicate == HAS_GRAPH_METADATA {
+                if let TermRef::NamedNode(n) = object {
+                    metadata_nodes.insert(n);
+                }
+            } else if let Some(iri) = ONTOLOGY_VERSION_IRIS.iter().find(|iri| **iri == predicate) {
+                if let Some(value) = version_property_value(object) {
+                    version_properties.entry((*iri).into()).or_insert(value);
+                }
+            }
+        }
+
+        // Pass 2: SHACL prefix declarations and linked graph-metadata nodes.
+        let mut declared: HashMap<NamedOrBlankNodeRef<'_>, (Option<String>, Option<String>)> =
+            HashMap::new();
+        if !declare_nodes.is_empty() || !metadata_nodes.is_empty() {
+            for triple in triples {
+                let subject = triple.subject.as_ref();
+                if declare_nodes.contains(&subject) {
+                    let predicate = triple.predicate.as_ref();
+                    if predicate == SH_PREFIX || predicate == SH_NAMESPACE {
+                        if let TermRef::Literal(lit) = triple.object.as_ref() {
+                            let entry = declared.entry(subject).or_default();
+                            let slot = if predicate == SH_PREFIX {
+                                &mut entry.0
+                            } else {
+                                &mut entry.1
+                            };
+                            if slot.is_none() {
+                                *slot = Some(lit.value().to_string());
+                            }
+                        }
+                    }
+                }
+                if let NamedOrBlankNodeRef::NamedNode(n) = subject {
+                    if metadata_nodes.contains(&n) {
+                        let predicate = triple.predicate.as_ref();
+                        if let Some(iri) =
+                            ONTOLOGY_VERSION_IRIS.iter().find(|iri| **iri == predicate)
+                        {
+                            if let Some(value) = version_property_value(triple.object.as_ref()) {
+                                // Graph metadata values take precedence over the
+                                // values declared directly on the ontology subject.
+                                version_properties.insert((*iri).into(), value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let namespace_map: HashMap<String, String> = declared
+            .into_values()
+            .filter_map(|(prefix, namespace)| Some((prefix?, namespace?)))
+            .collect();
+
+        for (k, v) in version_properties.iter() {
+            debug!("{k}: {v}");
+        }
+        info!("Fetched graph {ontology_name} from location: {location:?}");
+
+        Ok(Ontology {
+            id: GraphIdentifier {
+                location: location.clone(),
+                name: ontology_name.clone(),
+            },
+            name: ontology_name,
+            imports,
+            location: Some(location),
+            version_properties,
+            last_updated: None,
+            namespace_map,
+            content_hash: None,
+        })
     }
 
     #[allow(clippy::should_implement_trait)]

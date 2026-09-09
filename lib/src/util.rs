@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 
 use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
@@ -52,7 +52,9 @@ pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
         file,
         dataset.len()
     );
-    let mut file = std::fs::File::create(file)?;
+    // The Turtle serializer issues many small writes per term; without a
+    // buffer each one is a syscall and serialization dominates the command.
+    let mut file = std::io::BufWriter::new(std::fs::File::create(file)?);
     let mut serializer = RdfSerializer::from_format(RdfFormat::Turtle).for_writer(&mut file);
     for quad in dataset.iter() {
         serializer.serialize_triple(TripleRef {
@@ -62,6 +64,7 @@ pub fn write_dataset_to_file(dataset: &Dataset, file: &str) -> Result<()> {
         })?;
     }
     serializer.finish()?;
+    file.flush()?;
     Ok(())
 }
 

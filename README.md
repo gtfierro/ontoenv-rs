@@ -112,6 +112,8 @@ catalog is published successfully.
 
 Set `ONTOENV_DIR` to override the environment location. Logging is controlled via `ONTOENV_LOG` or `RUST_LOG`.
 
+Ontology sources are fetched and parsed on up to 8 worker threads while an environment is initialized or updated. Set `ONTOENV_PARALLELISM` to change the worker count (`ONTOENV_PARALLELISM=1` processes sources one at a time).
+
 ### Commands
 
 #### `init`

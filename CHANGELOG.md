@@ -6,6 +6,40 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Changed
+- Ontology sources are now fetched and parsed concurrently. `add`, `update`,
+  and `init` process the `owl:imports` graph in breadth-first waves: every
+  source in a wave is read (from disk or the network) and parsed on a worker
+  thread, and the results are committed to the graph store one at a time in
+  queue order, so cache reuse, strict-mode failures, and the returned ontology
+  order behave exactly as before. Initializing an environment from Brick 1.4
+  (fifteen ontologies, most fetched over HTTP) drops from about 9.5s to about
+  2.5s. The worker count defaults to 8 and can be changed with the
+  `ONTOENV_PARALLELISM` environment variable (`1` disables the parallelism).
+- Parsing no longer stages every source in a temporary oxigraph store just to
+  read its metadata. Sources are parsed straight into a triple list, the
+  `owl:Ontology` declaration, imports, version properties, and SHACL prefix
+  declarations are extracted with linear scans, and the triples are bulk-loaded
+  into the destination store once. `Ontology::from_triples` exposes this path.
+- One HTTP client is now shared by all fetches instead of being rebuilt (TLS
+  configuration, root certificates, connection pool) for every request, so
+  consecutive requests to the same host reuse their connection.
+- `GraphIO` gained `add_parsed`, which receives an already-parsed
+  `ParsedOntology`. The default implementation re-parses the retained bytes
+  through `add_from_bytes`, so existing custom backends keep working; the
+  built-in backends and the Python graph-store adapter ingest the parsed
+  triples directly.
+- Opening an existing environment memory-maps the RDF5D snapshot instead of
+  reading the whole file into memory, and RDF5D CRC verification uses a
+  slicing-by-8 table instead of a bit-serial loop. A warm `ontoenv status` on
+  a 4.4 MB environment goes from about 28ms to about 11ms.
+- `get_union_graph`/`get_closure` on the built-in persistent backend decode
+  graphs that are not yet resident straight from the RDF5D snapshot into the
+  union dataset instead of first bulk-loading them into the in-memory store.
+- The CLI buffers Turtle output. `ontoenv closure` on the Brick closure
+  (220k triples) previously issued one `write(2)` per term and spent most of
+  its time in the kernel; it now takes about 0.6s instead of about 2.7s.
+
 ## [0.6.3] — 2026-08-26
 
 ### Fixed

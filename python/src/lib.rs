@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Error, Result};
-use chrono::prelude::*;
 use ontoenv::api::{
     find_ontoenv_root_from, ConnectSync, OntoEnv as OntoEnvRs, ResolveTarget, SyncMode, SyncReport,
 };
@@ -12,16 +11,16 @@ use ontoenv::errors::{
     ExternalStoreChangedError as ExternalStoreChangedErrorRs, OfflineRetrievalError,
     StoreCapabilityError as StoreCapabilityErrorRs,
 };
-use ontoenv::io::{GraphIO, StoreStats};
+use ontoenv::io::{GraphIO, ParsedOntology, StoreStats};
 use ontoenv::ontology::{GraphIdentifier, Ontology as OntologyRs, OntologyLocation};
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ontoenv::transform;
 use ontoenv::util::{get_file_contents, get_url_contents};
 use ontoenv::FailedImport;
 use ontoenv::ToUriString;
-use oxigraph::io::{RdfFormat, RdfParser};
+use oxigraph::io::RdfFormat;
 use oxigraph::model::{
-    BlankNode, Graph as OxigraphGraph, GraphName, GraphNameRef, Literal, NamedNode, NamedNodeRef,
+    BlankNode, Graph as OxigraphGraph, GraphName, Literal, NamedNode, NamedNodeRef,
     NamedOrBlankNode, NamedOrBlankNodeRef, Quad, Term, TermRef, Triple, TripleRef,
 };
 use oxigraph::store::Store;
@@ -892,55 +891,20 @@ fn build_transformed_dependency_graph(
     Ok(merged)
 }
 
-fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
-    let mut candidates = vec![RdfFormat::Turtle, RdfFormat::RdfXml, RdfFormat::NTriples];
-    if let Some(p) = preferred {
-        candidates.retain(|f| *f != p);
-        candidates.insert(0, p);
-    }
-    let store = Store::new().map_err(|e| anyhow!(e.to_string()))?;
-    for fmt in candidates {
-        let staging_graph = NamedNode::new_unchecked("temp:graph");
-        let parser = RdfParser::from_format(fmt)
-            .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
-            .without_named_graphs();
-        let mut loader = store.bulk_loader();
-        match loader.load_from_reader(parser, std::io::Cursor::new(bytes)) {
-            Ok(_) => {
-                loader.commit().map_err(|e| anyhow!(e.to_string()))?;
-                return Ok(store);
-            }
-            Err(_) => continue,
-        }
-    }
-    Err(anyhow!("Failed to parse RDF bytes in any supported format"))
-}
-
 fn parse_ontology_bytes(
     location: &OntologyLocation,
     bytes: &[u8],
     format: Option<RdfFormat>,
     require_ontology_names: bool,
 ) -> Result<(OntologyRs, OxigraphGraph)> {
-    let staging_graph = NamedNode::new_unchecked("temp:graph");
-    let tmp_store = load_staging_store_from_bytes(bytes, format)?;
-    let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
-    let mut ontology = OntologyRs::from_store(&tmp_store, &staging_id, require_ontology_names)?;
-    let hash = blake3::hash(bytes).to_hex().to_string();
-    ontology.set_content_hash(hash);
-    ontology.with_last_updated(Utc::now());
-
-    let mut graph = OxigraphGraph::new();
-    for quad in tmp_store.quads_for_pattern(
-        None,
-        None,
-        None,
-        Some(GraphNameRef::NamedNode(staging_graph.as_ref())),
-    ) {
-        let quad = quad.map_err(|e: oxigraph::store::StorageError| anyhow!(e.to_string()))?;
-        graph.insert(quad.as_ref());
-    }
-    Ok((ontology, graph))
+    let parsed = ontoenv::io::parse_ontology_source(
+        location.clone(),
+        bytes.to_vec(),
+        format,
+        require_ontology_names,
+    )?;
+    let graph = parsed.to_graph();
+    Ok((parsed.ontology, graph))
 }
 
 fn pystring_to_string(py_str: &Bound<'_, PyString>) -> PyResult<String> {
@@ -1172,6 +1136,20 @@ impl GraphIO for PythonGraphIO {
             self.add_graph_to_store(py, &store, &graph_id, &graph, overwrite)
         })?;
         Ok(ontology)
+    }
+
+    fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<OntologyRs> {
+        if self.read_only {
+            return Err(anyhow!("Cannot add to read-only store"));
+        }
+        // The triples were already parsed off-thread; only the rdflib
+        // conversion and the store call happen here under the GIL.
+        let graph = parsed.to_graph();
+        let graph_id = parsed.ontology.id().to_uri_string();
+        self.with_store(|py, store| {
+            self.add_graph_to_store(py, &store, &graph_id, &graph, overwrite)
+        })?;
+        Ok(parsed.ontology)
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<OxigraphGraph> {

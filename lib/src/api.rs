@@ -27,9 +27,10 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::io::GraphIO;
+use crate::io::{GraphIO, ParsedOntology};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::progress::ProgressReporter;
 use anyhow::{anyhow, Result};
@@ -104,6 +105,104 @@ impl PendingImport {
                 depth,
                 ..
             } => (location, *required, *depth),
+        }
+    }
+}
+
+/// Environment variable that caps how many ontology sources are fetched and
+/// parsed concurrently during an import. `1` disables the parallelism.
+pub const PARALLELISM_ENV_VAR: &str = "ONTOENV_PARALLELISM";
+
+/// Default number of sources fetched and parsed concurrently. Imports are
+/// dominated by network latency, so this deliberately exceeds the core count
+/// on small machines.
+const DEFAULT_IMPORT_PARALLELISM: usize = 8;
+
+/// Number of ontology sources fetched and parsed concurrently by
+/// [`OntoEnv::add`], [`OntoEnv::update_all`], and friends.
+///
+/// Reads [`PARALLELISM_ENV_VAR`] once; unset or invalid values fall back to
+/// the default. This only governs the fetch/parse stage; backend writes are
+/// always performed sequentially on the calling thread.
+pub fn import_parallelism() -> usize {
+    static PARALLELISM: OnceLock<usize> = OnceLock::new();
+    *PARALLELISM.get_or_init(|| {
+        std::env::var(PARALLELISM_ENV_VAR)
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_IMPORT_PARALLELISM)
+    })
+}
+
+/// Upper bound on the number of sources fetched and parsed before the results
+/// are committed. Bounds the parsed triples held in memory at once when a
+/// directory scan discovers hundreds of files; the remaining sources simply
+/// form the next wave, so traversal order is unaffected.
+fn max_wave_size() -> usize {
+    import_parallelism().saturating_mul(4).max(8)
+}
+
+/// A queued import after its fetch/parse stage, ready to be committed to the
+/// backend on the calling thread.
+struct PreparedImport {
+    location: OntologyLocation,
+    overwrite: Overwrite,
+    required: bool,
+    depth: usize,
+    result: Result<ParsedOntology>,
+}
+
+impl PreparedImport {
+    /// Run the backend-independent part of an import: read the source (from
+    /// disk, the network, or the bytes supplied by the caller) and parse it.
+    fn prepare(job: PendingImport, offline: bool, require_ontology_names: bool) -> Self {
+        match job {
+            PendingImport::FromBytes {
+                location,
+                overwrite,
+                required,
+                depth,
+                bytes,
+                format,
+            } => {
+                let result = crate::io::parse_ontology_source(
+                    location.clone(),
+                    bytes,
+                    format,
+                    require_ontology_names,
+                );
+                Self {
+                    location,
+                    overwrite,
+                    required,
+                    depth,
+                    result,
+                }
+            }
+            PendingImport::FromLocation {
+                location,
+                overwrite,
+                required,
+                depth,
+            } => {
+                let result =
+                    crate::io::fetch_source(&location, offline).and_then(|(bytes, format)| {
+                        crate::io::parse_ontology_source(
+                            location.clone(),
+                            bytes,
+                            format,
+                            require_ontology_names,
+                        )
+                    });
+                Self {
+                    location,
+                    overwrite,
+                    required,
+                    depth,
+                    result,
+                }
+            }
         }
     }
 }
@@ -359,11 +458,6 @@ impl<'a> Drop for BatchScope<'a> {
         }
         self.env.batch_state.end();
     }
-}
-
-enum FetchOutcome {
-    Reused(GraphIdentifier),
-    Loaded(Box<Ontology>),
 }
 
 /// Snapshot of the four mutable fields of [`OntoEnv`] that together form the
@@ -2150,57 +2244,6 @@ impl OntoEnv {
         })
     }
 
-    fn fetch_location(
-        &mut self,
-        job: PendingImport,
-        refresh: RefreshStrategy,
-    ) -> Result<FetchOutcome> {
-        match job {
-            PendingImport::FromBytes {
-                location,
-                overwrite,
-                bytes,
-                format,
-                ..
-            } => {
-                if let Some(existing_id) =
-                    self.try_reuse_cached_bytes(&location, bytes.as_slice(), refresh)?
-                {
-                    self.batch_state.mark_seen(&location);
-                    return Ok(FetchOutcome::Reused(existing_id));
-                }
-
-                if let Some(existing_id) = self.reuse_if_seen_in_batch(&location, refresh) {
-                    return Ok(FetchOutcome::Reused(existing_id));
-                }
-
-                let ontology =
-                    self.io
-                        .add_from_bytes(location.clone(), bytes, format, overwrite)?;
-                self.batch_state.mark_seen(&location);
-                Ok(FetchOutcome::Loaded(Box::new(ontology)))
-            }
-            PendingImport::FromLocation {
-                location,
-                overwrite,
-                ..
-            } => {
-                if let Some(existing_id) = self.try_reuse_cached(&location, refresh)? {
-                    self.batch_state.mark_seen(&location);
-                    return Ok(FetchOutcome::Reused(existing_id));
-                }
-
-                if let Some(existing_id) = self.reuse_if_seen_in_batch(&location, refresh) {
-                    return Ok(FetchOutcome::Reused(existing_id));
-                }
-
-                let ontology = self.io.add(location.clone(), overwrite)?;
-                self.batch_state.mark_seen(&location);
-                Ok(FetchOutcome::Loaded(Box::new(ontology)))
-            }
-        }
-    }
-
     fn reuse_if_seen_in_batch(
         &self,
         location: &OntologyLocation,
@@ -2585,7 +2628,11 @@ impl OntoEnv {
         max_import_depth: Option<usize>,
         progress: &mut ProgressReporter,
     ) -> Result<(Vec<Ontology>, Vec<GraphIdentifier>, Vec<String>)> {
-        // Use a BFS-style queue to load ontologies and (optionally) their imports.
+        // Breadth-first traversal of the owl:imports graph, processed in
+        // waves. Each wave drains the queue: cache hits are resolved on this
+        // thread, and every source that must be (re)read is fetched and
+        // parsed concurrently before being committed to the backend in queue
+        // order. The next wave then holds the imports discovered so far.
         let mut queue: VecDeque<PendingImport> = seeds.into_iter().collect();
         // Track locations to prevent cycles and duplicate fetches.
         let mut seen: HashSet<OntologyLocation> = HashSet::new();
@@ -2602,20 +2649,27 @@ impl OntoEnv {
             }
         };
 
-        while let Some(job) = queue.pop_front() {
-            let (job_location_ref, job_required, job_depth) = job.meta();
-            let job_location = job_location_ref.clone();
-            if !seen.insert(job_location.clone()) {
-                continue;
-            }
-            progress.loading(&job_location, queue.len() + 1);
-            match self.fetch_location(job, refresh) {
-                Ok(FetchOutcome::Loaded(ontology)) => {
-                    let ontology = *ontology;
-                    let imports = ontology.imports.clone();
-                    let id = ontology.id().clone();
-                    progress.tick_loaded();
-                    if include_imports {
+        loop {
+            let mut wave: Vec<PendingImport> = Vec::new();
+            while wave.len() < max_wave_size() {
+                let Some(job) = queue.pop_front() else {
+                    break;
+                };
+                let (job_location_ref, _, job_depth) = job.meta();
+                let job_location = job_location_ref.clone();
+                if !seen.insert(job_location.clone()) {
+                    continue;
+                }
+                let Some(id) = self.reuse_cached_for_job(&job, refresh)? else {
+                    wave.push(job);
+                    continue;
+                };
+                // Reused ontologies still contribute to the dependency graph.
+                progress.tick_reused();
+                record_id(&id);
+                if include_imports {
+                    if let Ok(existing) = self.get_ontology(&id) {
+                        let imports = existing.imports;
                         let import_count = imports.len();
                         if import_count > 0 {
                             progress.expanding(id.to_uri_string(), import_count);
@@ -2628,16 +2682,32 @@ impl OntoEnv {
                             max_import_depth,
                         )?;
                     }
-                    fetched.push(ontology);
-                    record_id(&id);
                 }
-                Ok(FetchOutcome::Reused(id)) => {
-                    // Reused ontologies still contribute to the dependency graph.
-                    progress.tick_reused();
-                    record_id(&id);
-                    if include_imports {
-                        if let Ok(existing) = self.get_ontology(&id) {
-                            let imports = existing.imports;
+                progress.tick_processed();
+            }
+            if wave.is_empty() {
+                break;
+            }
+
+            for prepared in self.prepare_wave(wave, progress) {
+                let PreparedImport {
+                    location: job_location,
+                    overwrite,
+                    required: job_required,
+                    depth: job_depth,
+                    result,
+                } = prepared;
+                let outcome = result.and_then(|parsed| {
+                    let ontology = self.io.add_parsed(parsed, overwrite)?;
+                    self.batch_state.mark_seen(&job_location);
+                    Ok(ontology)
+                });
+                match outcome {
+                    Ok(ontology) => {
+                        let imports = ontology.imports.clone();
+                        let id = ontology.id().clone();
+                        progress.tick_loaded();
+                        if include_imports {
                             let import_count = imports.len();
                             if import_count > 0 {
                                 progress.expanding(id.to_uri_string(), import_count);
@@ -2650,28 +2720,115 @@ impl OntoEnv {
                                 max_import_depth,
                             )?;
                         }
+                        fetched.push(ontology);
+                        record_id(&id);
                     }
-                }
-                Err(err) => {
-                    let err_str = err.to_string();
-                    let enriched = format!("Failed to load ontology {}: {}", job_location, err_str);
-                    if job_required {
-                        return Err(anyhow!(enriched));
-                    }
-                    // Non-strict mode records errors but continues processing.
-                    warn!("{}", enriched);
-                    errors.push(enriched);
-                    if let OntologyLocation::Url(url) = &job_location {
-                        if let Ok(node) = NamedNode::new(url.clone()) {
-                            self.failed_resolutions.insert(node);
+                    Err(err) => {
+                        let err_str = err.to_string();
+                        let enriched =
+                            format!("Failed to load ontology {}: {}", job_location, err_str);
+                        if job_required {
+                            return Err(anyhow!(enriched));
+                        }
+                        // Non-strict mode records errors but continues processing.
+                        warn!("{}", enriched);
+                        errors.push(enriched);
+                        if let OntologyLocation::Url(url) = &job_location {
+                            if let Ok(node) = NamedNode::new(url.clone()) {
+                                self.failed_resolutions.insert(node);
+                            }
                         }
                     }
                 }
+                progress.tick_processed();
             }
-            progress.tick_processed();
         }
 
         Ok((fetched, touched_ids, errors))
+    }
+
+    /// Resolve a queued import against the cache without touching its source.
+    /// Returns the identifier of the ontology to reuse, or `None` when the
+    /// source has to be fetched and parsed.
+    fn reuse_cached_for_job(
+        &mut self,
+        job: &PendingImport,
+        refresh: RefreshStrategy,
+    ) -> Result<Option<GraphIdentifier>> {
+        let cached = match job {
+            PendingImport::FromBytes {
+                location, bytes, ..
+            } => self.try_reuse_cached_bytes(location, bytes.as_slice(), refresh)?,
+            PendingImport::FromLocation { location, .. } => {
+                self.try_reuse_cached(location, refresh)?
+            }
+        };
+        let (location, _, _) = job.meta();
+        if let Some(id) = cached {
+            self.batch_state.mark_seen(location);
+            return Ok(Some(id));
+        }
+        Ok(self.reuse_if_seen_in_batch(location, refresh))
+    }
+
+    /// Fetch and parse every job in a wave, concurrently when there is more
+    /// than one, returning the results in the wave's original order.
+    ///
+    /// Only pure work happens off-thread: reading files, HTTP retrieval, RDF
+    /// parsing, and metadata extraction. The backend is never touched here.
+    fn prepare_wave(
+        &self,
+        wave: Vec<PendingImport>,
+        progress: &mut ProgressReporter,
+    ) -> Vec<PreparedImport> {
+        let offline = self.io.is_offline();
+        let require_ontology_names = self.config.require_ontology_names;
+        let total = wave.len();
+        let workers = import_parallelism().min(total);
+
+        if workers <= 1 {
+            return wave
+                .into_iter()
+                .enumerate()
+                .map(|(index, job)| {
+                    let (location, _, _) = job.meta();
+                    progress.loading(location, total - index);
+                    PreparedImport::prepare(job, offline, require_ontology_names)
+                })
+                .collect();
+        }
+
+        let jobs: Mutex<VecDeque<(usize, PendingImport)>> =
+            Mutex::new(wave.into_iter().enumerate().collect());
+        let (sender, receiver) = mpsc::channel::<(usize, PreparedImport)>();
+        let mut slots: Vec<Option<PreparedImport>> = (0..total).map(|_| None).collect();
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let jobs = &jobs;
+                let sender = sender.clone();
+                scope.spawn(move || loop {
+                    let next = jobs.lock().ok().and_then(|mut queue| queue.pop_front());
+                    let Some((index, job)) = next else {
+                        break;
+                    };
+                    let prepared = PreparedImport::prepare(job, offline, require_ontology_names);
+                    if sender.send((index, prepared)).is_err() {
+                        break;
+                    }
+                });
+            }
+            drop(sender);
+            let mut remaining = total;
+            for (index, prepared) in receiver {
+                progress.loading(&prepared.location, remaining);
+                remaining -= 1;
+                slots[index] = Some(prepared);
+            }
+        });
+        slots
+            .into_iter()
+            .map(|slot| slot.expect("every wave job produces exactly one result"))
+            .collect()
     }
 
     fn enqueue_imports_for_job(

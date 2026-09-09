@@ -779,24 +779,19 @@ fn execute(cmd: Cli) -> Result<()> {
                 }
             };
 
-            if let Some(path) = output {
-                let mut file = std::fs::File::create(path)?;
-                let mut serializer =
-                    oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut file);
-                for t in graph.iter() {
-                    serializer.serialize_triple(t)?;
-                }
-                serializer.finish()?;
-            } else {
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                let mut serializer =
-                    oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut handle);
-                for t in graph.iter() {
-                    serializer.serialize_triple(t)?;
-                }
-                serializer.finish()?;
+            // Serializers emit many tiny writes; buffer them so output is not
+            // one syscall per term.
+            let mut sink: Box<dyn std::io::Write> = match output {
+                Some(path) => Box::new(std::io::BufWriter::new(std::fs::File::create(path)?)),
+                None => Box::new(std::io::BufWriter::new(std::io::stdout().lock())),
+            };
+            let mut serializer =
+                oxigraph::io::RdfSerializer::from_format(fmt).for_writer(&mut sink);
+            for t in graph.iter() {
+                serializer.serialize_triple(t)?;
             }
+            serializer.finish()?;
+            sink.flush()?;
         }
         Commands::Version => {
             println!(

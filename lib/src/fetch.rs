@@ -4,7 +4,9 @@ use chrono::prelude::*;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfParser};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, LINK};
+use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 type FetchResponseParts = (
@@ -250,6 +252,26 @@ fn is_generic_content_type(ct: Option<&str>) -> bool {
     }
 }
 
+/// Return a process-wide HTTP client for the given timeout.
+///
+/// Building a `reqwest` client is expensive (TLS configuration, root
+/// certificates, a connection pool) and clients are cheap to clone, so one is
+/// kept per distinct timeout and shared by every fetch. Sharing also lets
+/// consecutive requests to the same host reuse its connection.
+fn shared_client(timeout: Duration) -> Result<Client> {
+    static CLIENTS: OnceLock<Mutex<HashMap<Duration, Client>>> = OnceLock::new();
+    let clients = CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut clients = clients
+        .lock()
+        .map_err(|_| anyhow!("HTTP client registry lock poisoned"))?;
+    if let Some(client) = clients.get(&timeout) {
+        return Ok(client.clone());
+    }
+    let client = Client::builder().timeout(timeout).build()?;
+    clients.insert(timeout, client.clone());
+    Ok(client)
+}
+
 pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
     // Retrieve RDF with layered format detection and fallback URL heuristics.
     if opts.offline {
@@ -258,7 +280,7 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
         }));
     }
     // Use a bounded-timeout client to avoid hanging on misbehaving endpoints.
-    let client = Client::builder().timeout(opts.timeout).build()?;
+    let client = shared_client(opts.timeout)?;
     let accept = build_accept(&opts.accept_order);
 
     // First attempt
@@ -387,7 +409,7 @@ pub fn fetch_rdf(url: &str, opts: &FetchOptions) -> Result<FetchResult> {
 }
 
 fn head_request(url: &str, opts: &FetchOptions) -> Result<reqwest::blocking::Response> {
-    let client = Client::builder().timeout(opts.timeout).build()?;
+    let client = shared_client(opts.timeout)?;
     let accept = build_accept(&opts.accept_order);
     Ok(client.head(url).header(ACCEPT, accept).send()?)
 }

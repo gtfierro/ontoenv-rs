@@ -13,7 +13,7 @@ use chrono::prelude::*;
 use log::{error, info};
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::{
-    Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad, QuadRef,
+    Dataset, Graph, GraphName, GraphNameRef, NamedNode, NamedOrBlankNode, Quad, QuadRef, Triple,
 };
 use oxigraph::store::Store;
 use rdf5d::{
@@ -78,9 +78,75 @@ fn file_backend_state(path: &Path) -> Result<BackendState> {
     })
 }
 
-fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<Store> {
-    // Try multiple parsers to maximize compatibility with unknown RDF inputs.
-    // Try preferred first, then fall back to all other formats.
+/// Open an RDF5D snapshot for lazy graph reads.
+///
+/// On Unix the file is memory-mapped so that opening an environment costs a
+/// header/dictionary parse rather than a full read of the store, and only the
+/// triple blocks that are actually decoded get paged in. Windows cannot
+/// atomically replace a mapped file, so it keeps the owned read.
+fn open_r5tu(path: &Path) -> Result<R5tuFile> {
+    #[cfg(not(windows))]
+    {
+        Ok(R5tuFile::open_mmap(path)?)
+    }
+    #[cfg(windows)]
+    {
+        Ok(R5tuFile::open(path)?)
+    }
+}
+
+/// Read the raw bytes of an ontology source, honoring offline mode for URLs.
+pub fn fetch_source(
+    location: &OntologyLocation,
+    offline: bool,
+) -> Result<(Vec<u8>, Option<RdfFormat>)> {
+    match location {
+        OntologyLocation::File(path) => get_file_contents(path),
+        OntologyLocation::Url(url) => {
+            if offline {
+                return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
+            }
+            let opts = crate::fetch::FetchOptions::default();
+            let fetched = crate::fetch::fetch_rdf(url.as_str(), &opts)?;
+            Ok((fetched.bytes, fetched.format))
+        }
+        OntologyLocation::InMemory { .. } => Err(anyhow!(
+            "In-memory ontologies cannot be persisted or refreshed from a source"
+        )),
+    }
+}
+
+/// An ontology source that has been fetched and parsed but not yet written to
+/// a graph backend.
+///
+/// Produced by [`parse_ontology_source`] (which is safe to run on a worker
+/// thread) and consumed by [`GraphIO::add_parsed`] on the thread that owns
+/// the backend. The original bytes are retained so backends that cannot ingest
+/// triples directly can fall back to [`GraphIO::add_from_bytes`].
+#[derive(Debug, Clone)]
+pub struct ParsedOntology {
+    pub location: OntologyLocation,
+    pub bytes: Vec<u8>,
+    pub format: Option<RdfFormat>,
+    pub ontology: Ontology,
+    pub triples: Vec<Triple>,
+}
+
+impl ParsedOntology {
+    /// Materialize the parsed triples as an oxigraph [`Graph`].
+    pub fn to_graph(&self) -> Graph {
+        let mut graph = Graph::new();
+        for triple in &self.triples {
+            graph.insert(triple.as_ref());
+        }
+        graph
+    }
+}
+
+/// Parse RDF bytes into a triple list, trying the preferred format first and
+/// then every other supported syntax. Named graphs are rejected so that a
+/// TriG/N-Quads source cannot smuggle quads into a single-graph ontology.
+fn parse_triples(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<(Vec<Triple>, RdfFormat)> {
     use oxigraph::io::JsonLdProfileSet;
     let mut candidates = vec![
         RdfFormat::Turtle,
@@ -96,63 +162,95 @@ fn load_staging_store_from_bytes(bytes: &[u8], preferred: Option<RdfFormat>) -> 
         candidates.retain(|f| *f != p);
         candidates.insert(0, p);
     }
-    let store = Store::new()?;
+    let mut first_error: Option<String> = None;
     for fmt in candidates {
-        // Load into a temporary named graph so the parser has a stable target.
-        let staging_graph = NamedNode::new_unchecked("temp:graph");
-        let parser = RdfParser::from_format(fmt)
-            .with_default_graph(GraphNameRef::NamedNode(staging_graph.as_ref()))
-            .without_named_graphs();
-        let mut loader = store.bulk_loader();
-        match loader.load_from_reader(parser, std::io::Cursor::new(bytes)) {
-            Ok(_) => {
-                loader.commit()?;
-                return Ok(store);
+        let parser = RdfParser::from_format(fmt).without_named_graphs();
+        let mut triples = Vec::new();
+        let mut failure = None;
+        for quad in parser.for_slice(bytes) {
+            match quad {
+                Ok(quad) => triples.push(Triple::new(quad.subject, quad.predicate, quad.object)),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
             }
-            Err(_) => continue,
+        }
+        match failure {
+            None => return Ok((triples, fmt)),
+            Some(error) => {
+                first_error.get_or_insert_with(|| format!("{fmt}: {error}"));
+            }
         }
     }
-    Err(anyhow!("Failed to parse RDF bytes in any supported format"))
+    Err(anyhow!(
+        "Failed to parse RDF bytes in any supported format ({})",
+        first_error.unwrap_or_default()
+    ))
 }
 
-fn add_ontology_bytes(
-    store: &Store,
-    location: &OntologyLocation,
-    bytes: &[u8],
+/// Parse an ontology source and extract its metadata without touching any
+/// store. The returned record carries a content hash and a fresh
+/// `last_updated` timestamp exactly like the store-backed ingest path.
+pub fn parse_ontology_source(
+    location: OntologyLocation,
+    bytes: Vec<u8>,
     format: Option<RdfFormat>,
-    overwrite: Overwrite,
     require_ontology_names: bool,
-) -> Result<Ontology> {
-    // Parse into a temporary store to extract ontology metadata safely.
-    let staging_graph = NamedNode::new_unchecked("temp:graph");
-    let tmp_store = load_staging_store_from_bytes(bytes, format)?;
-    let staging_id = GraphIdentifier::new_with_location(staging_graph.as_ref(), location.clone());
-    let mut ontology = Ontology::from_store(&tmp_store, &staging_id, require_ontology_names)?;
+) -> Result<ParsedOntology> {
+    let (triples, parsed_format) = parse_triples(&bytes, format)?;
+    let mut ontology = Ontology::from_triples(&triples, location.clone(), require_ontology_names)?;
     // Hash content for change detection without re-reading sources.
-    let hash = blake3::hash(bytes).to_hex().to_string();
-    ontology.set_content_hash(hash);
+    ontology.set_content_hash(blake3::hash(&bytes).to_hex().to_string());
     ontology.with_last_updated(Utc::now());
+    Ok(ParsedOntology {
+        location,
+        bytes,
+        format: Some(parsed_format),
+        ontology,
+        triples,
+    })
+}
+
+/// Write a parsed ontology into `store` under its graph name, unless the
+/// graph already exists and `overwrite` forbids replacing it.
+fn commit_parsed_ontology(
+    store: &Store,
+    parsed: ParsedOntology,
+    overwrite: Overwrite,
+) -> Result<Ontology> {
+    let ParsedOntology {
+        ontology, triples, ..
+    } = parsed;
     let id = ontology.id();
     let graphname: GraphName = id.graphname()?;
 
     // Only write into the store if overwrite is allowed or the graph is absent.
     if overwrite.as_bool() || !store.contains_named_graph(id.name())? {
         store.remove_named_graph(id.name())?;
-        let quads = tmp_store
-            .quads_for_pattern(
-                None,
-                None,
-                None,
-                Some(GraphNameRef::NamedNode(staging_graph.as_ref())),
-            )
-            .map(|res| res.map(|q| Quad::new(q.subject, q.predicate, q.object, graphname.clone())));
         let mut loader = store.bulk_loader();
-        loader.load_ok_quads::<_, oxigraph::store::StorageError>(quads)?;
+        loader.load_quads(
+            triples
+                .into_iter()
+                .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
+        )?;
         loader.commit()?;
         info!("Added graph {} (from bytes)", id.name());
     }
 
     Ok(ontology)
+}
+
+fn add_ontology_bytes(
+    store: &Store,
+    location: OntologyLocation,
+    bytes: Vec<u8>,
+    format: Option<RdfFormat>,
+    overwrite: Overwrite,
+    require_ontology_names: bool,
+) -> Result<Ontology> {
+    let parsed = parse_ontology_source(location, bytes, format, require_ontology_names)?;
+    commit_parsed_ontology(store, parsed, overwrite)
 }
 
 /// A helper function to read an ontology from a location, add it to a store,
@@ -164,31 +262,87 @@ fn add_ontology_to_store(
     offline: bool,
     require_ontology_names: bool,
 ) -> Result<Ontology> {
-    // Resolve bytes from the location, honoring offline mode.
-    let (bytes, format) = match &location {
-        OntologyLocation::File(path) => get_file_contents(path)?,
-        OntologyLocation::Url(url) => {
-            if offline {
-                return Err(Error::new(OfflineRetrievalError { file: url.clone() }));
-            }
-            let opts = crate::fetch::FetchOptions::default();
-            let fetched = crate::fetch::fetch_rdf(url.as_str(), &opts)?;
-            (fetched.bytes, fetched.format)
-        }
-        OntologyLocation::InMemory { .. } => {
-            return Err(anyhow!(
-                "In-memory ontologies cannot be persisted or refreshed from a source"
-            ))
-        }
-    };
+    let (bytes, format) = fetch_source(&location, offline)?;
     add_ontology_bytes(
         store,
-        &location,
-        &bytes,
+        location,
+        bytes,
         format,
         overwrite,
         require_ontology_names,
     )
+}
+
+fn copy_store_graph(store: &Store, graphname: &GraphName, dataset: &mut Dataset) -> Result<()> {
+    for quad in store.quads_for_pattern(None, None, None, Some(graphname.as_ref())) {
+        let quad = quad.map_err(|e| anyhow!("union_graph store error: {}", e))?;
+        dataset.insert(QuadRef::new(
+            quad.subject.as_ref(),
+            quad.predicate.as_ref(),
+            quad.object.as_ref(),
+            graphname.as_ref(),
+        ));
+    }
+    Ok(())
+}
+
+fn copy_r5tu_graph(
+    file: &R5tuFile,
+    gid: u64,
+    graphname: &GraphName,
+    dataset: &mut Dataset,
+) -> Result<()> {
+    for triple in file.oxigraph_triples(gid)? {
+        let triple = triple.map_err(|e| anyhow!("RDF5D read error: {}", e))?;
+        dataset.insert(QuadRef::new(
+            triple.subject.as_ref(),
+            triple.predicate.as_ref(),
+            triple.object.as_ref(),
+            graphname.as_ref(),
+        ));
+    }
+    Ok(())
+}
+
+/// Assemble a union dataset for a lazily-loaded RDF5D backend.
+///
+/// Graphs that are already resident in the in-memory store (added or read
+/// during this session) are copied from there. Everything else is decoded
+/// straight from the snapshot into the dataset, skipping the bulk load into
+/// the oxigraph store that a one-shot union would never query.
+fn r5tu_union_graph(
+    store: &Store,
+    r5_file: Option<&R5tuFile>,
+    r5_index: &HashMap<String, R5GraphInfo>,
+    loaded_graphs: &Mutex<HashSet<String>>,
+    ids: &[GraphIdentifier],
+) -> (Dataset, Vec<FailedImport>) {
+    let mut dataset = Dataset::new();
+    let mut failures: Vec<FailedImport> = Vec::new();
+    for id in ids {
+        let graphname = match id.graphname() {
+            Ok(gn) => gn,
+            Err(e) => {
+                failures.push(FailedImport::new(id.clone(), e.to_string()));
+                continue;
+            }
+        };
+        let name = id.name().as_str();
+        let resident = loaded_graphs
+            .lock()
+            .map(|loaded| loaded.contains(name))
+            .unwrap_or(false);
+        let result = match (resident, r5_file, r5_index.get(name)) {
+            (false, Some(file), Some(info)) => {
+                copy_r5tu_graph(file, info.gid, &graphname, &mut dataset)
+            }
+            _ => copy_store_graph(store, &graphname, &mut dataset),
+        };
+        if let Err(e) = result {
+            failures.push(FailedImport::new(id.clone(), e.to_string()));
+        }
+    }
+    (dataset, failures)
 }
 
 pub trait GraphIO: Send + Sync {
@@ -255,6 +409,18 @@ pub trait GraphIO: Send + Sync {
         format: Option<RdfFormat>,
         overwrite: Overwrite,
     ) -> Result<Ontology>;
+
+    /// Add an ontology that has already been fetched and parsed (see
+    /// [`parse_ontology_source`]) and return its metadata record.
+    ///
+    /// The import pipeline fetches and parses sources on worker threads and
+    /// then hands the results to this method one at a time, so backends must
+    /// only assume single-threaded access here. The default implementation
+    /// re-parses the retained bytes through [`Self::add_from_bytes`]; backends
+    /// that can ingest the parsed triples directly should override it.
+    fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
+        self.add_from_bytes(parsed.location, parsed.bytes, parsed.format, overwrite)
+    }
 
     /// Write a pre-built graph into the store under the given identifier, replacing any
     /// existing graph at that name.  Used by the rename machinery after a transform.
@@ -502,7 +668,7 @@ impl PersistentGraphIO {
         let store = Store::new()?;
         // Load RDF5D header/index for lazy graph loading.
         let (r5_file, r5_index) = if store_path.exists() {
-            let file = R5tuFile::open(&store_path)?;
+            let file = open_r5tu(&store_path)?;
             let mut index = HashMap::new();
             for gr in file.enumerate_all()? {
                 index.insert(
@@ -570,6 +736,23 @@ impl PersistentGraphIO {
         loader.commit()?;
         loaded.insert(graphname_str);
         Ok(())
+    }
+
+    /// Record a graph that was just written to the in-memory store: refresh
+    /// its index entry, mark it resident, and schedule the snapshot rewrite.
+    fn finish_add(&mut self, ont: Ontology) -> Result<Ontology> {
+        let graphname = ont.id().graphname()?;
+        self.update_index_for_graph(&graphname)?;
+        let mut loaded = self
+            .loaded_graphs
+            .lock()
+            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
+        if let GraphName::NamedNode(nn) = graphname {
+            loaded.insert(nn.as_str().to_string());
+        }
+        drop(loaded);
+        self.on_store_mutated()?;
+        Ok(ont)
     }
 
     fn count_graph_triples(&self, graphname: &GraphName) -> Result<usize> {
@@ -760,18 +943,7 @@ impl GraphIO for PersistentGraphIO {
             self.offline,
             self.require_ontology_names,
         )?;
-        let graphname = ont.id().graphname()?;
-        self.update_index_for_graph(&graphname)?;
-        let mut loaded = self
-            .loaded_graphs
-            .lock()
-            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
-        if let GraphName::NamedNode(nn) = graphname {
-            loaded.insert(nn.as_str().to_string());
-        }
-        drop(loaded);
-        self.on_store_mutated()?;
-        Ok(ont)
+        self.finish_add(ont)
     }
 
     fn add_from_bytes(
@@ -783,24 +955,18 @@ impl GraphIO for PersistentGraphIO {
     ) -> Result<Ontology> {
         let ont = add_ontology_bytes(
             &self.store,
-            &location,
-            &bytes,
+            location,
+            bytes,
             format,
             overwrite,
             self.require_ontology_names,
         )?;
-        let graphname = ont.id().graphname()?;
-        self.update_index_for_graph(&graphname)?;
-        let mut loaded = self
-            .loaded_graphs
-            .lock()
-            .map_err(|_| anyhow!("Failed to lock graph load state"))?;
-        if let GraphName::NamedNode(nn) = graphname {
-            loaded.insert(nn.as_str().to_string());
-        }
-        drop(loaded);
-        self.on_store_mutated()?;
-        Ok(ont)
+        self.finish_add(ont)
+    }
+
+    fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
+        let ont = commit_parsed_ontology(&self.store, parsed, overwrite)?;
+        self.finish_add(ont)
     }
 
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
@@ -834,6 +1000,16 @@ impl GraphIO for PersistentGraphIO {
             graph.insert(quad?.as_ref());
         }
         Ok(graph)
+    }
+
+    fn union_graph(&self, ids: &[GraphIdentifier]) -> (Dataset, Vec<FailedImport>) {
+        r5tu_union_graph(
+            &self.store,
+            self.r5_file.as_ref(),
+            &self.r5_index,
+            &self.loaded_graphs,
+            ids,
+        )
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -880,7 +1056,7 @@ impl ReadOnlyPersistentGraphIO {
         let store_path = path.join("store.r5tu");
         let store = Store::new()?;
         let (r5_file, r5_index) = if store_path.exists() {
-            let file = R5tuFile::open(&store_path)?;
+            let file = open_r5tu(&store_path)?;
             let mut index = HashMap::new();
             for graph in file.enumerate_all()? {
                 index.insert(
@@ -1027,17 +1203,21 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         Err(anyhow!("Cannot remove from read-only store"))
     }
 
+    fn union_graph(&self, ids: &[GraphIdentifier]) -> (Dataset, Vec<FailedImport>) {
+        r5tu_union_graph(
+            &self.store,
+            self.r5_file.as_ref(),
+            &self.r5_index,
+            &self.loaded_graphs,
+            ids,
+        )
+    }
+
     fn size(&self) -> Result<StoreStats> {
-        if !self.store_path.exists() {
-            return Ok(StoreStats {
-                num_graphs: 0,
-                num_triples: 0,
-            });
-        }
-        let f = R5tuFile::open(&self.store_path)?;
-        let graphs = f.enumerate_all()?;
-        let num_graphs = graphs.len();
-        let num_triples: usize = graphs.iter().map(|gr| gr.n_triples as usize).sum();
+        // The directory read at open time is authoritative for a read-only
+        // backend; there is no need to re-open the snapshot to count graphs.
+        let num_graphs = self.r5_index.len();
+        let num_triples: usize = self.r5_index.values().map(|gr| gr.n_triples as usize).sum();
         Ok(StoreStats {
             num_graphs,
             num_triples,
@@ -1112,12 +1292,16 @@ impl GraphIO for ExternalStoreGraphIO {
     ) -> Result<Ontology> {
         add_ontology_bytes(
             &self.store,
-            &location,
-            &bytes,
+            location,
+            bytes,
             format,
             overwrite,
             self.require_ontology_names,
         )
+    }
+
+    fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
+        commit_parsed_ontology(&self.store, parsed, overwrite)
     }
 }
 
@@ -1202,11 +1386,15 @@ impl GraphIO for MemoryGraphIO {
     ) -> Result<Ontology> {
         add_ontology_bytes(
             &self.store,
-            &location,
-            &bytes,
+            location,
+            bytes,
             format,
             overwrite,
             self.require_ontology_names,
         )
+    }
+
+    fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
+        commit_parsed_ontology(&self.store, parsed, overwrite)
     }
 }
