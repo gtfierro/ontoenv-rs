@@ -587,5 +587,138 @@ class TestCopyDispatch(unittest.TestCase):
         self.assertFalse(self._has_marker(ds.graph(URIRef(self.BASE)), self.BASE))
 
 
+class TestPythonGraphStoreRename(unittest.TestCase):
+    """Renaming an ontology's IRI onto an IRI already registered in a custom
+    ``graph_store=`` backend.
+
+    Regression: ``env.add(location, rename=<canonical>)`` used to write the
+    renamed graph into an internal scratch oxigraph store (never read by the
+    Python backend) and leave the pre-existing registration of ``<canonical>``
+    in place, so ``get_ontology_names()`` reported the IRI twice and the
+    backend still served the old bundled graph.
+    """
+
+    MARKER = "http://example.com/marker"
+
+    def _ttl(self, iri: str, marker: str) -> str:
+        return "\n".join(
+            [
+                "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
+                f"<{iri}> a owl:Ontology .",
+                f'<{iri}> <{self.MARKER}> "{marker}" .',
+            ]
+        )
+
+    def _markers(self, graph: Graph) -> set:
+        return {str(o) for s, p, o in graph if str(p) == self.MARKER}
+
+    def _subjects(self, graph: Graph) -> set:
+        return {str(s) for s, p, o in graph}
+
+    def test_rename_onto_registered_iri_path_form(self) -> None:
+        canonical = "http://example.com/canonical"
+        declared = "http://example.com/declared"
+
+        with tempfile.TemporaryDirectory() as td:
+            first = Path(td) / "first.ttl"
+            first.write_text(self._ttl(canonical, "old"))
+            second = Path(td) / "second.ttl"
+            second.write_text(self._ttl(declared, "new"))
+
+            store = DictGraphStore()
+            env = OntoEnv(graph_store=store, temporary=True)
+
+            # `canonical` is already registered, from `first`.
+            env.add(str(first))
+            self.assertIn(canonical, store.graphs)
+
+            # Add `second` (which declares a different IRI) and rename it onto
+            # the already-registered `canonical`.
+            returned = env.add(str(second), rename=canonical)
+            self.assertEqual(returned, canonical)
+
+            # No duplicate entry for the canonical IRI.
+            names = env.get_ontology_names()
+            self.assertEqual(
+                names.count(canonical),
+                1,
+                f"canonical IRI should appear exactly once, got {names}",
+            )
+            # The source's own declared IRI must not linger anywhere.
+            self.assertNotIn(declared, names)
+            self.assertNotIn(declared, store.graphs)
+
+            # The custom store's bundled graph was actually replaced with the
+            # renamed ("new") content rather than left at the old content.
+            self.assertIn(canonical, store.graphs)
+            self.assertEqual(self._markers(store.graphs[canonical]), {"new"})
+
+            # ... and that is what OntoEnv now hands back, with the old IRI
+            # rewritten out of the graph.
+            g = env.get_graph(canonical)
+            self.assertEqual(self._markers(g), {"new"})
+            self.assertNotIn(declared, self._subjects(g))
+
+    def test_rename_onto_registered_iri_graph_form(self) -> None:
+        from rdflib import Literal, URIRef
+        from rdflib.namespace import OWL, RDF
+
+        canonical = "http://example.com/canonical"
+        declared = "http://example.com/declared"
+
+        with tempfile.TemporaryDirectory() as td:
+            first = Path(td) / "first.ttl"
+            first.write_text(self._ttl(canonical, "old"))
+
+            store = DictGraphStore()
+            env = OntoEnv(graph_store=store, temporary=True)
+            env.add(str(first))
+
+            # Pre-parsed rdflib.Graph input rather than a path string.
+            g = Graph()
+            g.add((URIRef(declared), RDF.type, OWL.Ontology))
+            g.add((URIRef(declared), URIRef(self.MARKER), Literal("new")))
+
+            returned = env.add(g, rename=canonical)
+            self.assertEqual(returned, canonical)
+
+            names = env.get_ontology_names()
+            self.assertEqual(names.count(canonical), 1, names)
+            self.assertNotIn(declared, names)
+            self.assertNotIn(declared, store.graphs)
+
+            self.assertEqual(self._markers(store.graphs[canonical]), {"new"})
+            self.assertEqual(self._markers(env.get_graph(canonical)), {"new"})
+
+    def test_rename_onto_cleared_iri_writes_through(self) -> None:
+        """Even after the target IRI is cleared from the store first, the renamed
+        graph is persisted through to the custom store (not an internal scratch
+        store)."""
+        canonical = "http://example.com/canonical"
+        declared = "http://example.com/declared"
+
+        with tempfile.TemporaryDirectory() as td:
+            first = Path(td) / "first.ttl"
+            first.write_text(self._ttl(canonical, "old"))
+            second = Path(td) / "second.ttl"
+            second.write_text(self._ttl(declared, "new"))
+
+            store = DictGraphStore()
+            env = OntoEnv(graph_store=store, temporary=True)
+            env.add(str(first))
+
+            # Explicitly clear the target from the backend, then re-sync.
+            store.remove_graph(canonical)
+            env.refresh_from_store()
+            self.assertNotIn(canonical, store.graphs)
+            self.assertNotIn(canonical, env.get_ontology_names())
+
+            env.add(str(second), rename=canonical)
+
+            self.assertEqual(env.get_ontology_names().count(canonical), 1)
+            self.assertIn(canonical, store.graphs)
+            self.assertEqual(self._markers(store.graphs[canonical]), {"new"})
+
+
 if __name__ == "__main__":
     unittest.main()
