@@ -5066,6 +5066,12 @@ impl OntoEnv {
     /// ``owl:versionIRI`` values), stores the result under the new name,
     /// removes the old named graph, and rebuilds the import dependency graph.
     ///
+    /// If ``new_iri`` is already registered (from a different source location)
+    /// the existing registration is replaced: its graph is dropped from the
+    /// store and the environment before the renamed graph is written, so the
+    /// IRI is never registered twice. Custom ``graph_store=`` backends receive
+    /// this write through ``add_graph(new_iri, graph, overwrite=True)``.
+    ///
     /// Returns the new IRI string.
     fn rename_graph_iri(&self, uri: &str, new_iri: &str) -> PyResult<String> {
         let old_iri = NamedNode::new(uri)

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-09-09
+
 ### Fixed
 - `rename_graph_iri` / `add(..., rename=...)` now writes the renamed graph
   through custom Python `graph_store=` backends. Previously the rename wrote the

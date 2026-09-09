@@ -1983,6 +1983,10 @@ impl OntoEnv {
     /// `new_iri` (subject and object positions), writes it back under the new name,
     /// removes the old named graph, and updates the in-memory environment and dependency
     /// graph to reflect the change.
+    ///
+    /// If `new_iri` is already registered under a different source location, that
+    /// registration is removed from both the IO store and the environment before the
+    /// renamed graph is written, so the IRI is never registered twice.
     pub fn rename_graph_iri(
         &mut self,
         id: &GraphIdentifier,
