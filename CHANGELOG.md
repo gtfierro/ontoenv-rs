@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Fixed
+- `rename_graph_iri` / `add(..., rename=...)` now writes the renamed graph
+  through custom Python `graph_store=` backends. Previously the rename wrote the
+  new graph into an internal scratch oxigraph store the backend never reads,
+  leaving the backend's bundled graph unchanged. `PythonGraphIO` now implements
+  `add_named_graph` by routing to the store's `add_graph(iri, graph, overwrite=True)`,
+  so a backend's `add_graph` with `overwrite=True` must fully replace any
+  existing graph at that IRI.
+- Renaming an ontology onto an IRI that is already registered under a different
+  source location no longer leaves a duplicate entry in `get_ontology_names()`;
+  the pre-existing registration is dropped from the store and the environment
+  metadata before the renamed graph is written.
+
 ## [0.6.4] — 2026-09-09
 
 ### Changed

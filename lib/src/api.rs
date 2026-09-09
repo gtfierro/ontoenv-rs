@@ -2016,6 +2016,25 @@ impl OntoEnv {
         transform::rename_ontology_iri_graph(&mut graph, old_id.name(), new_iri.as_ref());
         let new_id =
             GraphIdentifier::new_with_location(new_iri.as_ref(), old_id.location().clone());
+
+        // A rename onto an IRI that is already registered (under a different
+        // source location) must replace that entry, not sit beside it. Drop any
+        // existing registration of `new_iri` from both the backend and the
+        // in-memory metadata before writing the renamed graph, so the IRI is not
+        // reported twice by `get_ontology_names()` and the backend's bundled
+        // graph is actually replaced.
+        let stale: Vec<GraphIdentifier> = self
+            .env
+            .ontologies()
+            .keys()
+            .filter(|id| id.name() == new_iri.as_ref() && *id != old_id)
+            .cloned()
+            .collect();
+        for id in &stale {
+            self.io.remove(id)?;
+            self.env.remove_ontology(id)?;
+        }
+
         self.io.remove(old_id)?;
         self.io.add_named_graph(new_id.clone(), graph)?;
 

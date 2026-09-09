@@ -1152,6 +1152,24 @@ impl GraphIO for PythonGraphIO {
         Ok(parsed.ontology)
     }
 
+    /// Write a pre-built graph into the Python store under `id`, replacing any
+    /// existing graph at that name.
+    ///
+    /// The base `GraphIO` default writes into `self.store()`, which for a custom
+    /// `graph_store=` backend is only the empty scratch oxigraph store the
+    /// Python store never reads from. Route it through `add_graph(..., overwrite=True)`
+    /// so the rename machinery (`OntoEnv::rename_graph_iri`) actually persists to
+    /// the backing store.
+    fn add_named_graph(&mut self, id: GraphIdentifier, graph: OxigraphGraph) -> Result<()> {
+        if self.read_only {
+            return Err(anyhow!("Cannot add to read-only store"));
+        }
+        let graph_id = id.to_uri_string();
+        self.with_store(|py, store| {
+            self.add_graph_to_store(py, &store, &graph_id, &graph, Overwrite::Allow)
+        })
+    }
+
     fn get_graph(&self, id: &GraphIdentifier) -> Result<OxigraphGraph> {
         let graph_id = id.to_uri_string();
         self.with_store(|py, store| {
