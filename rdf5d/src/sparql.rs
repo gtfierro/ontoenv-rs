@@ -289,8 +289,9 @@ pub(crate) fn decoded_to_term(term: DecodedTerm<'_>) -> Result<Term, R5Error> {
 ///
 /// Bail-out cases: predicate not in the closure index; both endpoints are
 /// variables; path is anything other than a direct `ZeroOrMore`/`OneOrMore` of
-/// a single `NamedNode` (optionally reversed). In all bail-outs the original
-/// pattern is left intact and spareval evaluates the property path itself.
+/// a single `NamedNode` (optionally reversed); paths inside `GRAPH` or
+/// `SERVICE` clauses. In all bail-outs the original pattern is left intact and
+/// spareval evaluates the property path itself.
 pub(crate) struct PClosRewriter<'a> {
     snapshot: &'a Snapshot,
     view: Option<&'a View<'a>>,
@@ -370,16 +371,20 @@ impl<'a> PClosRewriter<'a> {
                 self.rewrite_pattern(right);
             }
             GraphPattern::Filter { inner, .. }
-            | GraphPattern::Graph { inner, .. }
             | GraphPattern::Extend { inner, .. }
             | GraphPattern::OrderBy { inner, .. }
             | GraphPattern::Project { inner, .. }
             | GraphPattern::Distinct { inner }
             | GraphPattern::Reduced { inner }
             | GraphPattern::Slice { inner, .. }
-            | GraphPattern::Group { inner, .. }
-            | GraphPattern::Service { inner, .. } => self.rewrite_pattern(inner),
-            GraphPattern::Bgp { .. } | GraphPattern::Values { .. } => {}
+            | GraphPattern::Group { inner, .. } => self.rewrite_pattern(inner),
+            // This closure spans the entire dataset (or view). A GRAPH clause
+            // selects one named graph, and a SERVICE clause has its own data.
+            // Let the evaluator resolve paths in those scopes.
+            GraphPattern::Graph { .. }
+            | GraphPattern::Service { .. }
+            | GraphPattern::Bgp { .. }
+            | GraphPattern::Values { .. } => {}
             // Catch-all for feature-gated variants (e.g. Lateral). Leave alone.
             #[allow(unreachable_patterns)]
             _ => {}

@@ -124,6 +124,9 @@ impl Iterator for GroupedScan {
         if let Some(row) = self.pending.next() {
             return Some(row);
         }
+        if self.next_key >= self.end_key {
+            return None;
+        }
         let section = self.snapshot.mem_section(IdxKind::Spo)?;
         while self.next_key < self.end_key {
             let s = section.keys[self.next_key];
@@ -298,15 +301,19 @@ impl Snapshot {
                 .map(|graph| graph.gids.clone())
                 .unwrap_or_default(),
         };
-        let section = self
-            .mem_section(IdxKind::Spo)
-            .ok_or(R5Error::Invalid("SPO index unavailable for grouped scan"))?;
-        let (next_key, end_key) = match pat.s {
-            Some(subject) => match section.keys.binary_search(&subject) {
-                Ok(index) => (index, index + 1),
-                Err(_) => (0, 0),
-            },
-            None => (0, section.keys.len()),
+        let (next_key, end_key) = if gids.is_empty() {
+            (0, 0)
+        } else {
+            let section = self
+                .mem_section(IdxKind::Spo)
+                .ok_or(R5Error::Invalid("SPO index unavailable for grouped scan"))?;
+            match pat.s {
+                Some(subject) => match section.keys.binary_search(&subject) {
+                    Ok(index) => (index, index + 1),
+                    Err(_) => (0, 0),
+                },
+                None => (0, section.keys.len()),
+            }
         };
         Ok(GroupedScan {
             snapshot: self.clone(),
@@ -805,6 +812,29 @@ mod tests {
             .scan(Pattern::ANY, Scope::ByName("http://ex/g/nonexistent"))
             .collect();
         assert_eq!(count_matches(&results), 0);
+    }
+
+    #[test]
+    fn empty_grouped_scopes_do_not_build_spo_index() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("grouped_nonexist.r5tu");
+        multi_gid_fixture(&path);
+        let s = Arc::new(snap(&path));
+
+        assert!(
+            s.grouped_scan(Pattern::ANY, Scope::ByName("http://ex/g/nonexistent"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+        assert!(s.mem_spo.get().is_none());
+        assert!(
+            s.grouped_scan(Pattern::ANY, Scope::Gids(&[]))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+        assert!(s.mem_spo.get().is_none());
     }
 
     #[test]

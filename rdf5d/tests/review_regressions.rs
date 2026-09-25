@@ -225,6 +225,86 @@ fn view_property_path_stays_within_scoped_graphs() {
     assert_eq!(rows[0]["o"].to_string(), "<http://ex/b>");
 }
 
+#[cfg(feature = "sparql")]
+#[test]
+fn graph_clause_property_path_does_not_cross_view_graphs() {
+    use rdf5d::{Snapshot, View};
+    use spareval::QueryResults;
+    use spargebra::SparqlParser;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("graph_paths.r5tu");
+    let edge = |id: &str, graph: &str, subject: &str, object: &str| Quint {
+        id: id.into(),
+        gname: graph.into(),
+        s: Term::Iri(subject.into()),
+        p: Term::Iri("http://www.w3.org/2000/01/rdf-schema#subClassOf".into()),
+        o: Term::Iri(object.into()),
+    };
+    write_file(
+        &path,
+        &[
+            edge("source1", "http://ex/g1", "http://ex/a", "http://ex/b"),
+            edge("source2", "http://ex/g2", "http://ex/b", "http://ex/c"),
+        ],
+    )
+    .unwrap();
+    let snapshot = Snapshot::open(&path).unwrap();
+    let view = View::from_names(&snapshot, &["http://ex/g1", "http://ex/g2"]);
+    let path_pattern = "<http://ex/a> <http://www.w3.org/2000/01/rdf-schema#subClassOf>+ ?o";
+
+    let mut graph_query = SparqlParser::new()
+        .parse_query(&format!(
+            "SELECT ?o WHERE {{ GRAPH <http://ex/g1> {{ {path_pattern} }} }}"
+        ))
+        .unwrap();
+    let QueryResults::Solutions(rows) = view.query(&mut graph_query).unwrap() else {
+        panic!("expected solutions")
+    };
+    let objects: Vec<_> = rows.map(|row| row.unwrap()["o"].to_string()).collect();
+    assert_eq!(objects, vec!["<http://ex/b>"]);
+
+    let mut snapshot_graph_query = SparqlParser::new()
+        .parse_query(&format!(
+            "SELECT ?o WHERE {{ GRAPH <http://ex/g1> {{ {path_pattern} }} }}"
+        ))
+        .unwrap();
+    let QueryResults::Solutions(rows) = snapshot.query(&mut snapshot_graph_query).unwrap() else {
+        panic!("expected solutions")
+    };
+    let objects: Vec<_> = rows.map(|row| row.unwrap()["o"].to_string()).collect();
+    assert_eq!(objects, vec!["<http://ex/b>"]);
+
+    let mut variable_graph_query = SparqlParser::new()
+        .parse_query(&format!(
+            "SELECT ?g ?o WHERE {{ GRAPH ?g {{ {path_pattern} }} }}"
+        ))
+        .unwrap();
+    let QueryResults::Solutions(rows) = view.query(&mut variable_graph_query).unwrap() else {
+        panic!("expected solutions")
+    };
+    let pairs: Vec<_> = rows
+        .map(|row| {
+            let row = row.unwrap();
+            (row["g"].to_string(), row["o"].to_string())
+        })
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![("<http://ex/g1>".into(), "<http://ex/b>".into())]
+    );
+
+    let mut union_query = SparqlParser::new()
+        .parse_query(&format!("SELECT ?o WHERE {{ {path_pattern} }}"))
+        .unwrap();
+    let QueryResults::Solutions(rows) = view.query(&mut union_query).unwrap() else {
+        panic!("expected solutions")
+    };
+    let mut objects: Vec<_> = rows.map(|row| row.unwrap()["o"].to_string()).collect();
+    objects.sort();
+    assert_eq!(objects, vec!["<http://ex/b>", "<http://ex/c>"]);
+}
+
 #[cfg(feature = "idx")]
 #[test]
 fn grouped_scan_reports_contexts_once_and_honors_scope() {
