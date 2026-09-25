@@ -11,6 +11,7 @@
 //! `VALUES` blocks before handing the query to spareval.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::iter::{empty, once};
 
 use oxrdf::{BlankNode, Literal, NamedNode, Term};
@@ -23,17 +24,75 @@ use spargebra::term::{GroundTerm, TermPattern, Variable};
 
 use crate::reader::{DecodedTerm, R5Error};
 use crate::snapshot::{Pattern, Scope, Snapshot};
+use crate::view::View;
 
 /// A read-only SPARQL dataset view over a [`Snapshot`], using logical (by-name)
 /// graph semantics. Cheap to create — it just borrows the snapshot.
 #[derive(Clone, Copy, Debug)]
 pub struct SparqlView<'a> {
     snapshot: &'a Snapshot,
+    gids: Option<&'a [u64]>,
 }
 
 impl<'a> SparqlView<'a> {
     pub fn new(snapshot: &'a Snapshot) -> Self {
-        Self { snapshot }
+        Self {
+            snapshot,
+            gids: None,
+        }
+    }
+
+    pub(crate) fn scoped(snapshot: &'a Snapshot, gids: &'a [u64]) -> Self {
+        Self {
+            snapshot,
+            gids: Some(gids),
+        }
+    }
+
+    fn names(&self) -> Vec<&'a str> {
+        let snapshot = self.snapshot;
+        let scope = self.gids;
+        snapshot
+            .graph_names()
+            .filter(move |name| {
+                scope.is_none_or(|gids| {
+                    snapshot
+                        .gids_for_name(name)
+                        .is_some_and(|name_gids| name_gids.iter().any(|gid| gids.contains(gid)))
+                })
+            })
+            .collect()
+    }
+
+    fn scan_name(
+        &self,
+        pat: Pattern,
+        name: &str,
+    ) -> Box<dyn Iterator<Item = crate::reader::Result<crate::snapshot::Match>> + 'a> {
+        let snapshot = self.snapshot;
+        if let Some(scope) = self.gids {
+            let gids: Vec<u64> = snapshot
+                .gids_for_name(name)
+                .unwrap_or_default()
+                .iter()
+                .copied()
+                .filter(|gid| scope.contains(gid))
+                .collect();
+            if gids.is_empty() {
+                return Box::new(empty());
+            }
+            let mut seen = HashSet::new();
+            Box::new(
+                snapshot
+                    .scan(pat, Scope::Gids(&gids))
+                    .filter(move |hit| match hit {
+                        Ok(m) => seen.insert((m.s, m.p, m.o)),
+                        Err(_) => true,
+                    }),
+            )
+        } else {
+            snapshot.scan(pat, Scope::ByName(name))
+        }
     }
 
     fn graph_id(&self, name: &str) -> u64 {
@@ -79,38 +138,37 @@ impl<'a> QueryableDataset<'a> for SparqlView<'a> {
 
         match name {
             Some(name) => {
-                if !snapshot.has_graph(&name) {
+                if !self.names().contains(&name.as_str()) {
                     return Box::new(empty());
                 }
                 let graph_id = self.graph_id(&name);
                 // `scan` copies the gids and borrows only the snapshot, so the
                 // returned iterator does not retain `name` — we can stream.
-                Box::new(
-                    snapshot
-                        .scan(pat, Scope::ByName(name.as_str()))
-                        .map(move |hit| {
-                            hit.map(|m| InternalQuad {
-                                subject: m.s,
-                                predicate: m.p,
-                                object: m.o,
-                                graph_name: Some(graph_id),
-                            })
-                        }),
-                )
-            }
-            None => Box::new(snapshot.graph_names().flat_map(move |name| {
-                let graph_id = snapshot
-                    .file()
-                    .intern_decoded(&DecodedTerm::Iri(Cow::Borrowed(name)));
-                snapshot.scan(pat, Scope::ByName(name)).map(move |hit| {
+                Box::new(self.scan_name(pat, &name).map(move |hit| {
                     hit.map(|m| InternalQuad {
                         subject: m.s,
                         predicate: m.p,
                         object: m.o,
                         graph_name: Some(graph_id),
                     })
-                })
-            })),
+                }))
+            }
+            None => {
+                let view = *self;
+                Box::new(view.names().into_iter().flat_map(move |name| {
+                    let graph_id = snapshot
+                        .file()
+                        .intern_decoded(&DecodedTerm::Iri(Cow::Borrowed(name)));
+                    view.scan_name(pat, name).map(move |hit| {
+                        hit.map(|m| InternalQuad {
+                            subject: m.s,
+                            predicate: m.p,
+                            object: m.o,
+                            graph_name: Some(graph_id),
+                        })
+                    })
+                }))
+            }
         }
     }
 
@@ -119,8 +177,8 @@ impl<'a> QueryableDataset<'a> for SparqlView<'a> {
         &self,
     ) -> Box<dyn Iterator<Item = Result<Self::InternalTerm, Self::Error>> + 'a> {
         let ids: Vec<_> = self
-            .snapshot
-            .graph_names()
+            .names()
+            .into_iter()
             .map(|name| Ok(self.graph_id(name)))
             .collect();
         Box::new(ids.into_iter())
@@ -134,7 +192,7 @@ impl<'a> QueryableDataset<'a> for SparqlView<'a> {
             DecodedTerm::Iri(name) => name.into_owned(),
             _ => return Ok(false),
         };
-        Ok(self.snapshot.has_graph(&name))
+        Ok(self.names().contains(&name.as_str()))
     }
 
     fn internalize_term(&self, term: Term) -> Result<Self::InternalTerm, Self::Error> {
@@ -241,17 +299,43 @@ pub(crate) fn decoded_to_term(term: DecodedTerm<'_>) -> Result<Term, R5Error> {
 /// variables; path is anything other than a direct `ZeroOrMore`/`OneOrMore` of
 /// a single `NamedNode` (optionally reversed). In all bail-outs the original
 /// pattern is left intact and spareval evaluates the property path itself.
-struct PClosRewriter<'a> {
+pub(crate) struct PClosRewriter<'a> {
     snapshot: &'a Snapshot,
+    view: Option<&'a View<'a>>,
 }
 
 impl<'a> PClosRewriter<'a> {
     fn new(snapshot: &'a Snapshot) -> Self {
-        Self { snapshot }
+        Self {
+            snapshot,
+            view: None,
+        }
+    }
+
+    pub(crate) fn for_view(view: &'a View<'a>) -> Self {
+        Self {
+            snapshot: view.snapshot(),
+            view: Some(view),
+        }
     }
 
     fn enabled(&self) -> bool {
-        self.snapshot.has_closures()
+        self.view
+            .map_or_else(|| self.snapshot.has_closures(), |view| view.has_closures())
+    }
+
+    fn closure_forward(&self, predicate: u64, subject: u64) -> Option<Vec<u64>> {
+        self.view.map_or_else(
+            || self.snapshot.closure_forward(predicate, subject),
+            |view| view.closure_forward(predicate, subject),
+        )
+    }
+
+    fn closure_reverse(&self, predicate: u64, object: u64) -> Option<Vec<u64>> {
+        self.view.map_or_else(
+            || self.snapshot.closure_reverse(predicate, object),
+            |view| view.closure_reverse(predicate, object),
+        )
     }
 
     fn predicate_id(&self, iri: &str) -> Option<u64> {
@@ -267,7 +351,7 @@ impl<'a> PClosRewriter<'a> {
         }
     }
 
-    fn rewrite_query(&self, query: &mut Query) {
+    pub(crate) fn rewrite_query(&self, query: &mut Query) {
         if !self.enabled() {
             return;
         }
@@ -363,10 +447,7 @@ impl<'a> PClosRewriter<'a> {
             // const P+ ?var -> forward closure of const, bind ?var
             (TermPattern::NamedNode(c), TermPattern::Variable(var)) => {
                 let c_id = self.predicate_id(c.as_str())?;
-                let mut answers = self
-                    .snapshot
-                    .closure_forward(p_id, c_id)
-                    .unwrap_or_default();
+                let mut answers = self.closure_forward(p_id, c_id).unwrap_or_default();
                 if include_reflexive {
                     answers.push(c_id);
                     answers.sort();
@@ -377,10 +458,7 @@ impl<'a> PClosRewriter<'a> {
             // ?var P+ const -> reverse closure of const, bind ?var
             (TermPattern::Variable(var), TermPattern::NamedNode(c)) => {
                 let c_id = self.predicate_id(c.as_str())?;
-                let mut answers = self
-                    .snapshot
-                    .closure_reverse(p_id, c_id)
-                    .unwrap_or_default();
+                let mut answers = self.closure_reverse(p_id, c_id).unwrap_or_default();
                 if include_reflexive {
                     answers.push(c_id);
                     answers.sort();
@@ -392,10 +470,7 @@ impl<'a> PClosRewriter<'a> {
             (TermPattern::NamedNode(s), TermPattern::NamedNode(o)) => {
                 let s_id = self.predicate_id(s.as_str())?;
                 let o_id = self.predicate_id(o.as_str())?;
-                let answers = self
-                    .snapshot
-                    .closure_forward(p_id, s_id)
-                    .unwrap_or_default();
+                let answers = self.closure_forward(p_id, s_id).unwrap_or_default();
                 let reachable =
                     answers.binary_search(&o_id).is_ok() || (include_reflexive && s_id == o_id);
                 if reachable {

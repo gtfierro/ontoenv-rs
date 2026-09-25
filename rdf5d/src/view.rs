@@ -108,6 +108,11 @@ impl<'a> View<'a> {
         &self.gids
     }
 
+    #[cfg(feature = "sparql")]
+    pub(crate) fn snapshot(&self) -> &Snapshot {
+        self.snapshot
+    }
+
     /// Number of physical gids in the view.
     pub fn n_gids(&self) -> usize {
         self.gids.len()
@@ -152,7 +157,7 @@ impl<'a> View<'a> {
     /// deduplicates triples across gids that share a name.
     #[cfg(feature = "sparql")]
     pub fn sparql_view(&'a self) -> SparqlView<'a> {
-        todo!("wire SparqlView to accept a gid filter")
+        SparqlView::scoped(self.snapshot, &self.gids)
     }
 
     /// Rewrite and evaluate a SPARQL query against this view.
@@ -169,11 +174,8 @@ impl<'a> View<'a> {
 
     /// Rewrite `P+`/`P*` property paths using the view's PClos.
     #[cfg(feature = "sparql")]
-    pub fn rewrite_query(&self, _query: &mut spargebra::Query) {
-        // Identical logic to the PClosRewriter in sparql.rs, but delegates
-        // to self.mem_pclos() (the view's own closure index) instead of
-        // snapshot.mem_pclos(). Requires making PClosRewriter accept an
-        // external closure provider or factoring the rewriter into a helper.
+    pub fn rewrite_query(&self, query: &mut spargebra::Query) {
+        crate::sparql::PClosRewriter::for_view(self).rewrite_query(query);
     }
 
     /// The dedup-aware unique-triple count for this view.
@@ -186,7 +188,11 @@ impl<'a> View<'a> {
     /// Whether the view contains a specific triple.
     pub fn contains(&self, s: Option<u64>, p: Option<u64>, o: Option<u64>) -> Result<bool> {
         let pat = Pattern { s, p, o };
-        Ok(self.scan(pat).any(|r| r.is_ok()))
+        if let Some(hit) = self.scan(pat).next() {
+            hit?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Forward closure for a predicate, scoped to this view.
@@ -197,6 +203,11 @@ impl<'a> View<'a> {
     /// Reverse closure for a predicate, scoped to this view.
     pub fn closure_reverse(&self, predicate: u64, object: u64) -> Option<Vec<u64>> {
         self.mem_pclos()?.closure_reverse(predicate, object)
+    }
+
+    #[cfg(feature = "sparql")]
+    pub(crate) fn has_closures(&self) -> bool {
+        self.mem_pclos().is_some()
     }
 
     // ── index building (lazy, per-view) ─────────────────────────────────
@@ -266,18 +277,19 @@ impl<'a> View<'a> {
     ) -> impl Iterator<Item = Result<Match>> + 'a {
         let file = self.snapshot.file();
         gids.into_iter()
-            .flat_map(move |gid| match file.triples_ids(gid) {
+            .flat_map(move |gid| match file.triples_ids_lazy(gid) {
                 Ok(triples) => {
                     let pat = pat;
-                    Box::new(triples.filter_map(move |(s, p, o)| {
-                        if pat.s.is_some_and(|x| x != s)
-                            || pat.p.is_some_and(|x| x != p)
-                            || pat.o.is_some_and(|x| x != o)
+                    Box::new(triples.filter_map(move |triple| match triple {
+                        Err(error) => Some(Err(error)),
+                        Ok((s, p, o))
+                            if pat.s.is_none_or(|x| x == s)
+                                && pat.p.is_none_or(|x| x == p)
+                                && pat.o.is_none_or(|x| x == o) =>
                         {
-                            None
-                        } else {
                             Some(Ok(Match { gid, s, p, o }))
                         }
+                        Ok(_) => None,
                     })) as Box<dyn Iterator<Item = Result<Match>> + 'a>
                 }
                 Err(error) => Box::new(once(Err(error))),

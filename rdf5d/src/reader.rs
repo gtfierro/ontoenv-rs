@@ -66,7 +66,7 @@ pub type Result<T> = std::result::Result<T, R5Error>;
 /// Controls how aggressively the reader validates on-disk integrity at open time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IntegrityMode {
-    /// Validate structure, section CRCs, and the global footer CRC if present.
+    /// Validate structure, section CRCs, and the required global footer CRC.
     #[default]
     Strict,
     /// Validate structural correctness but skip CRC verification.
@@ -288,7 +288,18 @@ impl R5tuFile {
     ///
     /// Convert term ids to strings with [`Self::term_to_string`].
     pub fn triples_ids(&self, gid: u64) -> Result<TripleIter<'_>> {
-        self.decode_triple_block(gid)
+        self.decode_triple_block(gid, true)
+    }
+    /// Iterate triples without scanning every object at construction.
+    ///
+    /// Each item is fallible because corruption in a later object run is
+    /// reported when that run is reached.
+    pub fn triples_ids_lazy(&self, gid: u64) -> Result<CheckedTripleIter<'_>> {
+        self.decode_triple_block(gid, false)
+            .map(|inner| CheckedTripleIter {
+                inner,
+                failed: false,
+            })
     }
     /// Resolve a term id to a displayable string (IRI, bnode, or literal).
     pub fn term_to_string(&self, term_id: u64) -> Result<String> {
@@ -497,6 +508,9 @@ impl R5tuFile {
         if &header.magic != b"R5TU" {
             return Err(R5Error::Invalid("bad magic"));
         }
+        if header.version_u16 != 1 {
+            return Err(R5Error::Invalid("unsupported format version"));
+        }
         let toc =
             parse_toc(data, &header).ok_or_else(|| R5Error::Corrupt("TOC parse failed".into()))?;
         let sections = validate_open(data, &header, &toc, integrity)?;
@@ -570,11 +584,11 @@ fn validate_open(
             }
         }
 
-        if let Some((footer_crc, _magic)) = parse_footer(data) {
-            let got = crc32_ieee(&data[..data.len() - 16]);
-            if got != footer_crc {
-                return Err(R5Error::Corrupt("global CRC mismatch".into()));
-            }
+        let (footer_crc, _) = parse_footer(data)
+            .ok_or_else(|| R5Error::Corrupt("missing or invalid footer".into()))?;
+        let got = crc32_ieee(&data[..data.len() - 16]);
+        if got != footer_crc {
+            return Err(R5Error::Corrupt("global CRC mismatch".into()));
         }
     }
 
@@ -617,7 +631,7 @@ impl Dict {
             return Err(R5Error::Corrupt("dict section OOB".into()));
         }
         let base = sec.off as usize;
-        if base + 52 > data.len() {
+        if sec.len < 52 || base.checked_add(52).is_none_or(|end| end > data.len()) {
             return Err(R5Error::Corrupt("short dict header".into()));
         }
         let n = u32::from_le_bytes([data[base], data[base + 1], data[base + 2], data[base + 3]]);
@@ -660,11 +674,23 @@ impl Dict {
         } else {
             None
         };
-        if !section_in_bounds(data.len(), blob) || !section_in_bounds(data.len(), offs) {
+        let inside = |part: Section| {
+            part.off >= sec.off
+                && part.off.checked_add(part.len).is_some_and(|end| {
+                    sec.off
+                        .checked_add(sec.len)
+                        .is_some_and(|sec_end| end <= sec_end)
+                })
+        };
+        if !section_in_bounds(data.len(), blob)
+            || !section_in_bounds(data.len(), offs)
+            || !inside(blob)
+            || !inside(offs)
+        {
             return Err(R5Error::Corrupt("dict blob/offs OOB".into()));
         }
         if let Some(s) = idx
-            && !section_in_bounds(data.len(), s)
+            && (!section_in_bounds(data.len(), s) || !inside(s))
         {
             return Err(R5Error::Corrupt("dict index OOB".into()));
         }
@@ -686,6 +712,22 @@ impl Dict {
         } else {
             0
         };
+        let offset_entries = if front_coded {
+            (n as usize)
+                .div_ceil(STR_DICT_FRONT_BLOCK_SIZE)
+                .checked_add(1)
+        } else {
+            (n as usize).checked_add(1)
+        };
+        if offset_entries
+            .and_then(|entries| entries.checked_mul(4))
+            .is_none_or(|bytes| bytes > offs.len as usize)
+        {
+            return Err(R5Error::Corrupt("dict offsets truncated".into()));
+        }
+        if grouped_idx && idx.is_some_and(|index| index.len < 4) {
+            return Err(R5Error::Corrupt("grouped dict index truncated".into()));
+        }
         Ok(Dict {
             sec,
             n,
@@ -706,36 +748,28 @@ impl Dict {
             return self.get_front_coded(data, id);
         }
         let o_base = self.offs.off as usize;
-        let s = u32::from_le_bytes(
-            data[o_base + id as usize * 4..o_base + id as usize * 4 + 4]
-                .try_into()
-                .ok()?,
-        ) as usize;
-        let e = u32::from_le_bytes(
-            data[o_base + (id as usize + 1) * 4..o_base + (id as usize + 1) * 4 + 4]
-                .try_into()
-                .ok()?,
-        ) as usize;
-        let b_base = self.blob.off as usize;
-        std::str::from_utf8(&data[b_base + s..b_base + e])
-            .ok()
-            .map(Cow::Borrowed)
+        let offs = data.get(o_base..o_base.checked_add(self.offs.len as usize)?)?;
+        let start = id as usize * 4;
+        let s = u32::from_le_bytes(offs.get(start..start + 4)?.try_into().ok()?) as usize;
+        let e = u32::from_le_bytes(offs.get(start + 4..start + 8)?.try_into().ok()?) as usize;
+        let blob =
+            data.get(self.blob.off as usize..self.blob.off.checked_add(self.blob.len)? as usize)?;
+        std::str::from_utf8(blob.get(s..e)?).ok().map(Cow::Borrowed)
     }
 
     fn get_front_coded<'a>(&self, data: &'a [u8], id: u32) -> Option<Cow<'a, str>> {
         let block = id as usize / STR_DICT_FRONT_BLOCK_SIZE;
         let within = id as usize % STR_DICT_FRONT_BLOCK_SIZE;
         let offs_base = self.offs.off as usize;
-        let block_start = u32::from_le_bytes(
-            data[offs_base + block * 4..offs_base + block * 4 + 4]
-                .try_into()
-                .ok()?,
-        ) as usize;
-        let blob_base = self.blob.off as usize;
-        let blob = &data[blob_base + block_start..blob_base + self.blob.len as usize];
+        let offs = data.get(offs_base..offs_base.checked_add(self.offs.len as usize)?)?;
+        let block_start =
+            u32::from_le_bytes(offs.get(block * 4..block * 4 + 4)?.try_into().ok()?) as usize;
+        let blob =
+            data.get(self.blob.off as usize..self.blob.off.checked_add(self.blob.len)? as usize)?;
+        let blob = blob.get(block_start..)?;
         let (first_len, mut off) = read_uvarint(blob, 0)?;
-        let end = off + first_len as usize;
-        let mut current = std::str::from_utf8(&blob[off..end]).ok()?.to_string();
+        let end = off.checked_add(usize::try_from(first_len).ok()?)?;
+        let mut current = std::str::from_utf8(blob.get(off..end)?).ok()?.to_string();
         if within == 0 {
             return Some(Cow::Owned(current));
         }
@@ -743,9 +777,9 @@ impl Dict {
         for _ in 0..within {
             let (prefix_len, o2) = read_uvarint(blob, off)?;
             let (suffix_len, o3) = read_uvarint(blob, o2)?;
-            let suffix_end = o3 + suffix_len as usize;
-            let suffix = std::str::from_utf8(&blob[o3..suffix_end]).ok()?;
-            let prefix = &current[..prefix_len as usize];
+            let suffix_end = o3.checked_add(usize::try_from(suffix_len).ok()?)?;
+            let suffix = std::str::from_utf8(blob.get(o3..suffix_end)?).ok()?;
+            let prefix = current.get(..usize::try_from(prefix_len).ok()?)?;
             let mut rebuilt = String::with_capacity(prefix.len() + suffix.len());
             rebuilt.push_str(prefix);
             rebuilt.push_str(suffix);
@@ -814,28 +848,39 @@ impl Dict {
 
     fn find_id_grouped(&self, data: &[u8], idx: Section, s: &str) -> Option<u32> {
         let ib = idx.off as usize;
-        let n_groups = u32::from_le_bytes(data[ib..ib + 4].try_into().ok()?) as usize;
-        let headers_off = ib + 4;
+        let index = data.get(ib..ib.checked_add(idx.len as usize)?)?;
+        let n_groups = u32::from_le_bytes(index.get(..4)?.try_into().ok()?) as usize;
+        let headers_off = 4usize;
         let stride = self.idx_stride;
+        let ids_base = headers_off.checked_add(n_groups.checked_mul(stride)?)?;
+        if ids_base > index.len() {
+            return None;
+        }
         let key16 = dict_key16(s);
         let mut lo = 0usize;
         let mut hi = n_groups;
         while lo < hi {
             let mid = (lo + hi) / 2;
             let off = headers_off + mid * stride;
-            let k = &data[off..off + 16];
+            let k = index.get(off..off + 16)?;
             use std::cmp::Ordering::*;
             match k.cmp(&key16) {
                 Less => lo = mid + 1,
                 Greater => hi = mid,
                 Equal => {
                     let ids_off =
-                        u32::from_le_bytes(data[off + 16..off + 20].try_into().ok()?) as usize;
-                    let count =
-                        u32::from_le_bytes(data[off + 20..off + 24].try_into().ok()?) as usize;
+                        u32::from_le_bytes(index.get(off + 16..off + 20)?.try_into().ok()?)
+                            as usize;
+                    let count = u32::from_le_bytes(index.get(off + 20..off + 24)?.try_into().ok()?)
+                        as usize;
+                    if ids_off < ids_base
+                        || ids_off.checked_add(count.checked_mul(4)?)? > index.len()
+                    {
+                        return None;
+                    }
                     for i in 0..count {
                         let id = u32::from_le_bytes(
-                            data[ib + ids_off + i * 4..ib + ids_off + i * 4 + 4]
+                            index[ids_off + i * 4..ids_off + i * 4 + 4]
                                 .try_into()
                                 .ok()?,
                         );
@@ -892,7 +937,7 @@ impl TermDict {
             return Err(R5Error::Corrupt("term dict OOB".into()));
         }
         let base = sec.off as usize;
-        if base + 1 + 8 * 4 > data.len() {
+        if sec.len < 33 || base.checked_add(33).is_none_or(|end| end > data.len()) {
             return Err(R5Error::Corrupt("short term dict header".into()));
         }
         let width_and_flags = data[base];
@@ -906,6 +951,28 @@ impl TermDict {
         let kinds_off = u64::from_le_bytes(data[base + 9..base + 17].try_into().unwrap());
         let data_off = u64::from_le_bytes(data[base + 17..base + 25].try_into().unwrap());
         let offs_off = u64::from_le_bytes(data[base + 25..base + 33].try_into().unwrap());
+        let sec_end = sec
+            .off
+            .checked_add(sec.len)
+            .ok_or_else(|| R5Error::Corrupt("term dict OOB".into()))?;
+        let kinds_end = kinds_off
+            .checked_add(n_terms)
+            .ok_or_else(|| R5Error::Corrupt("term kinds OOB".into()))?;
+        let offsets_len = n_terms
+            .checked_add(1)
+            .and_then(|n| n.checked_mul(u64::from(width)))
+            .ok_or_else(|| R5Error::Corrupt("term offsets OOB".into()))?;
+        let offsets_end = offs_off
+            .checked_add(offsets_len)
+            .ok_or_else(|| R5Error::Corrupt("term offsets OOB".into()))?;
+        if kinds_off < sec.off
+            || kinds_end > sec_end
+            || data_off < sec.off
+            || data_off > offs_off
+            || offsets_end > sec_end
+        {
+            return Err(R5Error::Corrupt("term dict layout OOB".into()));
+        }
         let literal_components = if has_literal_components {
             let mut next = data_off as usize;
             let lex = parse_component_dict(data, next, offs_off)?;
@@ -941,16 +1008,20 @@ impl TermDict {
             read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("dt id".into()))?;
         let (lang_id, _) =
             read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("lang id".into()))?;
-        let lex = component_string(data, dicts.lex, lex_id as u32)?;
+        let lex_id = u32::try_from(lex_id).map_err(|_| R5Error::Corrupt("lex id OOB".into()))?;
+        let lex = component_string(data, dicts.lex, lex_id)?;
         let dt = if dt_id == 0 {
             None
         } else {
-            Some(component_string(data, dicts.dt, (dt_id - 1) as u32)?)
+            let id = u32::try_from(dt_id - 1).map_err(|_| R5Error::Corrupt("dt id OOB".into()))?;
+            Some(component_string(data, dicts.dt, id)?)
         };
         let lang = if lang_id == 0 {
             None
         } else {
-            Some(component_string(data, dicts.lang, (lang_id - 1) as u32)?)
+            let id =
+                u32::try_from(lang_id - 1).map_err(|_| R5Error::Corrupt("lang id OOB".into()))?;
+            Some(component_string(data, dicts.lang, id)?)
         };
         Ok((lex, dt, lang))
     }
@@ -970,14 +1041,15 @@ impl TermDict {
             read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("dt id".into()))?;
         let (lang_id, _) =
             read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("lang id".into()))?;
-        let lex = component_string_borrowed(data, dicts.lex, lex_id as u32)?;
+        let lex_id = u32::try_from(lex_id).map_err(|_| R5Error::Corrupt("lex id OOB".into()))?;
+        let lex = component_string_borrowed(data, dicts.lex, lex_id)?;
         let dt = if dt_id == 0 {
             None
         } else {
             Some(component_string_borrowed(
                 data,
                 dicts.dt,
-                (dt_id - 1) as u32,
+                u32::try_from(dt_id - 1).map_err(|_| R5Error::Corrupt("dt id OOB".into()))?,
             )?)
         };
         let lang = if lang_id == 0 {
@@ -986,60 +1058,20 @@ impl TermDict {
             Some(component_string_borrowed(
                 data,
                 dicts.lang,
-                (lang_id - 1) as u32,
+                u32::try_from(lang_id - 1).map_err(|_| R5Error::Corrupt("lang id OOB".into()))?,
             )?)
         };
         Ok((lex, dt, lang))
     }
 
     fn term_to_string(&self, data: &[u8], term_id: u64) -> Result<String> {
-        if term_id >= self.n_terms {
-            return Err(R5Error::Invalid("term id out of range"));
-        }
-        let kinds_off = self.kinds_off as usize;
-        let data_off = self.data_off as usize;
-        let s = self.offset_at(data, term_id)? as usize;
-        let e = self.offset_at(data, term_id + 1)? as usize;
-        let payload = &data[data_off + s..data_off + e];
-        match data[kinds_off + term_id as usize] {
+        let (kind, payload) = self.term_payload(data, term_id)?;
+        match kind {
             0 | 1 => std::str::from_utf8(payload)
                 .map(String::from)
                 .map_err(|_| R5Error::Corrupt("utf8".into())),
             2 => {
-                let (lex_len, mut off) =
-                    read_uvarint(payload, 0).ok_or_else(|| R5Error::Corrupt("lit lex".into()))?;
-                let lex = std::str::from_utf8(&payload[off..off + lex_len as usize])
-                    .map_err(|_| R5Error::Corrupt("utf8".into()))?;
-                off += lex_len as usize;
-                if off >= payload.len() {
-                    return Err(R5Error::Corrupt("lit bounds".into()));
-                }
-                let has_dt = payload[off];
-                off += 1;
-                let dt = if has_dt == 1 {
-                    let (l, o2) = read_uvarint(payload, off)
-                        .ok_or_else(|| R5Error::Corrupt("dt len".into()))?;
-                    let s = std::str::from_utf8(&payload[o2..o2 + l as usize])
-                        .map_err(|_| R5Error::Corrupt("utf8".into()))?;
-                    off = o2 + l as usize;
-                    Some(s.to_string())
-                } else {
-                    None
-                };
-                if off >= payload.len() {
-                    return Err(R5Error::Corrupt("lit bounds2".into()));
-                }
-                let has_lang = payload[off];
-                off += 1;
-                let lang = if has_lang == 1 {
-                    let (l, o2) = read_uvarint(payload, off)
-                        .ok_or_else(|| R5Error::Corrupt("lang len".into()))?;
-                    let s = std::str::from_utf8(&payload[o2..o2 + l as usize])
-                        .map_err(|_| R5Error::Corrupt("utf8".into()))?;
-                    Some(s.to_string())
-                } else {
-                    None
-                };
+                let (lex, dt, lang) = parse_inline_literal(payload)?;
                 Ok(match (dt, lang) {
                     (Some(dt), _) => format!("\"{}\"^^<{}>", lex, dt),
                     (None, Some(lang)) => format!("\"{}\"@{}", lex, lang),
@@ -1062,15 +1094,8 @@ impl TermDict {
     // reconstruct writer terms from an existing file without going through
     // a third-party representation.
     pub(crate) fn term_parts(&self, data: &[u8], term_id: u64) -> Result<TermParts> {
-        if term_id >= self.n_terms {
-            return Err(R5Error::Invalid("term id out of range"));
-        }
-        let kinds_off = self.kinds_off as usize;
-        let data_off = self.data_off as usize;
-        let s = self.offset_at(data, term_id)? as usize;
-        let e = self.offset_at(data, term_id + 1)? as usize;
-        let payload = &data[data_off + s..data_off + e];
-        Ok(match data[kinds_off + term_id as usize] {
+        let (kind, payload) = self.term_payload(data, term_id)?;
+        Ok(match kind {
             0 => TermParts::Iri(
                 std::str::from_utf8(payload)
                     .map_err(|_| R5Error::Corrupt("utf8".into()))?
@@ -1082,46 +1107,12 @@ impl TermDict {
                     .to_string(),
             ),
             2 => {
-                let (lex_len, mut off) =
-                    read_uvarint(payload, 0).ok_or_else(|| R5Error::Corrupt("lit lex".into()))?;
-                let lex = std::str::from_utf8(&payload[off..off + lex_len as usize])
-                    .map_err(|_| R5Error::Corrupt("utf8".into()))?
-                    .to_string();
-                off += lex_len as usize;
-                if off >= payload.len() {
-                    return Err(R5Error::Corrupt("lit bounds".into()));
+                let (lex, dt, lang) = parse_inline_literal(payload)?;
+                TermParts::Literal {
+                    lex: lex.to_string(),
+                    dt: dt.map(str::to_string),
+                    lang: lang.map(str::to_string),
                 }
-                let has_dt = payload[off];
-                off += 1;
-                let dt = if has_dt == 1 {
-                    let (l, o2) = read_uvarint(payload, off)
-                        .ok_or_else(|| R5Error::Corrupt("dt len".into()))?;
-                    off = o2;
-                    let s = std::str::from_utf8(&payload[off..off + l as usize])
-                        .map_err(|_| R5Error::Corrupt("utf8".into()))?
-                        .to_string();
-                    off += l as usize;
-                    Some(s)
-                } else {
-                    None
-                };
-                if off >= payload.len() {
-                    return Err(R5Error::Corrupt("lit bounds2".into()));
-                }
-                let has_lang = payload[off];
-                off += 1;
-                let lang = if has_lang == 1 {
-                    let (l, o2) = read_uvarint(payload, off)
-                        .ok_or_else(|| R5Error::Corrupt("lang len".into()))?;
-                    off = o2;
-                    let s = std::str::from_utf8(&payload[off..off + l as usize])
-                        .map_err(|_| R5Error::Corrupt("utf8".into()))?
-                        .to_string();
-                    Some(s)
-                } else {
-                    None
-                };
-                TermParts::Literal { lex, dt, lang }
             }
             3 => {
                 let (lex, dt, lang) = self.decode_component_literal(data, payload)?;
@@ -1132,15 +1123,8 @@ impl TermDict {
     }
 
     fn decoded_term<'a>(&self, data: &'a [u8], term_id: u64) -> Result<DecodedTerm<'a>> {
-        if term_id >= self.n_terms {
-            return Err(R5Error::Invalid("term id out of range"));
-        }
-        let kinds_off = self.kinds_off as usize;
-        let data_off = self.data_off as usize;
-        let s = self.offset_at(data, term_id)? as usize;
-        let e = self.offset_at(data, term_id + 1)? as usize;
-        let payload = &data[data_off + s..data_off + e];
-        Ok(match data[kinds_off + term_id as usize] {
+        let (kind, payload) = self.term_payload(data, term_id)?;
+        Ok(match kind {
             0 => DecodedTerm::Iri(Cow::Borrowed(
                 std::str::from_utf8(payload).map_err(|_| R5Error::Corrupt("utf8".into()))?,
             )),
@@ -1148,48 +1132,12 @@ impl TermDict {
                 std::str::from_utf8(payload).map_err(|_| R5Error::Corrupt("utf8".into()))?,
             )),
             2 => {
-                let (lex_len, mut off) =
-                    read_uvarint(payload, 0).ok_or_else(|| R5Error::Corrupt("lit lex".into()))?;
-                let lex_end = off + lex_len as usize;
-                let lex = Cow::Borrowed(
-                    std::str::from_utf8(&payload[off..lex_end])
-                        .map_err(|_| R5Error::Corrupt("utf8".into()))?,
-                );
-                off = lex_end;
-                if off >= payload.len() {
-                    return Err(R5Error::Corrupt("lit bounds".into()));
+                let (lex, dt, lang) = parse_inline_literal(payload)?;
+                DecodedTerm::Literal {
+                    lex: Cow::Borrowed(lex),
+                    dt: dt.map(Cow::Borrowed),
+                    lang: lang.map(Cow::Borrowed),
                 }
-                let has_dt = payload[off];
-                off += 1;
-                let dt = if has_dt == 1 {
-                    let (len, start) = read_uvarint(payload, off)
-                        .ok_or_else(|| R5Error::Corrupt("dt len".into()))?;
-                    let end = start + len as usize;
-                    off = end;
-                    Some(Cow::Borrowed(
-                        std::str::from_utf8(&payload[start..end])
-                            .map_err(|_| R5Error::Corrupt("utf8".into()))?,
-                    ))
-                } else {
-                    None
-                };
-                if off >= payload.len() {
-                    return Err(R5Error::Corrupt("lit bounds2".into()));
-                }
-                let has_lang = payload[off];
-                off += 1;
-                let lang = if has_lang == 1 {
-                    let (len, start) = read_uvarint(payload, off)
-                        .ok_or_else(|| R5Error::Corrupt("lang len".into()))?;
-                    let end = start + len as usize;
-                    Some(Cow::Borrowed(
-                        std::str::from_utf8(&payload[start..end])
-                            .map_err(|_| R5Error::Corrupt("utf8".into()))?,
-                    ))
-                } else {
-                    None
-                };
-                DecodedTerm::Literal { lex, dt, lang }
             }
             3 => {
                 let (lex, dt, lang) = self.decode_component_literal_borrowed(data, payload)?;
@@ -1197,6 +1145,44 @@ impl TermDict {
             }
             _ => return Err(R5Error::Corrupt("unknown term kind".into())),
         })
+    }
+
+    fn term_payload<'a>(&self, data: &'a [u8], term_id: u64) -> Result<(u8, &'a [u8])> {
+        if term_id >= self.n_terms {
+            return Err(R5Error::Invalid("term id out of range"));
+        }
+        let kind_pos = usize::try_from(self.kinds_off)
+            .ok()
+            .and_then(|base| base.checked_add(term_id as usize))
+            .ok_or_else(|| R5Error::Corrupt("term kind OOB".into()))?;
+        let kind = *data
+            .get(kind_pos)
+            .ok_or_else(|| R5Error::Corrupt("term kind OOB".into()))?;
+        let start = self.offset_at(data, term_id)?;
+        let end = self.offset_at(data, term_id + 1)?;
+        let payload_limit = self
+            .offs_off
+            .checked_sub(self.data_off)
+            .ok_or_else(|| R5Error::Corrupt("term data OOB".into()))?;
+        if start > end || end > payload_limit {
+            return Err(R5Error::Corrupt("term payload OOB".into()));
+        }
+        let base =
+            usize::try_from(self.data_off).map_err(|_| R5Error::Corrupt("term data OOB".into()))?;
+        let start = base
+            .checked_add(
+                usize::try_from(start).map_err(|_| R5Error::Corrupt("term data OOB".into()))?,
+            )
+            .ok_or_else(|| R5Error::Corrupt("term data OOB".into()))?;
+        let end = base
+            .checked_add(
+                usize::try_from(end).map_err(|_| R5Error::Corrupt("term data OOB".into()))?,
+            )
+            .ok_or_else(|| R5Error::Corrupt("term data OOB".into()))?;
+        let payload = data
+            .get(start..end)
+            .ok_or_else(|| R5Error::Corrupt("term data OOB".into()))?;
+        Ok((kind, payload))
     }
 
     fn offset_at(&self, data: &[u8], idx: u64) -> Result<u64> {
@@ -1264,24 +1250,7 @@ fn component_dict_end(dict: ComponentDictRef) -> Result<usize> {
 }
 
 fn component_string(data: &[u8], dict: ComponentDictRef, id: u32) -> Result<String> {
-    if id >= dict.n {
-        return Err(R5Error::Corrupt("component id out of range".into()));
-    }
-    let offs_base = dict.offs_off as usize;
-    let start = u32::from_le_bytes(
-        data[offs_base + id as usize * 4..offs_base + id as usize * 4 + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
-    let end = u32::from_le_bytes(
-        data[offs_base + (id as usize + 1) * 4..offs_base + (id as usize + 1) * 4 + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
-    let blob_base = dict.blob_off as usize;
-    std::str::from_utf8(&data[blob_base + start..blob_base + end])
-        .map(|s| s.to_string())
-        .map_err(|_| R5Error::Corrupt("utf8".into()))
+    component_string_borrowed(data, dict, id).map(|s| s.into_owned())
 }
 
 fn component_string_borrowed<'a>(
@@ -1293,20 +1262,30 @@ fn component_string_borrowed<'a>(
         return Err(R5Error::Corrupt("component id out of range".into()));
     }
     let offs_base = dict.offs_off as usize;
-    let start = u32::from_le_bytes(
-        data[offs_base + id as usize * 4..offs_base + id as usize * 4 + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
-    let end = u32::from_le_bytes(
-        data[offs_base + (id as usize + 1) * 4..offs_base + (id as usize + 1) * 4 + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
+    let read_offset = |index: usize| -> Result<usize> {
+        let pos = offs_base
+            .checked_add(
+                index
+                    .checked_mul(4)
+                    .ok_or_else(|| R5Error::Corrupt("component offsets OOB".into()))?,
+            )
+            .ok_or_else(|| R5Error::Corrupt("component offsets OOB".into()))?;
+        let bytes = data
+            .get(pos..pos + 4)
+            .ok_or_else(|| R5Error::Corrupt("component offsets OOB".into()))?;
+        Ok(u32::from_le_bytes(bytes.try_into().unwrap()) as usize)
+    };
+    let start = read_offset(id as usize)?;
+    let end = read_offset(id as usize + 1)?;
     let blob_base = dict.blob_off as usize;
+    if start > end || blob_base.checked_add(end).is_none_or(|pos| pos > offs_base) {
+        return Err(R5Error::Corrupt("component blob OOB".into()));
+    }
+    let bytes = data
+        .get(blob_base + start..blob_base + end)
+        .ok_or_else(|| R5Error::Corrupt("component blob OOB".into()))?;
     Ok(Cow::Borrowed(
-        std::str::from_utf8(&data[blob_base + start..blob_base + end])
-            .map_err(|_| R5Error::Corrupt("utf8".into()))?,
+        std::str::from_utf8(bytes).map_err(|_| R5Error::Corrupt("utf8".into()))?,
     ))
 }
 
@@ -1420,12 +1399,22 @@ impl R5tuFile {
     fn gdir_header(&self) -> Result<(u64, usize)> {
         let bytes = self.bytes();
         let base = self.gdir.off as usize;
-        if base + 16 > bytes.len() {
+        if self.gdir.len < 16 || base.checked_add(16).is_none_or(|end| end > bytes.len()) {
             return Err(R5Error::Corrupt("gdir header OOB".into()));
         }
         // Slices are exactly 8/4 bytes respectively; try_into cannot fail
         let n_rows = u64::from_le_bytes(bytes[base..base + 8].try_into().unwrap());
         let row_size = u32::from_le_bytes(bytes[base + 8..base + 12].try_into().unwrap()) as usize;
+        if row_size != 32 && row_size != 44 {
+            return Err(R5Error::Corrupt("unsupported gdir row size".into()));
+        }
+        if n_rows
+            .checked_mul(row_size as u64)
+            .and_then(|len| len.checked_add(16))
+            .is_none_or(|len| len > self.gdir.len)
+        {
+            return Err(R5Error::Corrupt("gdir rows OOB".into()));
+        }
         Ok((n_rows, row_size))
     }
 
@@ -1435,8 +1424,14 @@ impl R5tuFile {
             return Err(R5Error::Invalid("gid out of range"));
         }
         let bytes = self.bytes();
-        let off = self.gdir.off as usize + 16 + gid as usize * row_size;
-        if off + row_size > bytes.len() {
+        let off = (self.gdir.off as usize)
+            .checked_add(16)
+            .and_then(|base| base.checked_add((gid as usize).checked_mul(row_size)?))
+            .ok_or_else(|| R5Error::Corrupt("gdir row OOB".into()))?;
+        if off
+            .checked_add(row_size)
+            .is_none_or(|end| end > bytes.len())
+        {
             return Err(R5Error::Corrupt("gdir row OOB".into()));
         }
         let b = &bytes[off..off + row_size];
@@ -1499,20 +1494,31 @@ impl R5tuFile {
     }
 
     fn decode_posting_list(&self, sec: Section, key_ordinal: usize) -> Result<Vec<u64>> {
-        let data_all = self.bytes();
-        let b = &data_all[sec.off as usize..(sec.off + sec.len) as usize];
+        let data = self.bytes();
+        let sec_start = sec.off as usize;
+        let sec_end = sec_start
+            .checked_add(sec.len as usize)
+            .ok_or_else(|| R5Error::Corrupt("postings section OOB".into()))?;
+        let b = &data[sec_start..sec_end];
         if b.len() < 24 {
             return Err(R5Error::Corrupt("postings header short".into()));
         }
-        let n_keys = u64::from_le_bytes(b[0..8].try_into().unwrap()) as usize;
-        if key_ordinal >= n_keys {
-            return Ok(vec![]);
-        }
+        let n_keys = usize::try_from(u64::from_le_bytes(b[0..8].try_into().unwrap()))
+            .map_err(|_| R5Error::Corrupt("postings key count OOB".into()))?;
+        let offsets_len = n_keys
+            .checked_add(1)
+            .and_then(|n| n.checked_mul(8))
+            .ok_or_else(|| R5Error::Corrupt("postings offs OOB".into()))?;
         let offs_off = u64::from_le_bytes(b[8..16].try_into().unwrap()) as usize;
         let blob_off = u64::from_le_bytes(b[16..24].try_into().unwrap()) as usize;
-        let data = self.bytes();
-        if offs_off + (n_keys + 1) * 8 > data.len() {
-            return Err(R5Error::Corrupt("postings offs OOB".into()));
+        let offs_end = offs_off
+            .checked_add(offsets_len)
+            .ok_or_else(|| R5Error::Corrupt("postings offs OOB".into()))?;
+        if offs_off < sec_start + 24 || offs_end > blob_off || blob_off > sec_end {
+            return Err(R5Error::Corrupt("postings layout OOB".into()));
+        }
+        if key_ordinal >= n_keys {
+            return Ok(vec![]);
         }
         let s = u64::from_le_bytes(
             data[offs_off + key_ordinal * 8..offs_off + key_ordinal * 8 + 8]
@@ -1524,30 +1530,31 @@ impl R5tuFile {
                 .try_into()
                 .unwrap(),
         ) as usize;
-        if blob_off + e > data.len() || blob_off + s > data.len() || s > e {
+        if s > e || e > sec_end - blob_off {
             return Err(R5Error::Corrupt("postings blob OOB".into()));
         }
-        let mut off = blob_off + s;
-        let end = blob_off + e;
-        let (n, o1) =
-            read_uvarint(data, off).ok_or_else(|| R5Error::Corrupt("postings n".into()))?;
-        off = o1;
+        let list = &data[blob_off + s..blob_off + e];
+        let (n, o1) = read_uvarint(list, 0).ok_or_else(|| R5Error::Corrupt("postings n".into()))?;
+        let mut off = o1;
         if n == 0 {
             return Ok(vec![]);
         }
+        if n > list.len() as u64 {
+            return Err(R5Error::Corrupt("postings count OOB".into()));
+        }
         let (first, o_after_first) =
-            read_uvarint(data, off).ok_or_else(|| R5Error::Corrupt("postings first".into()))?;
+            read_uvarint(list, off).ok_or_else(|| R5Error::Corrupt("postings first".into()))?;
         off = o_after_first;
         let mut out = Vec::with_capacity(n as usize);
         out.push(first);
         let mut cur = first;
         for _ in 1..n {
-            if off >= end {
-                return Err(R5Error::Corrupt("postings truncated".into()));
-            }
             let (d, o2) =
-                read_uvarint(data, off).ok_or_else(|| R5Error::Corrupt("postings delta".into()))?;
+                read_uvarint(list, off).ok_or_else(|| R5Error::Corrupt("postings delta".into()))?;
             off = o2;
+            if d == 0 {
+                return Err(R5Error::Corrupt("postings not ascending".into()));
+            }
             cur = cur
                 .checked_add(d)
                 .ok_or_else(|| R5Error::Corrupt("postings overflow".into()))?;
@@ -1564,10 +1571,14 @@ impl R5tuFile {
         }
         let n_pairs = u64::from_le_bytes(b[0..8].try_into().unwrap()) as usize;
         let pairs_off = u64::from_le_bytes(b[8..16].try_into().unwrap()) as usize;
-        if pairs_off < sec.off as usize + 16 {
+        let sec_end =
+            sec.off
+                .checked_add(sec.len)
+                .ok_or_else(|| R5Error::Corrupt("pair section OOB".into()))? as usize;
+        if pairs_off < sec.off as usize + 16 || pairs_off > sec_end {
             return Err(R5Error::Corrupt("pairs offset OOB".into()));
         }
-        let payload_len = sec.len as usize - (pairs_off - sec.off as usize);
+        let payload_len = sec_end - pairs_off;
         let entry_size = match payload_len.checked_div(n_pairs) {
             None => 16usize,
             Some(stride) if payload_len != stride * n_pairs || (stride != 12 && stride != 16) => {
@@ -1575,7 +1586,14 @@ impl R5tuFile {
             }
             Some(stride) => stride,
         };
-        if pairs_off + n_pairs * entry_size > data.len() {
+        if pairs_off
+            .checked_add(
+                n_pairs
+                    .checked_mul(entry_size)
+                    .ok_or_else(|| R5Error::Corrupt("pairs OOB".into()))?,
+            )
+            .is_none_or(|end| end > sec_end)
+        {
             return Err(R5Error::Corrupt("pairs OOB".into()));
         }
         let mut lo = 0usize;
@@ -1606,8 +1624,11 @@ impl R5tuFile {
 // ---------------- Utilities ----------------
 fn read_uvarint(buf: &[u8], mut off: usize) -> Option<(u64, usize)> {
     let (mut x, mut s) = (0u64, 0u32);
-    for _ in 0..10 {
+    for i in 0..10 {
         let b = *buf.get(off)? as u64;
+        if i == 9 && b > 1 {
+            return None;
+        }
         off += 1;
         x |= (b & 0x7f) << s;
         if b & 0x80 == 0 {
@@ -1616,6 +1637,53 @@ fn read_uvarint(buf: &[u8], mut off: usize) -> Option<(u64, usize)> {
         s += 7;
     }
     None
+}
+
+fn parse_inline_literal(payload: &[u8]) -> Result<(&str, Option<&str>, Option<&str>)> {
+    fn part(payload: &[u8], off: usize) -> Result<(&str, usize)> {
+        let (len, start) =
+            read_uvarint(payload, off).ok_or_else(|| R5Error::Corrupt("literal length".into()))?;
+        let end = start
+            .checked_add(
+                usize::try_from(len).map_err(|_| R5Error::Corrupt("literal length OOB".into()))?,
+            )
+            .ok_or_else(|| R5Error::Corrupt("literal length OOB".into()))?;
+        let bytes = payload
+            .get(start..end)
+            .ok_or_else(|| R5Error::Corrupt("literal bytes OOB".into()))?;
+        Ok((
+            std::str::from_utf8(bytes).map_err(|_| R5Error::Corrupt("utf8".into()))?,
+            end,
+        ))
+    }
+    let (lex, mut off) = part(payload, 0)?;
+    let has_dt = *payload
+        .get(off)
+        .ok_or_else(|| R5Error::Corrupt("literal datatype flag OOB".into()))?;
+    off += 1;
+    if has_dt > 1 {
+        return Err(R5Error::Corrupt("invalid literal datatype flag".into()));
+    }
+    let dt = if has_dt == 1 {
+        let (value, end) = part(payload, off)?;
+        off = end;
+        Some(value)
+    } else {
+        None
+    };
+    let has_lang = *payload
+        .get(off)
+        .ok_or_else(|| R5Error::Corrupt("literal language flag OOB".into()))?;
+    off += 1;
+    if has_lang > 1 {
+        return Err(R5Error::Corrupt("invalid literal language flag".into()));
+    }
+    let lang = if has_lang == 1 {
+        Some(part(payload, off)?.0)
+    } else {
+        None
+    };
+    Ok((lex, dt, lang))
 }
 
 // ---------------- Triple blocks ----------------
@@ -1633,19 +1701,51 @@ pub struct TripleIter<'a> {
     o_off: usize,
     run_remaining: usize,
     current_o: u64,
+    needs_delta: bool,
+}
+
+/// A triple iterator that validates object values as it reaches them.
+#[derive(Debug)]
+pub struct CheckedTripleIter<'a> {
+    inner: TripleIter<'a>,
+    failed: bool,
+}
+
+impl Iterator for CheckedTripleIter<'_> {
+    type Item = Result<(u64, u64, u64)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.failed {
+            return None;
+        }
+        match self.inner.next_checked() {
+            Ok(Some(triple)) => Some(Ok(triple)),
+            Ok(None) => None,
+            Err(error) => {
+                self.failed = true;
+                Some(Err(error))
+            }
+        }
+    }
 }
 
 impl Iterator for TripleIter<'_> {
     type Item = (u64, u64, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.next_checked().ok().flatten()
+    }
+}
+
+impl TripleIter<'_> {
+    fn next_checked(&mut self) -> Result<Option<(u64, u64, u64)>> {
         if self.emitted >= self.n_t {
-            return None;
+            return Ok(None);
         }
 
         while self.run_remaining == 0 {
             if self.pi >= self.p_vals.len() {
-                return None;
+                return Err(R5Error::Corrupt("triple run exhausted".into()));
             }
             while self.si + 1 < self.s_heads.len() && self.s_heads[self.si + 1] <= self.pi as u64 {
                 self.si += 1;
@@ -1656,37 +1756,62 @@ impl Iterator for TripleIter<'_> {
                 self.pi += 1;
                 continue;
             }
-            let (first, next_off) = read_uvarint(self.raw.as_ref(), self.o_off)?;
+            let (first, next_off) = read_uvarint(self.raw.as_ref(), self.o_off)
+                .ok_or_else(|| R5Error::Corrupt("O first".into()))?;
             self.o_off = next_off;
             self.current_o = first;
             self.run_remaining = end - start;
+            self.needs_delta = false;
         }
 
-        let s = self.s_vals[self.si];
-        let p = self.p_vals[self.pi];
+        if self.needs_delta {
+            let (delta, next_off) = read_uvarint(self.raw.as_ref(), self.o_off)
+                .ok_or_else(|| R5Error::Corrupt("O delta".into()))?;
+            self.o_off = next_off;
+            self.current_o = self
+                .current_o
+                .checked_add(delta)
+                .ok_or_else(|| R5Error::Corrupt("O overflow".into()))?;
+            self.needs_delta = false;
+        }
+
+        let s = *self
+            .s_vals
+            .get(self.si)
+            .ok_or_else(|| R5Error::Corrupt("S run OOB".into()))?;
+        let p = *self
+            .p_vals
+            .get(self.pi)
+            .ok_or_else(|| R5Error::Corrupt("P run OOB".into()))?;
         let o = self.current_o;
         self.emitted += 1;
         self.run_remaining -= 1;
         if self.run_remaining > 0 {
-            let (delta, next_off) = read_uvarint(self.raw.as_ref(), self.o_off)?;
-            self.o_off = next_off;
-            self.current_o = self.current_o.checked_add(delta)?;
+            self.needs_delta = true;
         } else {
             self.pi += 1;
         }
-        Some((s, p, o))
+        Ok(Some((s, p, o)))
     }
 }
 
 impl R5tuFile {
-    fn decode_triple_block(&self, gid: u64) -> Result<TripleIter<'_>> {
+    fn decode_triple_block(&self, gid: u64, validate_objects: bool) -> Result<TripleIter<'_>> {
         let row = self.gdir_row(gid)?;
         let data = self.bytes();
         let base = row.triples_off as usize;
         let end = base
             .checked_add(row.triples_len as usize)
             .ok_or_else(|| R5Error::Corrupt("block bounds".into()))?;
-        if end > data.len() {
+        let section_end = self
+            .triple_blocks
+            .off
+            .checked_add(self.triple_blocks.len)
+            .ok_or_else(|| R5Error::Corrupt("triple section OOB".into()))?;
+        if row.triples_off < self.triple_blocks.off
+            || (end as u64) > section_end
+            || end > data.len()
+        {
             return Err(R5Error::Corrupt("block OOB".into()));
         }
         if base + 1 + 4 > end {
@@ -1701,7 +1826,7 @@ impl R5tuFile {
                     return Err(R5Error::Corrupt("raw len OOB".into()));
                 }
                 let raw = &data[payload_start..payload_start + raw_len];
-                self.decode_raw_payload(Cow::Borrowed(raw))
+                self.decode_raw_payload(Cow::Borrowed(raw), validate_objects)
             }
             1 => {
                 #[cfg(feature = "zstd")]
@@ -1712,7 +1837,7 @@ impl R5tuFile {
                     let frame = &data[payload_start..payload_start + raw_len];
                     let raw = zstd::decode_all(std::io::Cursor::new(frame))
                         .map_err(|_| R5Error::Corrupt("zstd decode".into()))?;
-                    self.decode_raw_payload(Cow::Owned(raw))
+                    self.decode_raw_payload(Cow::Owned(raw), validate_objects)
                 }
                 #[cfg(not(feature = "zstd"))]
                 {
@@ -1723,7 +1848,11 @@ impl R5tuFile {
         }
     }
 
-    fn decode_raw_payload<'a>(&self, raw: Cow<'a, [u8]>) -> Result<TripleIter<'a>> {
+    fn decode_raw_payload<'a>(
+        &self,
+        raw: Cow<'a, [u8]>,
+        validate_objects: bool,
+    ) -> Result<TripleIter<'a>> {
         let raw_ref = raw.as_ref();
         let mut off = 0usize;
         let (n_s, o1) = read_uvarint(raw_ref, off).ok_or_else(|| R5Error::Corrupt("nS".into()))?;
@@ -1735,6 +1864,12 @@ impl R5tuFile {
         let n_s = n_s as usize;
         let n_p = n_p as usize;
         let n_t = n_t as usize;
+        if n_s > raw_ref.len() || n_p > raw_ref.len() || n_t > raw_ref.len() {
+            return Err(R5Error::Corrupt("triple counts OOB".into()));
+        }
+        if (n_s == 0) != (n_p == 0) || (n_p == 0) != (n_t == 0) {
+            return Err(R5Error::Corrupt("inconsistent triple counts".into()));
+        }
         // S_vals (delta-coded ascending)
         let mut s_vals = Vec::with_capacity(n_s);
         if n_s > 0 {
@@ -1761,7 +1896,7 @@ impl R5tuFile {
             off = o;
             s_heads.push(v);
         }
-        if *s_heads.last().unwrap_or(&0) as usize != n_p {
+        if s_heads.first() != Some(&0) || *s_heads.last().unwrap_or(&0) as usize != n_p {
             return Err(R5Error::Corrupt("S_heads last != nP".into()));
         }
 
@@ -1800,12 +1935,17 @@ impl R5tuFile {
             off = o;
             p_heads.push(v);
         }
-        if *p_heads.last().unwrap_or(&0) as usize != n_t {
+        if p_heads.first() != Some(&0)
+            || *p_heads.last().unwrap_or(&0) as usize != n_t
+            || p_heads.windows(2).any(|w| w[0] >= w[1])
+        {
             return Err(R5Error::Corrupt("P_heads last != nT".into()));
         }
 
         let o_off = off;
-        validate_o_runs(raw_ref, o_off, n_t, &p_heads)?;
+        if validate_objects {
+            validate_o_runs(raw_ref, o_off, n_t, &p_heads)?;
+        }
 
         let mut si = 0usize;
         while si + 1 < s_heads.len() && s_heads[si + 1] == 0 {
@@ -1825,6 +1965,7 @@ impl R5tuFile {
             o_off,
             run_remaining: 0,
             current_o: 0,
+            needs_delta: false,
         })
     }
 }
@@ -2186,7 +2327,7 @@ mod tests {
 
         let offs_off = file.len();
         file.extend_from_slice(&(u32::try_from(payload_off - data_off).unwrap()).to_le_bytes());
-        file.extend_from_slice(&(u32::try_from(file.len() - data_off).unwrap()).to_le_bytes());
+        file.extend_from_slice(&(u32::try_from(offs_off - data_off).unwrap()).to_le_bytes());
 
         file[sec_off] = 4 | 0x80;
         file[sec_off + 1..sec_off + 9].copy_from_slice(&(1u64).to_le_bytes());
@@ -2282,7 +2423,7 @@ mod tests {
             term_overflow: Mutex::new(TermOverflow::default()),
         };
 
-        let mut iter = file.decode_raw_payload(Cow::Owned(raw)).unwrap();
+        let mut iter = file.decode_raw_payload(Cow::Owned(raw), true).unwrap();
         assert_eq!(iter.run_remaining, 0);
         assert_eq!(iter.emitted, 0);
         assert_eq!(iter.n_t, 3);
@@ -2484,6 +2625,9 @@ mod tests {
         f[16..24].copy_from_slice(&(toc_off as u64).to_le_bytes());
         f[24..28].copy_from_slice(&(toc_entries.len() as u32).to_le_bytes());
         f[28..32].copy_from_slice(&0u32.to_le_bytes());
+        let crc = crc32_ieee(&f);
+        f.extend_from_slice(&crc.to_le_bytes());
+        f.extend_from_slice(b"R5TU_ENDMARK");
 
         // Write and open
         let mut path = std::env::temp_dir();

@@ -296,16 +296,17 @@ impl Snapshot {
         let file: &'a R5tuFile = self.file.as_ref();
         gids.into_iter()
             .flat_map(move |gid| -> Box<dyn Iterator<Item = Result<Match>> + 'a> {
-                match file.triples_ids(gid) {
-                    Ok(triples) => Box::new(triples.filter_map(move |(s, p, o)| {
-                        if pat.s.is_some_and(|x| x != s)
-                            || pat.p.is_some_and(|x| x != p)
-                            || pat.o.is_some_and(|x| x != o)
+                match file.triples_ids_lazy(gid) {
+                    Ok(triples) => Box::new(triples.filter_map(move |triple| match triple {
+                        Err(error) => Some(Err(error)),
+                        Ok((s, p, o))
+                            if pat.s.is_none_or(|x| x == s)
+                                && pat.p.is_none_or(|x| x == p)
+                                && pat.o.is_none_or(|x| x == o) =>
                         {
-                            None
-                        } else {
                             Some(Ok(Match { gid, s, p, o }))
                         }
+                        Ok(_) => None,
                     })),
                     Err(error) => Box::new(once(Err(error))),
                 }

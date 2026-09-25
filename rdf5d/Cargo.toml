@@ -36,3 +36,4 @@ idx = ["dep:log"]
 [[bench]]
 name = "rdf5d_bench"
 harness = false
+required-features = ["idx"]
