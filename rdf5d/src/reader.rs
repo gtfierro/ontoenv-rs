@@ -358,7 +358,38 @@ impl R5tuFile {
     /// for terms absent from the dictionary. `O(1)` after the first call
     /// (which lazily builds the reverse index).
     pub fn term_id(&self, term: &DecodedTerm<'_>) -> Option<u64> {
-        self.term_index().get(term).copied()
+        let index = self.term_index();
+        if let Some(id) = index.get(term) {
+            return Some(*id);
+        }
+        // Older snapshots can encode plain literals as explicit xsd:string.
+        // RDF treats the two spellings as the same term.
+        const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
+        match term {
+            DecodedTerm::Literal {
+                lex,
+                dt: None,
+                lang: None,
+            } => index
+                .get(&DecodedTerm::Literal {
+                    lex: lex.clone(),
+                    dt: Some(std::borrow::Cow::Borrowed(XSD_STRING)),
+                    lang: None,
+                })
+                .copied(),
+            DecodedTerm::Literal {
+                lex,
+                dt: Some(dt),
+                lang: None,
+            } if dt.as_ref() == XSD_STRING => index
+                .get(&DecodedTerm::Literal {
+                    lex: lex.clone(),
+                    dt: None,
+                    lang: None,
+                })
+                .copied(),
+            _ => None,
+        }
     }
 
     /// Resolves a decoded term to a stable term id for SPARQL evaluation.

@@ -224,3 +224,96 @@ fn view_property_path_stays_within_scoped_graphs() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["o"].to_string(), "<http://ex/b>");
 }
+
+#[cfg(feature = "idx")]
+#[test]
+fn grouped_scan_reports_contexts_once_and_honors_scope() {
+    use rdf5d::{Pattern, Scope, Snapshot, View};
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("grouped.r5tu");
+    let triple = |id: &str, graph: &str, object: &str| Quint {
+        id: id.into(),
+        gname: graph.into(),
+        s: Term::Iri("http://ex/s".into()),
+        p: Term::Iri("http://ex/p".into()),
+        o: Term::Iri(object.into()),
+    };
+    write_file(
+        &path,
+        &[
+            triple("source1", "http://ex/g1", "http://ex/o"),
+            triple("source2", "http://ex/g1", "http://ex/o"),
+            triple("source3", "http://ex/g2", "http://ex/o"),
+            triple("source3", "http://ex/g2", "http://ex/other"),
+        ],
+    )
+    .unwrap();
+    let snapshot = Arc::new(Snapshot::open(&path).unwrap());
+    let all: Vec<_> = snapshot
+        .grouped_scan(Pattern::ANY, Scope::All)
+        .unwrap()
+        .collect();
+    assert_eq!(all.len(), 2);
+    let shared = all.iter().find(|row| row.gids.len() == 3).unwrap();
+    assert_eq!(shared.gids.len(), 3);
+
+    let view = View::from_names(&snapshot, &["http://ex/g1"]);
+    for pattern in [
+        Pattern {
+            s: Some(shared.s),
+            ..Pattern::ANY
+        },
+        Pattern {
+            p: Some(shared.p),
+            ..Pattern::ANY
+        },
+        Pattern {
+            o: Some(shared.o),
+            ..Pattern::ANY
+        },
+        Pattern {
+            p: Some(shared.p),
+            o: Some(shared.o),
+            ..Pattern::ANY
+        },
+    ] {
+        let matches: Vec<_> = view.scan(pattern).collect::<rdf5d::Result<_>>().unwrap();
+        assert_eq!(matches.len(), 1);
+    }
+    let scoped: Vec<_> = snapshot
+        .grouped_scan(Pattern::ANY, Scope::Gids(view.gids()))
+        .unwrap()
+        .collect();
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(scoped[0].gids.len(), 2);
+}
+
+#[test]
+fn legacy_explicit_xsd_string_can_be_found_as_plain_literal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy-literal.r5tu");
+    write_file(
+        &path,
+        &[Quint {
+            id: "source".into(),
+            gname: "http://ex/g".into(),
+            s: Term::Iri("http://ex/s".into()),
+            p: Term::Iri("http://ex/p".into()),
+            o: Term::Literal {
+                lex: "hello".into(),
+                dt: Some("http://www.w3.org/2001/XMLSchema#string".into()),
+                lang: None,
+            },
+        }],
+    )
+    .unwrap();
+    let file = R5tuFile::open(&path).unwrap();
+    let plain = rdf5d::DecodedTerm::Literal {
+        lex: "hello".into(),
+        dt: None,
+        lang: None,
+    };
+    assert!(file.term_id(&plain).is_some());
+}

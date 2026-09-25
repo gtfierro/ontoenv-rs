@@ -17,7 +17,7 @@
 //!
 //! ```ignore
 //! let snap = Snapshot::open(&path)?;
-//! let view = View::from_names(&snap, &["http://ex/g/A", "http://ex/g/B"])?;
+//! let view = View::from_names(&snap, &["http://ex/g/A", "http://ex/g/B"]);
 //!
 //! // SPARQL query scoped to the view
 //! let mut query = SparqlParser::new().parse_query("SELECT ?x WHERE { ... }")?;
@@ -31,7 +31,9 @@ use std::collections::HashSet;
 use std::iter::{empty, once};
 use std::sync::OnceLock;
 
-use crate::index::{IdxKind, MemPClos, MemSection};
+use crate::index::{
+    IdxKind, MemPClos, MemSection, build_mem_pclos_for_gids, build_mem_section_for_gids,
+};
 use crate::reader::{DecodedTerm, Result};
 use crate::snapshot::{CLOSURE_PREDICATE_IRIS, Match, Pattern, Snapshot};
 
@@ -52,13 +54,9 @@ pub struct View<'a> {
     gids: Vec<u64>,
     // Permutation indexes, built lazily and independently from the view's
     // gids only. `None` inside the cell means the build failed (logged).
-    #[allow(dead_code)]
     mem_pso: OnceLock<Option<MemSection>>,
-    #[allow(dead_code)]
     mem_pos: OnceLock<Option<MemSection>>,
-    #[allow(dead_code)]
     mem_spo: OnceLock<Option<MemSection>>,
-    #[allow(dead_code)]
     mem_osp: OnceLock<Option<MemSection>>,
     // Precomputed transitive closures for CLOSURE_PREDICATE_IRIS, computed
     // over triples in the view's gids only.
@@ -91,7 +89,9 @@ impl<'a> View<'a> {
     }
 
     /// Create a view from an explicit list of physical gids.
-    pub fn from_gids(snapshot: &'a Snapshot, gids: Vec<u64>) -> Self {
+    pub fn from_gids(snapshot: &'a Snapshot, mut gids: Vec<u64>) -> Self {
+        gids.sort_unstable();
+        gids.dedup();
         Self {
             snapshot,
             gids,
@@ -124,6 +124,14 @@ impl<'a> View<'a> {
     /// indexes when a term is bound and the relevant index is available;
     /// otherwise falls back to a per-gid scan of the view's gids.
     pub fn scan(&'a self, pat: Pattern) -> Box<dyn Iterator<Item = Result<Match>> + 'a> {
+        self.scan_gids(pat, self.gids.clone())
+    }
+
+    pub(crate) fn scan_gids(
+        &'a self,
+        pat: Pattern,
+        gids: Vec<u64>,
+    ) -> Box<dyn Iterator<Item = Result<Match>> + 'a> {
         let n_terms = self.snapshot.file().num_terms();
         if [pat.s, pat.p, pat.o]
             .iter()
@@ -132,8 +140,7 @@ impl<'a> View<'a> {
             return Box::new(empty());
         }
 
-        let dedup = self.gids.len() > 1;
-        let gids = self.gids.clone();
+        let dedup = gids.len() > 1;
 
         let base: Box<dyn Iterator<Item = Result<Match>> + 'a> = match self.indexed_iter(pat, gids)
         {
@@ -157,7 +164,7 @@ impl<'a> View<'a> {
     /// deduplicates triples across gids that share a name.
     #[cfg(feature = "sparql")]
     pub fn sparql_view(&'a self) -> SparqlView<'a> {
-        SparqlView::scoped(self.snapshot, &self.gids)
+        SparqlView::scoped(self)
     }
 
     /// Rewrite and evaluate a SPARQL query against this view.
@@ -180,7 +187,7 @@ impl<'a> View<'a> {
 
     /// The dedup-aware unique-triple count for this view.
     ///
-    /// Computed lazily and cached (first call scans all gids).
+    /// Each call scans the selected gids.
     pub fn triple_count(&self) -> Result<usize> {
         count_unique(self.snapshot.file(), &self.gids)
     }
@@ -212,7 +219,6 @@ impl<'a> View<'a> {
 
     // ── index building (lazy, per-view) ─────────────────────────────────
 
-    #[allow(dead_code)]
     fn mem_section(&self, kind: IdxKind) -> Option<&MemSection> {
         let cell = match kind {
             IdxKind::Pso => &self.mem_pso,
@@ -261,13 +267,10 @@ impl<'a> View<'a> {
 
     fn indexed_iter(
         &'a self,
-        _pat: Pattern,
+        pat: Pattern,
         gids: Vec<u64>,
     ) -> std::result::Result<Box<dyn Iterator<Item = Result<Match>> + 'a>, Vec<u64>> {
-        // Identical to Snapshot::indexed_iter but uses self.mem_section()
-        // (view's own indexes) instead of snapshot's.
-        // ... (copy the match arms from Snapshot::indexed_iter)
-        Err(gids)
+        crate::snapshot::indexed_iter_with_sections(pat, gids, |kind| self.mem_section(kind))
     }
 
     fn full_scan(
@@ -295,151 +298,6 @@ impl<'a> View<'a> {
                 Err(error) => Box::new(once(Err(error))),
             })
     }
-}
-
-/// Collect `(p, gid, s, o)` tuples from only the given gids.
-fn collect_tuples_for_gids(
-    r5tu: &crate::reader::R5tuFile,
-    gids: &[u64],
-) -> Result<Vec<(u64, u32, u64, u64)>> {
-    let mut tuples: Vec<(u64, u32, u64, u64)> = Vec::new();
-    for &gid in gids {
-        if gid > u32::MAX as u64 {
-            continue;
-        }
-        for (s, p, o) in r5tu.triples_ids(gid)? {
-            tuples.push((p, gid as u32, s, o));
-        }
-    }
-    Ok(tuples)
-}
-
-/// Build one permutation index from only the given gids.
-#[allow(dead_code)]
-fn build_mem_section_for_gids(
-    r5tu: &crate::reader::R5tuFile,
-    kind: IdxKind,
-    gids: &[u64],
-) -> Result<MemSection> {
-    let mut tuples: Vec<(u64, u32, u64, u64)> = collect_tuples_for_gids(r5tu, gids)?
-        .into_iter()
-        .map(|(p, gid, s, o)| match kind {
-            IdxKind::Pso => (p, gid, s, o),
-            IdxKind::Pos => (p, gid, o, s),
-            IdxKind::Spo => (s, gid, p, o),
-            IdxKind::Osp => (o, gid, s, p),
-            IdxKind::PClos => unreachable!(),
-        })
-        .collect();
-    tuples.sort_unstable();
-
-    let mut keys: Vec<u64> = Vec::new();
-    let mut postings: Vec<crate::index::Posting> = Vec::new();
-    let mut i = 0usize;
-    while i < tuples.len() {
-        let key = tuples[i].0;
-        let mut gids_vec: Vec<u32> = Vec::new();
-        let mut blocks: Vec<Vec<(u64, u64)>> = Vec::new();
-        while i < tuples.len() && tuples[i].0 == key {
-            let gid = tuples[i].1;
-            let mut block: Vec<(u64, u64)> = Vec::new();
-            while i < tuples.len() && tuples[i].0 == key && tuples[i].1 == gid {
-                block.push((tuples[i].2, tuples[i].3));
-                i += 1;
-            }
-            gids_vec.push(gid);
-            blocks.push(block);
-        }
-        keys.push(key);
-        postings.push(crate::index::Posting {
-            gids: gids_vec,
-            blocks,
-        });
-    }
-
-    Ok(MemSection {
-        kind,
-        keys,
-        postings,
-    })
-}
-
-/// Build PClos from only the given gids.
-fn build_mem_pclos_for_gids(
-    r5tu: &crate::reader::R5tuFile,
-    predicates: &[u64],
-    gids: &[u64],
-) -> Result<MemPClos> {
-    let tuples = collect_tuples_for_gids(r5tu, gids)?;
-    let mut wanted: Vec<u64> = predicates.to_vec();
-    wanted.sort_unstable();
-    wanted.dedup();
-
-    let mut preds = std::collections::HashMap::with_capacity(wanted.len());
-    for p in wanted {
-        // Distinct (s, o) edges for predicate p, from the view's gids only.
-        let mut adjacency: std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>> =
-            std::collections::BTreeMap::new();
-        for &(tp, _gid, s, o) in &tuples {
-            if tp == p {
-                adjacency.entry(s).or_default().insert(o);
-            }
-        }
-        if adjacency.is_empty() {
-            preds.insert(p, crate::index::PClosPred::default());
-            continue;
-        }
-        let forward = bfs_closure_table(&adjacency);
-        let mut inverse: std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>> =
-            std::collections::BTreeMap::new();
-        for (s, objects) in &adjacency {
-            for o in objects {
-                inverse.entry(*o).or_default().insert(*s);
-            }
-        }
-        let reverse = bfs_closure_table(&inverse);
-        preds.insert(
-            p,
-            crate::index::PClosPred {
-                forward: forward.into_iter().collect(),
-                reverse: reverse.into_iter().collect(),
-            },
-        );
-    }
-
-    Ok(crate::index::MemPClos { preds })
-}
-
-/// Non-reflexive BFS closure table. (Duplicated from index.rs; could be
-/// shared via a helper module.)
-fn bfs_closure_table(
-    adj: &std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>>,
-) -> std::collections::BTreeMap<u64, Vec<u64>> {
-    let mut out = std::collections::BTreeMap::new();
-    for start in adj.keys() {
-        let mut visited = std::collections::BTreeSet::new();
-        let mut queue: std::collections::VecDeque<u64> = std::collections::VecDeque::new();
-        if let Some(direct) = adj.get(start) {
-            for d in direct {
-                if visited.insert(*d) {
-                    queue.push_back(*d);
-                }
-            }
-        }
-        while let Some(cur) = queue.pop_front() {
-            if let Some(next) = adj.get(&cur) {
-                for n in next {
-                    if visited.insert(*n) {
-                        queue.push_back(*n);
-                    }
-                }
-            }
-        }
-        if !visited.is_empty() {
-            out.insert(*start, visited.into_iter().collect());
-        }
-    }
-    out
 }
 
 /// Wraps a match iterator, dropping triples already seen.

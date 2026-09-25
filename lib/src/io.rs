@@ -218,27 +218,38 @@ fn commit_parsed_ontology(
     store: &Store,
     parsed: ParsedOntology,
     overwrite: Overwrite,
-) -> Result<Ontology> {
+    require_ontology_names: bool,
+) -> Result<(Ontology, bool)> {
     let ParsedOntology {
-        ontology, triples, ..
+        location,
+        ontology,
+        triples,
+        ..
     } = parsed;
     let id = ontology.id();
     let graphname: GraphName = id.graphname()?;
 
-    // Only write into the store if overwrite is allowed or the graph is absent.
-    if overwrite.as_bool() || !store.contains_named_graph(id.name())? {
-        store.remove_named_graph(id.name())?;
-        let mut loader = store.bulk_loader();
-        loader.load_quads(
-            triples
-                .into_iter()
-                .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
-        )?;
-        loader.commit()?;
-        info!("Added graph {} (from bytes)", id.name());
+    if !overwrite.as_bool() && store.contains_named_graph(id.name())? {
+        let mut existing = Graph::new();
+        for quad in store.quads_for_pattern(None, None, None, Some(graphname.as_ref())) {
+            existing.insert(quad?.as_ref());
+        }
+        return Ok((
+            Ontology::from_graph(&existing, location, require_ontology_names)?,
+            false,
+        ));
     }
 
-    Ok(ontology)
+    store.remove_named_graph(id.name())?;
+    let mut loader = store.bulk_loader();
+    loader.load_quads(
+        triples
+            .into_iter()
+            .map(|t| Quad::new(t.subject, t.predicate, t.object, graphname.clone())),
+    )?;
+    loader.commit()?;
+    info!("Added graph {} (from bytes)", id.name());
+    Ok((ontology, true))
 }
 
 fn add_ontology_bytes(
@@ -250,7 +261,7 @@ fn add_ontology_bytes(
     require_ontology_names: bool,
 ) -> Result<Ontology> {
     let parsed = parse_ontology_source(location, bytes, format, require_ontology_names)?;
-    commit_parsed_ontology(store, parsed, overwrite)
+    commit_parsed_ontology(store, parsed, overwrite, require_ontology_names).map(|(ont, _)| ont)
 }
 
 /// A helper function to read an ontology from a location, add it to a store,
@@ -604,7 +615,8 @@ fn oxigraph_object_to_r5term(o: oxigraph::model::Term) -> R5Term {
             } else {
                 R5Term::Literal {
                     lex,
-                    dt: Some(lit.datatype().as_str().to_string()),
+                    dt: (lit.datatype().as_str() != "http://www.w3.org/2001/XMLSchema#string")
+                        .then(|| lit.datatype().as_str().to_string()),
                     lang: None,
                 }
             }
@@ -729,6 +741,23 @@ impl PersistentGraphIO {
         drop(loaded);
         self.on_store_mutated()?;
         Ok(ont)
+    }
+
+    fn commit_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
+        if overwrite == Overwrite::Preserve
+            && self
+                .r5_index
+                .contains_key(parsed.ontology.id().name().as_str())
+        {
+            self.ensure_graph_loaded(parsed.ontology.id().name().as_str())?;
+        }
+        let (ontology, written) =
+            commit_parsed_ontology(&self.store, parsed, overwrite, self.require_ontology_names)?;
+        if written {
+            self.finish_add(ontology)
+        } else {
+            Ok(ontology)
+        }
     }
 
     fn count_graph_triples(&self, graphname: &GraphName) -> Result<usize> {
@@ -912,14 +941,9 @@ impl GraphIO for PersistentGraphIO {
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
-        let ont = add_ontology_to_store(
-            &self.store,
-            location,
-            overwrite,
-            self.offline,
-            self.require_ontology_names,
-        )?;
-        self.finish_add(ont)
+        let (bytes, format) = fetch_source(&location, self.offline)?;
+        let parsed = parse_ontology_source(location, bytes, format, self.require_ontology_names)?;
+        self.commit_parsed(parsed, overwrite)
     }
 
     fn add_from_bytes(
@@ -929,20 +953,12 @@ impl GraphIO for PersistentGraphIO {
         format: Option<RdfFormat>,
         overwrite: Overwrite,
     ) -> Result<Ontology> {
-        let ont = add_ontology_bytes(
-            &self.store,
-            location,
-            bytes,
-            format,
-            overwrite,
-            self.require_ontology_names,
-        )?;
-        self.finish_add(ont)
+        let parsed = parse_ontology_source(location, bytes, format, self.require_ontology_names)?;
+        self.commit_parsed(parsed, overwrite)
     }
 
     fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
-        let ont = commit_parsed_ontology(&self.store, parsed, overwrite)?;
-        self.finish_add(ont)
+        self.commit_parsed(parsed, overwrite)
     }
 
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
@@ -1277,7 +1293,8 @@ impl GraphIO for ExternalStoreGraphIO {
     }
 
     fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
-        commit_parsed_ontology(&self.store, parsed, overwrite)
+        commit_parsed_ontology(&self.store, parsed, overwrite, self.require_ontology_names)
+            .map(|(ont, _)| ont)
     }
 }
 
@@ -1371,6 +1388,7 @@ impl GraphIO for MemoryGraphIO {
     }
 
     fn add_parsed(&mut self, parsed: ParsedOntology, overwrite: Overwrite) -> Result<Ontology> {
-        commit_parsed_ontology(&self.store, parsed, overwrite)
+        commit_parsed_ontology(&self.store, parsed, overwrite, self.require_ontology_names)
+            .map(|(ont, _)| ont)
     }
 }

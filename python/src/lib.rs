@@ -35,7 +35,7 @@ use pyo3::{
     },
 };
 use rand::random;
-use rdf5d::{DecodedTerm, Pattern, Scope, Snapshot};
+use rdf5d::{snapshot::GroupedScan, DecodedTerm, Pattern, Scope, Snapshot};
 use spareval::{QueryEvaluator, QueryResults as SpareQueryResults};
 use spargebra::SparqlParser;
 use std::borrow::{Borrow, Cow};
@@ -1503,13 +1503,6 @@ fn snapshot_term_id(snapshot: &Snapshot, term: &Term) -> Option<u64> {
     snapshot.file().term_id(&term_to_decoded_term(term))
 }
 
-/// `keep` for an optional closure patch: raw backends (no patch) keep every
-/// triple; closure backends delegate to [`rdf5d::ClosurePatch::keep`].
-#[inline]
-fn keep_opt(patch: Option<&rdf5d::ClosurePatch>, s: u64, p: u64, o: u64) -> bool {
-    patch.is_none_or(|patch| patch.keep(s, p, o))
-}
-
 /// Physical gids backing the given logical graph names.
 fn gids_for_names(snapshot: &Snapshot, graph_names: &[String]) -> Vec<u64> {
     let mut gids = Vec::new();
@@ -1533,68 +1526,6 @@ fn patch_root_iri(patch: &rdf5d::ClosurePatch, snapshot: &Snapshot) -> String {
         Ok(DecodedTerm::Iri(v)) => v.into_owned(),
         _ => String::new(),
     }
-}
-
-/// A `(subject, predicate, object)` triple keyed grouping to the graph names
-/// (contexts) each triple appears in, all in on-disk term-id space.
-type GroupedContexts = HashMap<(u64, u64, u64), Vec<String>>;
-
-/// Build the deduped `(triple -> contexts)` grouping for a pattern scan.
-///
-/// For a raw union backend (`patch = None`) the contexts are the graph names
-/// the triple appears in. For a closure backend the view is a single flattened
-/// graph, so surviving triples are collapsed under the root graph name and the
-/// patch's pattern-matching additions are injected.
-fn scan_grouped(
-    snapshot: &Snapshot,
-    patch: Option<&rdf5d::ClosurePatch>,
-    pat: Pattern,
-    graph_names: &[String],
-) -> std::result::Result<GroupedContexts, rdf5d::reader::R5Error> {
-    let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
-    match patch {
-        Some(patch) => {
-            // Single flattened graph: collapse cross-graph duplicates under the
-            // root graph name.
-            let root = patch_root_iri(patch, snapshot);
-            let gids = gids_for_names(snapshot, graph_names);
-            for hit in snapshot.scan(pat, Scope::Gids(&gids)) {
-                let m = hit?;
-                if !patch.keep(m.s, m.p, m.o) {
-                    continue;
-                }
-                grouped
-                    .entry((m.s, m.p, m.o))
-                    .or_insert_with(|| vec![root.clone()]);
-            }
-            // Additions matching the pattern.
-            for &(s, p, o) in patch.additions() {
-                if pat.s.is_none_or(|x| x == s)
-                    && pat.p.is_none_or(|x| x == p)
-                    && pat.o.is_none_or(|x| x == o)
-                {
-                    grouped
-                        .entry((s, p, o))
-                        .or_insert_with(|| vec![root.clone()]);
-                }
-            }
-        }
-        None => {
-            for name in graph_names {
-                if !snapshot.has_graph(name) {
-                    continue;
-                }
-                for hit in snapshot.scan(pat, Scope::ByName(name.as_str())) {
-                    let m = hit?;
-                    let contexts = grouped.entry((m.s, m.p, m.o)).or_default();
-                    if !contexts.iter().any(|c| c == name) {
-                        contexts.push(name.clone());
-                    }
-                }
-            }
-        }
-    }
-    Ok(grouped)
 }
 
 /// The snapshot's logical graphs as rdflib graph-name nodes.
@@ -2172,7 +2103,6 @@ impl PyRdfLibStoreBackend {
                 if matches!(graph_name, Some(GraphName::DefaultGraph)) {
                     return Ok(PyList::empty(py).into_any().unbind());
                 }
-                let mut grouped: HashMap<(u64, u64, u64), Vec<String>> = HashMap::new();
                 let subject_id = subject
                     .as_ref()
                     .map(|value| snapshot_term_id(snapshot, &subject_to_term(value)));
@@ -2187,11 +2117,10 @@ impl PyRdfLibStoreBackend {
                         py,
                         StoreTriplesIter {
                             snapshot: snapshot.clone(),
-                            grouped: HashMap::new().into_iter(),
+                            grouped: StoreGroupedRows::Empty,
                             ctors: RdflibCtors::new(py)?,
                             term_cache: self.term_cache.clone(),
                             graph_cache: HashMap::new(),
-                            remaining: 0,
                         },
                     )
                     .map(|p| p.into_any())
@@ -2210,45 +2139,21 @@ impl PyRdfLibStoreBackend {
                     o: object_id.flatten(),
                 };
 
-                if let Some(graph_name) = graph_name.as_ref() {
+                let grouped = if let Some(graph_name) = graph_name.as_ref() {
                     let Some(name) = graph_name_key(graph_name) else {
                         return empty_iter(py);
                     };
-                    if !snapshot.has_graph(&name) {
-                        return empty_iter(py);
-                    }
-                    for hit in snapshot.scan(pat, Scope::ByName(&name)) {
-                        let m = hit.map_err(r5error_to_pyerr)?;
-                        if !keep_opt(patch.as_deref(), m.s, m.p, m.o) {
-                            continue;
-                        }
-                        grouped
-                            .entry((m.s, m.p, m.o))
-                            .or_insert_with(|| vec![name.clone()]);
-                    }
+                    streaming_store_rows(snapshot, pat, Scope::ByName(&name), patch.clone())?
                 } else {
-                    for name in snapshot.graph_names() {
-                        for hit in snapshot.scan(pat, Scope::ByName(name)) {
-                            let m = hit.map_err(r5error_to_pyerr)?;
-                            if !keep_opt(patch.as_deref(), m.s, m.p, m.o) {
-                                continue;
-                            }
-                            let contexts = grouped.entry((m.s, m.p, m.o)).or_default();
-                            if !contexts.iter().any(|c| c == name) {
-                                contexts.push(name.to_string());
-                            }
-                        }
-                    }
-                }
+                    streaming_store_rows(snapshot, pat, Scope::All, patch.clone())?
+                };
 
-                let total = grouped.len();
                 let iter = StoreTriplesIter {
                     snapshot: snapshot.clone(),
-                    grouped: grouped.into_iter(),
+                    grouped,
                     ctors,
                     term_cache: self.term_cache.clone(),
                     graph_cache: HashMap::new(),
-                    remaining: total,
                 };
                 Ok(Py::new(py, iter)?.into_any())
             }
@@ -2475,11 +2380,10 @@ impl PyRdfLibStoreBackend {
                         py,
                         StoreTriplesIter {
                             snapshot: snapshot.clone(),
-                            grouped: HashMap::new().into_iter(),
+                            grouped: StoreGroupedRows::Empty,
                             ctors: RdflibCtors::new(py)?,
                             term_cache: self.term_cache.clone(),
                             graph_cache: HashMap::new(),
-                            remaining: 0,
                         },
                     )
                     .map(|p| p.into_any())
@@ -2515,16 +2419,50 @@ impl PyRdfLibStoreBackend {
                     o: object_id,
                 };
 
-                let grouped = scan_grouped(snapshot, patch.as_deref(), pat, &graph_names)
+                if patch.is_none() {
+                    let gids = gids_for_names(snapshot, &graph_names);
+                    let grouped = streaming_store_rows(snapshot, pat, Scope::Gids(&gids), None)?;
+                    return Ok(Py::new(
+                        py,
+                        StoreTriplesIter {
+                            snapshot: snapshot.clone(),
+                            grouped,
+                            ctors,
+                            term_cache: self.term_cache.clone(),
+                            graph_cache: HashMap::new(),
+                        },
+                    )?
+                    .into_any());
+                }
+
+                let patch = patch.as_ref().expect("checked above").clone();
+                let gids = gids_for_names(snapshot, &graph_names);
+                let rows = snapshot
+                    .grouped_scan(pat, Scope::Gids(&gids))
                     .map_err(r5error_to_pyerr)?;
-                let total = grouped.len();
+                let additions = patch
+                    .additions()
+                    .iter()
+                    .copied()
+                    .filter(|&(s, p, o)| {
+                        pat.s.is_none_or(|x| x == s)
+                            && pat.p.is_none_or(|x| x == p)
+                            && pat.o.is_none_or(|x| x == o)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter();
+                let root = patch_root_iri(&patch, snapshot);
                 let iter = StoreTriplesIter {
                     snapshot: snapshot.clone(),
-                    grouped: grouped.into_iter(),
+                    grouped: StoreGroupedRows::Closure {
+                        rows,
+                        patch,
+                        root,
+                        additions,
+                    },
                     ctors,
                     term_cache: self.term_cache.clone(),
                     graph_cache: HashMap::new(),
-                    remaining: total,
                 };
                 Ok(Py::new(py, iter)?.into_any())
             }
@@ -3240,12 +3178,100 @@ struct OntoEnv {
 #[pyclass]
 struct StoreTriplesIter {
     snapshot: Arc<Snapshot>,
-    grouped: std::collections::hash_map::IntoIter<(u64, u64, u64), Vec<String>>,
+    grouped: StoreGroupedRows,
     ctors: RdflibCtors,
     /// Shared with the owning `_RdfLibStoreBackend`; persists across scans.
     term_cache: Arc<Mutex<HashMap<u64, Py<PyAny>>>>,
     graph_cache: HashMap<String, Py<PyAny>>,
-    remaining: usize,
+}
+
+enum StoreGroupedRows {
+    Empty,
+    Streaming {
+        rows: GroupedScan,
+        names_by_gid: HashMap<u64, String>,
+        patch: Option<Arc<rdf5d::ClosurePatch>>,
+    },
+    Closure {
+        rows: GroupedScan,
+        patch: Arc<rdf5d::ClosurePatch>,
+        root: String,
+        additions: std::vec::IntoIter<(u64, u64, u64)>,
+    },
+}
+
+impl StoreGroupedRows {
+    fn next(&mut self) -> Option<((u64, u64, u64), Vec<String>)> {
+        match self {
+            Self::Empty => None,
+            Self::Streaming {
+                rows,
+                names_by_gid,
+                patch,
+            } => {
+                for row in rows {
+                    if patch
+                        .as_ref()
+                        .is_some_and(|patch| !patch.keep(row.s, row.p, row.o))
+                    {
+                        continue;
+                    }
+                    let mut contexts = Vec::new();
+                    for gid in row.gids {
+                        if let Some(name) = names_by_gid.get(&gid) {
+                            if !contexts.contains(name) {
+                                contexts.push(name.clone());
+                            }
+                        }
+                    }
+                    return Some(((row.s, row.p, row.o), contexts));
+                }
+                None
+            }
+            Self::Closure {
+                rows,
+                patch,
+                root,
+                additions,
+            } => {
+                for row in rows {
+                    if patch.keep(row.s, row.p, row.o) && !patch.is_addition(row.s, row.p, row.o) {
+                        return Some(((row.s, row.p, row.o), vec![root.clone()]));
+                    }
+                }
+                additions.next().map(|triple| (triple, vec![root.clone()]))
+            }
+        }
+    }
+
+    fn length_hint(&self) -> usize {
+        match self {
+            Self::Empty | Self::Streaming { .. } | Self::Closure { .. } => 0,
+        }
+    }
+}
+
+fn streaming_store_rows(
+    snapshot: &Arc<Snapshot>,
+    pat: Pattern,
+    scope: Scope<'_>,
+    patch: Option<Arc<rdf5d::ClosurePatch>>,
+) -> PyResult<StoreGroupedRows> {
+    let rows = snapshot
+        .grouped_scan(pat, scope)
+        .map_err(r5error_to_pyerr)?;
+    let names_by_gid = snapshot
+        .file()
+        .enumerate_all()
+        .map_err(r5error_to_pyerr)?
+        .into_iter()
+        .map(|graph| (graph.gid, graph.graphname))
+        .collect();
+    Ok(StoreGroupedRows::Streaming {
+        rows,
+        names_by_gid,
+        patch,
+    })
 }
 
 /// Resolve three snapshot term ids to rdflib objects through the backend-wide
@@ -3308,7 +3334,6 @@ impl StoreTriplesIter {
         let Some(((s_id, p_id, o_id), contexts)) = self.grouped.next() else {
             return Ok(None);
         };
-        self.remaining = self.remaining.saturating_sub(1);
         let terms = cached_snapshot_terms(
             py,
             &self.snapshot,
@@ -3326,8 +3351,8 @@ impl StoreTriplesIter {
         Ok(Some(row.unbind()))
     }
 
-    fn __len__(&self) -> usize {
-        self.remaining
+    fn __length_hint__(&self) -> usize {
+        self.grouped.length_hint()
     }
 }
 

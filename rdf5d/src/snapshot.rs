@@ -13,13 +13,13 @@
 //! ([`crate::sparql`]) and the higher-level store APIs are both expressed on
 //! top of it, so the "index-or-scan" decision lives in exactly one place.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::{empty, once};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use crate::index::{IdxKind, MemPClos, MemSection, build_mem_pclos, build_mem_section};
-use crate::reader::{DecodedTerm, R5tuFile, Result};
+use crate::reader::{DecodedTerm, R5Error, R5tuFile, Result};
 
 /// Predicate IRIs whose transitive closure is precomputed (in memory, on first
 /// use) to accelerate SPARQL `P+`/`P*` property paths.
@@ -95,6 +95,63 @@ pub struct Snapshot {
     mem_osp: OnceLock<Option<MemSection>>,
     // Precomputed transitive closures for CLOSURE_PREDICATE_IRIS.
     mem_pclos: OnceLock<Option<MemPClos>>,
+}
+
+/// One distinct triple and the physical graph groups that contain it.
+#[derive(Debug)]
+pub struct GroupedMatch {
+    pub s: u64,
+    pub p: u64,
+    pub o: u64,
+    pub gids: Vec<u64>,
+}
+
+/// Streams grouped triples from the SPO index, retaining only one subject's
+/// matches at a time. It owns the snapshot so it can outlive a Python call.
+pub struct GroupedScan {
+    snapshot: Arc<Snapshot>,
+    gids: HashSet<u64>,
+    pattern: Pattern,
+    next_key: usize,
+    end_key: usize,
+    pending: std::vec::IntoIter<GroupedMatch>,
+}
+
+impl Iterator for GroupedScan {
+    type Item = GroupedMatch;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(row) = self.pending.next() {
+            return Some(row);
+        }
+        let section = self.snapshot.mem_section(IdxKind::Spo)?;
+        while self.next_key < self.end_key {
+            let s = section.keys[self.next_key];
+            self.next_key += 1;
+            let mut rows: BTreeMap<(u64, u64), Vec<u64>> = BTreeMap::new();
+            for (gid, p, o) in section.lookup(s)?.iter_all() {
+                if self.gids.contains(&gid)
+                    && self.pattern.p.is_none_or(|wanted| wanted == p)
+                    && self.pattern.o.is_none_or(|wanted| wanted == o)
+                {
+                    rows.entry((p, o)).or_default().push(gid);
+                }
+            }
+            self.pending = rows
+                .into_iter()
+                .map(|((p, o), mut gids)| {
+                    gids.sort_unstable();
+                    gids.dedup();
+                    GroupedMatch { s, p, o, gids }
+                })
+                .collect::<Vec<_>>()
+                .into_iter();
+            if let Some(row) = self.pending.next() {
+                return Some(row);
+            }
+        }
+        None
+    }
 }
 
 impl Snapshot {
@@ -229,6 +286,38 @@ impl Snapshot {
         }
     }
 
+    /// Group matching triples by value while keeping memory bounded by one
+    /// subject's matches. Useful for APIs that return graph contexts per row.
+    pub fn grouped_scan(self: &Arc<Self>, pat: Pattern, scope: Scope<'_>) -> Result<GroupedScan> {
+        let gids = match scope {
+            Scope::All => self.all_gids(),
+            Scope::Gids(gids) => gids.to_vec(),
+            Scope::ByName(name) => self
+                .by_name
+                .get(name)
+                .map(|graph| graph.gids.clone())
+                .unwrap_or_default(),
+        };
+        let section = self
+            .mem_section(IdxKind::Spo)
+            .ok_or(R5Error::Invalid("SPO index unavailable for grouped scan"))?;
+        let (next_key, end_key) = match pat.s {
+            Some(subject) => match section.keys.binary_search(&subject) {
+                Ok(index) => (index, index + 1),
+                Err(_) => (0, 0),
+            },
+            None => (0, section.keys.len()),
+        };
+        Ok(GroupedScan {
+            snapshot: self.clone(),
+            gids: gids.into_iter().collect(),
+            pattern: pat,
+            next_key,
+            end_key,
+            pending: Vec::new().into_iter(),
+        })
+    }
+
     /// The dedup-aware unique-triple count for a scope. `ByName` is cached.
     pub fn triple_count(&self, scope: Scope<'_>) -> Result<usize> {
         match scope {
@@ -313,86 +402,13 @@ impl Snapshot {
             })
     }
 
-    /// Serve a bound-term pattern from the permutation indexes as a streaming
-    /// iterator. The returned iterator borrows the snapshot's lazily-built
-    /// index and owns `gids`.
-    ///
-    /// Returns `Err(gids)` (handing ownership back) when no term is bound (no
-    /// index applies) or the relevant index/posting is absent, so the caller
-    /// can fall back to a full scan without re-deriving the gid set.
-    #[allow(clippy::type_complexity)]
+    /// Serve bound patterns through a permutation index when available.
     fn indexed_iter<'a>(
         &'a self,
         pat: Pattern,
         gids: Vec<u64>,
     ) -> std::result::Result<Box<dyn Iterator<Item = Result<Match>> + 'a>, Vec<u64>> {
-        match (pat.s, pat.p, pat.o) {
-            // Predicate + object bound: POS (pairs are (object, subject)).
-            (subject, Some(p_id), Some(o_id)) => {
-                let Some(post) = self.mem_section(IdxKind::Pos).and_then(|s| s.lookup(p_id)) else {
-                    return Err(gids);
-                };
-                Ok(Box::new(gids.into_iter().flat_map(move |gid| {
-                    post.block_for_gid(gid).into_iter().flat_map(move |block| {
-                        post.iter_block(block).filter_map(move |(o, s)| {
-                            if o != o_id || subject.is_some_and(|sid| s != sid) {
-                                None
-                            } else {
-                                Some(Ok(Match { gid, s, p: p_id, o }))
-                            }
-                        })
-                    })
-                })))
-            }
-            // Predicate bound, object unbound: PSO (pairs are (subject, object)).
-            (subject, Some(p_id), None) => {
-                let Some(post) = self.mem_section(IdxKind::Pso).and_then(|s| s.lookup(p_id)) else {
-                    return Err(gids);
-                };
-                Ok(Box::new(gids.into_iter().flat_map(move |gid| {
-                    post.block_for_gid(gid).into_iter().flat_map(move |block| {
-                        post.iter_block(block).filter_map(move |(s, o)| {
-                            if subject.is_some_and(|sid| s != sid) {
-                                None
-                            } else {
-                                Some(Ok(Match { gid, s, p: p_id, o }))
-                            }
-                        })
-                    })
-                })))
-            }
-            // Subject bound, predicate unbound: SPO (pairs are (predicate, object)).
-            (Some(s_id), None, object) => {
-                let Some(post) = self.mem_section(IdxKind::Spo).and_then(|s| s.lookup(s_id)) else {
-                    return Err(gids);
-                };
-                Ok(Box::new(gids.into_iter().flat_map(move |gid| {
-                    post.block_for_gid(gid).into_iter().flat_map(move |block| {
-                        post.iter_block(block).filter_map(move |(p, o)| {
-                            if object.is_some_and(|oid| o != oid) {
-                                None
-                            } else {
-                                Some(Ok(Match { gid, s: s_id, p, o }))
-                            }
-                        })
-                    })
-                })))
-            }
-            // Object bound, subject+predicate unbound: OSP (pairs are (subject, predicate)).
-            (None, None, Some(o_id)) => {
-                let Some(post) = self.mem_section(IdxKind::Osp).and_then(|s| s.lookup(o_id)) else {
-                    return Err(gids);
-                };
-                Ok(Box::new(gids.into_iter().flat_map(move |gid| {
-                    post.block_for_gid(gid).into_iter().flat_map(move |block| {
-                        post.iter_block(block)
-                            .map(move |(s, p)| Ok(Match { gid, s, p, o: o_id }))
-                    })
-                })))
-            }
-            // All unbound: no index can help — caller does a full scan.
-            (None, None, None) => Err(gids),
-        }
+        indexed_iter_with_sections(pat, gids, |kind| self.mem_section(kind))
     }
 
     /// Lazily build (once) and borrow a permutation index, or `None` on failure.
@@ -439,6 +455,95 @@ impl Snapshot {
                 }
             })
             .as_ref()
+    }
+}
+
+/// Shared by whole-snapshot and gid-scoped scans. An available index with
+/// no posting is an empty result; only an unavailable index falls back to a scan.
+#[allow(clippy::type_complexity)]
+pub(crate) fn indexed_iter_with_sections<'a>(
+    pat: Pattern,
+    gids: Vec<u64>,
+    section: impl Fn(IdxKind) -> Option<&'a MemSection>,
+) -> std::result::Result<Box<dyn Iterator<Item = Result<Match>> + 'a>, Vec<u64>> {
+    match (pat.s, pat.p, pat.o) {
+        // Predicate + object bound: POS (pairs are (object, subject)).
+        (subject, Some(p_id), Some(o_id)) => {
+            let Some(index) = section(IdxKind::Pos) else {
+                return Err(gids);
+            };
+            let Some(post) = index.lookup(p_id) else {
+                return Ok(Box::new(empty()));
+            };
+            Ok(Box::new(gids.into_iter().flat_map(move |gid| {
+                post.block_for_gid(gid).into_iter().flat_map(move |block| {
+                    post.iter_block(block).filter_map(move |(o, s)| {
+                        if o != o_id || subject.is_some_and(|sid| s != sid) {
+                            None
+                        } else {
+                            Some(Ok(Match { gid, s, p: p_id, o }))
+                        }
+                    })
+                })
+            })))
+        }
+        // Predicate bound, object unbound: PSO (pairs are (subject, object)).
+        (subject, Some(p_id), None) => {
+            let Some(index) = section(IdxKind::Pso) else {
+                return Err(gids);
+            };
+            let Some(post) = index.lookup(p_id) else {
+                return Ok(Box::new(empty()));
+            };
+            Ok(Box::new(gids.into_iter().flat_map(move |gid| {
+                post.block_for_gid(gid).into_iter().flat_map(move |block| {
+                    post.iter_block(block).filter_map(move |(s, o)| {
+                        if subject.is_some_and(|sid| s != sid) {
+                            None
+                        } else {
+                            Some(Ok(Match { gid, s, p: p_id, o }))
+                        }
+                    })
+                })
+            })))
+        }
+        // Subject bound, predicate unbound: SPO (pairs are (predicate, object)).
+        (Some(s_id), None, object) => {
+            let Some(index) = section(IdxKind::Spo) else {
+                return Err(gids);
+            };
+            let Some(post) = index.lookup(s_id) else {
+                return Ok(Box::new(empty()));
+            };
+            Ok(Box::new(gids.into_iter().flat_map(move |gid| {
+                post.block_for_gid(gid).into_iter().flat_map(move |block| {
+                    post.iter_block(block).filter_map(move |(p, o)| {
+                        if object.is_some_and(|oid| o != oid) {
+                            None
+                        } else {
+                            Some(Ok(Match { gid, s: s_id, p, o }))
+                        }
+                    })
+                })
+            })))
+        }
+        // Object bound, subject+predicate unbound: OSP (pairs are (subject, predicate)).
+        (None, None, Some(o_id)) => {
+            let Some(index) = section(IdxKind::Osp) else {
+                return Err(gids);
+            };
+            let Some(post) = index.lookup(o_id) else {
+                return Ok(Box::new(empty()));
+            };
+            Ok(Box::new(gids.into_iter().flat_map(move |gid| {
+                post.block_for_gid(gid).into_iter().flat_map(move |block| {
+                    post.iter_block(block)
+                        .map(move |(s, p)| Ok(Match { gid, s, p, o: o_id }))
+                })
+            })))
+        }
+        // All unbound: no index can help — caller does a full scan.
+        (None, None, None) => Err(gids),
     }
 }
 

@@ -2,6 +2,7 @@ use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::{Config, ConfigOverrides};
 use ontoenv::consts::IMPORTS;
+use ontoenv::io::{GraphIO, PersistentGraphIO};
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ontoenv::ToUriString;
@@ -1913,7 +1914,7 @@ fn test_cached_add_reloads_on_file_change() -> Result<()> {
 
     let refreshed_id = env.add(
         location.clone(),
-        Overwrite::Preserve,
+        Overwrite::Allow,
         RefreshStrategy::UseCache,
     )?;
     let refreshed_updated = env
@@ -1954,11 +1955,7 @@ fn test_cached_add_force_refreshes() -> Result<()> {
 
     thread::sleep(Duration::from_secs(1));
 
-    let forced_id = env.add(
-        location.clone(),
-        Overwrite::Preserve,
-        RefreshStrategy::Force,
-    )?;
+    let forced_id = env.add(location.clone(), Overwrite::Allow, RefreshStrategy::Force)?;
     let forced_updated = env
         .ontologies()
         .get(&forced_id)
@@ -1970,6 +1967,90 @@ fn test_cached_add_force_refreshes() -> Result<()> {
 
     drop(env);
     teardown(dir);
+    Ok(())
+}
+
+#[test]
+fn preserve_keeps_lazy_graph_and_catalog_metadata() -> Result<()> {
+    let dir = new_tempdir("ontoenv_preserve_lazy")?;
+    let mut env = OntoEnv::init(default_config(&dir), true)?;
+    let path = dir.path().join("preserve.ttl");
+    let location = OntologyLocation::File(path.clone());
+    fs::write(
+        &path,
+        "<urn:preserve> a <http://www.w3.org/2002/07/owl#Ontology> .\n<urn:preserve> <urn:value> \"old\" .",
+    )?;
+    let id = env.add(location.clone(), Overwrite::Allow, RefreshStrategy::Force)?;
+    let original_hash = env.ontologies()[&id].content_hash().map(str::to_string);
+    drop(env);
+
+    fs::write(
+        &path,
+        "<urn:preserve> a <http://www.w3.org/2002/07/owl#Ontology> .\n<urn:preserve> <urn:value> \"new\" .",
+    )?;
+    // Exercise the backend before any graph has been loaded into Oxigraph.
+    let mut backend = PersistentGraphIO::new(dir.path().join(".ontoenv"), true, false)?;
+    backend.add(location.clone(), Overwrite::Preserve)?;
+    let graph = backend.get_graph(&id)?;
+    assert!(graph.iter().any(|t| t.object.to_string() == "\"old\""));
+    assert!(!graph.iter().any(|t| t.object.to_string() == "\"new\""));
+    drop(backend);
+
+    let mut env = OntoEnv::load_from_directory(dir.path().to_path_buf(), false)?;
+    env.add(location, Overwrite::Preserve, RefreshStrategy::Force)?;
+    assert_eq!(
+        env.ontologies()[&id].content_hash(),
+        original_hash.as_deref()
+    );
+    assert!(env
+        .get_graph(&id)?
+        .iter()
+        .any(|t| t.object.to_string() == "\"old\""));
+    Ok(())
+}
+
+#[test]
+fn bounded_byte_imports_do_not_fetch_beyond_depth() -> Result<()> {
+    let dir = new_tempdir("ontoenv_bounded_imports")?;
+    let imported = dir.path().join("imported.ttl");
+    fs::write(
+        &imported,
+        "<urn:imported> a <http://www.w3.org/2002/07/owl#Ontology> .",
+    )?;
+    let config = Config::builder()
+        .root(dir.path().to_path_buf())
+        .locations(Vec::<PathBuf>::new())
+        .temporary(true)
+        .strict(true)
+        .offline(true)
+        .build()?;
+    let mut env = OntoEnv::init(config, true)?;
+    let root = OntologyLocation::InMemory {
+        identifier: "urn:bounded-root".to_string(),
+    };
+    let bytes = format!(
+        "<urn:bounded-root> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <{}> .",
+        OntologyLocation::File(imported).to_iri().as_str()
+    )
+    .into_bytes();
+    env.add_from_bytes_with_import_depth(
+        root.clone(),
+        bytes.clone(),
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::Force,
+        Some(0),
+    )?;
+    assert_eq!(env.ontologies().len(), 1);
+    env.add_from_bytes_with_import_depth(
+        root,
+        bytes,
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+        RefreshStrategy::Force,
+        Some(1),
+    )?;
+    assert_eq!(env.ontologies().len(), 2);
     Ok(())
 }
 

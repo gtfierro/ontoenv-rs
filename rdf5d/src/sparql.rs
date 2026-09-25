@@ -11,7 +11,6 @@
 //! `VALUES` blocks before handing the query to spareval.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::iter::{empty, once};
 
 use oxrdf::{BlankNode, Literal, NamedNode, Term};
@@ -31,34 +30,34 @@ use crate::view::View;
 #[derive(Clone, Copy, Debug)]
 pub struct SparqlView<'a> {
     snapshot: &'a Snapshot,
-    gids: Option<&'a [u64]>,
+    view: Option<&'a View<'a>>,
 }
 
 impl<'a> SparqlView<'a> {
     pub fn new(snapshot: &'a Snapshot) -> Self {
         Self {
             snapshot,
-            gids: None,
+            view: None,
         }
     }
 
-    pub(crate) fn scoped(snapshot: &'a Snapshot, gids: &'a [u64]) -> Self {
+    pub(crate) fn scoped(view: &'a View<'a>) -> Self {
         Self {
-            snapshot,
-            gids: Some(gids),
+            snapshot: view.snapshot(),
+            view: Some(view),
         }
     }
 
     fn names(&self) -> Vec<&'a str> {
         let snapshot = self.snapshot;
-        let scope = self.gids;
+        let scope = self.view.map(View::gids);
         snapshot
             .graph_names()
             .filter(move |name| {
                 scope.is_none_or(|gids| {
-                    snapshot
-                        .gids_for_name(name)
-                        .is_some_and(|name_gids| name_gids.iter().any(|gid| gids.contains(gid)))
+                    snapshot.gids_for_name(name).is_some_and(|name_gids| {
+                        name_gids.iter().any(|gid| gids.binary_search(gid).is_ok())
+                    })
                 })
             })
             .collect()
@@ -70,26 +69,19 @@ impl<'a> SparqlView<'a> {
         name: &str,
     ) -> Box<dyn Iterator<Item = crate::reader::Result<crate::snapshot::Match>> + 'a> {
         let snapshot = self.snapshot;
-        if let Some(scope) = self.gids {
+        if let Some(view) = self.view {
+            let scope = view.gids();
             let gids: Vec<u64> = snapshot
                 .gids_for_name(name)
                 .unwrap_or_default()
                 .iter()
                 .copied()
-                .filter(|gid| scope.contains(gid))
+                .filter(|gid| scope.binary_search(gid).is_ok())
                 .collect();
             if gids.is_empty() {
                 return Box::new(empty());
             }
-            let mut seen = HashSet::new();
-            Box::new(
-                snapshot
-                    .scan(pat, Scope::Gids(&gids))
-                    .filter(move |hit| match hit {
-                        Ok(m) => seen.insert((m.s, m.p, m.o)),
-                        Err(_) => true,
-                    }),
-            )
+            view.scan_gids(pat, gids)
         } else {
             snapshot.scan(pat, Scope::ByName(name))
         }

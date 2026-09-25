@@ -2176,6 +2176,7 @@ impl OntoEnv {
         &mut self,
         ontologies: Vec<Ontology>,
         update_dependencies: bool,
+        bounded_imports: bool,
         filters: &OntologyFilters,
     ) -> Result<Vec<GraphIdentifier>> {
         let mut ids = Vec::with_capacity(ontologies.len());
@@ -2190,7 +2191,13 @@ impl OntoEnv {
         }
 
         if update_dependencies && !ids.is_empty() {
-            self.add_ids_to_dependency_graph(ids.clone())?;
+            if bounded_imports {
+                // The import queue has already applied the requested depth limit.
+                // Rebuilding from metadata must not fetch the skipped imports.
+                self.rebuild_dependency_graph_from_metadata();
+            } else {
+                self.add_ids_to_dependency_graph(ids.clone())?;
+            }
         }
 
         Ok(ids)
@@ -2250,8 +2257,12 @@ impl OntoEnv {
             .into_iter()
             .filter(|o| ontology_filters.allow(o.id()))
             .collect();
-        let mut ids =
-            self.register_ontologies(filtered_onts, update_dependencies, &ontology_filters)?;
+        let mut ids = self.register_ontologies(
+            filtered_onts,
+            update_dependencies,
+            max_import_depth.is_some(),
+            &ontology_filters,
+        )?;
         // Include cached/reused identifiers that still pass filters.
         ids.extend(
             reused_ids
@@ -2438,7 +2449,7 @@ impl OntoEnv {
             .into_iter()
             .filter(|o| ontology_filters.allow(o.id()))
             .collect();
-        let mut ids = self.register_ontologies(filtered_onts, true, &ontology_filters)?;
+        let mut ids = self.register_ontologies(filtered_onts, true, false, &ontology_filters)?;
         ids.extend(
             reused_ids
                 .into_iter()
@@ -2599,14 +2610,29 @@ impl OntoEnv {
 
             for PreparedImport { job, result } in self.prepare_wave(wave, progress) {
                 let outcome = result.and_then(|parsed| {
+                    if job.overwrite == Overwrite::Preserve {
+                        if let Some(existing) = self
+                            .env
+                            .ontologies()
+                            .values()
+                            .find(|ont| ont.id().name() == parsed.ontology.id().name())
+                        {
+                            self.batch_state.mark_seen(&job.location);
+                            return Ok((existing.clone(), true));
+                        }
+                    }
                     let ontology = self.io.add_parsed(parsed, job.overwrite)?;
                     self.batch_state.mark_seen(&job.location);
-                    Ok(ontology)
+                    Ok((ontology, false))
                 });
                 match outcome {
-                    Ok(ontology) => {
+                    Ok((ontology, reused)) => {
                         let id = ontology.id().clone();
-                        progress.tick_loaded();
+                        if reused {
+                            progress.tick_reused();
+                        } else {
+                            progress.tick_loaded();
+                        }
                         if include_imports {
                             self.enqueue_imports(
                                 &id,
@@ -2617,7 +2643,9 @@ impl OntoEnv {
                                 progress,
                             )?;
                         }
-                        fetched.push(ontology);
+                        if !reused {
+                            fetched.push(ontology);
+                        }
                         record_id(&id);
                     }
                     Err(err) => {
