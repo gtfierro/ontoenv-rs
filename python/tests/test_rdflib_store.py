@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from rdflib import Dataset, Graph, Literal, URIRef
+from rdflib.namespace import OWL
 
 from ontoenv import (
     OntoEnv,
@@ -105,6 +106,77 @@ def test_rdf5d_store_streams_grouped_contexts(persistent_env: OntoEnv, tmp_path:
     one = list(backend.triples(*triple, URIRef("urn:graph:one")))
     assert len(one) == 1
     assert {str(context) for context in one[0][1]} == {"urn:graph:one"}
+
+    # Every supported bound shape must preserve the same grouped row and
+    # complete context set, including after a new snapshot is bound.
+    dataset = persistent_env.get_dataset()
+    backend = dataset.store._backend
+    shapes = [
+        (None, None, None),
+        (triple[0], None, None),
+        (None, triple[1], None),
+        (None, None, triple[2]),
+        (None, triple[1], triple[2]),
+        (triple[0], triple[1], None),
+        (triple[0], None, triple[2]),
+        triple,
+    ]
+    for shape in shapes:
+        matches = [row for row in backend.triples(*shape, None) if row[0] == triple]
+        assert len(matches) == 1
+        assert {str(context) for context in matches[0][1]} == {
+            "urn:graph:one", "urn:graph:two"
+        }
+    assert list(backend.triples(URIRef("urn:absent"), None, None, None)) == []
+    assert list(backend.triples(*triple, URIRef("urn:graph:absent"))) == []
+
+    third = tmp_path / "third.ttl"
+    third.write_text(
+        '<urn:graph:third> a <http://www.w3.org/2002/07/owl#Ontology> .\n'
+        '<urn:shared:s> <urn:shared:p> "shared" .\n'
+    )
+    persistent_env.add(str(third))
+    persistent_env.flush()
+    refresh_dataset_from_env(dataset, persistent_env)
+    refreshed = list(dataset.store._backend.triples(*triple, None))
+    assert len(refreshed) == 1
+    assert {str(context) for context in refreshed[0][1]} == {
+        "urn:graph:one", "urn:graph:two", "urn:graph:third"
+    }
+
+
+def test_local_closure_bound_shapes_and_patch(persistent_env: OntoEnv, tmp_path: Path) -> None:
+    root = URIRef("urn:closure:root")
+    leaf = URIRef("urn:closure:leaf")
+    shared = (URIRef("urn:closure:s"), URIRef("urn:closure:p"), Literal("shared"))
+    for name, import_name in (("root", leaf), ("leaf", None), ("other", None)):
+        path = tmp_path / f"{name}.ttl"
+        lines = [f"<urn:closure:{name}> a <{OWL.Ontology}> ."]
+        if import_name is not None:
+            lines.append(f"<urn:closure:{name}> <{OWL.imports}> <{import_name}> .")
+        lines.append('<urn:closure:s> <urn:closure:p> "shared" .')
+        lines.append(f"<urn:closure:{name}:only> <urn:closure:p> <urn:closure:o> .")
+        path.write_text("\n".join(lines) + "\n")
+        persistent_env.add(str(path), fetch_imports=False)
+    persistent_env.flush()
+
+    view, names = persistent_env.get_closure(str(root))
+    assert set(names) == {str(root), str(leaf)}
+    shapes = [
+        (None, None, None),
+        (shared[0], None, None),
+        (None, shared[1], None),
+        (None, None, shared[2]),
+        (None, shared[1], shared[2]),
+        (shared[0], shared[1], None),
+        (shared[0], None, shared[2]),
+        shared,
+    ]
+    for shape in shapes:
+        assert list(view.triples(shape)).count(shared) == 1
+    assert list(view.triples((URIRef("urn:absent"), None, None))) == []
+    assert (URIRef("urn:closure:other:only"), shared[1], URIRef("urn:closure:o")) not in view
+    assert list(view.triples((root, OWL.imports, leaf))) == []
 
 
 def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(temporary_env: OntoEnv) -> None:
