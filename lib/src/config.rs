@@ -7,6 +7,7 @@ use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -72,6 +73,10 @@ pub struct Config {
     pub remote_cache_ttl_secs: u64,
     // if true, do not store the ontoenv store on disk
     pub temporary: bool,
+    /// User-declared prefix -> namespace bindings. These are layered on top of
+    /// the prefixes declared by the ontologies themselves.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub namespaces: BTreeMap<String, String>,
 }
 
 /// Explicit changes to apply when reopening an existing environment.
@@ -516,6 +521,7 @@ impl ConfigBuilder {
                 .remote_cache_ttl_secs
                 .unwrap_or_else(default_remote_cache_ttl_secs),
             temporary: self.temporary.unwrap_or(false),
+            namespaces: BTreeMap::new(),
         })
     }
 }

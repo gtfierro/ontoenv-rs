@@ -208,7 +208,9 @@ class OntoEnvStore(Store):
 
         If ``mode`` is omitted, the previously chosen backend is reused (or
         ``"auto"`` on first call). Namespace bindings are cleared and
-        re-populated from ``env.get_namespaces()``.
+        re-populated from ``env.get_namespaces()``, which includes bindings
+        saved with ``env.bind_namespace()``; unsaved ``dataset.bind()`` calls
+        are discarded.
         """
         normalized_mode = _normalize_mode(mode or self._env_mode or "auto")
         if normalized_mode == "rdf5d":
@@ -620,6 +622,6 @@ class ViewGraph:
         for s, p, o in self:
             g.add((s, p, o))
         for prefix, namespace in self._namespaces.items():
-            g.bind(prefix, namespace)
+            g.bind(prefix, namespace, replace=True)
         return g.serialize(destination=destination, format=format, **kwargs)
 

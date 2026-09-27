@@ -205,6 +205,21 @@ ns = env.get_namespaces("https://brickschema.org/schema/1.4-rc1/Brick")
 ns_with_imports = env.get_namespaces("https://brickschema.org/schema/1.4-rc1/Brick", include_closure=True)
 ```
 
+Prefixes you want every session to use can be saved in the environment. Saved
+bindings take precedence over the prefixes ontologies declare, and are applied
+to `get_namespaces()`, `get_dataset()`, `copy_dataset()`, and the views from
+`get_closure()` / `get_union()`:
+
+```python
+env.bind_namespace("bldg", "urn:my-building#")   # persisted in .ontoenv/ontoenv.json
+env.get_bound_namespaces()                         # {'bldg': 'urn:my-building#'}
+env.unbind_namespace("bldg")
+```
+
+`dataset.bind(...)` on a Dataset from `get_dataset()` is not saved (rdflib also
+calls `bind` itself for its defaults and auto-generated `ns1`-style prefixes),
+and `refresh_dataset_from_env()` resets the dataset's bindings to the env's.
+
 From the CLI:
 
 ```
@@ -212,6 +227,8 @@ ontoenv namespaces                                     # all namespaces
 ontoenv namespaces https://example.org/my-ontology     # single ontology
 ontoenv namespaces https://example.org/my-ontology --closure   # with imports
 ontoenv namespaces --json                              # JSON output
+ontoenv config bind bldg urn:my-building#              # save a prefix binding
+ontoenv config unbind bldg
 ```
 
 ## Custom graph store

@@ -120,6 +120,19 @@ enum ConfigCommands {
         /// The value to remove.
         value: String,
     },
+    /// Bind a prefix to a namespace IRI. User bindings are saved in the
+    /// environment and take precedence over prefixes declared by ontologies.
+    Bind {
+        /// The prefix (e.g. `ex`).
+        prefix: String,
+        /// The namespace IRI (e.g. `http://example.org/ns#`).
+        namespace: String,
+    },
+    /// Remove a prefix binding added with `ontoenv config bind`.
+    Unbind {
+        /// The prefix to remove.
+        prefix: String,
+    },
     /// List all configuration values.
     List,
 }
@@ -446,6 +459,37 @@ fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<
                 }
             }
             println!("Added '{}' to {}", value, key);
+        }
+        ConfigCommands::Bind { prefix, namespace } => {
+            NamedNode::new(namespace.as_str())
+                .map_err(|e| anyhow::anyhow!("Invalid namespace IRI '{}': {}", namespace, e))?;
+            let entry = object
+                .entry("namespaces".to_string())
+                .or_insert_with(|| serde_json::Value::Object(Default::default()));
+            let namespaces = entry.as_object_mut().ok_or_else(|| {
+                anyhow::anyhow!("Invalid config format: 'namespaces' is not an object.")
+            })?;
+            // A namespace has at most one user-declared prefix.
+            namespaces.retain(|_, ns| ns.as_str() != Some(namespace.as_str()));
+            namespaces.insert(prefix.clone(), serde_json::Value::String(namespace.clone()));
+            println!("Bound {}: <{}>", prefix, namespace);
+        }
+        ConfigCommands::Unbind { prefix } => {
+            let removed = object
+                .get_mut("namespaces")
+                .and_then(|entry| entry.as_object_mut())
+                .and_then(|namespaces| namespaces.remove(&prefix));
+            if removed.is_none() {
+                return Err(anyhow::anyhow!("Prefix '{}' is not bound.", prefix));
+            }
+            if object
+                .get("namespaces")
+                .and_then(|entry| entry.as_object())
+                .is_some_and(|namespaces| namespaces.is_empty())
+            {
+                object.remove("namespaces");
+            }
+            println!("Unbound '{}'.", prefix);
         }
         ConfigCommands::Remove { key, value } => {
             match key.as_str() {

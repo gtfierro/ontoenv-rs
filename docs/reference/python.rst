@@ -234,7 +234,11 @@ Inspecting
        environment; a string IRI walks that ontology's closure; a ``Graph``
        checks its direct imports.
    * - ``get_namespaces(ontology=None, include_closure=False)``
-     - Prefix → namespace mapping.
+     - Prefix → namespace mapping, including saved bindings.
+   * - ``bind_namespace(prefix, namespace)`` / ``unbind_namespace(prefix)``
+     - Save or remove a prefix binding in ``.ontoenv/ontoenv.json``.
+   * - ``get_bound_namespaces()``
+     - The saved prefix bindings.
    * - ``store_path()``
      - Filesystem path of the graph store, if any.
    * - ``dump(includes=None)``

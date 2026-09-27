@@ -224,3 +224,104 @@ def test_dataset_from_env_with_other_store_forces_copy(persistent_env: OntoEnv) 
         )
     )
     assert [row.label for row in rows] == [Literal("AHU-1")]
+
+
+def test_bound_namespaces_persist_across_reopen(tmp_path: Path) -> None:
+    env = OntoEnv(path=tmp_path, recreate=True, offline=True)
+    try:
+        env.add(str(DEMO_TTL))
+        env.bind_namespace("demo", "urn:example:")
+        env.bind_namespace("custom", "urn:custom#")
+        assert env.get_bound_namespaces() == {"demo": "urn:example:", "custom": "urn:custom#"}
+        # The user prefix replaces the ontology's `ex:` for the same namespace.
+        namespaces = env.get_namespaces()
+        assert namespaces["demo"] == "urn:example:"
+        assert "ex" not in namespaces
+    finally:
+        env.close()
+
+    env = OntoEnv(path=tmp_path, offline=True)
+    try:
+        assert env.get_bound_namespaces() == {"demo": "urn:example:", "custom": "urn:custom#"}
+        dataset = env.get_dataset()
+        bound = {prefix: str(ns) for prefix, ns in dataset.namespaces()}
+        assert bound["demo"] == "urn:example:"
+        assert bound["custom"] == "urn:custom#"
+        assert "@prefix demo: <urn:example:>" in dataset.serialize(format="trig")
+
+        assert env.unbind_namespace("custom") is True
+        assert env.unbind_namespace("custom") is False
+    finally:
+        env.close()
+
+    env = OntoEnv(path=tmp_path, offline=True)
+    try:
+        assert env.get_bound_namespaces() == {"demo": "urn:example:"}
+    finally:
+        env.close()
+
+
+def test_refresh_resets_to_env_bindings(persistent_env: OntoEnv) -> None:
+    persistent_env.add(str(DEMO_TTL))
+    persistent_env.flush()
+    dataset = persistent_env.get_dataset()
+    dataset.bind("session", URIRef("urn:session#"))
+
+    persistent_env.bind_namespace("persisted", "urn:persisted#")
+    refresh_dataset_from_env(dataset, persistent_env)
+
+    bound = {prefix: str(ns) for prefix, ns in dataset.namespaces()}
+    assert "session" not in bound
+    assert bound["persisted"] == "urn:persisted#"
+    assert bound["ex"] == "urn:example:"
+
+
+def _write_import_pair(directory: Path) -> tuple[Path, Path]:
+    root = directory / "root.ttl"
+    root.write_text(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        "@prefix rt: <urn:root#> .\n"
+        "<urn:root> a owl:Ontology ; owl:imports <urn:dep> .\n"
+        "rt:a rt:p rt:b .\n"
+    )
+    dep = directory / "dep.ttl"
+    dep.write_text(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        "@prefix dep: <urn:dep#> .\n"
+        "<urn:dep> a owl:Ontology .\n"
+        "dep:x dep:p dep:y .\n"
+    )
+    return root, dep
+
+
+@pytest.mark.parametrize("temporary", [False, True])
+def test_views_carry_env_namespaces(tmp_path: Path, temporary: bool) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    root, dep = _write_import_pair(src)
+    if temporary:
+        env = OntoEnv(temporary=True, offline=True)
+    else:
+        env = OntoEnv(path=tmp_path / "env", recreate=True, offline=True)
+    try:
+        env.add(str(dep))
+        env.add(str(root))
+        env.flush()
+        if not temporary:
+            env.bind_namespace("mine", "urn:mine#")
+
+        closure, _ = env.get_closure("urn:root")
+        assert closure.namespace("rt") == "urn:root#"
+        assert closure.namespace("dep") == "urn:dep#"
+        if not temporary:
+            assert closure.namespace("mine") == "urn:mine#"
+        turtle = closure.serialize(format="turtle")
+        assert "@prefix dep: <urn:dep#>" in turtle
+        assert "@prefix rt: <urn:root#>" in turtle
+
+        union, _ = env.get_union(["urn:dep"])
+        assert union.namespace("dep") == "urn:dep#"
+        assert union.namespace("rt") is None
+    finally:
+        env.close()
+
