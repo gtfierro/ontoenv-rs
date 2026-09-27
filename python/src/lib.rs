@@ -40,7 +40,7 @@ use spareval::{QueryEvaluator, QueryResults as SpareQueryResults};
 use spargebra::SparqlParser;
 use std::borrow::{Borrow, Cow};
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 #[cfg(unix)]
@@ -3037,7 +3037,7 @@ fn instantiate_view_graph(
     py: Python<'_>,
     backend: Py<PyAny>,
     names: &[String],
-    namespaces: Py<PyAny>,
+    namespaces: HashMap<String, String>,
 ) -> PyResult<Py<PyAny>> {
     let rdflib_store = py.import("ontoenv.rdflib_store")?;
     let scope_items: Vec<Py<PyAny>> = names
@@ -3056,7 +3056,7 @@ fn build_view_graph(
     dataset: &Py<PyAny>,
     names: &[String],
     config: Option<&ClosureViewConfig>,
-    namespaces: Py<PyAny>,
+    namespaces: HashMap<String, String>,
 ) -> PyResult<Py<PyAny>> {
     let shared_backend = dataset
         .bind(py)
@@ -3534,26 +3534,6 @@ impl OntoEnv {
             .call_method1("bind_rdf5d_snapshot", (store_path.as_ref(),))?;
         store.setattr("_env_mode", "rdf5d")?;
         Ok(rdflib.getattr("Dataset")?.call1((store,))?.unbind())
-    }
-
-    /// Build a zero-argument callable that resolves the merged prefixes of
-    /// `names`. Views call it on first use: collecting parser-level prefixes
-    /// re-reads each source file, which is too slow to do on every view.
-    fn lazy_namespaces_for_graphs(&self, py: Python<'_>, names: &[String]) -> PyResult<Py<PyAny>> {
-        let env_obj = Py::new(
-            py,
-            OntoEnv {
-                inner: self.inner.clone(),
-                cache: self.cache.clone(),
-                read_only: self.read_only,
-            },
-        )?;
-        let loader = env_obj.getattr(py, "_namespaces_for_graphs")?;
-        Ok(py
-            .import("functools")?
-            .getattr("partial")?
-            .call1((loader, names.to_vec()))?
-            .unbind())
     }
 
     /// Apply `f` to the user-declared namespace bindings and persist them.
@@ -5380,7 +5360,7 @@ impl OntoEnv {
         remove_owl_imports: bool,
         rewrite_sh_prefixes: bool,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let (requested_root, root_id, closure, names, has_rdf5d_snapshot) = {
+        let (requested_root, root_id, closure, names, namespaces, has_rdf5d_snapshot) = {
             let iri = NamedNode::new(uri)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
@@ -5402,13 +5382,15 @@ impl OntoEnv {
                 .iter()
                 .map(GraphIdentifier::to_uri_string)
                 .collect::<Vec<_>>();
+            let namespaces = env
+                .get_namespaces_for_graphs(&closure)
+                .map_err(anyhow_to_pyerr)?;
             let has_rdf5d_snapshot = env.store_path().is_some_and(|path| {
                 path.file_name().is_some_and(|name| name == "store.r5tu") && path.is_file()
             });
-            (iri, graphid, closure, names, has_rdf5d_snapshot)
+            (iri, graphid, closure, names, namespaces, has_rdf5d_snapshot)
         };
 
-        let namespaces = self.lazy_namespaces_for_graphs(py, &names)?;
         if has_rdf5d_snapshot {
             let dataset = self.cached_view_dataset(py)?;
             let config = ClosureViewConfig {
@@ -5490,7 +5472,7 @@ impl OntoEnv {
         include_closures: bool,
         recursion_depth: i32,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let names = {
+        let (names, namespaces) = {
             let graph_iris: Vec<NamedNode> = uris
                 .iter()
                 .map(|uri| {
@@ -5505,7 +5487,7 @@ impl OntoEnv {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
 
-            let mut names: Vec<String> = Vec::new();
+            let mut ids: Vec<GraphIdentifier> = Vec::new();
             let mut seen: HashSet<String> = HashSet::new();
             for iri in &graph_iris {
                 let id = env
@@ -5521,22 +5503,21 @@ impl OntoEnv {
                         .get_closure(&id, recursion_depth)
                         .map_err(anyhow_to_pyerr)?;
                     for closure_id in closure {
-                        let s = closure_id.to_uri_string();
-                        if seen.insert(s.clone()) {
-                            names.push(s);
+                        if seen.insert(closure_id.to_uri_string()) {
+                            ids.push(closure_id);
                         }
                     }
-                } else {
-                    let s = id.to_uri_string();
-                    if seen.insert(s.clone()) {
-                        names.push(s);
-                    }
+                } else if seen.insert(id.to_uri_string()) {
+                    ids.push(id);
                 }
             }
-            names
+            let namespaces = env
+                .get_namespaces_for_graphs(&ids)
+                .map_err(anyhow_to_pyerr)?;
+            let names: Vec<String> = ids.iter().map(GraphIdentifier::to_uri_string).collect();
+            (names, namespaces)
         };
 
-        let namespaces = self.lazy_namespaces_for_graphs(py, &names)?;
         let dataset = self.cached_view_dataset(py)?;
         let view = build_view_graph(py, &dataset, &names, None, namespaces)?;
         Ok((view, names))
@@ -5731,40 +5712,14 @@ impl OntoEnv {
         self.update_bound_namespaces(|env| env.unbind_namespace(prefix))
     }
 
-    /// Merged prefixes for the given graph IRIs (used by ``ViewGraph``).
-    fn _namespaces_for_graphs(&self, names: Vec<String>) -> PyResult<HashMap<String, String>> {
-        let inner = self.inner.clone();
-        let guard = inner.lock_detached().unwrap();
-        let env = guard
-            .as_ref()
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let ids = names
-            .iter()
-            .map(|name| {
-                let iri = NamedNode::new(name.as_str())
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-                env.resolve(ResolveTarget::Graph(iri)).ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Ontology not found: {name}"
-                    ))
-                })
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        env.get_namespaces_for_graphs(&ids).map_err(anyhow_to_pyerr)
-    }
-
     /// Return the user-declared bindings added with :meth:`bind_namespace`.
-    fn get_bound_namespaces(&self) -> PyResult<HashMap<String, String>> {
+    fn get_bound_namespaces(&self) -> PyResult<BTreeMap<String, String>> {
         let inner = self.inner.clone();
         let guard = inner.lock_detached().unwrap();
         let env = guard
             .as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        Ok(env
-            .bound_namespaces()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect())
+        Ok(env.bound_namespaces().clone())
     }
 
     /// Get the names of all ontologies in the OntoEnv

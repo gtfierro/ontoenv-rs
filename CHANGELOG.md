@@ -16,18 +16,13 @@ All notable changes to this project are documented here. Releases follow [Semant
   and the rdflib datasets.
 - `get_closure()` and `get_union()` views now carry the prefixes of the graphs
   they cover (plus saved bindings), so `serialize()`, `namespace()`, and
-  `prefix()` work on them. Prefixes are resolved on first use, so creating a
-  view stays cheap.
+  `prefix()` work on them.
 
 ### Changed
-- `refresh_dataset_from_env()` keeps prefixes bound on the dataset since the
-  last refresh unless the refreshed env binds the same prefix or namespace;
-  previously every refresh reset bindings to the env's.
 - Parser-level `@prefix`/`PREFIX` declarations are now recorded in the catalog
-  when a source is parsed, so `get_namespaces()`, `ontoenv namespaces`, and the
-  rdflib datasets and views no longer re-read (or re-fetch) every source file.
-  Records from older catalogs fall back to re-reading until the source changes
-  or `ontoenv update --all` re-parses it.
+  when a source is parsed, so namespace lookups no longer re-read (or re-fetch)
+  every source file. Ontologies in existing catalogs report only their SHACL
+  prefixes until their source is re-parsed (e.g. `ontoenv update --all`).
 - `ViewGraph.serialize()` now lets the view's prefixes replace rdflib's
   defaults when they clash, instead of emitting `schema1`-style prefixes.
 

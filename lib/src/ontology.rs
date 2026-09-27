@@ -451,10 +451,9 @@ pub struct Ontology {
     #[serde(default)]
     namespace_map: HashMap<String, String>,
     /// Parser-level `@prefix`/`PREFIX` declarations captured when the source
-    /// was parsed. `None` for records written before these were recorded, or
-    /// built without parsing the source (e.g. adopted from a store).
+    /// was parsed.
     #[serde(default)]
-    source_prefixes: Option<HashMap<String, String>>,
+    source_prefixes: HashMap<String, String>,
     #[serde(default)]
     content_hash: Option<String>,
 }
@@ -489,7 +488,7 @@ impl Default for Ontology {
             last_updated: None,
             version_properties: HashMap::new(),
             namespace_map: HashMap::new(),
-            source_prefixes: None,
+            source_prefixes: HashMap::new(),
             content_hash: None,
         }
     }
@@ -531,13 +530,12 @@ impl Ontology {
         self.content_hash = Some(hash);
     }
 
-    /// Parser-level prefix declarations recorded at parse time, if known.
-    pub fn source_prefixes(&self) -> Option<&HashMap<String, String>> {
-        self.source_prefixes.as_ref()
+    pub fn source_prefixes(&self) -> &HashMap<String, String> {
+        &self.source_prefixes
     }
 
     pub fn set_source_prefixes(&mut self, prefixes: HashMap<String, String>) {
-        self.source_prefixes = Some(prefixes);
+        self.source_prefixes = prefixes;
     }
 
     pub fn content_hash(&self) -> Option<&str> {
@@ -764,7 +762,7 @@ impl Ontology {
             version_properties,
             last_updated: None,
             namespace_map,
-            source_prefixes: None,
+            source_prefixes: HashMap::new(),
             content_hash: None,
         })
     }

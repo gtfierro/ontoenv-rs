@@ -20,7 +20,7 @@ falls back to ``copy`` otherwise.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -182,7 +182,6 @@ class OntoEnvStore(Store):
         self._backend = _RdfLibStoreBackend()
         self._prefix_to_namespace: dict[str, URIRef] = {}
         self._namespace_to_prefix: dict[URIRef, str] = {}
-        self._env_namespaces: dict[str, URIRef] = {}
         self._env_mode: Mode | None = None
 
     @classmethod
@@ -202,18 +201,16 @@ class OntoEnvStore(Store):
         self._backend = _RdfLibStoreBackend()
         self._prefix_to_namespace.clear()
         self._namespace_to_prefix.clear()
-        self._env_namespaces.clear()
         self._env_mode = None
 
     def refresh_from_env(self, env: Any, mode: Mode | None = None) -> None:
         """Rebind this store to a fresh snapshot of ``env``.
 
         If ``mode`` is omitted, the previously chosen backend is reused (or
-        ``"auto"`` on first call). Namespace bindings are re-populated from
-        ``env.get_namespaces()`` (which includes bindings persisted with
-        ``env.bind_namespace()``). Bindings added to the store since the last
-        refresh (e.g. via ``dataset.bind()``) are kept unless the refreshed env
-        now binds the same prefix or namespace.
+        ``"auto"`` on first call). Namespace bindings are cleared and
+        re-populated from ``env.get_namespaces()``, which includes bindings
+        saved with ``env.bind_namespace()``; unsaved ``dataset.bind()`` calls
+        are discarded.
         """
         normalized_mode = _normalize_mode(mode or self._env_mode or "auto")
         if normalized_mode == "rdf5d":
@@ -232,21 +229,10 @@ class OntoEnvStore(Store):
                 _copy_env_into_store(env, self)
                 self._env_mode = "copy"
 
-        session_bindings = [
-            (prefix, namespace)
-            for prefix, namespace in self._prefix_to_namespace.items()
-            if self._env_namespaces.get(prefix) != namespace
-        ]
-        self._env_namespaces = {
-            prefix: URIRef(namespace) for prefix, namespace in env.get_namespaces().items()
-        }
         self._prefix_to_namespace.clear()
         self._namespace_to_prefix.clear()
-        for prefix, namespace in self._env_namespaces.items():
-            self.bind(prefix, namespace, override=True)
-        for prefix, namespace in session_bindings:
-            if prefix not in self._prefix_to_namespace and namespace not in self._namespace_to_prefix:
-                self.bind(prefix, namespace, override=True)
+        for prefix, namespace in env.get_namespaces().items():
+            self.bind(prefix, URIRef(namespace), override=True)
 
     def add(
         self,
@@ -401,44 +387,21 @@ class ViewGraph:
             attached; for a union view it is the shared (raw) backend.
         scope: Tuple of graph IRIs to scope against, or ``None`` for
             all graphs in the backend.
-        namespaces: Optional ``{prefix: namespace}`` bindings, or a zero-argument
-            callable returning them. A callable is invoked on first use, since
-            resolving an env's prefixes re-reads the ontology source files.
+        namespaces: Optional dict of ``{prefix: namespace}`` bindings.
     """
 
     def __init__(
         self,
         backend: Any,
         scope: tuple[str, ...] | None = None,
-        namespaces: Mapping[str, str] | Callable[[], Mapping[str, str]] | None = None,
+        namespaces: dict[str, str] | None = None,
     ):
         self._backend = backend
         self._scope = scope  # None = all graphs
-        self._namespace_loader: Callable[[], Mapping[str, str]] | None = None
-        self._namespaces: dict[str, str] = {}
+        self._namespaces = dict(namespaces) if namespaces else {}
         self._namespaces_rev: dict[str, str] = {}
-        if callable(namespaces):
-            self._namespace_loader = namespaces
-        elif namespaces:
-            self._load_namespaces(namespaces)
-
-    def _load_namespaces(self, namespaces: Mapping[str, str]) -> None:
-        for p, ns in namespaces.items():
-            self._namespaces[p] = str(ns)
-            self._namespaces_rev[str(ns)] = p
-
-    def _ensure_namespaces(self) -> None:
-        loader = self._namespace_loader
-        if loader is None:
-            return
-        self._namespace_loader = None
-        # Bindings made before the first load take precedence over the env's.
-        user_bindings = list(self._namespaces.items())
-        self._namespaces.clear()
-        self._namespaces_rev.clear()
-        self._load_namespaces(loader())
-        for p, ns in user_bindings:
-            self.bind(p, ns)
+        for p, ns in self._namespaces.items():
+            self._namespaces_rev[ns] = p
 
     # -- Core iteration --
 
@@ -620,12 +583,10 @@ class ViewGraph:
     @property
     def namespaces(self) -> dict[str, str]:
         """``{prefix: namespace}`` bindings."""
-        self._ensure_namespaces()
         return dict(self._namespaces)
 
     def bind(self, prefix: str, namespace: str, override: bool = True) -> None:
         """Bind a prefix to a namespace."""
-        namespace = str(namespace)
         existing_ns = self._namespaces.get(prefix)
         existing_prefix = self._namespaces_rev.get(namespace)
         if override:
@@ -641,12 +602,10 @@ class ViewGraph:
 
     def namespace(self, prefix: str) -> str | None:
         """Resolve a prefix to a namespace IRI."""
-        self._ensure_namespaces()
         return self._namespaces.get(prefix)
 
     def prefix(self, namespace: str) -> str | None:
         """Resolve a namespace IRI to a prefix."""
-        self._ensure_namespaces()
         return self._namespaces_rev.get(namespace)
 
     # -- Serialization --
@@ -662,7 +621,7 @@ class ViewGraph:
         g = Graph()
         for s, p, o in self:
             g.add((s, p, o))
-        for prefix, namespace in self.namespaces.items():
-            g.bind(prefix, namespace, override=True, replace=True)
+        for prefix, namespace in self._namespaces.items():
+            g.bind(prefix, namespace, replace=True)
         return g.serialize(destination=destination, format=format, **kwargs)
 

@@ -3400,9 +3400,11 @@ fn parser_prefixes_are_recorded_in_catalog() -> Result<()> {
     let id = env
         .resolve(ResolveTarget::Graph(NamedNode::new("urn:a")?))
         .expect("urn:a is loaded");
-    let recorded = env.get_ontology(&id)?.source_prefixes().cloned();
     assert_eq!(
-        recorded.as_ref().and_then(|p| p.get("a")).map(String::as_str),
+        env.get_ontology(&id)?
+            .source_prefixes()
+            .get("a")
+            .map(String::as_str),
         Some("urn:a#")
     );
     env.bind_namespace("mine", "urn:mine#");
@@ -3421,6 +3423,9 @@ fn parser_prefixes_are_recorded_in_catalog() -> Result<()> {
     let namespaces = reopened.get_namespaces(&id, false)?;
     assert_eq!(namespaces.get("a").map(String::as_str), Some("urn:a#"));
     assert!(!namespaces.contains_key("changed"));
-    assert_eq!(namespaces.get("mine").map(String::as_str), Some("urn:mine#"));
+    assert_eq!(
+        namespaces.get("mine").map(String::as_str),
+        Some("urn:mine#")
+    );
     Ok(())
 }

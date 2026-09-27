@@ -218,8 +218,7 @@ env.unbind_namespace("bldg")
 
 `dataset.bind(...)` on a Dataset from `get_dataset()` is not saved (rdflib also
 calls `bind` itself for its defaults and auto-generated `ns1`-style prefixes),
-but it survives `refresh_dataset_from_env()` unless the env now binds the same
-prefix or namespace.
+and `refresh_dataset_from_env()` resets the dataset's bindings to the env's.
 
 From the CLI:
 

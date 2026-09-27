@@ -188,13 +188,6 @@ pub fn save(
                 literal(serde_json::to_string(&(property.as_str(), value))?),
             ));
         }
-        for (prefix, namespace) in ontology.source_prefixes().into_iter().flatten() {
-            quints.push(quint(
-                record.clone(),
-                "sourcePrefix",
-                literal(serde_json::to_string(&(prefix, namespace))?),
-            ));
-        }
         for (prefix, namespace) in ontology.namespace_map() {
             quints.push(quint(
                 record.clone(),

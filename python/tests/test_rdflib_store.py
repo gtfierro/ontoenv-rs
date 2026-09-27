@@ -261,7 +261,7 @@ def test_bound_namespaces_persist_across_reopen(tmp_path: Path) -> None:
         env.close()
 
 
-def test_refresh_keeps_session_bindings(persistent_env: OntoEnv) -> None:
+def test_refresh_resets_to_env_bindings(persistent_env: OntoEnv) -> None:
     persistent_env.add(str(DEMO_TTL))
     persistent_env.flush()
     dataset = persistent_env.get_dataset()
@@ -271,7 +271,7 @@ def test_refresh_keeps_session_bindings(persistent_env: OntoEnv) -> None:
     refresh_dataset_from_env(dataset, persistent_env)
 
     bound = {prefix: str(ns) for prefix, ns in dataset.namespaces()}
-    assert bound["session"] == "urn:session#"
+    assert "session" not in bound
     assert bound["persisted"] == "urn:persisted#"
     assert bound["ex"] == "urn:example:"
 
@@ -325,11 +325,3 @@ def test_views_carry_env_namespaces(tmp_path: Path, temporary: bool) -> None:
     finally:
         env.close()
 
-
-def test_view_binding_before_first_use_wins(persistent_env: OntoEnv, tmp_path: Path) -> None:
-    _, dep = _write_import_pair(tmp_path)
-    persistent_env.add(str(dep))
-    view, _ = persistent_env.get_union(["urn:dep"])
-    view.bind("d", "urn:dep#")
-    assert view.prefix("urn:dep#") == "d"
-    assert view.namespace("dep") is None
