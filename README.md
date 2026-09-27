@@ -374,7 +374,8 @@ rewritten onto it. Returns `(deps_graph, list[str])`.
 | `iter_triples(name)` / `iter_closure_triples(name, recursion_depth=-1)` | Streaming triple iterators that skip the rdflib `Graph` wrapper |
 | `get_ontology(name)` | Inspect metadata: imports list, version, namespace map, last-updated |
 | `get_importers(name) -> list[str]` | Reverse dependency lookup |
-| `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings |
+| `get_namespaces(name, include_closure=False)` | Aggregated prefix-to-IRI mappings, including saved bindings |
+| `bind_namespace(prefix, ns)` / `unbind_namespace(prefix)` | Save or remove a prefix binding in the env (also `ontoenv config bind/unbind`) |
 | `missing_imports(uri=None) -> list[str]` | List unresolvable `owl:imports` IRIs (see below) |
 | `get_dataset() -> rdflib.Dataset` | Read-only Dataset view of the env |
 | `copy_dataset(dataset=None) -> rdflib.Dataset` | Mutable in-memory copy of the env |

@@ -603,6 +603,23 @@ class OntoEnv:
         """
         ...
 
+    def bind_namespace(self, prefix: str, namespace: str) -> None:
+        """Persistently bind *prefix* to *namespace* for this environment.
+
+        Saved in ``.ontoenv/ontoenv.json``; takes precedence over
+        ontology-declared prefixes in :meth:`get_namespaces` and in datasets
+        from :meth:`get_dataset` / :meth:`copy_dataset`.
+        """
+        ...
+
+    def unbind_namespace(self, prefix: str) -> bool:
+        """Remove a binding added with :meth:`bind_namespace`; ``True`` if it existed."""
+        ...
+
+    def get_bound_namespaces(self) -> Dict[str, str]:
+        """Return the bindings added with :meth:`bind_namespace`."""
+        ...
+
     def get_dataset(self) -> Dataset:
         """Return a read-only store-backed ``rdflib.Dataset`` view.
 

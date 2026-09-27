@@ -6,6 +6,26 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Added
+- Prefix bindings can be saved in the environment: `ontoenv config bind
+  <prefix> <namespace>` / `ontoenv config unbind <prefix>` from the CLI, and
+  `env.bind_namespace()` / `env.unbind_namespace()` /
+  `env.get_bound_namespaces()` from Python. They are stored under
+  `namespaces` in `.ontoenv/ontoenv.json` and take precedence over
+  ontology-declared prefixes in `ontoenv namespaces`, `get_namespaces()`,
+  and the rdflib datasets.
+- `get_closure()` and `get_union()` views now carry the prefixes of the graphs
+  they cover (plus saved bindings), so `serialize()`, `namespace()`, and
+  `prefix()` work on them. Prefixes are resolved on first use, so creating a
+  view stays cheap.
+
+### Changed
+- `refresh_dataset_from_env()` keeps prefixes bound on the dataset since the
+  last refresh unless the refreshed env binds the same prefix or namespace;
+  previously every refresh reset bindings to the env's.
+- `ViewGraph.serialize()` now lets the view's prefixes replace rdflib's
+  defaults when they clash, instead of emitting `schema1`-style prefixes.
+
 ## [0.6.4] — 2026-09-09
 
 ### Changed

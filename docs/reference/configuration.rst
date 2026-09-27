@@ -83,6 +83,11 @@ Settings
      - ``"."``
      - —
      - ``root=``
+   * - ``namespaces``
+     - dict[prefix, IRI]
+     - ``{}``
+     - ``config bind`` / ``config unbind``
+     - ``bind_namespace()``
 
 .. rubric:: Notes
 
@@ -106,6 +111,12 @@ Settings
 ``remote_cache_ttl_secs``
    How long a cached remote ontology is trusted before ``update`` re-fetches
    it.
+
+``namespaces``
+   User-declared prefix bindings. They are merged over the prefixes declared
+   by the ontologies wherever namespaces are reported: ``ontoenv namespaces``,
+   ``get_namespaces()``, and the rdflib datasets and views. A user prefix
+   also replaces any ontology-declared prefix for the same namespace IRI.
 
 Setting values from the CLI
 ---------------------------
@@ -138,6 +149,15 @@ the lines below are also independent examples:
    $ ontoenv config add excludes 'vendor'
 
 ``add``/``remove`` accept ``locations``, ``includes``, and ``excludes``.
+
+Prefix bindings use ``bind`` and ``unbind``. Binding a namespace that already
+has a user prefix replaces that prefix:
+
+.. code-block:: console
+
+   $ ontoenv config bind ex http://example.org/ns#
+   $ ontoenv config unbind ex
+
 ``include_ontologies`` and ``exclude_ontologies`` have no ``config``
 subcommand support — pass the flags on a command, or edit
 ``.ontoenv/config.json``.
@@ -173,6 +193,10 @@ writable environment:
 Each has a matching getter — ``is_offline()``, ``is_strict()``,
 ``requires_ontology_names()``, ``uses_cached_ontologies()``,
 ``remote_cache_ttl_secs()``, ``resolution_policy()``.
+
+Prefix bindings are saved with ``env.bind_namespace(prefix, namespace)``,
+removed with ``env.unbind_namespace(prefix)``, and listed with
+``env.get_bound_namespaces()``.
 
 Override rules on reopen
 ------------------------

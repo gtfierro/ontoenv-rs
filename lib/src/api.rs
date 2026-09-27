@@ -37,7 +37,7 @@ use anyhow::{anyhow, Result};
 use blake3;
 use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 
 /// Where a queued import's bytes come from.
@@ -3570,23 +3570,31 @@ impl OntoEnv {
     ) -> Result<HashMap<String, String>> {
         if include_closure {
             let closure = self.get_closure(id, -1)?;
-            let mut namespace_map = HashMap::new();
-            for graph_id in &closure {
-                let ontology =
-                    self.env.ontologies().get(graph_id).ok_or_else(|| {
-                        anyhow!("Ontology {} not found", graph_id.to_uri_string())
-                    })?;
-                namespace_map.extend(self.collect_ontology_prefixes(ontology));
-            }
-            Ok(namespace_map)
+            self.get_namespaces_for_graphs(&closure)
         } else {
+            self.get_namespaces_for_graphs(std::slice::from_ref(id))
+        }
+    }
+
+    /// Return merged namespace (prefix → IRI) mappings for the given graphs.
+    ///
+    /// Later graphs win on prefix conflicts; user-declared bindings (see
+    /// [`bind_namespace`](Self::bind_namespace)) win over all of them.
+    pub fn get_namespaces_for_graphs(
+        &self,
+        ids: &[GraphIdentifier],
+    ) -> Result<HashMap<String, String>> {
+        let mut namespace_map = HashMap::new();
+        for graph_id in ids {
             let ontology = self
                 .env
                 .ontologies()
-                .get(id)
-                .ok_or_else(|| anyhow!("Ontology {} not found", id.to_uri_string()))?;
-            Ok(self.collect_ontology_prefixes(ontology))
+                .get(graph_id)
+                .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
+            namespace_map.extend(self.collect_ontology_prefixes(ontology));
         }
+        self.apply_bound_namespaces(&mut namespace_map);
+        Ok(namespace_map)
     }
 
     /// Return merged namespace (prefix → IRI) mappings across **all** ontologies
@@ -3601,7 +3609,50 @@ impl OntoEnv {
         for ontology in self.ontologies().values() {
             namespace_map.extend(self.collect_ontology_prefixes(ontology));
         }
+        self.apply_bound_namespaces(&mut namespace_map);
         namespace_map
+    }
+
+    /// Return the user-declared prefix bindings persisted in the environment
+    /// configuration (see [`bind_namespace`](Self::bind_namespace)).
+    pub fn bound_namespaces(&self) -> &BTreeMap<String, String> {
+        &self.config.namespaces
+    }
+
+    /// Bind `prefix` to `namespace` in the environment configuration.
+    ///
+    /// User bindings take precedence over prefixes declared by ontologies in
+    /// [`get_namespaces`](Self::get_namespaces) and
+    /// [`get_all_namespaces`](Self::get_all_namespaces). A namespace can only
+    /// have one user-declared prefix, so rebinding a namespace under a new
+    /// prefix drops the old one. Call [`save_to_directory`](Self::save_to_directory)
+    /// to persist the change.
+    pub fn bind_namespace(&mut self, prefix: &str, namespace: &str) {
+        self.config.namespaces.retain(|_, ns| ns != namespace);
+        self.config
+            .namespaces
+            .insert(prefix.to_string(), namespace.to_string());
+    }
+
+    /// Remove a user-declared prefix binding. Returns `true` if it existed.
+    pub fn unbind_namespace(&mut self, prefix: &str) -> bool {
+        self.config.namespaces.remove(prefix).is_some()
+    }
+
+    fn apply_bound_namespaces(&self, namespace_map: &mut HashMap<String, String>) {
+        if self.config.namespaces.is_empty() {
+            return;
+        }
+        // Drop ontology-declared prefixes that would alias a user-bound namespace
+        // so the user's prefix is the one serializers pick.
+        let bound: HashSet<&String> = self.config.namespaces.values().collect();
+        namespace_map.retain(|_, ns| !bound.contains(ns));
+        namespace_map.extend(
+            self.config
+                .namespaces
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
     }
 
     /// Merge an ontology and its imports closure into a single graph.
