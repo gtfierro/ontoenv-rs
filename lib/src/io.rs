@@ -146,7 +146,10 @@ impl ParsedOntology {
 /// Parse RDF bytes into a triple list, trying the preferred format first and
 /// then every other supported syntax. Named graphs are rejected so that a
 /// TriG/N-Quads source cannot smuggle quads into a single-graph ontology.
-fn parse_triples(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<(Vec<Triple>, RdfFormat)> {
+fn parse_triples(
+    bytes: &[u8],
+    preferred: Option<RdfFormat>,
+) -> Result<(Vec<Triple>, RdfFormat, HashMap<String, String>)> {
     use oxigraph::io::JsonLdProfileSet;
     let mut candidates = vec![
         RdfFormat::Turtle,
@@ -167,7 +170,8 @@ fn parse_triples(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<(Vec<Trip
         let parser = RdfParser::from_format(fmt).without_named_graphs();
         let mut triples = Vec::new();
         let mut failure = None;
-        for quad in parser.for_slice(bytes) {
+        let mut reader = parser.for_slice(bytes);
+        for quad in &mut reader {
             match quad {
                 Ok(quad) => triples.push(Triple::new(quad.subject, quad.predicate, quad.object)),
                 Err(error) => {
@@ -177,7 +181,13 @@ fn parse_triples(bytes: &[u8], preferred: Option<RdfFormat>) -> Result<(Vec<Trip
             }
         }
         match failure {
-            None => return Ok((triples, fmt)),
+            None => {
+                let prefixes = reader
+                    .prefixes()
+                    .map(|(prefix, namespace)| (prefix.to_string(), namespace.to_string()))
+                    .collect();
+                return Ok((triples, fmt, prefixes));
+            }
             Some(error) => {
                 first_error.get_or_insert_with(|| format!("{fmt}: {error}"));
             }
@@ -198,8 +208,9 @@ pub fn parse_ontology_source(
     format: Option<RdfFormat>,
     require_ontology_names: bool,
 ) -> Result<ParsedOntology> {
-    let (triples, parsed_format) = parse_triples(&bytes, format)?;
+    let (triples, parsed_format, prefixes) = parse_triples(&bytes, format)?;
     let mut ontology = Ontology::from_triples(&triples, location.clone(), require_ontology_names)?;
+    ontology.set_source_prefixes(prefixes);
     // Hash content for change detection without re-reading sources.
     ontology.set_content_hash(blake3::hash(&bytes).to_hex().to_string());
     ontology.with_last_updated(Utc::now());

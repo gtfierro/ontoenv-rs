@@ -3524,16 +3524,20 @@ impl OntoEnv {
     /// If the source cannot be re-read (e.g. in-memory location, missing file),
     /// the error is logged and only SHACL entries are returned.
     fn collect_ontology_prefixes(&self, ontology: &Ontology) -> HashMap<String, String> {
-        // Start with parser-level @prefix / PREFIX declarations from the source.
-        let mut namespace_map = ontology
-            .location()
-            .map(|loc| {
-                crate::util::read_prefixes_from_location(loc).unwrap_or_else(|e| {
-                    warn!("Failed to read prefixes from {}: {}", loc, e);
-                    HashMap::new()
+        // Start with parser-level @prefix / PREFIX declarations, recorded at
+        // parse time; only records that predate that are re-read from source.
+        let recorded = ontology.source_prefixes().cloned();
+        let mut namespace_map = recorded.unwrap_or_else(|| {
+            ontology
+                .location()
+                .map(|loc| {
+                    crate::util::read_prefixes_from_location(loc).unwrap_or_else(|e| {
+                        warn!("Failed to read prefixes from {}: {}", loc, e);
+                        HashMap::new()
+                    })
                 })
-            })
-            .unwrap_or_default();
+                .unwrap_or_default()
+        });
         // SHACL sh:declare entries take precedence over parser-level prefixes.
         namespace_map.extend(
             ontology

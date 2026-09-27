@@ -23,6 +23,11 @@ All notable changes to this project are documented here. Releases follow [Semant
 - `refresh_dataset_from_env()` keeps prefixes bound on the dataset since the
   last refresh unless the refreshed env binds the same prefix or namespace;
   previously every refresh reset bindings to the env's.
+- Parser-level `@prefix`/`PREFIX` declarations are now recorded in the catalog
+  when a source is parsed, so `get_namespaces()`, `ontoenv namespaces`, and the
+  rdflib datasets and views no longer re-read (or re-fetch) every source file.
+  Records from older catalogs fall back to re-reading until the source changes
+  or `ontoenv update --all` re-parses it.
 - `ViewGraph.serialize()` now lets the view's prefixes replace rdflib's
   defaults when they clash, instead of emitting `schema1`-style prefixes.
 
