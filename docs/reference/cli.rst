@@ -244,8 +244,11 @@ declaration, and conflicting namespace prefixes. ``--json`` is accepted.
 .. rubric:: ``ontoenv namespaces [ONTOLOGY]``
 
 Print prefix-to-IRI mappings taken from ``@prefix``/``PREFIX`` declarations
-and SHACL ``sh:declare`` entries. With no argument, merges every ontology in
-the environment.
+and SHACL ``sh:declare`` entries, plus any bindings saved with
+``ontoenv config bind`` (which take precedence). With no argument, merges
+every ontology in the environment.
+
+See :doc:`../explanation/namespaces` for precedence and editing examples.
 
 ``--closure``
    Include namespaces from the ontology's transitive imports.
@@ -276,6 +279,9 @@ Configuration
    Read, write, or revert one key.
 ``add <KEY> <VALUE>`` / ``remove <KEY> <VALUE>``
    Modify a list-valued key.
+``bind <PREFIX> <NAMESPACE>`` / ``unbind <PREFIX>``
+   Save or remove a prefix binding. Saved bindings override ontology-declared
+   prefixes in ``ontoenv namespaces`` and the Python rdflib integration.
 
 Each line below is an independent example:
 
@@ -285,6 +291,7 @@ Each line below is an independent example:
    $ ontoenv config set remote_cache_ttl_secs 604800
    $ ontoenv config add locations ./more-ontologies
    $ ontoenv config remove locations ./old-path
+   $ ontoenv config bind ex http://example.org/ns#
 
 ``add``/``remove`` handle ``locations``, ``includes``, and ``excludes``. The
 ontology-IRI regex lists must be edited in ``.ontoenv/config.json`` directly.

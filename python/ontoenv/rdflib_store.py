@@ -56,8 +56,12 @@ def _normalize_mode(mode: str) -> Mode:
 
 
 def _bind_dataset_namespaces(dataset: Dataset, env: Any) -> None:
+    user_bindings = env.get_bound_namespaces()
     for prefix, namespace in env.get_namespaces().items():
-        dataset.bind(prefix, URIRef(namespace), override=True)
+        # Saved user choices take precedence over destination bindings;
+        # ontology declarations preserve the destination's preferred prefixes.
+        user_defined = prefix in user_bindings
+        dataset.bind(prefix, URIRef(namespace), override=user_defined, replace=user_defined)
 
 
 def add_triples_to_graph(graph: Graph, triples: Iterable[tuple[Any, Any, Any]]) -> None:
@@ -208,7 +212,9 @@ class OntoEnvStore(Store):
 
         If ``mode`` is omitted, the previously chosen backend is reused (or
         ``"auto"`` on first call). Namespace bindings are cleared and
-        re-populated from ``env.get_namespaces()``.
+        re-populated from ``env.get_namespaces()``, which includes bindings
+        saved with ``env.bind_namespace()``; unsaved ``dataset.bind()`` calls
+        are discarded.
         """
         normalized_mode = _normalize_mode(mode or self._env_mode or "auto")
         if normalized_mode == "rdf5d":
@@ -620,6 +626,6 @@ class ViewGraph:
         for s, p, o in self:
             g.add((s, p, o))
         for prefix, namespace in self._namespaces.items():
-            g.bind(prefix, namespace)
+            g.bind(prefix, namespace, replace=True)
         return g.serialize(destination=destination, format=format, **kwargs)
 

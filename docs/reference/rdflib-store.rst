@@ -118,6 +118,10 @@ environment:
 
 Use ``env.copy_dataset()`` for a mutable in-memory copy.
 
+Namespace bindings can be saved in the environment or edited locally on a
+dataset or view. See :doc:`../explanation/namespaces` for precedence rules
+and refresh behavior.
+
 Query behavior
 --------------
 

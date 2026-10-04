@@ -37,7 +37,7 @@ use anyhow::{anyhow, Result};
 use blake3;
 use log::{debug, error, info, warn};
 use petgraph::graph::{Graph as DiGraph, NodeIndex};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 
 /// Where a queued import's bytes come from.
@@ -3512,42 +3512,10 @@ impl OntoEnv {
         self.get_union_graph(&graph_ids, root, rewrite_sh_prefixes, remove_owl_imports)
     }
 
-    /// Collect namespace prefixes for a single ontology.
-    ///
-    /// Two sources are merged (in order of increasing priority):
-    ///
-    /// 1. **Parser-level prefixes** — `@prefix` / `PREFIX` declarations obtained
-    ///    by re-reading the ontology's source file or URL.
-    /// 2. **SHACL `sh:declare` entries** — stored in [`Ontology::namespace_map`].
-    ///    These take precedence when the same prefix name appears in both sources.
-    ///
-    /// If the source cannot be re-read (e.g. in-memory location, missing file),
-    /// the error is logged and only SHACL entries are returned.
-    fn collect_ontology_prefixes(&self, ontology: &Ontology) -> HashMap<String, String> {
-        // Start with parser-level @prefix / PREFIX declarations from the source.
-        let mut namespace_map = ontology
-            .location()
-            .map(|loc| {
-                crate::util::read_prefixes_from_location(loc).unwrap_or_else(|e| {
-                    warn!("Failed to read prefixes from {}: {}", loc, e);
-                    HashMap::new()
-                })
-            })
-            .unwrap_or_default();
-        // SHACL sh:declare entries take precedence over parser-level prefixes.
-        namespace_map.extend(
-            ontology
-                .namespace_map()
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
-        namespace_map
-    }
-
     /// Return namespace (prefix → IRI) mappings for an ontology.
     ///
     /// Prefixes come from two sources: parser-level `@prefix` / `PREFIX`
-    /// declarations (obtained by re-reading the source file) and SHACL
+    /// declarations (recorded when the source was parsed) and SHACL
     /// `sh:declare` entries stored in the ontology metadata.  When the same
     /// prefix name appears in both, the SHACL value wins.
     ///
@@ -3570,23 +3538,30 @@ impl OntoEnv {
     ) -> Result<HashMap<String, String>> {
         if include_closure {
             let closure = self.get_closure(id, -1)?;
-            let mut namespace_map = HashMap::new();
-            for graph_id in &closure {
-                let ontology =
-                    self.env.ontologies().get(graph_id).ok_or_else(|| {
-                        anyhow!("Ontology {} not found", graph_id.to_uri_string())
-                    })?;
-                namespace_map.extend(self.collect_ontology_prefixes(ontology));
-            }
-            Ok(namespace_map)
+            self.get_namespaces_for_graphs(&closure)
         } else {
-            let ontology = self
-                .env
-                .ontologies()
-                .get(id)
-                .ok_or_else(|| anyhow!("Ontology {} not found", id.to_uri_string()))?;
-            Ok(self.collect_ontology_prefixes(ontology))
+            self.get_namespaces_for_graphs(std::slice::from_ref(id))
         }
+    }
+
+    /// Return merged namespace (prefix → IRI) mappings for the given graphs.
+    ///
+    /// Later graphs win on prefix conflicts; user-declared bindings (see
+    /// [`bind_namespace`](Self::bind_namespace)) win over all of them.
+    pub fn get_namespaces_for_graphs(
+        &self,
+        ids: &[GraphIdentifier],
+    ) -> Result<HashMap<String, String>> {
+        let ontologies = ids
+            .iter()
+            .map(|id| {
+                self.env
+                    .ontologies()
+                    .get(id)
+                    .ok_or_else(|| anyhow!("Ontology {} not found", id.to_uri_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(self.merge_namespaces(ontologies))
     }
 
     /// Return merged namespace (prefix → IRI) mappings across **all** ontologies
@@ -3597,11 +3572,53 @@ impl OntoEnv {
     /// the same prefix with different IRIs, the last one encountered wins
     /// (iteration order is not guaranteed).
     pub fn get_all_namespaces(&self) -> HashMap<String, String> {
+        self.merge_namespaces(self.ontologies().values())
+    }
+
+    /// Merge the prefixes of `ontologies`, later ones winning on conflicts.
+    /// Within an ontology, SHACL `sh:declare` entries win over parser-level
+    /// `@prefix` / `PREFIX` declarations. User-declared bindings win over all
+    /// of them, and replace any other prefix for the same namespace so the
+    /// user's prefix is the one serializers pick.
+    fn merge_namespaces<'a>(
+        &self,
+        ontologies: impl IntoIterator<Item = &'a Ontology>,
+    ) -> HashMap<String, String> {
         let mut namespace_map = HashMap::new();
-        for ontology in self.ontologies().values() {
-            namespace_map.extend(self.collect_ontology_prefixes(ontology));
+        for ontology in ontologies {
+            namespace_map.extend(ontology.source_prefixes().clone());
+            namespace_map.extend(ontology.namespace_map().clone());
         }
+        let bound: HashSet<&String> = self.config.namespaces.values().collect();
+        namespace_map.retain(|_, ns| !bound.contains(ns));
+        namespace_map.extend(self.config.namespaces.clone());
         namespace_map
+    }
+
+    /// Return the user-declared prefix bindings persisted in the environment
+    /// configuration (see [`bind_namespace`](Self::bind_namespace)).
+    pub fn bound_namespaces(&self) -> &BTreeMap<String, String> {
+        &self.config.namespaces
+    }
+
+    /// Bind `prefix` to `namespace` in the environment configuration.
+    ///
+    /// User bindings take precedence over prefixes declared by ontologies in
+    /// [`get_namespaces`](Self::get_namespaces) and
+    /// [`get_all_namespaces`](Self::get_all_namespaces). A namespace can only
+    /// have one user-declared prefix, so rebinding a namespace under a new
+    /// prefix drops the old one. Call [`save_to_directory`](Self::save_to_directory)
+    /// to persist the change.
+    pub fn bind_namespace(&mut self, prefix: &str, namespace: &str) {
+        self.config.namespaces.retain(|_, ns| ns != namespace);
+        self.config
+            .namespaces
+            .insert(prefix.to_string(), namespace.to_string());
+    }
+
+    /// Remove a user-declared prefix binding. Returns `true` if it existed.
+    pub fn unbind_namespace(&mut self, prefix: &str) -> bool {
+        self.config.namespaces.remove(prefix).is_some()
     }
 
     /// Merge an ontology and its imports closure into a single graph.
