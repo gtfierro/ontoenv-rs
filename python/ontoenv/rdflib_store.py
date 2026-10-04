@@ -56,8 +56,12 @@ def _normalize_mode(mode: str) -> Mode:
 
 
 def _bind_dataset_namespaces(dataset: Dataset, env: Any) -> None:
+    user_bindings = env.get_bound_namespaces()
     for prefix, namespace in env.get_namespaces().items():
-        dataset.bind(prefix, URIRef(namespace), override=True, replace=True)
+        # Saved user choices take precedence over destination bindings;
+        # ontology declarations preserve the destination's preferred prefixes.
+        user_defined = prefix in user_bindings
+        dataset.bind(prefix, URIRef(namespace), override=user_defined, replace=user_defined)
 
 
 def add_triples_to_graph(graph: Graph, triples: Iterable[tuple[Any, Any, Any]]) -> None:

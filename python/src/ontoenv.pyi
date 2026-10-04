@@ -635,6 +635,8 @@ class OntoEnv:
 
         If *dataset* is provided, quads are added to it and the same dataset is
         returned. Otherwise a new in-memory dataset is returned.
+        Saved user namespace bindings replace conflicting destination bindings.
+        Ontology-declared prefixes preserve the destination's preferred bindings.
         """
         ...
 

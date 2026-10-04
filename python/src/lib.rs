@@ -5742,6 +5742,8 @@ impl OntoEnv {
     ///
     /// If `dataset` is provided, quads are added to it and the same object is
     /// returned. Otherwise a new ``rdflib.Dataset`` is created.
+    /// Saved user namespace bindings replace conflicting destination bindings.
+    /// Ontology-declared prefixes preserve the destination's preferred bindings.
     ///
     /// Works correctly with custom ``graph_store=`` backends: every named
     /// graph is materialised via the backend's ``get_graph`` path rather than

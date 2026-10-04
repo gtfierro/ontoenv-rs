@@ -275,16 +275,33 @@ def test_copy_dataset_saved_prefix_replaces_collision(
     if existing_namespace is not None:
         destination = Dataset()
         destination.bind(prefix, URIRef(existing_namespace))
+        destination.bind("preferred", URIRef("urn:example:"))
 
     dataset = persistent_env.copy_dataset(destination)
     if destination is not None:
         assert dataset is destination
     bound = dict(dataset.namespaces())
     assert bound[prefix] == URIRef("urn:example:")
+    assert dataset.store.prefix(URIRef("urn:example:")) == prefix
     assert bound.get(f"{prefix}1") != URIRef("urn:example:")
     serialized = dataset.serialize(format="trig")
     assert f"@prefix {prefix}: <urn:example:>" in serialized
     assert f"{prefix}:ahu1" in serialized
+
+
+def test_copy_dataset_ontology_prefix_preserves_destination_bindings(
+    persistent_env: OntoEnv,
+) -> None:
+    persistent_env.add(str(DEMO_TTL))
+    destination = Dataset()
+    destination.bind("ex", URIRef("urn:destination#"))
+    destination.bind("preferred", URIRef("urn:example:"))
+
+    persistent_env.copy_dataset(destination)
+
+    assert dict(destination.namespaces())["ex"] == URIRef("urn:destination#")
+    assert destination.store.prefix(URIRef("urn:example:")) == "preferred"
+    assert "preferred:ahu1" in destination.serialize(format="trig")
 
 
 def test_refresh_resets_to_env_bindings(persistent_env: OntoEnv) -> None:

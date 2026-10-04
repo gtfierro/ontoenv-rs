@@ -247,6 +247,9 @@ Inspecting
 ``Ontology`` exposes ``id``, ``name``, ``imports``, ``location``,
 ``last_updated``, ``version_properties``, and ``namespace_map``.
 
+For namespace precedence, saved bindings, and local rdflib edits, see
+:doc:`../explanation/namespaces`.
+
 Aliases
 -------
 
