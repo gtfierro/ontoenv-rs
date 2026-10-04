@@ -261,6 +261,32 @@ def test_bound_namespaces_persist_across_reopen(tmp_path: Path) -> None:
         env.close()
 
 
+@pytest.mark.parametrize(
+    ("prefix", "existing_namespace"),
+    [("schema", None), ("chosen", "urn:old#")],
+)
+def test_copy_dataset_saved_prefix_replaces_collision(
+    persistent_env: OntoEnv, prefix: str, existing_namespace: str | None
+) -> None:
+    persistent_env.add(str(DEMO_TTL))
+    persistent_env.bind_namespace(prefix, "urn:example:")
+
+    destination = None
+    if existing_namespace is not None:
+        destination = Dataset()
+        destination.bind(prefix, URIRef(existing_namespace))
+
+    dataset = persistent_env.copy_dataset(destination)
+    if destination is not None:
+        assert dataset is destination
+    bound = dict(dataset.namespaces())
+    assert bound[prefix] == URIRef("urn:example:")
+    assert bound.get(f"{prefix}1") != URIRef("urn:example:")
+    serialized = dataset.serialize(format="trig")
+    assert f"@prefix {prefix}: <urn:example:>" in serialized
+    assert f"{prefix}:ahu1" in serialized
+
+
 def test_refresh_resets_to_env_bindings(persistent_env: OntoEnv) -> None:
     persistent_env.add(str(DEMO_TTL))
     persistent_env.flush()

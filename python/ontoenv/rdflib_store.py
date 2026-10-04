@@ -57,7 +57,7 @@ def _normalize_mode(mode: str) -> Mode:
 
 def _bind_dataset_namespaces(dataset: Dataset, env: Any) -> None:
     for prefix, namespace in env.get_namespaces().items():
-        dataset.bind(prefix, URIRef(namespace), override=True)
+        dataset.bind(prefix, URIRef(namespace), override=True, replace=True)
 
 
 def add_triples_to_graph(graph: Graph, triples: Iterable[tuple[Any, Any, Any]]) -> None:
