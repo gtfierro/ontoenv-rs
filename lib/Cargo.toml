@@ -34,9 +34,21 @@ tempfile = "3.10.1"
 fs2 = "0.4"
 url = "2.5"
 blake3.workspace = true
+redb = { version = "=4.3.0", optional = true, features = ["experimental-multiprocess"] }
+rand = { workspace = true, optional = true }
 
 [features]
 rocksdb = ["oxigraph/rocksdb"]
+# Experimental snapshot storage requires Rust 1.90 (redb's minimum version).
+transactional-snapshots = ["dep:redb", "dep:rand"]
+
+[[example]]
+name = "transactional_snapshots"
+required-features = ["transactional-snapshots"]
+
+[[example]]
+name = "snapshot_profile"
+required-features = ["transactional-snapshots"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

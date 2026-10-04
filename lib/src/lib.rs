@@ -105,6 +105,8 @@ pub mod ontology;
 pub mod options;
 pub mod policy;
 pub mod progress;
+#[cfg(feature = "transactional-snapshots")]
+pub mod snapshots;
 #[macro_use]
 pub mod util;
 pub mod transform;

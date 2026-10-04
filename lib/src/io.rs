@@ -604,14 +604,14 @@ pub trait GraphIO: Send + Sync {
     }
 }
 
-fn oxigraph_subject_to_r5term(s: NamedOrBlankNode) -> R5Term {
+pub(crate) fn oxigraph_subject_to_r5term(s: NamedOrBlankNode) -> R5Term {
     match s {
         NamedOrBlankNode::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
         NamedOrBlankNode::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
     }
 }
 
-fn oxigraph_object_to_r5term(o: oxigraph::model::Term) -> R5Term {
+pub(crate) fn oxigraph_object_to_r5term(o: oxigraph::model::Term) -> R5Term {
     match o {
         oxigraph::model::Term::NamedNode(nn) => R5Term::Iri(nn.as_str().to_string()),
         oxigraph::model::Term::BlankNode(bn) => R5Term::BNode(bn.as_str().to_string()),
