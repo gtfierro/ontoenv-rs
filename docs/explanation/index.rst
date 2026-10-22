@@ -16,6 +16,10 @@ Explanation
    Why every read method comes in a ``get_*`` and a ``copy_*`` flavour, what a
    closure view actually contains, and how to choose.
 
+:doc:`namespaces`
+   Where prefixes come from, which bindings win, and how to edit saved or
+   local choices.
+
 :doc:`lifecycle`
    There are five ways to open an environment. What each one refuses to do,
    and why ``connect`` is almost always the right answer.
@@ -34,6 +38,7 @@ Explanation
 
    concepts
    views-and-copies
+   namespaces
    lifecycle
    staying-in-sync
    performance

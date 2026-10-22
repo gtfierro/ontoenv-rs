@@ -731,3 +731,63 @@ fn add_with_rename_stores_under_new_iri() {
         "old IRI should NOT be listed: {stdout}"
     );
 }
+
+/// `ontoenv config bind/unbind` persist user prefixes, which then show up in
+/// `ontoenv namespaces`.
+#[test]
+fn config_bind_and_unbind_namespaces() {
+    let exe = ontoenv_bin();
+    let root = tmp_dir("config-bind");
+    write_ttl(&root.join("A.ttl"), "http://example.com/A", "");
+
+    let run = |args: &[&str]| {
+        let out = Command::new(&exe)
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .expect("run ontoenv");
+        assert!(
+            out.status.success(),
+            "{:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    run(&["--offline", "init", "."]);
+    run(&["config", "bind", "ex", "http://example.com/ns#"]);
+    run(&["config", "bind", "other", "http://other.com/"]);
+    // Rebinding a namespace under a new prefix replaces the old prefix.
+    run(&["config", "bind", "ex2", "http://example.com/ns#"]);
+
+    let namespaces: serde_json::Value =
+        serde_json::from_str(&run(&["namespaces", "--json"])).expect("parse namespaces");
+    assert_eq!(namespaces["ex2"], "http://example.com/ns#");
+    assert_eq!(namespaces["other"], "http://other.com/");
+    assert!(namespaces.get("ex").is_none());
+
+    run(&["config", "unbind", "other"]);
+    run(&["config", "unbind", "ex2"]);
+    let cfg: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".ontoenv").join("ontoenv.json")).expect("read config"),
+    )
+    .expect("parse config");
+    assert!(cfg.get("namespaces").is_none());
+
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .args(["config", "unbind", "ex2"])
+        .output()
+        .expect("run unbind");
+    assert!(
+        !out.status.success(),
+        "unbinding an unbound prefix should fail"
+    );
+    let out = Command::new(&exe)
+        .current_dir(&root)
+        .args(["config", "bind", "bad", "not an iri"])
+        .output()
+        .expect("run bind");
+    assert!(!out.status.success(), "binding an invalid IRI should fail");
+}

@@ -3384,3 +3384,48 @@ fn new_online_mechanism_persists_flag() -> Result<()> {
     teardown(dir);
     Ok(())
 }
+
+#[test]
+fn parser_prefixes_are_recorded_in_catalog() -> Result<()> {
+    let dir = new_tempdir("ontoenv-prefixes")?;
+    let source = dir.path().join("a.ttl");
+    fs::write(
+        &source,
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix a: <urn:a#> .\n\
+         <urn:a> a owl:Ontology .\n\
+         a:x a:p a:y .\n",
+    )?;
+    let mut env = OntoEnv::init(default_config(&dir), false)?;
+    let id = env
+        .resolve(ResolveTarget::Graph(NamedNode::new("urn:a")?))
+        .expect("urn:a is loaded");
+    assert_eq!(
+        env.get_ontology(&id)?
+            .source_prefixes()
+            .get("a")
+            .map(String::as_str),
+        Some("urn:a#")
+    );
+    env.bind_namespace("mine", "urn:mine#");
+    env.save_to_directory()?;
+    drop(env);
+
+    // Rewrite the source without refreshing: namespaces must come from the
+    // catalog record rather than a re-parse of the file on disk.
+    fs::write(
+        &source,
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix changed: <urn:a#> .\n\
+         <urn:a> a owl:Ontology .\n",
+    )?;
+    let reopened = OntoEnv::load_from_directory(dir.path().to_path_buf(), true)?;
+    let namespaces = reopened.get_namespaces(&id, false)?;
+    assert_eq!(namespaces.get("a").map(String::as_str), Some("urn:a#"));
+    assert!(!namespaces.contains_key("changed"));
+    assert_eq!(
+        namespaces.get("mine").map(String::as_str),
+        Some("urn:mine#")
+    );
+    Ok(())
+}
