@@ -415,6 +415,24 @@ fn bench_first_triple(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_first_triple_lazy(c: &mut Criterion) {
+    let mut group = c.benchmark_group("first_triple_lazy");
+    for n in bench_usize_list("RDF5D_BENCH_SINGLE_GRAPH_TRIPLES", &[100, 1_000, 10_000]) {
+        let quints = generate_quints(1, n);
+        let f = NamedTempFile::new().unwrap();
+        write_file_with_options(f.path(), &quints, opts_plain()).unwrap();
+        let file = R5tuFile::open(f.path()).unwrap();
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &file, |b, file| {
+            b.iter(|| {
+                let mut iter = file.triples_ids_lazy(0).unwrap();
+                iter.next().unwrap().unwrap()
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_graph_lookup(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_lookup");
     let graph_counts = bench_usize_list("RDF5D_BENCH_GRAPH_COUNTS", &[5, 20, 100]);
@@ -1001,6 +1019,7 @@ criterion_group!(
     bench_open,
     bench_read_triples,
     bench_first_triple,
+    bench_first_triple_lazy,
     bench_graph_lookup,
     bench_resolve_gid,
     bench_enumerate_all,

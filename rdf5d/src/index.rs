@@ -18,7 +18,7 @@
 //! Build with [`build_mem_section`] / [`build_mem_pclos`]; read with
 //! [`MemSection::lookup`] / [`MemPClos::closure_forward`].
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use crate::reader::{R5Error, R5tuFile, Result};
 
@@ -131,14 +131,35 @@ impl MemSection {
 /// Walk every triple in the snapshot into a `(p, gid, s, o)` tuple vector.
 fn collect_tuples(r5tu: &R5tuFile) -> Result<Vec<(u64, u32, u64, u64)>> {
     let graphs = r5tu.enumerate_all()?;
-    let total: u64 = graphs.iter().map(|g| g.n_triples).sum();
-    let mut tuples: Vec<(u64, u32, u64, u64)> = Vec::with_capacity(total as usize);
-    for g in &graphs {
-        if g.gid > u32::MAX as u64 {
-            return Err(R5Error::Invalid("gid exceeds u32 (index limit)"));
-        }
-        for (s, p, o) in r5tu.triples_ids(g.gid)? {
-            tuples.push((p, g.gid as u32, s, o));
+    let capacity = graphs.iter().try_fold(0usize, |total, graph| {
+        let count = usize::try_from(graph.n_triples)
+            .map_err(|_| R5Error::Invalid("triple count exceeds usize"))?;
+        total
+            .checked_add(count)
+            .ok_or(R5Error::Invalid("total triple count exceeds usize"))
+    })?;
+    let gids: Vec<u64> = graphs.into_iter().map(|graph| graph.gid).collect();
+    collect_tuples_with_capacity(r5tu, &gids, capacity)
+}
+
+pub(crate) fn collect_tuples_for_gids(
+    r5tu: &R5tuFile,
+    gids: &[u64],
+) -> Result<Vec<(u64, u32, u64, u64)>> {
+    collect_tuples_with_capacity(r5tu, gids, 0)
+}
+
+fn collect_tuples_with_capacity(
+    r5tu: &R5tuFile,
+    gids: &[u64],
+    capacity: usize,
+) -> Result<Vec<(u64, u32, u64, u64)>> {
+    let mut tuples = Vec::with_capacity(capacity);
+    for &gid in gids {
+        let gid32 =
+            u32::try_from(gid).map_err(|_| R5Error::Invalid("gid exceeds u32 (index limit)"))?;
+        for (s, p, o) in r5tu.triples_ids(gid)? {
+            tuples.push((p, gid32, s, o));
         }
     }
     Ok(tuples)
@@ -151,6 +172,21 @@ fn collect_tuples(r5tu: &R5tuFile) -> Result<Vec<(u64, u32, u64, u64)>> {
 ///   PSO: key = p, A = s, B = o      POS: key = p, A = o, B = s
 ///   SPO: key = s, A = p, B = o      OSP: key = o, A = s, B = p
 pub fn build_mem_section(r5tu: &R5tuFile, kind: IdxKind) -> Result<MemSection> {
+    build_mem_section_from_tuples(collect_tuples(r5tu)?, kind)
+}
+
+pub(crate) fn build_mem_section_for_gids(
+    r5tu: &R5tuFile,
+    kind: IdxKind,
+    gids: &[u64],
+) -> Result<MemSection> {
+    build_mem_section_from_tuples(collect_tuples_for_gids(r5tu, gids)?, kind)
+}
+
+fn build_mem_section_from_tuples(
+    source: Vec<(u64, u32, u64, u64)>,
+    kind: IdxKind,
+) -> Result<MemSection> {
     if kind == IdxKind::PClos {
         return Err(R5Error::Invalid("use build_mem_pclos for PClos"));
     }
@@ -159,7 +195,7 @@ pub fn build_mem_section(r5tu: &R5tuFile, kind: IdxKind) -> Result<MemSection> {
     // once. Sorting groups equal keys and gids into contiguous runs and leaves
     // the (A, B) pairs ordered, so the postings build in a single linear walk
     // with no per-triple hashing.
-    let mut tuples: Vec<(u64, u32, u64, u64)> = collect_tuples(r5tu)?
+    let mut tuples: Vec<(u64, u32, u64, u64)> = source
         .into_iter()
         .map(|(p, gid, s, o)| match kind {
             IdxKind::Pso => (p, gid, s, o),
@@ -240,20 +276,44 @@ impl MemPClos {
 /// that want `P*` semantics add the source node themselves. Cycles are handled
 /// by the BFS visited set.
 pub fn build_mem_pclos(r5tu: &R5tuFile, predicates: &[u64]) -> Result<MemPClos> {
-    let tuples = collect_tuples(r5tu)?;
+    Ok(build_mem_pclos_from_tuples(
+        collect_tuples(r5tu)?,
+        predicates,
+    ))
+}
+
+pub(crate) fn build_mem_pclos_for_gids(
+    r5tu: &R5tuFile,
+    predicates: &[u64],
+    gids: &[u64],
+) -> Result<MemPClos> {
+    Ok(build_mem_pclos_from_tuples(
+        collect_tuples_for_gids(r5tu, gids)?,
+        predicates,
+    ))
+}
+
+fn build_mem_pclos_from_tuples(tuples: Vec<(u64, u32, u64, u64)>, predicates: &[u64]) -> MemPClos {
     let mut wanted: Vec<u64> = predicates.to_vec();
     wanted.sort_unstable();
     wanted.dedup();
+    let wanted_set: HashSet<u64> = wanted.iter().copied().collect();
+    let mut adjacencies: HashMap<u64, BTreeMap<u64, BTreeSet<u64>>> = HashMap::new();
+    for (predicate, _, subject, object) in tuples {
+        if wanted_set.contains(&predicate) {
+            adjacencies
+                .entry(predicate)
+                .or_default()
+                .entry(subject)
+                .or_default()
+                .insert(object);
+        }
+    }
 
     let mut preds = HashMap::with_capacity(wanted.len());
     for p in wanted {
         // Distinct (s, o) edges for predicate p, ignoring gid.
-        let mut adjacency: BTreeMap<u64, BTreeSet<u64>> = BTreeMap::new();
-        for &(tp, _gid, s, o) in &tuples {
-            if tp == p {
-                adjacency.entry(s).or_default().insert(o);
-            }
-        }
+        let adjacency = adjacencies.remove(&p).unwrap_or_default();
         if adjacency.is_empty() {
             preds.insert(p, PClosPred::default());
             continue;
@@ -276,7 +336,7 @@ pub fn build_mem_pclos(r5tu: &R5tuFile, predicates: &[u64]) -> Result<MemPClos> 
         );
     }
 
-    Ok(MemPClos { preds })
+    MemPClos { preds }
 }
 
 /// For every source node in `adj`, compute the set of nodes reachable via one

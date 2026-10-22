@@ -85,6 +85,7 @@ Observed constraints from the current implementation:
   - `first_triple/100`: about `865.60-877.07 ns`
   - `first_triple/1000`: about `8.06-8.19 us`
   - `first_triple/10000`: about `80.22-81.28 us`
+- A matched run after adding `triples_ids_lazy` (`--features idx,mmap,zstd`) measured first-triple latency at `10_000` triples as `178.71-182.44 us` for the validating iterator and `134.35-136.16 us` for the fallible lazy iterator. The latter reports object corruption during iteration. Both still decode the subject and predicate structure before reaching the object stream, so first-triple latency continues to grow with graph size.
 - Focused graph-lookup notes from `cargo bench --bench rdf5d_bench --features mmap,zstd graph_lookup` after compacting the string index:
   - `enumerate_by_id/20`: about `2.38-2.41 us`
   - `enumerate_by_graphname/20`: about `3.90-4.02 us`

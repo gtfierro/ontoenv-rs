@@ -85,6 +85,28 @@ def test_dataset_from_env_auto_uses_rdf5d_for_persistent_env(persistent_env: Ont
         )
 
 
+def test_rdf5d_store_streams_grouped_contexts(persistent_env: OntoEnv, tmp_path: Path) -> None:
+    triple = (URIRef("urn:shared:s"), URIRef("urn:shared:p"), Literal("shared"))
+    for name in ("one", "two"):
+        path = tmp_path / f"{name}.ttl"
+        path.write_text(
+            f'<urn:graph:{name}> a <http://www.w3.org/2002/07/owl#Ontology> .\n'
+            '<urn:shared:s> <urn:shared:p> "shared" .\n'
+        )
+        persistent_env.add(str(path))
+    persistent_env.flush()
+
+    backend = persistent_env.get_dataset().store._backend
+    rows = list(backend.triples(*triple, None))
+    assert len(rows) == 1
+    assert rows[0][0] == triple
+    assert {str(context) for context in rows[0][1]} == {"urn:graph:one", "urn:graph:two"}
+
+    one = list(backend.triples(*triple, URIRef("urn:graph:one")))
+    assert len(one) == 1
+    assert {str(context) for context in one[0][1]} == {"urn:graph:one"}
+
+
 def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(temporary_env: OntoEnv) -> None:
     temporary_env.add(str(DEMO_TTL))
 
