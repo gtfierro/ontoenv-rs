@@ -4234,7 +4234,10 @@ mod tests {
         });
         ready_rx.recv().unwrap();
 
-        let reopened = OntoEnv::load_from_directory(root, false).unwrap();
+        // A reader waits for the writer's shared-lock handoff, including the
+        // interval after it removes the marker but before it drops its lock.
+        // A writable open can legitimately fail during that interval.
+        let reopened = OntoEnv::load_from_directory(root, true).unwrap();
         drop(reopened);
         writer.join().unwrap();
     }
