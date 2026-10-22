@@ -1256,20 +1256,45 @@ ex:B a owl:Class .
         self.assertGreater(num_graphs, 5)
 
     def test_import_graph(self):
-        """Test env.import_graph()."""
-        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=False)
-        name = self.env.add(self.brick_144_url)
-        self.assertEqual(name, self.brick_144_name)
+        """Flatten a local closure and attach its imports only to the root."""
+        root_path = self.test_dir / "root.ttl"
+        dependency_path = self.test_dir / "dependency.ttl"
+        leaf_path = self.test_dir / "leaf.ttl"
+        root_iri = root_path.resolve().as_uri()
+        dependency_iri = dependency_path.resolve().as_uri()
+        leaf_iri = leaf_path.resolve().as_uri()
+        root_path.write_text(
+            f"<{root_iri}> a <{OWL.Ontology}> ; <{OWL.imports}> <{dependency_iri}> .",
+            encoding="utf-8",
+        )
+        dependency_path.write_text(
+            f"<{dependency_iri}> a <{OWL.Ontology}> ; <{OWL.imports}> <{leaf_iri}> .",
+            encoding="utf-8",
+        )
+        leaf_path.write_text(
+            f"<{leaf_iri}> a <{OWL.Ontology}> .\n"
+            f"<{leaf_iri}#Class> a <{OWL.Class}> .",
+            encoding="utf-8",
+        )
+        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=True, strict=True)
+        name = self.env.add(str(root_path))
+        self.assertEqual(name, root_iri)
 
         g = Graph()
         self.assertEqual(len(g), 0)
-        # import full closure; ensure imports were materialized and owl:imports removed
         self.env.import_graph(g, name, recursion_depth=-1)
-        self.assertGreater(len(g), 0)
-        # owl:imports should be rewritten onto the root ontology
-        imports_pred = URIRef("http://www.w3.org/2002/07/owl#imports")
-        imports = list(g.triples((URIRef(name), imports_pred, None)))
-        self.assertGreater(len(imports), 0)
+        self.assertIn((URIRef(f"{leaf_iri}#Class"), RDF.type, OWL.Class), g)
+        self.assertSetEqual(
+            set(g.triples((None, OWL.imports, None))),
+            {
+                (URIRef(root_iri), OWL.imports, URIRef(dependency_iri)),
+                (URIRef(root_iri), OWL.imports, URIRef(leaf_iri)),
+            },
+        )
+        self.assertEqual(
+            list(g.triples((None, RDF.type, OWL.Ontology))),
+            [(URIRef(root_iri), RDF.type, OWL.Ontology)],
+        )
 
     def test_store_path(self):
         """Test env.store_path()."""

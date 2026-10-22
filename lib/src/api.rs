@@ -4217,7 +4217,10 @@ mod tests {
         });
         ready_rx.recv().unwrap();
 
-        let reopened = OntoEnv::load_from_directory(root, false).unwrap();
+        // A reader waits for the writer's shared-lock handoff, including the
+        // interval after it removes the marker but before it drops its lock.
+        // A writable open can legitimately fail during that interval.
+        let reopened = OntoEnv::load_from_directory(root, true).unwrap();
         drop(reopened);
         writer.join().unwrap();
     }
@@ -4241,6 +4244,7 @@ mod tests {
         std::fs::write(&pending, r#"{"mutation_id":"active","graphs":[]}"#).unwrap();
         let lock_path = root.join(".ontoenv").join("store.lock");
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
         let writer = std::thread::spawn(move || {
             let lock = std::fs::OpenOptions::new()
                 .read(true)
@@ -4249,16 +4253,20 @@ mod tests {
                 .unwrap();
             FileExt::lock_exclusive(&lock).unwrap();
             ready_tx.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(2100));
+            // Keep the lock until the caller has observed the active mutation.
+            // A fixed sleep races with the two-second startup timeout on CI.
+            release_rx.recv_timeout(Duration::from_secs(30)).unwrap();
         });
         ready_rx.recv().unwrap();
 
-        let error = OntoEnv::load_from_directory(root, false).unwrap_err();
+        let result = OntoEnv::load_from_directory(root, false);
+        release_tx.send(()).unwrap();
+        writer.join().unwrap();
+        let error = result.unwrap_err();
         assert!(error
             .to_string()
             .contains("external process is mutating this OntoEnv"));
         assert!(error.downcast_ref::<CatalogRecoveryError>().is_none());
-        writer.join().unwrap();
     }
 
     #[test]
