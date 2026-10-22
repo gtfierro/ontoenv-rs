@@ -248,6 +248,8 @@ and SHACL ``sh:declare`` entries, plus any bindings saved with
 ``ontoenv config bind`` (which take precedence). With no argument, merges
 every ontology in the environment.
 
+See :doc:`../explanation/namespaces` for precedence and editing examples.
+
 ``--closure``
    Include namespaces from the ontology's transitive imports.
 ``--json``

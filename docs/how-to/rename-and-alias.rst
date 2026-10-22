@@ -83,6 +83,19 @@ Rename an ontology already in the environment
 This applies the same rewrite rules to the stored graph and rebuilds the
 import dependency graph so existing imports point at the new name.
 
+Renaming onto an IRI that is already registered
+-----------------------------------------------
+
+If the target IRI is already registered — from a different source location —
+the rename **replaces** that registration: the previous graph is dropped from
+the store and the environment, and the renamed graph takes its place. The IRI
+is never registered twice, so ``get_ontology_names()`` still lists it once.
+
+This holds for the built-in store and for a custom ``graph_store=`` backend.
+For a custom backend the replacement is written through
+``add_graph(iri, graph, overwrite=True)``, so that method must fully replace an
+existing graph rather than merge into it (see :doc:`../reference/graph-store`).
+
 Route several IRIs to one graph
 -------------------------------
 

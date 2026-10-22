@@ -117,6 +117,7 @@ Settings
    by the ontologies wherever namespaces are reported: ``ontoenv namespaces``,
    ``get_namespaces()``, and the rdflib datasets and views. A user prefix
    also replaces any ontology-declared prefix for the same namespace IRI.
+   See :doc:`../explanation/namespaces` for precedence and editing examples.
 
 Setting values from the CLI
 ---------------------------
