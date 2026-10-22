@@ -32,6 +32,10 @@ Explanation
    Benchmarks against in-memory rdflib and Oxigraph, plus the indexing that
    explains the results.
 
+:doc:`transactional-snapshots`
+   An experimental Rust API for immutable mmap-backed generations, concurrent
+   readers, staged updates, and explicit snapshot refresh.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -42,3 +46,4 @@ Explanation
    lifecycle
    staying-in-sync
    performance
+   transactional-snapshots

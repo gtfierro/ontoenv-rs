@@ -19,7 +19,7 @@ The example keeps a writer open, opens a reader, publishes new graph content and
 an alias, then refreshes the reader. A retained old query view still reads the
 old generation.
 
-```rust,ignore
+```rust
 let mut writer = SnapshotWriter::create(config)?;
 let mut update = writer.begin_update();
 let id = update.add_from_bytes(location, bytes, format)?;

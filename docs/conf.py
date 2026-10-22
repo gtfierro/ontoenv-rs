@@ -58,6 +58,7 @@ exclude_patterns: list[str] = [
     ".DS_Store",
     ".venv",
     ".venv/**",
+    "reviews/**",
 ]
 
 html_theme = "furo"

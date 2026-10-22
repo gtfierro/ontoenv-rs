@@ -98,6 +98,20 @@ jobs:
         working-directory: pyontoenv-shim
         run: uv run python scripts/test_pyontoenv.py
 
+  transactional-snapshots:
+    name: Transactional snapshots (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      # The opt-in redb backend requires 1.90; default builds retain 1.88.
+      - uses: dtolnay/rust-toolchain@1.90
+      - name: Test snapshot transactions, recovery and concurrent processes
+        run: cargo test -p ontoenv --locked --release --features transactional-snapshots --lib --test test_snapshots --test test_concurrency
+
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest
