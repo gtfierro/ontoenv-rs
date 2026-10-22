@@ -450,6 +450,10 @@ pub struct Ontology {
     version_properties: HashMap<NamedNode, String>,
     #[serde(default)]
     namespace_map: HashMap<String, String>,
+    /// Parser-level `@prefix`/`PREFIX` declarations captured when the source
+    /// was parsed.
+    #[serde(default)]
+    source_prefixes: HashMap<String, String>,
     #[serde(default)]
     content_hash: Option<String>,
 }
@@ -484,6 +488,7 @@ impl Default for Ontology {
             last_updated: None,
             version_properties: HashMap::new(),
             namespace_map: HashMap::new(),
+            source_prefixes: HashMap::new(),
             content_hash: None,
         }
     }
@@ -523,6 +528,14 @@ impl Ontology {
     pub fn set_content_hash(&mut self, hash: String) {
         // Record content hash for change detection without re-parsing.
         self.content_hash = Some(hash);
+    }
+
+    pub fn source_prefixes(&self) -> &HashMap<String, String> {
+        &self.source_prefixes
+    }
+
+    pub fn set_source_prefixes(&mut self, prefixes: HashMap<String, String>) {
+        self.source_prefixes = prefixes;
     }
 
     pub fn content_hash(&self) -> Option<&str> {
@@ -749,6 +762,7 @@ impl Ontology {
             version_properties,
             last_updated: None,
             namespace_map,
+            source_prefixes: HashMap::new(),
             content_hash: None,
         })
     }

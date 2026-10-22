@@ -6,6 +6,41 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Added
+- Prefix bindings can be saved in the environment: `ontoenv config bind
+  <prefix> <namespace>` / `ontoenv config unbind <prefix>` from the CLI, and
+  `env.bind_namespace()` / `env.unbind_namespace()` /
+  `env.get_bound_namespaces()` from Python. They are stored under
+  `namespaces` in `.ontoenv/ontoenv.json` and take precedence over
+  ontology-declared prefixes in `ontoenv namespaces`, `get_namespaces()`,
+  and the rdflib datasets.
+- `get_closure()` and `get_union()` views now carry the prefixes of the graphs
+  they cover (plus saved bindings), so `serialize()`, `namespace()`, and
+  `prefix()` work on them.
+
+### Changed
+- Parser-level `@prefix`/`PREFIX` declarations are now recorded in the catalog
+  when a source is parsed, so namespace lookups no longer re-read (or re-fetch)
+  every source file. Ontologies in existing catalogs report only their SHACL
+  prefixes until their source is re-parsed (e.g. `ontoenv update --all`).
+- `ViewGraph.serialize()` now lets the view's prefixes replace rdflib's
+  defaults when they clash, instead of emitting `schema1`-style prefixes.
+
+## [0.6.5] — 2026-09-09
+
+### Fixed
+- `rename_graph_iri` / `add(..., rename=...)` now writes the renamed graph
+  through custom Python `graph_store=` backends. Previously the rename wrote the
+  new graph into an internal scratch oxigraph store the backend never reads,
+  leaving the backend's bundled graph unchanged. `PythonGraphIO` now implements
+  `add_named_graph` by routing to the store's `add_graph(iri, graph, overwrite=True)`,
+  so a backend's `add_graph` with `overwrite=True` must fully replace any
+  existing graph at that IRI.
+- Renaming an ontology onto an IRI that is already registered under a different
+  source location no longer leaves a duplicate entry in `get_ontology_names()`;
+  the pre-existing registration is dropped from the store and the environment
+  metadata before the renamed graph is written.
+
 ## [0.6.4] — 2026-09-09
 
 ### Changed

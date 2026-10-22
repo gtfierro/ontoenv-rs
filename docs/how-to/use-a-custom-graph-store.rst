@@ -42,6 +42,12 @@ instances.
        def graph_ids(self) -> list[str]:
            return list(self.graphs.keys())
 
+``add_graph`` with ``overwrite=True`` must *fully replace* whatever is stored
+at ``iri`` — drop the old triples, then insert the new graph. ``add`` with
+``overwrite=True``, adoption, refresh, and ``rename_graph_iri`` all depend on
+it. The full protocol, including the optional methods, is in
+:doc:`../reference/graph-store`.
+
 Register it
 -----------
 

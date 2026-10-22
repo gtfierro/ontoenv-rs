@@ -40,7 +40,7 @@ use spareval::{QueryEvaluator, QueryResults as SpareQueryResults};
 use spargebra::SparqlParser;
 use std::borrow::{Borrow, Cow};
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 #[cfg(unix)]
@@ -1150,6 +1150,24 @@ impl GraphIO for PythonGraphIO {
             self.add_graph_to_store(py, &store, &graph_id, &graph, overwrite)
         })?;
         Ok(parsed.ontology)
+    }
+
+    /// Write a pre-built graph into the Python store under `id`, replacing any
+    /// existing graph at that name.
+    ///
+    /// The base `GraphIO` default writes into `self.store()`, which for a custom
+    /// `graph_store=` backend is only the empty scratch oxigraph store the
+    /// Python store never reads from. Route it through `add_graph(..., overwrite=True)`
+    /// so the rename machinery (`OntoEnv::rename_graph_iri`) actually persists to
+    /// the backing store.
+    fn add_named_graph(&mut self, id: GraphIdentifier, graph: OxigraphGraph) -> Result<()> {
+        if self.read_only {
+            return Err(anyhow!("Cannot add to read-only store"));
+        }
+        let graph_id = id.to_uri_string();
+        self.with_store(|py, store| {
+            self.add_graph_to_store(py, &store, &graph_id, &graph, Overwrite::Allow)
+        })
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<OxigraphGraph> {
@@ -3037,6 +3055,7 @@ fn instantiate_view_graph(
     py: Python<'_>,
     backend: Py<PyAny>,
     names: &[String],
+    namespaces: HashMap<String, String>,
 ) -> PyResult<Py<PyAny>> {
     let rdflib_store = py.import("ontoenv.rdflib_store")?;
     let scope_items: Vec<Py<PyAny>> = names
@@ -3046,7 +3065,7 @@ fn instantiate_view_graph(
     let scope = PyTuple::new(py, scope_items)?.into_any().unbind();
     Ok(rdflib_store
         .getattr("ViewGraph")?
-        .call1((backend, scope, py.None()))?
+        .call1((backend, scope, namespaces))?
         .unbind())
 }
 
@@ -3055,6 +3074,7 @@ fn build_view_graph(
     dataset: &Py<PyAny>,
     names: &[String],
     config: Option<&ClosureViewConfig>,
+    namespaces: HashMap<String, String>,
 ) -> PyResult<Py<PyAny>> {
     let shared_backend = dataset
         .bind(py)
@@ -3078,7 +3098,7 @@ fn build_view_graph(
         }
         None => shared_backend,
     };
-    instantiate_view_graph(py, backend, names)
+    instantiate_view_graph(py, backend, names, namespaces)
 }
 
 /// Internal cache for the lazily-built Dataset used by [`OntoEnv::get_graph`].
@@ -3525,6 +3545,30 @@ impl OntoEnv {
             .call_method1("bind_rdf5d_snapshot", (store_path.as_ref(),))?;
         store.setattr("_env_mode", "rdf5d")?;
         Ok(rdflib.getattr("Dataset")?.call1((store,))?.unbind())
+    }
+
+    /// Apply `f` to the user-declared namespace bindings and persist them.
+    fn update_bound_namespaces<F>(&self, f: F) -> PyResult<bool>
+    where
+        F: FnOnce(&mut OntoEnvRs) -> bool,
+    {
+        if self.read_only {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot persist configuration on a read-only OntoEnv",
+            ));
+        }
+        let inner = self.inner.clone();
+        let mut guard = inner.lock_detached().unwrap();
+        let Some(env) = guard.as_mut() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OntoEnv is closed",
+            ));
+        };
+        let changed = f(env);
+        if changed {
+            env.save_to_directory().map_err(anyhow_to_pyerr)?;
+        }
+        Ok(changed)
     }
 
     /// Mark the cached Dataset (if any) as stale. Subsequent reads via
@@ -5066,6 +5110,12 @@ impl OntoEnv {
     /// ``owl:versionIRI`` values), stores the result under the new name,
     /// removes the old named graph, and rebuilds the import dependency graph.
     ///
+    /// If ``new_iri`` is already registered (from a different source location)
+    /// the existing registration is replaced: its graph is dropped from the
+    /// store and the environment before the renamed graph is written, so the
+    /// IRI is never registered twice. Custom ``graph_store=`` backends receive
+    /// this write through ``add_graph(new_iri, graph, overwrite=True)``.
+    ///
     /// Returns the new IRI string.
     fn rename_graph_iri(&self, uri: &str, new_iri: &str) -> PyResult<String> {
         let old_iri = NamedNode::new(uri)
@@ -5327,7 +5377,7 @@ impl OntoEnv {
         remove_owl_imports: bool,
         rewrite_sh_prefixes: bool,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let (requested_root, root_id, closure, names, has_rdf5d_snapshot) = {
+        let (requested_root, root_id, closure, names, namespaces, has_rdf5d_snapshot) = {
             let iri = NamedNode::new(uri)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
@@ -5349,10 +5399,13 @@ impl OntoEnv {
                 .iter()
                 .map(GraphIdentifier::to_uri_string)
                 .collect::<Vec<_>>();
+            let namespaces = env
+                .get_namespaces_for_graphs(&closure)
+                .map_err(anyhow_to_pyerr)?;
             let has_rdf5d_snapshot = env.store_path().is_some_and(|path| {
                 path.file_name().is_some_and(|name| name == "store.r5tu") && path.is_file()
             });
-            (iri, graphid, closure, names, has_rdf5d_snapshot)
+            (iri, graphid, closure, names, namespaces, has_rdf5d_snapshot)
         };
 
         if has_rdf5d_snapshot {
@@ -5363,7 +5416,7 @@ impl OntoEnv {
                 remove_owl_imports,
                 rewrite_sh_prefixes,
             };
-            let view = build_view_graph(py, &dataset, &names, Some(&config))?;
+            let view = build_view_graph(py, &dataset, &names, Some(&config), namespaces)?;
             return Ok((view, names));
         }
 
@@ -5406,7 +5459,7 @@ impl OntoEnv {
             },
         )?
         .into_any();
-        let view = instantiate_view_graph(py, backend, &names)?;
+        let view = instantiate_view_graph(py, backend, &names, namespaces)?;
         Ok((view, names))
     }
 
@@ -5436,7 +5489,7 @@ impl OntoEnv {
         include_closures: bool,
         recursion_depth: i32,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let names = {
+        let (names, namespaces) = {
             let graph_iris: Vec<NamedNode> = uris
                 .iter()
                 .map(|uri| {
@@ -5451,7 +5504,7 @@ impl OntoEnv {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed")
             })?;
 
-            let mut names: Vec<String> = Vec::new();
+            let mut ids: Vec<GraphIdentifier> = Vec::new();
             let mut seen: HashSet<String> = HashSet::new();
             for iri in &graph_iris {
                 let id = env
@@ -5467,23 +5520,23 @@ impl OntoEnv {
                         .get_closure(&id, recursion_depth)
                         .map_err(anyhow_to_pyerr)?;
                     for closure_id in closure {
-                        let s = closure_id.to_uri_string();
-                        if seen.insert(s.clone()) {
-                            names.push(s);
+                        if seen.insert(closure_id.to_uri_string()) {
+                            ids.push(closure_id);
                         }
                     }
-                } else {
-                    let s = id.to_uri_string();
-                    if seen.insert(s.clone()) {
-                        names.push(s);
-                    }
+                } else if seen.insert(id.to_uri_string()) {
+                    ids.push(id);
                 }
             }
-            names
+            let namespaces = env
+                .get_namespaces_for_graphs(&ids)
+                .map_err(anyhow_to_pyerr)?;
+            let names: Vec<String> = ids.iter().map(GraphIdentifier::to_uri_string).collect();
+            (names, namespaces)
         };
 
         let dataset = self.cached_view_dataset(py)?;
-        let view = build_view_graph(py, &dataset, &names, None)?;
+        let view = build_view_graph(py, &dataset, &names, None, namespaces)?;
         Ok((view, names))
     }
 
@@ -5652,6 +5705,40 @@ impl OntoEnv {
         }
     }
 
+    /// Persistently bind ``prefix`` to ``namespace`` for this environment.
+    ///
+    /// The binding is saved in ``.ontoenv/ontoenv.json`` and is included by
+    /// :meth:`get_namespaces` (taking precedence over ontology-declared
+    /// prefixes) and therefore by every Dataset returned from
+    /// :meth:`get_dataset` / :meth:`copy_dataset`, including after reopening
+    /// the environment. A namespace has at most one user-declared prefix;
+    /// rebinding it under a new prefix replaces the old one.
+    fn bind_namespace(&mut self, prefix: &str, namespace: &str) -> PyResult<()> {
+        self.update_bound_namespaces(|env| {
+            env.bind_namespace(prefix, namespace);
+            true
+        })
+        .map(|_| ())
+    }
+
+    /// Remove a prefix previously added with :meth:`bind_namespace`.
+    ///
+    /// Returns ``True`` if the prefix was bound. Ontology-declared prefixes
+    /// are unaffected.
+    fn unbind_namespace(&mut self, prefix: &str) -> PyResult<bool> {
+        self.update_bound_namespaces(|env| env.unbind_namespace(prefix))
+    }
+
+    /// Return the user-declared bindings added with :meth:`bind_namespace`.
+    fn get_bound_namespaces(&self) -> PyResult<BTreeMap<String, String>> {
+        let inner = self.inner.clone();
+        let guard = inner.lock_detached().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
+        Ok(env.bound_namespaces().clone())
+    }
+
     /// Get the names of all ontologies in the OntoEnv
     fn get_ontology_names(&self) -> PyResult<Vec<String>> {
         let inner = self.inner.clone();
@@ -5672,6 +5759,8 @@ impl OntoEnv {
     ///
     /// If `dataset` is provided, quads are added to it and the same object is
     /// returned. Otherwise a new ``rdflib.Dataset`` is created.
+    /// Saved user namespace bindings replace conflicting destination bindings.
+    /// Ontology-declared prefixes preserve the destination's preferred bindings.
     ///
     /// Works correctly with custom ``graph_store=`` backends: every named
     /// graph is materialised via the backend's ``get_graph`` path rather than
