@@ -18,7 +18,10 @@ Required methods
      - Contract
    * - ``add_graph(iri: str, graph: Graph, overwrite: bool = False) -> None``
      - Store *graph* under *iri*. With ``overwrite=False``, leave an existing
-       graph untouched.
+       graph untouched. With ``overwrite=True``, **fully replace** any existing
+       graph at *iri* (drop its previous triples, then insert *graph*) — a
+       merge is not sufficient. ``add(..., overwrite=True)``, adoption,
+       refresh, and ``rename_graph_iri`` all rely on this.
    * - ``get_graph(iri: str) -> Graph``
      - Return the graph for *iri*, for read-only access. Backs every ``get_*``
        method.

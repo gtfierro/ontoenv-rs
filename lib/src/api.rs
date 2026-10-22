@@ -1983,6 +1983,10 @@ impl OntoEnv {
     /// `new_iri` (subject and object positions), writes it back under the new name,
     /// removes the old named graph, and updates the in-memory environment and dependency
     /// graph to reflect the change.
+    ///
+    /// If `new_iri` is already registered under a different source location, that
+    /// registration is removed from both the IO store and the environment before the
+    /// renamed graph is written, so the IRI is never registered twice.
     pub fn rename_graph_iri(
         &mut self,
         id: &GraphIdentifier,
@@ -2016,6 +2020,25 @@ impl OntoEnv {
         transform::rename_ontology_iri_graph(&mut graph, old_id.name(), new_iri.as_ref());
         let new_id =
             GraphIdentifier::new_with_location(new_iri.as_ref(), old_id.location().clone());
+
+        // A rename onto an IRI that is already registered (under a different
+        // source location) must replace that entry, not sit beside it. Drop any
+        // existing registration of `new_iri` from both the backend and the
+        // in-memory metadata before writing the renamed graph, so the IRI is not
+        // reported twice by `get_ontology_names()` and the backend's bundled
+        // graph is actually replaced.
+        let stale: Vec<GraphIdentifier> = self
+            .env
+            .ontologies()
+            .keys()
+            .filter(|id| id.name() == new_iri.as_ref() && *id != old_id)
+            .cloned()
+            .collect();
+        for id in &stale {
+            self.io.remove(id)?;
+            self.env.remove_ontology(id)?;
+        }
+
         self.io.remove(old_id)?;
         self.io.add_named_graph(new_id.clone(), graph)?;
 
@@ -4235,6 +4258,7 @@ mod tests {
         std::fs::write(&pending, r#"{"mutation_id":"active","graphs":[]}"#).unwrap();
         let lock_path = root.join(".ontoenv").join("store.lock");
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
         let writer = std::thread::spawn(move || {
             let lock = std::fs::OpenOptions::new()
                 .read(true)
@@ -4243,16 +4267,20 @@ mod tests {
                 .unwrap();
             FileExt::lock_exclusive(&lock).unwrap();
             ready_tx.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(2100));
+            // Keep the lock until the caller has observed the active mutation.
+            // A fixed sleep races with the two-second startup timeout on CI.
+            release_rx.recv_timeout(Duration::from_secs(30)).unwrap();
         });
         ready_rx.recv().unwrap();
 
-        let error = OntoEnv::load_from_directory(root, false).unwrap_err();
+        let result = OntoEnv::load_from_directory(root, false);
+        release_tx.send(()).unwrap();
+        writer.join().unwrap();
+        let error = result.unwrap_err();
         assert!(error
             .to_string()
             .contains("external process is mutating this OntoEnv"));
         assert!(error.downcast_ref::<CatalogRecoveryError>().is_none());
-        writer.join().unwrap();
     }
 
     #[test]
