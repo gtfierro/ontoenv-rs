@@ -48,5 +48,9 @@ required-features = ["transactional-snapshots"]
 name = "snapshot_profile"
 required-features = ["transactional-snapshots"]
 
+[[example]]
+name = "snapshot_workload"
+required-features = ["transactional-snapshots"]
+
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

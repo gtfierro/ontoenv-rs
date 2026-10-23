@@ -6,6 +6,9 @@ implement environment transactions. The feature name remains
 `transactional-snapshots` while this is experimental. See
 [the boundary and manifest review](environment-publication.md) before treating
 this prototype as a production storage design.
+The subsequent [validation report](publication-validation.md) records the Windows
+replacement fix, guest crash/reboot campaign, larger multi-reader workloads and
+provisional acceptance budgets.
 
 The `transactional-snapshots` feature adds an experimental Rust storage API:
 `SnapshotWriter`, `SnapshotUpdate`, `SnapshotReader`, and `EnvironmentSnapshot`.

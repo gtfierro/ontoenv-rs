@@ -40,6 +40,10 @@ Explanation
    Why atomic publication belongs to OntoEnv, the RDF5D boundary, and the
    immutable-manifest publication protocol.
 
+:doc:`publication-validation`
+   Platform results, guest crash/reboot tests, multi-process workloads and
+   provisional acceptance budgets for the experimental publisher.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -52,3 +56,4 @@ Explanation
    performance
    transactional-snapshots
    environment-publication
+   publication-validation

@@ -1192,4 +1192,95 @@ mod tests {
         );
         Ok(())
     }
+
+    // Used only by lib/tests/support/snapshot_vm.py inside a disposable guest.
+    // A phase notification parks the guest process until the host kills QEMU;
+    // unlike process-exit tests, the guest kernel cannot finish flushing afterward.
+    #[test]
+    #[ignore = "disposable VM durability helper"]
+    fn durability_vm_worker() -> Result<()> {
+        fn cut(phase: &str) -> ! {
+            println!("ONTOENV_VM_CUT {phase}");
+            std::io::stdout().flush().unwrap();
+            loop {
+                std::thread::park();
+            }
+        }
+        let mode = std::env::var("ONTOENV_VM_MODE")?;
+        let root = Path::new("/data/environment");
+        if mode == "seed" {
+            let mut writer = SnapshotWriter::create(config(root))?;
+            let mut update = stage(&mut writer, "old")?;
+            update
+                .config_mut()
+                .namespaces
+                .insert("revision".into(), "urn:old:".into());
+            update.commit()?;
+            println!("ONTOENV_VM_SEEDED");
+        } else if mode == "update" {
+            let target = std::env::var("ONTOENV_VM_PHASE")?;
+            let mut writer = SnapshotWriter::open(root)?;
+            let mut update = stage(&mut writer, "new")?;
+            update
+                .config_mut()
+                .namespaces
+                .insert("revision".into(), "urn:new:".into());
+            update.add_alias("urn:new-alias", "urn:a")?;
+            update.commit_with_publisher(
+                || {
+                    if target == "ObjectReady" {
+                        cut("ObjectReady");
+                    }
+                    Ok(())
+                },
+                |directory, generation, expected| {
+                    publish_with_hook(directory, generation, expected, |phase| {
+                        if format!("{phase:?}") == target {
+                            cut(&target);
+                        }
+                        Ok(())
+                    })
+                },
+            )?;
+            // Acknowledged means the public commit has returned success.
+            if target == "Acknowledged" {
+                cut("Acknowledged");
+            }
+            bail!("Unknown VM crash phase {target}");
+        } else if mode == "verify" {
+            // The harness mounts /data read-only. Do not open a writer here.
+            let reader = SnapshotReader::open(root)?;
+            let snapshot = reader.snapshot();
+            let generation = snapshot.info().generation;
+            let expected = std::env::var("ONTOENV_VM_EXPECTED")?;
+            match expected.as_str() {
+                "old" => assert_eq!(generation, 1),
+                "new" => assert_eq!(generation, 2),
+                "either" => assert!(matches!(generation, 1 | 2)),
+                _ => bail!("Unknown expected VM outcome"),
+            }
+            let id = snapshot
+                .resolve(NamedNode::new("urn:a")?.as_ref())
+                .context("missing ontology")?;
+            let value = if generation == 1 { "old" } else { "new" };
+            assert!(snapshot
+                .get_graph(&id)?
+                .iter()
+                .any(|t| t.object.to_string() == format!("\"{value}\"")));
+            assert_eq!(
+                snapshot.config().namespaces["revision"],
+                format!("urn:{value}:")
+            );
+            assert_eq!(
+                snapshot
+                    .resolve(NamedNode::new("urn:new-alias")?.as_ref())
+                    .is_some(),
+                generation == 2
+            );
+            println!("ONTOENV_VM_VERIFIED {generation}");
+        } else {
+            bail!("Unknown VM mode {mode}");
+        }
+        Ok(())
+    }
 }

@@ -118,7 +118,9 @@ that it still reads the old bytes after new opens select the new pointer.
 Directory sync currently runs on Unix and is a no-op elsewhere. Passing Windows
 process tests establishes normal-operation/process-exit behavior, not a Windows
 power-loss guarantee. Filesystem and device flush semantics also matter on Unix.
-No power-failure simulation has been performed.
+A bounded guest crash/reboot campaign has now been performed on Linux/ext4;
+see [validation and acceptance gates](publication-validation.md) for its results
+and limits. It does not power-cycle host or device caches.
 
 ## Why replace the manifest database?
 
@@ -153,7 +155,8 @@ A second test runs three reader processes opening and refreshing while a writer
 publishes twenty successive changes. Each reader checks graph content, aliases
 and configuration against its selected version and retains its original view.
 Dedicated feature CI runs these tests on Linux, macOS and Windows at Rust 1.88;
-consult the PR checks for results on the current revision.
+consult the PR checks for results on the current revision. The Windows fix and
+repeated stress passed on all three platforms at `ac607d9`.
 
 Before normal Rust/Python/CLI integration, review platform durability guarantees,
 measure cold reads and query-index memory across processes, and add recursive
