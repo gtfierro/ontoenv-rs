@@ -1,0 +1,1586 @@
+{
+  "profiled_production_commit": "102fdfa58cc27ce357cfdb9b2120697cc4ee3e26",
+  "current_branch_commit": "7265b71bf752427c6525defd200bf533aa2014b5",
+  "host": "Linux-7.0.11-76070011-generic-x86_64-with-glibc2.39",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "valgrind": "valgrind-3.22.0",
+  "fixture": {
+    "source_directory": "/tmp/ontoenv-final-review-run3/sources",
+    "source_bytes": 20718528,
+    "source_sha256": {
+      "Brick-1.3.ttl": "661e9aa68505ba7652485e4ead51545108fff4830707eb3866f0f59514fa051f",
+      "SCHEMA-FACADE_QUDT-v2.1.ttl": "1ecdca4e724c6974a132f08566ab0702af3f9e07d7d7bacd6695e2f4e091e9e4",
+      "SCHEMA_QUDT_NoOWL-v2.1.ttl": "6d959448094628f0945faa68d821a73ceed1178eb55575e0643770e0174c6310",
+      "SHACL-SCHEMA-SUPPLEMENT_QUDT-v2.1.ttl": "73095b855aa6645f245bce5f47fe47bab467dfa4b7ce067a245a15c5857dd6d5",
+      "VOCAB_QUDT-DIMENSION-VECTORS-v2.1.ttl": "c2322e7791f945ad9c9ad056523a4a92ce4064563490753442e369bc5fb3546f",
+      "VOCAB_QUDT-PREFIX-v2.1.ttl": "ebae81c9cdfd4597bbf13320752afcf595528e5c0796baf2796d0492fb4e0553",
+      "VOCAB_QUDT-QUANTITY-KINDS-ALL-v2.1.ttl": "1a1034f6ce4c1298ed5cb75b8d071069e0b526c8526de2c53c7448eb13039c2d",
+      "VOCAB_QUDT-SYSTEM-OF-UNITS-ALL-v2.1.ttl": "4cc1fe8ddb672fb582c07bd456db4d38bb28cdb7eed8e0ec0548d67e117048ab",
+      "VOCAB_QUDT-UNITS-ALL-v2.1.ttl": "5f1bed0ed68e0f88bdedb381eeee923329bd795486a242450eed8be3bb9c2b84",
+      "VOCAB_QUDT-UNITS-CURRENCY-v2.1.ttl": "f0ac881e007b9c74d4ae9a27fff7a8c813086742da06adeaf436d4c004dffe86",
+      "bacnet.ttl": "bdc079995ebc7fcd8205e150947a80b76b200691959ffa8230c2d739dc1d96b7",
+      "brickpatches.ttl": "3454fd67aef9f0fd8d70044f95ad7a90b52441668a288a29e318808c8a5b058d",
+      "building-0.ttl": "512cf2760c9490c0c3f83dcf8ac538b4e921d514d0c9289841f04d6afdfb0af7",
+      "building-1.ttl": "69d6c0cd5ad0e5dc1f4136b04bd33f6cf46b2da00f89882b6e308023ec487723",
+      "building-10.ttl": "7280166848f12d3f04fbd5289691141da877b08ff77f6843c37e3f251c77a6fb",
+      "building-11.ttl": "f2393d3a4cba671ce30e0a567e97c7a0f60fddf411e85b727e8e3473c6968ca3",
+      "building-12.ttl": "14b9a616a812fa989bac44eb5922c82a8b4ff324e915fcffb145b42702466fb2",
+      "building-13.ttl": "454639018b71c89588a9f489caa6318d84dcee27406506aa94faaeac51b5aa50",
+      "building-14.ttl": "69b7f93a77789b4d887fe563542345f2db85d317eb2528d3b42282b2a30e32e8",
+      "building-15.ttl": "b33bf9159e6e8378a543a5af7f6b43ddf8e584663a59fb9516f4d199671c6160",
+      "building-16.ttl": "43596e126b4fd51ec3b43e47116d206c199aa40c3507a49b4c23fbaa9004f1e7",
+      "building-17.ttl": "4370a9e0e88865b3c5501f6948b6af8f93705d5cb588302f70a873845716e1fe",
+      "building-18.ttl": "16e88011bd6db4457d23db97ee6501680f8f89c98298ac57891d8f6f5b8b5788",
+      "building-19.ttl": "f8fbed4b216d0b4d9927be6f732203efc5622b8eec58f289a2c85aea218a89e9",
+      "building-2.ttl": "2e569f8d5e8dab6f798b913f48d411c3315f5e09f09e0e0c3ca34663adbfe009",
+      "building-20.ttl": "dddb5562c96f8d3b4920d356f9a4dcbebd1b42e1ba12f607e5b23b6611a81ee9",
+      "building-21.ttl": "b03b0726d1253be062cfc242a402bbe42b899ded1cfb189918d797a49b7ba822",
+      "building-22.ttl": "4f1659d1f7630b73dabb6bb10eb1426212df7d3ba9122ac5ed289b100cab1f7b",
+      "building-23.ttl": "79daa9254ceb431caca275872ea6ed1192c8a0cd5ff289386d0d248513c81232",
+      "building-24.ttl": "41bb50bc3bf57152815d8b8d6281e1b02eecd5a5c1a1847e51a7dfcc76083e55",
+      "building-25.ttl": "c1d78c92ba36d120191165a2374cb82dc03321bb9d355390d751f1385060cf83",
+      "building-26.ttl": "2b22cc1e78c8e7c12da55b3dedaa5e7354a2f24c99c37e8c378440981847334f",
+      "building-27.ttl": "f35024a113609f00c9c098ff6718cf7f845a0d18b6a5358a4621d16d7c7bec52",
+      "building-28.ttl": "342d7378db9936d5a6491c426dda4f54bcf4ce7f4c73d8d2106653c9d57af7be",
+      "building-29.ttl": "bea06accdb3ff0e5643175d78c89ceb77a50fc14c96fe7f62f5df9475b51313d",
+      "building-3.ttl": "7b9b3d9474cb5d512e59c6e768ae5fd24f45f8c84e5a991f24f94b51648cdbc2",
+      "building-30.ttl": "1b533e1a38afdbc833ac20fc2d4b61ba267a5e53d37182568551ca726a1b7b92",
+      "building-31.ttl": "a8f269a049689f554c7708fb0a863fd9b05f9451e32c35ab1dc1831789478a3d",
+      "building-32.ttl": "05d3efcf3d6fe9601bbd68013c13b3495cd8b4b094627e3ea2205927b250a3c7",
+      "building-33.ttl": "7c1ec990063983caa9ba645d86681569fafe9e75a49d7a2b28d2eb722c6f036e",
+      "building-34.ttl": "ab3d93d4a17a21eea60e7cf45be27ac6945fbd0e58c5b3a5e95ff1225dcf0b07",
+      "building-35.ttl": "1beb55bfc0b83cd356b1d0aa96aa29383751d5116f58101360cd19a450bddf28",
+      "building-36.ttl": "b70537e4d1b72f3719cfa60222adc9a84e41804c84048700b7628b0db5483993",
+      "building-37.ttl": "258bd686dbd08921fb0821d323b7e07476f983ecf382a44b6e1dab97e8e43ab2",
+      "building-38.ttl": "c742b7b68a417dda82bb0163e7216c6d4f0ada5ef2eed7dca2b005c3d88e4a50",
+      "building-39.ttl": "5eb4754cdc2b3e99ff5f9d1c9c7cb6ef6e84ca150837eeb48db1215297c943f4",
+      "building-4.ttl": "91cc0a5e01fd8679031bc1101cdcdd9eff58389271edcaea41204b4a9542318c",
+      "building-40.ttl": "5b53d513b9fd283d72d869a27989c717076b9ce929522da851a3b19cc738f497",
+      "building-41.ttl": "b73456c4ad52c0f9fb2a827140c2246d55840845470a364f9732d906732dba00",
+      "building-42.ttl": "cd3d842c3a187f52e8234585de02708970311e1847752b6ffab8123369bc6c7d",
+      "building-43.ttl": "9d0c79bbd0296d4b3b271cc71b84a15d5499c2672cf326a2d5e8720278feb7a0",
+      "building-44.ttl": "e788c9f387535dbc9326c8e13eebe069b33c2ac1f1c6327d46c1d07a0be2f974",
+      "building-45.ttl": "3fdc0cbcefd0959583b32406dac83bd7d915734ef7b886cfa6ea8a727adbf911",
+      "building-46.ttl": "78a3f6c41ba10574d10977784359fc4cff6273229f03a557523a4a0ae434a980",
+      "building-47.ttl": "638d1b6c29a841e5597653904958821f9d4895695398fc61986838339534c634",
+      "building-48.ttl": "8aab8efa28082f9fdb58b28583ecb2eba0dde70a6cdc103f2a46270699313344",
+      "building-49.ttl": "a1a5a4436bc2b3bfb6e3c0aa51b6eadd9f9d77c43342d8bba1f4c0a5a05dba8c",
+      "building-5.ttl": "5daf8378ad069abbf54955ba562d942bae5d27ede7243956507a80062ef54417",
+      "building-50.ttl": "36af5826bca0e23e9e716b6824e407b0098c6c35a33076104e3cb6c9963ee753",
+      "building-51.ttl": "9a14d4060390caef75dfce85e0ea35de22a9d978a0112ab84a1da908cc3a0522",
+      "building-52.ttl": "4307177086c27d88ba0fcb4c9b2da1c9eecfd051b3780bf449b94cf956729396",
+      "building-53.ttl": "39604e403c813a3715348f34c996cec251644d2be2f0e989240c1dee401a1b7d",
+      "building-54.ttl": "7d73459a55b7319566c26816082f0ba3ba589326e7d551b6e8101dbd7fb7d8d0",
+      "building-55.ttl": "0e4a5b8221be49e8b6fce6bfef9e045500fca6a8ee9fbe14226316cd6220cc7f",
+      "building-56.ttl": "bb5d17398736cc890cb6b90ee279fffefcc1e33bb86f68fa28da5537bae4a313",
+      "building-57.ttl": "9afa9a88904af4910af9aa0bf66c66ccd92c63a68f55bd504ea53660fea8748b",
+      "building-58.ttl": "ca88972c9b1189a16271a673e1695bfc597965539a95003a23990b67c428bab8",
+      "building-59.ttl": "2196bc3c3e3ef02c10a963bab1951736736ad4ca06e8b441a697a0a244c240da",
+      "building-6.ttl": "dd0980f19a8853c381f45b2ab7a498ecd17ec0a3bab2aaa8bd983965b091bf93",
+      "building-60.ttl": "e5af27ef8d6c900ef37a8b7e4c7f9c079f3b8a25c4397fd1d435ce532f12b9b3",
+      "building-61.ttl": "82a1beeec75e31f5937c3c68244a8d86aa27a3a31c363673be9339a731963f66",
+      "building-62.ttl": "ee7a78c7c2f4cab3edc3075080d13ee27d9161267ccf77031a974377242903b8",
+      "building-63.ttl": "e916b3981a13644ad440a78bce64700738ebe9fa4da541a8e5da5200771d3cf5",
+      "building-64.ttl": "ab3b3b55a8b184650c1bb00cb7f15fdcde7eedd139fb8821cce4624bdc79e38c",
+      "building-65.ttl": "8c9ede0b623b60159468b339560bba068485efb22c5ec1564dbf5346679fdf57",
+      "building-66.ttl": "16539a9968429e808228efe548b82b3d1a85861e74b3cf53bb288721c2a9c847",
+      "building-67.ttl": "c1d2392413a97d020c925ef417665b0a08d8802f929fe1cbbc59d9813176bb04",
+      "building-68.ttl": "53be01d19049ea46454c2a011bb0025ac816018f5f38f8250d90b474ae7db6ae",
+      "building-69.ttl": "62c09b80e9677e9b43524244a5129a645256dcaaadedf78fb77902f6b9d208dc",
+      "building-7.ttl": "4af2585a9f85f310cd3fc07fe6f8cd852ec0060ec16ed7a5f90d46dfdbdf5f56",
+      "building-70.ttl": "1d57c5fbaa7dfdfdc54f9a61202e1a2cbcb81a8b09657c82c3d6b8d0babb61fd",
+      "building-71.ttl": "5ffc09af688d467e5376e6d3ad368b274f9575d9e33dd14db1328516466cd739",
+      "building-72.ttl": "8d5dfaaf89b5fe81d606aa8bf41801fae918485914dce9074319f2d1111ec61a",
+      "building-73.ttl": "2a1f44b6a7482420bc607d1f7eae0128027ff043c23757ea8eebf387934e5446",
+      "building-74.ttl": "1d4ee7d31512471ab1ccbff245eeab5ce755712de4dd78f27fc65fcc24e5d97c",
+      "building-75.ttl": "7649f3476824cb3972e3d3443b520615b7a2455cd0f94c4fe244f2395a7e04c7",
+      "building-76.ttl": "d169a30544e35bea26c0f995318a7ea61e3f304a671bc3f41db85f6f74266c91",
+      "building-77.ttl": "9072da475b87f98219a2b24c05820a3fd55e2a9ac4c693165654af33b2b3536a",
+      "building-78.ttl": "e4c0d709b462aab0dc713ac788279656ac2c11694083679041398c6b6937cdf6",
+      "building-79.ttl": "4d770e66f0aa85824c9baaebc8fb53fc43e0ba5e539d81372448f06a80d3b471",
+      "building-8.ttl": "5dffb6cac96366bcc642bf4faab7897e5c3882383c42b05af6968eec9211899b",
+      "building-80.ttl": "c8aa0d06949aa80667079b5a77031f92c4a80d014b12892c3b62d2ff88e74ea4",
+      "building-81.ttl": "38a3d1f55fd2008d14cb895fc52e711a35775fe393cf8a6df809e70d6b3c46df",
+      "building-9.ttl": "fed788d21120cf1ec660f8b914f65dc75054c669c345d101e353487a037b5bd1",
+      "dash.ttl": "01a32d725a0093910d17596102dc38a0ead231fa9d8ebed0bb433abfb705ebf4",
+      "rec.ttl": "3cdda54a530522bf2d37711c054cae2a84c3c28b6d050768ac4b81c1a24ce74b",
+      "recimports.ttl": "58cebae4623e2718c302f207f25d1970b0e28f9ac191502fe48598d00e422983",
+      "ref-schema.ttl": "43da7c7eefa6eaf5eca3d37b036856c34f5d1da2a172a578a7868571c49a11e7",
+      "shacl.ttl": "0e5d8aea0eab98a072d4a02faaee1ee914ec99eab2ca473429726faed4a13f69",
+      "skos.ttl": "963027e5b2c6b74d5b477b3394e558453804387e3380fbeb8f53f284be3d0674"
+    },
+    "graphs": 100,
+    "stored_quads": 334059,
+    "unique_union_triples": 333008,
+    "note": "Same corpus as normal-api-workload-2026-10-23.json; building-0 retains revision 2 from that workload. Its shape and counts are unchanged."
+  },
+  "native_mode_summary": {
+    "default": {
+      "peak_rss_mib": [
+        533.82421875,
+        540.9140625,
+        543.80859375
+      ],
+      "post_import_rss_mib": [
+        486.0625,
+        493.375,
+        496.8984375
+      ],
+      "live_after_diagnostic_trim_rss_mib": [
+        41.8125,
+        39.9375,
+        48.953125
+      ],
+      "update_ms": [
+        949.7622700000001,
+        1208.913314,
+        1272.79686
+      ]
+    },
+    "serial": {
+      "peak_rss_mib": [
+        490.73828125,
+        497.98046875,
+        494.3046875
+      ],
+      "post_import_rss_mib": [
+        443.09375,
+        449.8125,
+        446.6640625
+      ],
+      "live_after_diagnostic_trim_rss_mib": [
+        34.27734375,
+        25.42578125,
+        34.4765625
+      ],
+      "update_ms": [
+        1233.598162,
+        1447.4044509999999,
+        1448.906558
+      ]
+    },
+    "one_arena": {
+      "peak_rss_mib": [
+        466.46484375,
+        466.7421875,
+        466.44921875
+      ],
+      "post_import_rss_mib": [
+        419.30859375,
+        420.23828125,
+        418.08984375
+      ],
+      "live_after_diagnostic_trim_rss_mib": [
+        37.51953125,
+        36.3984375,
+        35.69140625
+      ],
+      "update_ms": [
+        1320.56579,
+        1462.104244,
+        1306.176498
+      ]
+    }
+  },
+  "native_runs": [
+    {
+      "encoded_bytes": 14476358,
+      "graphs": 100,
+      "malloc_arena_max": null,
+      "parallelism": 8,
+      "phases_kib": [
+        {
+          "Pss": 2326,
+          "Rss": 3832,
+          "VmHWM": 3832,
+          "VmRSS": 3832,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4255,
+          "Rss": 6016,
+          "VmHWM": 6012,
+          "VmRSS": 6012,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 495843,
+          "Rss": 497728,
+          "VmHWM": 546636,
+          "VmRSS": 497728,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 40931,
+          "Rss": 42816,
+          "VmHWM": 546636,
+          "VmRSS": 42816,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 26795,
+          "Rss": 28680,
+          "VmHWM": 546636,
+          "VmRSS": 28676,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 25679,
+          "Rss": 27564,
+          "VmHWM": 546636,
+          "VmRSS": 27564,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 949.7622700000001,
+      "mode": "default",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/default-0",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {}
+    },
+    {
+      "encoded_bytes": 14477252,
+      "graphs": 100,
+      "malloc_arena_max": null,
+      "parallelism": 1,
+      "phases_kib": [
+        {
+          "Pss": 2374,
+          "Rss": 3880,
+          "VmHWM": 3880,
+          "VmRSS": 3880,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4379,
+          "Rss": 6140,
+          "VmHWM": 6136,
+          "VmRSS": 6136,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 451843,
+          "Rss": 453728,
+          "VmHWM": 502516,
+          "VmRSS": 453728,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 33215,
+          "Rss": 35100,
+          "VmHWM": 502516,
+          "VmRSS": 35100,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 19075,
+          "Rss": 20960,
+          "VmHWM": 502516,
+          "VmRSS": 20960,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 16119,
+          "Rss": 18004,
+          "VmHWM": 502516,
+          "VmRSS": 18004,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1233.598162,
+      "mode": "serial",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/serial-0",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {
+        "ONTOENV_PARALLELISM": "1"
+      }
+    },
+    {
+      "encoded_bytes": 14475996,
+      "graphs": 100,
+      "malloc_arena_max": "1",
+      "parallelism": 8,
+      "phases_kib": [
+        {
+          "Pss": 2398,
+          "Rss": 3904,
+          "VmHWM": 3904,
+          "VmRSS": 3904,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4407,
+          "Rss": 6168,
+          "VmHWM": 6164,
+          "VmRSS": 6164,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 427487,
+          "Rss": 429372,
+          "VmHWM": 477660,
+          "VmRSS": 429372,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 36535,
+          "Rss": 38420,
+          "VmHWM": 477660,
+          "VmRSS": 38420,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 22395,
+          "Rss": 24280,
+          "VmHWM": 477660,
+          "VmRSS": 24280,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 7067,
+          "Rss": 8952,
+          "VmHWM": 477660,
+          "VmRSS": 8952,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1320.56579,
+      "mode": "one_arena",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/one_arena-0",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {
+        "MALLOC_ARENA_MAX": "1"
+      }
+    },
+    {
+      "encoded_bytes": 14476629,
+      "graphs": 100,
+      "malloc_arena_max": null,
+      "parallelism": 8,
+      "phases_kib": [
+        {
+          "Pss": 2406,
+          "Rss": 3912,
+          "VmHWM": 3912,
+          "VmRSS": 3912,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4423,
+          "Rss": 6184,
+          "VmHWM": 6180,
+          "VmRSS": 6180,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 503331,
+          "Rss": 505216,
+          "VmHWM": 553896,
+          "VmRSS": 505216,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 39011,
+          "Rss": 40896,
+          "VmHWM": 553896,
+          "VmRSS": 40896,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 24875,
+          "Rss": 26760,
+          "VmHWM": 553896,
+          "VmRSS": 26756,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 22887,
+          "Rss": 24772,
+          "VmHWM": 553896,
+          "VmRSS": 24772,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1208.913314,
+      "mode": "default",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/default-1",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {}
+    },
+    {
+      "encoded_bytes": 14475595,
+      "graphs": 100,
+      "malloc_arena_max": null,
+      "parallelism": 1,
+      "phases_kib": [
+        {
+          "Pss": 2406,
+          "Rss": 3912,
+          "VmHWM": 3912,
+          "VmRSS": 3912,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4239,
+          "Rss": 6000,
+          "VmHWM": 5996,
+          "VmRSS": 5996,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 458723,
+          "Rss": 460608,
+          "VmHWM": 509932,
+          "VmRSS": 460608,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 24151,
+          "Rss": 26036,
+          "VmHWM": 509932,
+          "VmRSS": 26036,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 10011,
+          "Rss": 11896,
+          "VmHWM": 509932,
+          "VmRSS": 11896,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 6759,
+          "Rss": 8644,
+          "VmHWM": 509932,
+          "VmRSS": 8644,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1447.4044509999999,
+      "mode": "serial",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/serial-1",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {
+        "ONTOENV_PARALLELISM": "1"
+      }
+    },
+    {
+      "encoded_bytes": 14476257,
+      "graphs": 100,
+      "malloc_arena_max": "1",
+      "parallelism": 8,
+      "phases_kib": [
+        {
+          "Pss": 2406,
+          "Rss": 3908,
+          "VmHWM": 3908,
+          "VmRSS": 3908,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4359,
+          "Rss": 6116,
+          "VmHWM": 6112,
+          "VmRSS": 6112,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 428443,
+          "Rss": 430324,
+          "VmHWM": 477944,
+          "VmRSS": 430324,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 35391,
+          "Rss": 37272,
+          "VmHWM": 477944,
+          "VmRSS": 37272,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 21251,
+          "Rss": 23132,
+          "VmHWM": 477944,
+          "VmRSS": 23132,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 7115,
+          "Rss": 8996,
+          "VmHWM": 477944,
+          "VmRSS": 8996,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1462.104244,
+      "mode": "one_arena",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/one_arena-1",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {
+        "MALLOC_ARENA_MAX": "1"
+      }
+    },
+    {
+      "encoded_bytes": 14476622,
+      "graphs": 100,
+      "malloc_arena_max": null,
+      "parallelism": 8,
+      "phases_kib": [
+        {
+          "Pss": 2398,
+          "Rss": 3904,
+          "VmHWM": 3904,
+          "VmRSS": 3904,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4395,
+          "Rss": 6156,
+          "VmHWM": 6152,
+          "VmRSS": 6152,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 506939,
+          "Rss": 508824,
+          "VmHWM": 556860,
+          "VmRSS": 508824,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 48243,
+          "Rss": 50128,
+          "VmHWM": 556860,
+          "VmRSS": 50128,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 34103,
+          "Rss": 35988,
+          "VmHWM": 556860,
+          "VmRSS": 35988,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 32159,
+          "Rss": 34044,
+          "VmHWM": 556860,
+          "VmRSS": 34044,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1272.79686,
+      "mode": "default",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/default-2",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {}
+    },
+    {
+      "encoded_bytes": 14478059,
+      "graphs": 100,
+      "malloc_arena_max": null,
+      "parallelism": 1,
+      "phases_kib": [
+        {
+          "Pss": 2342,
+          "Rss": 3848,
+          "VmHWM": 3848,
+          "VmRSS": 3848,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4351,
+          "Rss": 6112,
+          "VmHWM": 6108,
+          "VmRSS": 6108,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 455499,
+          "Rss": 457384,
+          "VmHWM": 506168,
+          "VmRSS": 457384,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 33419,
+          "Rss": 35304,
+          "VmHWM": 506168,
+          "VmRSS": 35304,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 19279,
+          "Rss": 21164,
+          "VmHWM": 506168,
+          "VmRSS": 21164,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 16075,
+          "Rss": 17960,
+          "VmHWM": 506168,
+          "VmRSS": 17960,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1448.906558,
+      "mode": "serial",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/serial-2",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {
+        "ONTOENV_PARALLELISM": "1"
+      }
+    },
+    {
+      "encoded_bytes": 14473931,
+      "graphs": 100,
+      "malloc_arena_max": "1",
+      "parallelism": 8,
+      "phases_kib": [
+        {
+          "Pss": 2406,
+          "Rss": 3912,
+          "VmHWM": 3912,
+          "VmRSS": 3912,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4435,
+          "Rss": 6196,
+          "VmHWM": 6192,
+          "VmRSS": 6192,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 426239,
+          "Rss": 428124,
+          "VmHWM": 477644,
+          "VmRSS": 428124,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 34663,
+          "Rss": 36548,
+          "VmHWM": 477644,
+          "VmRSS": 36548,
+          "phase": "live_environment_after_diagnostic_trim"
+        },
+        {
+          "Pss": 20527,
+          "Rss": 22412,
+          "VmHWM": 477644,
+          "VmRSS": 22412,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 7171,
+          "Rss": 9056,
+          "VmHWM": 477644,
+          "VmRSS": 9056,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "stored_quads": 334059,
+      "unique_union_triples": 333008,
+      "update_ms": 1306.176498,
+      "mode": "one_arena",
+      "command": [
+        "/tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile",
+        "/tmp/ontoenv-memory-repeated/one_arena-2",
+        "/tmp/ontoenv-final-review-run3/sources",
+        "--allocator-stats",
+        "--trim-live"
+      ],
+      "env_changes": {
+        "MALLOC_ARENA_MAX": "1"
+      }
+    }
+  ],
+  "python_runs": [
+    {
+      "python": "3.14.2 (main, Dec 17 2025, 21:08:09) [Clang 21.1.4 ]",
+      "package_version": "0.7.0rc1",
+      "update_ms": 1090.2962749823928,
+      "phases_kib": [
+        {
+          "phase": "before_connect",
+          "VmHWM": 36288,
+          "VmRSS": 36288,
+          "Rss": 36296,
+          "Pss": 26074
+        },
+        {
+          "phase": "after_connect",
+          "VmHWM": 40916,
+          "VmRSS": 40916,
+          "Rss": 40916,
+          "Pss": 30584
+        },
+        {
+          "phase": "after_update",
+          "VmHWM": 584912,
+          "VmRSS": 536900,
+          "Rss": 536900,
+          "Pss": 526443
+        },
+        {
+          "phase": "live_environment_after_diagnostic_trim",
+          "VmHWM": 584912,
+          "VmRSS": 72652,
+          "Rss": 72656,
+          "Pss": 62102
+        },
+        {
+          "phase": "after_close",
+          "VmHWM": 584912,
+          "VmRSS": 58948,
+          "Rss": 58948,
+          "Pss": 48394
+        },
+        {
+          "phase": "after_diagnostic_trim",
+          "VmHWM": 584912,
+          "VmRSS": 56672,
+          "Rss": 56672,
+          "Pss": 46118
+        }
+      ],
+      "command": [
+        "/tmp/ontoenv-final-review-venv/bin/python",
+        "python/profile_managed_import.py",
+        "/tmp/ontoenv-memory-python/run-0",
+        "/tmp/ontoenv-final-review-run3/sources"
+      ]
+    },
+    {
+      "python": "3.14.2 (main, Dec 17 2025, 21:08:09) [Clang 21.1.4 ]",
+      "package_version": "0.7.0rc1",
+      "update_ms": 1157.0549383759499,
+      "phases_kib": [
+        {
+          "phase": "before_connect",
+          "VmHWM": 36316,
+          "VmRSS": 36316,
+          "Rss": 36324,
+          "Pss": 26077
+        },
+        {
+          "phase": "after_connect",
+          "VmHWM": 40944,
+          "VmRSS": 40944,
+          "Rss": 40944,
+          "Pss": 30586
+        },
+        {
+          "phase": "after_update",
+          "VmHWM": 584080,
+          "VmRSS": 535348,
+          "Rss": 535348,
+          "Pss": 524866
+        },
+        {
+          "phase": "live_environment_after_diagnostic_trim",
+          "VmHWM": 584080,
+          "VmRSS": 80688,
+          "Rss": 80692,
+          "Pss": 70113
+        },
+        {
+          "phase": "after_close",
+          "VmHWM": 584080,
+          "VmRSS": 66992,
+          "Rss": 66992,
+          "Pss": 56413
+        },
+        {
+          "phase": "after_diagnostic_trim",
+          "VmHWM": 584080,
+          "VmRSS": 64896,
+          "Rss": 64896,
+          "Pss": 54317
+        }
+      ],
+      "command": [
+        "/tmp/ontoenv-final-review-venv/bin/python",
+        "python/profile_managed_import.py",
+        "/tmp/ontoenv-memory-python/run-1",
+        "/tmp/ontoenv-final-review-run3/sources"
+      ]
+    },
+    {
+      "python": "3.14.2 (main, Dec 17 2025, 21:08:09) [Clang 21.1.4 ]",
+      "package_version": "0.7.0rc1",
+      "update_ms": 1192.0748203992844,
+      "phases_kib": [
+        {
+          "phase": "before_connect",
+          "VmHWM": 36352,
+          "VmRSS": 36352,
+          "Rss": 36360,
+          "Pss": 26071
+        },
+        {
+          "phase": "after_connect",
+          "VmHWM": 40980,
+          "VmRSS": 40980,
+          "Rss": 40980,
+          "Pss": 30580
+        },
+        {
+          "phase": "after_update",
+          "VmHWM": 585924,
+          "VmRSS": 537064,
+          "Rss": 537064,
+          "Pss": 526539
+        },
+        {
+          "phase": "live_environment_after_diagnostic_trim",
+          "VmHWM": 585924,
+          "VmRSS": 72588,
+          "Rss": 72588,
+          "Pss": 61967
+        },
+        {
+          "phase": "after_close",
+          "VmHWM": 585924,
+          "VmRSS": 58888,
+          "Rss": 58888,
+          "Pss": 48267
+        },
+        {
+          "phase": "after_diagnostic_trim",
+          "VmHWM": 585924,
+          "VmRSS": 56400,
+          "Rss": 56400,
+          "Pss": 45779
+        }
+      ],
+      "command": [
+        "/tmp/ontoenv-final-review-venv/bin/python",
+        "python/profile_managed_import.py",
+        "/tmp/ontoenv-memory-python/run-2",
+        "/tmp/ontoenv-final-review-run3/sources"
+      ]
+    }
+  ],
+  "peak_heap_attribution": {
+    "snapshot": 41,
+    "time_allocation_bytes": 1291669464,
+    "peak_useful_heap_bytes": 478257860,
+    "peak_allocator_overhead_bytes": 11317972,
+    "buckets": {
+      "staged_oxrdf_graphs": 359299512,
+      "rdf5d_publication": 103839042,
+      "other_or_below_threshold": 15119306
+    },
+    "staged_graph_btree_bytes": 343094592,
+    "largest_allocations": [
+      {
+        "bytes": 52312416,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9923: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDF313: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD91FA: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 52312416,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9923: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDF953: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD92A2: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 49289760,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9923: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDF633: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD92F0: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 49289760,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBDA82C: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDEFF3: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9245: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 49192416,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9923: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDE9B3: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9322: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 49192416,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9923: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDECD3: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9293: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 21233680,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0x9673A7: <hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x9651DF: <hashbrown::raw::RawTable<(rdf5d::writer::Term, u64)>>::reserve_rehash::<hashbrown::map::make_hasher<rdf5d::writer::Term, u64, std::hash::random::RandomState>::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x964942: <hashbrown::map::HashMap<rdf5d::writer::Term, u64, std::hash::random::RandomState>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95B0A8: <rdf5d::writer::StreamingWriter>::intern_term_owned (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95CB69: <rdf5d::writer::StreamingWriter>::add (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF86B: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 19922944,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xC39EC3: <alloc::raw_vec::RawVecInner>::finish_grow (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC39E62: <alloc::raw_vec::RawVec<u8>>::grow_one (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x9616A2: rdf5d::writer::write_term_dict (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95B2BA: <rdf5d::writer::StreamingWriter>::finalize_with_stats (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95D3E0: <rdf5d::writer::StreamingWriter>::finalize (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF8F0: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 18874368,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0x97309E: <alloc::raw_vec::RawVecInner>::finish_grow (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x972D69: <alloc::raw_vec::RawVec<rdf5d::writer::Term>>::grow_one (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95B020: <rdf5d::writer::StreamingWriter>::intern_term_owned (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95CB69: <rdf5d::writer::StreamingWriter>::add (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF86B: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 11184414,
+        "bucket": "other_or_below_threshold",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "in 206 places, all below massif's threshold (0.50%)"
+        ]
+      },
+      {
+        "bytes": 7670228,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xC3A50E: <alloc::string::String as core::clone::Clone>::clone (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95AEFB: <rdf5d::writer::StreamingWriter>::intern_term_owned (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95CBF6: <rdf5d::writer::StreamingWriter>::add (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF86B: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 7670228,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0x543C4D: ontoenv::io::oxigraph_object_to_r5term (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF748: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 7511901,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBE049E: <oxrdf::interning::Interner>::get_or_intern (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBE0FE9: <oxrdf::interning::InternedTerm>::encoded_into (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD947A: <oxrdf::dataset::GraphViewMut>::encode_triple (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A1BA: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 7494169,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xC3A50E: <alloc::string::String as core::clone::Clone>::clone (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x96316A: rdf5d::writer::intern_component (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x961A73: rdf5d::writer::write_term_dict (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95B2BA: <rdf5d::writer::StreamingWriter>::finalize_with_stats (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95D3E0: <rdf5d::writer::StreamingWriter>::finalize (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF8F0: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 7494169,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0x963126: rdf5d::writer::intern_component (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x961A73: rdf5d::writer::write_term_dict (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95B2BA: <rdf5d::writer::StreamingWriter>::finalize_with_stats (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95D3E0: <rdf5d::writer::StreamingWriter>::finalize (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF8F0: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 7267008,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9C45: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDF313: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD91FA: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 7267008,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9C45: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDF953: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD92A2: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 6764352,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9C45: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDE9B3: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9322: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 6764352,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9C45: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDECD3: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9293: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 6721344,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBD9C45: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDF633: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode, oxrdf::interning::InternedGraphName), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD92F0: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 6721344,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBDAB45: <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, (oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode), alloc::collections::btree::set_val::SetValZST, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::Edge>>::insert_recursing::<alloc::alloc::Global, <alloc::collections::btree::map::entry::VacantEntry<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode), alloc::collections::btree::set_val::SetValZST>>::insert_entry::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBDEFF3: <alloc::collections::btree::map::BTreeMap<(oxrdf::interning::InternedGraphName, oxrdf::interning::InternedNamedNode, oxrdf::interning::InternedTerm, oxrdf::interning::InternedNamedOrBlankNode), alloc::collections::btree::set_val::SetValZST>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9245: <oxrdf::dataset::Dataset>::insert_encoded (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A236: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 5648864,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBDD3D9: <hashbrown::raw::RawTable<(u64, alloc::string::String)>>::reserve_rehash::<hashbrown::map::make_hasher<u64, alloc::string::String, oxrdf::interning::IdentityHasherBuilder>::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBE0476: <oxrdf::interning::Interner>::get_or_intern (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9448: <oxrdf::dataset::GraphViewMut>::encode_triple (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A1BA: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 4325392,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0x9673A7: <hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x96637F: <hashbrown::raw::RawTable<(alloc::string::String, u32)>>::reserve_rehash::<hashbrown::map::make_hasher<alloc::string::String, u32, std::hash::random::RandomState>::{closure#0}> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x964F15: <hashbrown::map::HashMap<alloc::string::String, u32, std::hash::random::RandomState>>::insert (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x9631CA: rdf5d::writer::intern_component (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x961A73: rdf5d::writer::write_term_dict (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95B2BA: <rdf5d::writer::StreamingWriter>::finalize_with_stats (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95D3E0: <rdf5d::writer::StreamingWriter>::finalize (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF8F0: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 3145728,
+        "bucket": "rdf5d_publication",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xC0FE81: <alloc::raw_vec::RawVecInner>::finish_grow (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC0F73E: <alloc::raw_vec::RawVec<alloc::vec::Vec<u8>>>::grow_one (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x963179: rdf5d::writer::intern_component (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x961A73: rdf5d::writer::write_term_dict (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95B2BA: <rdf5d::writer::StreamingWriter>::finalize_with_stats (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x95D3E0: <rdf5d::writer::StreamingWriter>::finalize (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CF8F0: ontoenv::snapshots::write_object (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CD5A5: <ontoenv::snapshots::SnapshotUpdate>::commit (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4CC168: <ontoenv::snapshots::SnapshotWriter>::publish_state (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AC184: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::publish_environment (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42430A: <ontoenv::api::OntoEnv>::save_to_directory (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421977: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      },
+      {
+        "bytes": 3044155,
+        "bucket": "staged_oxrdf_graphs",
+        "path": [
+          "(heap allocation functions) malloc/new/new[], --alloc-fns, etc.",
+          "0xBE049E: <oxrdf::interning::Interner>::get_or_intern (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xBD9448: <oxrdf::dataset::GraphViewMut>::encode_triple (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x53A1BA: <ontoenv::io::ParsedOntology>::to_graph (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4A72C6: <ontoenv::snapshot_io::SnapshotGraphIO>::put (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x4AAE68: <ontoenv::snapshot_io::SnapshotGraphIO as ontoenv::io::GraphIO>::add_parsed (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x42AF13: <ontoenv::api::OntoEnv>::process_import_queue (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x421DD0: <ontoenv::api::OntoEnv>::update_all (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x412264: managed_import_profile::main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40F3BA: std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>> (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x40DC5C: std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0} (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0xC1E698: std::rt::lang_start_internal (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)",
+          "0x413FF4: main (in /tmp/ontoenv-snapshot-review-target/release/examples/managed_import_profile)"
+        ]
+      }
+    ]
+  },
+  "massif_worker": {
+    "encoded_bytes": 14475647,
+    "graphs": 100,
+    "malloc_arena_max": null,
+    "parallelism": 8,
+    "phases_kib": [
+      {
+        "Pss": 39463,
+        "Rss": 41144,
+        "VmHWM": 44888,
+        "VmRSS": 41108,
+        "phase": "before_connect"
+      },
+      {
+        "Pss": 42614,
+        "Rss": 44420,
+        "VmHWM": 44888,
+        "VmRSS": 44416,
+        "phase": "after_connect"
+      },
+      {
+        "Pss": 284100,
+        "Rss": 286000,
+        "VmHWM": 600500,
+        "VmRSS": 286000,
+        "phase": "after_update"
+      },
+      {
+        "Pss": 135628,
+        "Rss": 137528,
+        "VmHWM": 600500,
+        "VmRSS": 137528,
+        "phase": "after_drop"
+      },
+      {
+        "Pss": 135628,
+        "Rss": 137528,
+        "VmHWM": 600500,
+        "VmRSS": 137528,
+        "phase": "after_diagnostic_trim"
+      }
+    ],
+    "triples": 333008,
+    "update_ms": 14732.727035
+  },
+  "massif_raw_path": "/tmp/ontoenv-transactional-snapshots/docs/reviews/normal-api-memory-massif-2026-10-23.out.gz",
+  "massif_raw_sha256": "9c4464aed7ee5bc435678d803be5bdde09d46128662d5b9daee28c16aa7264ec",
+  "glibc_allocator_example": {
+    "run": {
+      "encoded_bytes": 14480161,
+      "graphs": 100,
+      "malloc_arena_max": null,
+      "parallelism": 8,
+      "phases_kib": [
+        {
+          "Pss": 2451,
+          "Rss": 3952,
+          "VmHWM": 3952,
+          "VmRSS": 3952,
+          "phase": "before_connect"
+        },
+        {
+          "Pss": 4516,
+          "Rss": 6272,
+          "VmHWM": 6268,
+          "VmRSS": 6268,
+          "phase": "after_connect"
+        },
+        {
+          "Pss": 498575,
+          "Rss": 500456,
+          "VmHWM": 548488,
+          "VmRSS": 500456,
+          "phase": "after_update"
+        },
+        {
+          "Pss": 484559,
+          "Rss": 486440,
+          "VmHWM": 548488,
+          "VmRSS": 486440,
+          "phase": "after_drop"
+        },
+        {
+          "Pss": 56255,
+          "Rss": 58136,
+          "VmHWM": 548488,
+          "VmRSS": 58136,
+          "phase": "after_diagnostic_trim"
+        }
+      ],
+      "triples": 333008,
+      "update_ms": 1121.3065060000001
+    },
+    "allocator_totals": {
+      "before_connect": {
+        "system_bytes": 135168,
+        "in_use_bytes": 7168
+      },
+      "after_connect": {
+        "system_bytes": 135168,
+        "in_use_bytes": 77328
+      },
+      "after_update": {
+        "system_bytes": 505556992,
+        "in_use_bytes": 892592
+      },
+      "after_drop": {
+        "system_bytes": 505556992,
+        "in_use_bytes": 248944
+      },
+      "after_diagnostic_trim": {
+        "system_bytes": 501350400,
+        "in_use_bytes": 249136
+      }
+    }
+  },
+  "source_sha256": {
+    "lib/examples/managed_import_profile.rs": "0c8e371a91f66f0df926573e6b9f6df773ae6896297d2ef90695ae79e0a607f2",
+    "python/profile_managed_import.py": "9d67efb0b4864f783fd329dd1b2a721d69aead06335fb09d939bcec770d49e5f",
+    "lib/src/snapshot_io.rs": "a4986f89c3add66887451a0395078d3f29aee88f58f4815a9ad1d8a2078c6f84",
+    "lib/src/snapshots.rs": "3d3ecc38c63982aa0d91366720a6502e2dd80d1d0bdc7dc64ca274f9467b807b",
+    "lib/src/io.rs": "63d8baf2a2953e3a4685f3f2d652562cb9f34b62de25f4d6b63a1cb3460de5fd",
+    "rdf5d/src/writer.rs": "a6c1c42243e8034bdc6438cb184ed2e4d32c1a7b063b955f9738092186fea892"
+  },
+  "limits": [
+    "Linux/glibc single-host diagnostic; three sequential fresh processes per native mode and for Python.",
+    "Timings use warm OS caches and are not a controlled latency comparison.",
+    "Valgrind replaces the allocator; use its allocation trees, not its RSS/timing, to attribute live heap.",
+    "The first exploratory Massif run exited on an overly strict triple-count assertion after import; all conclusions here use the complete successful second run.",
+    "Dataset quads (334059) and deduplicated union triples (333008) differ because graphs share some triples.",
+    "malloc_trim runs only in the diagnostic examples and does not change production behavior or reduce the already-observed high-water mark.",
+    "Heap stack attribution has a 0.5% threshold; small unresolved allocations remain in the other bucket."
+  ],
+  "reproduction_commands": [
+    "cargo build -p ontoenv --release --offline --target-dir /tmp/ontoenv-snapshot-review-target --example managed_import_profile",
+    "managed_import_profile NEW_ROOT SOURCE_DIRECTORY --allocator-stats --trim-live (repeat default, ONTOENV_PARALLELISM=1, MALLOC_ARENA_MAX=1 in separate fresh processes)",
+    "valgrind --tool=massif --time-unit=B --detailed-freq=1 --max-snapshots=200 --depth=40 --threshold=0.5 --massif-out-file=massif.out managed_import_profile NEW_ROOT SOURCE_DIRECTORY",
+    "python python/profile_managed_import.py NEW_ROOT SOURCE_DIRECTORY"
+  ]
+}

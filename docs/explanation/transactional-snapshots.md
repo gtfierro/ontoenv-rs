@@ -251,6 +251,16 @@ not isolated reader memory or a measurement of many reader processes. Cold
 reads, realistic queries, index-building memory and writer allocation attribution
 still need measurement before choosing on-disk graph-level COW.
 
+A later normal-API diagnostic used 100 graphs, 334,059 named-graph quads and a
+13.8 MiB encoded store. Compact parsed staging reduced native initial-import peak
+RSS from 534–544 MiB to 223–225 MiB, and Python from 570–572 MiB to 257–260 MiB.
+The complete Python workload, including retained views and repeated updates,
+still peaked at approximately 431–450 MiB. These are different measurement scopes,
+not supported memory ceilings. Three alternating baseline/optimized runs also
+observed slower first closure construction (median 70 to 88 ms), which is tracked
+separately. Commands, allocation profiles and limitations are recorded in
+`docs/reviews/compact-staging-2026-10-23.md` and its raw reports.
+
 The release candidate integrates recursive source updates, dependency views,
 CLI/Python entry points and explicit legacy migration. The remaining operational
 limit is indefinite retention. Online retention needs process-safe snapshot pins before any objects can be
