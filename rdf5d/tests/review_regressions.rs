@@ -370,6 +370,132 @@ fn grouped_scan_reports_contexts_once_and_honors_scope() {
     assert_eq!(scoped[0].gids.len(), 2);
 }
 
+#[cfg(feature = "idx")]
+#[test]
+fn grouped_scan_all_bound_shapes_match_scoped_physical_triples() {
+    use rdf5d::{DecodedTerm, Pattern, Scope, Snapshot};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("patterns.r5tu");
+    let q = |id: &str, graph: &str, s: &str, p: &str, o: &str| Quint {
+        id: id.into(),
+        gname: graph.into(),
+        s: Term::Iri(format!("http://ex/{s}")),
+        p: Term::Iri(format!("http://ex/{p}")),
+        o: Term::Iri(format!("http://ex/{o}")),
+    };
+    write_file(
+        &path,
+        &[
+            q("a", "http://ex/g1", "s1", "p1", "o1"),
+            q("b", "http://ex/g1", "s1", "p1", "o1"),
+            q("b", "http://ex/g1", "s1", "p2", "o2"),
+            q("c", "http://ex/g2", "s1", "p1", "o1"),
+            q("c", "http://ex/g2", "s2", "p1", "o2"),
+            q("c", "http://ex/g2", "s2", "p2", "o1"),
+        ],
+    )
+    .unwrap();
+    let snapshot = Arc::new(Snapshot::open(&path).unwrap());
+    let id = |name: &str| {
+        snapshot
+            .file()
+            .term_id(&DecodedTerm::Iri(format!("http://ex/{name}").into()))
+            .unwrap()
+    };
+    let s = id("s1");
+    let p = id("p1");
+    let o = id("o1");
+    let patterns = [
+        Pattern::ANY,
+        Pattern {
+            s: Some(s),
+            ..Pattern::ANY
+        },
+        Pattern {
+            p: Some(p),
+            ..Pattern::ANY
+        },
+        Pattern {
+            o: Some(o),
+            ..Pattern::ANY
+        },
+        Pattern {
+            p: Some(p),
+            o: Some(o),
+            ..Pattern::ANY
+        },
+        Pattern {
+            s: Some(s),
+            p: Some(p),
+            ..Pattern::ANY
+        },
+        Pattern {
+            s: Some(s),
+            o: Some(o),
+            ..Pattern::ANY
+        },
+        Pattern {
+            s: Some(s),
+            p: Some(p),
+            o: Some(o),
+        },
+        Pattern {
+            p: Some(snapshot.file().num_terms()),
+            ..Pattern::ANY
+        },
+    ];
+    let all_gids: Vec<_> = snapshot
+        .graph_names()
+        .flat_map(|name| snapshot.gids_for_name(name).unwrap().to_vec())
+        .collect();
+    let scopes = [
+        all_gids.clone(),
+        snapshot.gids_for_name("http://ex/g1").unwrap().to_vec(),
+        Vec::new(),
+    ];
+    for gids in &scopes {
+        for pattern in patterns {
+            let mut expected = BTreeMap::<(u64, u64, u64), Vec<u64>>::new();
+            for &gid in gids {
+                for (ts, tp, to) in snapshot.file().triples_ids(gid).unwrap() {
+                    if pattern.s.is_none_or(|v| v == ts)
+                        && pattern.p.is_none_or(|v| v == tp)
+                        && pattern.o.is_none_or(|v| v == to)
+                    {
+                        expected.entry((ts, tp, to)).or_default().push(gid);
+                    }
+                }
+            }
+            for contexts in expected.values_mut() {
+                contexts.sort_unstable();
+                contexts.dedup();
+            }
+            let actual: BTreeMap<_, _> = snapshot
+                .grouped_scan(pattern, Scope::Gids(gids))
+                .unwrap()
+                .map(|row| ((row.s, row.p, row.o), row.gids))
+                .collect();
+            assert_eq!(actual, expected);
+        }
+    }
+    assert!(
+        snapshot
+            .grouped_scan(Pattern::ANY, Scope::ByName("missing"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    for &gid in &all_gids {
+        assert!(matches!(
+            snapshot.graph_name_for_gid(gid),
+            Some("http://ex/g1" | "http://ex/g2")
+        ));
+    }
+}
+
 #[test]
 fn legacy_explicit_xsd_string_can_be_found_as_plain_literal() {
     let dir = tempfile::tempdir().unwrap();
