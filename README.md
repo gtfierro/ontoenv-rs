@@ -80,10 +80,12 @@ Ontologies fetched from a URL often declare a different (usually versioned) onto
 
 ## CLI
 
-An opt-in [transactional snapshot prototype](docs/explanation/transactional-snapshots.md)
+An opt-in [OntoEnv publication prototype](docs/explanation/transactional-snapshots.md)
 provides concurrent readers and one writer while retaining immutable mmap-backed
 RDF5D generations. It is separate from the existing CLI/Python storage path and
 requires Rust 1.90+ and the `transactional-snapshots` feature.
+Publication lives in OntoEnv; RDF5D remains an immutable file and query engine.
+See the [publication design review](docs/explanation/environment-publication.md).
 
 ### Installation
 

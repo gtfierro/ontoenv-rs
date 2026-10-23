@@ -36,6 +36,10 @@ Explanation
    An experimental Rust API for immutable mmap-backed generations, concurrent
    readers, staged updates, and explicit snapshot refresh.
 
+:doc:`environment-publication`
+   Why atomic publication belongs to OntoEnv, the RDF5D boundary, and the
+   manifest-backend decision still under review.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -47,3 +51,4 @@ Explanation
    staying-in-sync
    performance
    transactional-snapshots
+   environment-publication

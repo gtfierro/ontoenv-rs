@@ -1,6 +1,12 @@
 # Immutable RDF5D generations with a transactional manifest
 
-Status: design sketch, not implemented. Builds on `transactional-state.md` and the requested workload: local filesystem, one writer, approximately 100 graphs/10–20 MB, bursty updates, readers explicitly refreshing.
+Status: original design sketch, partially implemented by PR #36. The current
+boundary, backend comparison and acceptance work are documented in
+[Atomic publication belongs to OntoEnv](../explanation/environment-publication.md).
+The layout and illustrative APIs below describe the original proposal, not the
+current experimental disk format. Builds on `transactional-state.md` and the
+requested workload: local filesystem, one writer, approximately 100 graphs/10–20 MB,
+bursty updates, readers explicitly refreshing.
 
 ## Initial design choice
 

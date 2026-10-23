@@ -1,4 +1,4 @@
-//! Experimental transactional snapshots with immutable, mmap-backed RDF5D files.
+//! Experimental atomic publication of OntoEnv versions backed by immutable RDF5D files.
 //!
 //! Enable `transactional-snapshots` (Rust 1.90+). This API uses a separate
 //! `.ontoenv-snapshots` directory and does not migrate or modify legacy stores.
@@ -180,6 +180,9 @@ pub struct SnapshotWriter {
     directory: PathBuf,
     database: Database,
     current: Arc<EnvironmentSnapshot>,
+    // A failed publication may already be durable. Never publish again from a
+    // possibly stale base until a new writer has reconciled the manifest.
+    needs_reopen: bool,
     // Keep the stable lock held until after the database closes.
     _writer_lock: File,
 }
@@ -244,6 +247,7 @@ impl SnapshotWriter {
             directory,
             database,
             current,
+            needs_reopen: false,
             _writer_lock: writer_lock,
         })
     }
@@ -259,17 +263,20 @@ impl SnapshotWriter {
             directory,
             database,
             current,
+            needs_reopen: false,
             _writer_lock: writer_lock,
         })
     }
 
-    /// The writer's most recent committed snapshot; staged changes are private.
+    /// The writer's last confirmed snapshot; staged changes are private.
+    /// After a publication error it may lag durable head; reopen to reconcile.
     pub fn snapshot(&self) -> Arc<EnvironmentSnapshot> {
         Arc::clone(&self.current)
     }
 
     /// Start a copy-on-write update: only small catalog/config values are cloned.
     /// Untouched graph contents remain in the base snapshot's mapped RDF5D file.
+    /// After a publication error, commits are rejected until the writer is reopened.
     pub fn begin_update(&mut self) -> SnapshotUpdate<'_> {
         let environment = self.current.environment.clone();
         let config = self.current.config.clone();
@@ -435,9 +442,22 @@ impl SnapshotUpdate<'_> {
 
     // Fault injection stays private: production commits use a no-op hook.
     fn commit_before_publish(
-        mut self,
+        self,
         before_publish: impl FnOnce() -> Result<()>,
     ) -> Result<Arc<EnvironmentSnapshot>> {
+        self.commit_with_publisher(before_publish, publish)
+    }
+
+    // The publisher hook lets tests model an error both before and after a
+    // successful database commit, without corrupting live database files.
+    fn commit_with_publisher(
+        mut self,
+        before_publish: impl FnOnce() -> Result<()>,
+        publisher: impl FnOnce(&Database, &Generation, Option<&SnapshotInfo>) -> Result<()>,
+    ) -> Result<Arc<EnvironmentSnapshot>> {
+        if self.writer.needs_reopen {
+            bail!("A previous publication failed; close and reopen the writer before committing");
+        }
         self.validate()?;
         let base = &self.writer.current;
         let next = base
@@ -474,8 +494,10 @@ impl SnapshotUpdate<'_> {
         let snapshot = snapshot_from_generation(generation, rdf);
         let record = snapshot.record();
         before_publish()?;
-        publish(&self.writer.database, &record, Some(&base.info))?;
+        self.writer.needs_reopen = true;
+        publisher(&self.writer.database, &record, Some(&base.info))?;
         self.writer.current = Arc::clone(&snapshot);
+        self.writer.needs_reopen = false;
         Ok(snapshot)
     }
 
@@ -839,6 +861,13 @@ mod tests {
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
+            // redb refuses a fresh read-only open after an unclean writer exit:
+            // recovery requires a writer, even though retained RDF5D views work.
+            assert!(SnapshotReader::open(dir.path()).is_err());
+            assert!(retained
+                .get_graph(&id)?
+                .iter()
+                .any(|t| t.object.to_string() == "\"old\""));
             // Reopen a writer to let redb perform any required crash recovery.
             let writer = SnapshotWriter::open(dir.path())?;
             assert_eq!(
@@ -893,6 +922,58 @@ mod tests {
             fs::read_dir(dir.path().join(DIRECTORY).join("objects"))?.count(),
             count_before + 1
         );
+        // A failure known to precede publication does not disable the writer.
+        stage(&mut writer, "retry")?.commit()?;
+        Ok(())
+    }
+
+    #[test]
+    fn publication_error_requires_reopen_for_either_durable_outcome() -> Result<()> {
+        for did_commit in [false, true] {
+            let dir = tempfile::tempdir()?;
+            let mut writer = SnapshotWriter::create(config(dir.path()))?;
+            stage(&mut writer, "old")?.commit()?;
+            let mut reader = SnapshotReader::open(dir.path())?;
+            let retained = reader.snapshot();
+            let id = retained.resolve(NamedNode::new("urn:a")?.as_ref()).unwrap();
+            let result = stage(&mut writer, "new")?.commit_with_publisher(
+                || Ok(()),
+                |database, generation, expected| {
+                    if did_commit {
+                        publish(database, generation, expected)?;
+                    }
+                    bail!("injected uncertain publication outcome")
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(writer.snapshot().info().generation, 1);
+            assert_eq!(reader.refresh()?, did_commit);
+            let objects_before = fs::read_dir(dir.path().join(DIRECTORY).join("objects"))?.count();
+            let error = stage(&mut writer, "retry")?.commit().unwrap_err();
+            assert!(error.to_string().contains("close and reopen"));
+            assert_eq!(
+                fs::read_dir(dir.path().join(DIRECTORY).join("objects"))?.count(),
+                objects_before,
+                "rejected retry must not serialize another object"
+            );
+            assert!(retained
+                .get_graph(&id)?
+                .iter()
+                .any(|t| t.object.to_string() == "\"old\""));
+            drop(writer);
+            let mut writer = SnapshotWriter::open(dir.path())?;
+            assert_eq!(
+                writer.snapshot().info().generation,
+                if did_commit { 2 } else { 1 }
+            );
+            let expected = if did_commit { "\"new\"" } else { "\"old\"" };
+            assert!(writer
+                .snapshot()
+                .get_graph(&id)?
+                .iter()
+                .any(|t| t.object.to_string() == expected));
+            stage(&mut writer, "retry")?.commit()?;
+        }
         Ok(())
     }
 }

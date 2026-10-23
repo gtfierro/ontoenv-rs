@@ -58,6 +58,7 @@ fn main() -> Result<()> {
         .locations(vec![])
         .build()?;
     let mut writer = SnapshotWriter::create(config)?;
+    let started = Instant::now();
     let mut update = writer.begin_update();
     for graph in 0..graphs {
         update.add_from_bytes(
@@ -68,6 +69,7 @@ fn main() -> Result<()> {
             Some(RdfFormat::Turtle),
         )?;
     }
+    let initial_stage = started.elapsed();
     let started = Instant::now();
     update.commit()?;
     let first_commit = started.elapsed();
@@ -96,6 +98,7 @@ fn main() -> Result<()> {
 
     let mut reader = SnapshotReader::open(directory.path())?;
     let retained = reader.snapshot();
+    let started = Instant::now();
     let mut update = writer.begin_update();
     update.add_from_bytes(
         OntologyLocation::InMemory {
@@ -104,22 +107,47 @@ fn main() -> Result<()> {
         source(0, triples, 1),
         Some(RdfFormat::Turtle),
     )?;
+    let update_stage = started.elapsed();
     let started = Instant::now();
     update.commit()?;
     let rewrite_commit = started.elapsed();
     let started = Instant::now();
     reader.refresh()?;
     let refresh = started.elapsed();
+    let base = writer.snapshot();
+    let mut update = writer.begin_update();
+    update.add_alias("urn:profile:alias", "urn:graph:0")?;
+    let started = Instant::now();
+    let metadata = update.commit()?;
+    let metadata_commit = started.elapsed();
+    anyhow::ensure!(
+        Arc::ptr_eq(&base.rdf(), &metadata.rdf()),
+        "Metadata commit rewrote RDF5D"
+    );
+    anyhow::ensure!(retained.info().generation == 1, "Retained snapshot changed");
+    let objects: Vec<_> = std::fs::read_dir(directory.path().join(".ontoenv-snapshots/objects"))?
+        .map(|entry| {
+            let path = entry?.path().join("store.r5tu");
+            Ok(std::fs::metadata(path)?.len())
+        })
+        .collect::<std::io::Result<_>>()?;
+    let retained_bytes: u64 = objects.iter().sum();
+    let manifest_bytes =
+        std::fs::metadata(directory.path().join(".ontoenv-snapshots/manifest.redb"))?.len();
     println!(
         "{graphs} graphs, {} triples, {:.2} MiB RDF5D",
         graphs * (triples + 1),
         bytes as f64 / 1048576.0
     );
+    println!("initial source generation/parse/staging: {initial_stage:?}");
     println!("serialization/first commit: {first_commit:?}");
     println!("warm direct RDF5D mmap open: {direct_mmap:?}");
     println!("warm direct RDF5D owned open: {direct_owned:?}");
     println!("warm manifest + RDF5D mmap open: {manifest_open:?}");
+    println!("one-graph source generation/parse/staging: {update_stage:?}");
     println!("one-graph change / complete-file commit: {rewrite_commit:?}");
+    println!("metadata-only commit (same RDF5D mapping): {metadata_commit:?}");
+    println!("retained objects: {}; total RDF5D bytes: {retained_bytes}; manifest bytes: {manifest_bytes}", objects.len());
     println!(
         "reader refresh: {refresh:?}; retained generation: {}",
         retained.info().generation
