@@ -1,9 +1,9 @@
 # Atomic publication belongs to OntoEnv
 
-Status: design review of the opt-in prototype in PR #36, October 23, 2026.
-This describes the intended boundary and remaining acceptance work; it does not
-change the default persistence API. See [the prototype](transactional-snapshots.md)
-for the implemented Rust API and measurements.
+Status: experimental implementation in PR #36, October 23, 2026. The draft now
+uses immutable manifests and an atomic `CURRENT` file instead of redb. It does
+not change the default persistence API. See [the prototype guide](transactional-snapshots.md)
+for the Rust API and measurements.
 
 ## The boundary
 
@@ -18,139 +18,142 @@ numbers, commit timestamps, refresh and recovery belong here. A version bundles
 the catalog and configuration with a reference to an immutable RDF5D file.
 There is no independent catalog save after graph publication.
 
-| Component | What it does | What this design does not add |
-| --- | --- | --- |
-| RDF5D | Build, validate, open and query a fixed artifact | Environment transactions, writer locks or version discovery |
-| OntoEnv update | Stage graph replacements/deletions and candidate metadata | Concurrent mutations of a mapped file |
-| OntoEnv publication | Select one complete environment version atomically | Record-level transactions or multiple simultaneous writers |
-| OntoEnv reader | Retain one version until explicit refresh | Implicit source updates during reads |
+| Component | Responsibility |
+| --- | --- |
+| RDF5D | Build, validate, open and query a fixed artifact |
+| OntoEnv update | Stage graph replacements/deletions and candidate metadata |
+| OntoEnv publication | Select one complete environment version atomically |
+| OntoEnv reader | Retain one version until explicit refresh |
 
-PR #36 already follows this boundary: its publication code is in
-`lib/src/snapshots.rs`; the prototype adds no transaction machinery to the RDF5D
-crate. Keep the experimental API/feature names for now rather than mixing a
-terminology rename into persistence changes.
+All publication code lives in `lib/src/snapshots.rs`; the RDF5D crate gains no
+transaction machinery. Keep the experimental API/feature names for now rather
+than mixing a terminology rename into persistence changes.
 
 ## Minimal contract
 
 For a local filesystem, one writer, roughly 100 graphs and 10–20 MB of encoded
 data, with bursty writes and readers explicitly refreshing:
 
-1. A published RDF5D object is never changed in place.
-2. The selected version identifies catalog, configuration and graph data as one
-   unit. Readers select it once; they do not assemble it from separate current
-   files or filesystem modification times.
+1. Published RDF5D objects and selected manifests never change in place.
+2. One selected manifest identifies catalog, configuration and graph data as a
+   unit. Readers do not assemble a version from independently current files or
+   filesystem modification times.
 3. Graph-changing commits write a complete new RDF5D artifact. Metadata-only
    commits reuse the previous artifact. Beginning an update clones small
    metadata and holds only graph replacements/deletions in an overlay.
 4. Preparation is private. Abort, Drop, parse errors and validation failures do
    not publish. Successful publication has one authority change.
 5. Readers do not hold the writer's lock. Retained views keep their old mapping
-   and metadata. Refresh builds and validates a replacement before swapping it;
+   and metadata. Refresh validates a replacement before swapping it;
    a refresh error leaves the old view intact.
 6. A publication I/O error may mean old or new head is durable. Further commits
-   from that writer are rejected until close/reopen reconciles durable head.
+   from that writer are rejected until close/reopen reconciles head.
    Its last confirmed snapshot remains readable but may be behind durable head.
-7. Keep all complete objects initially. Neither retained files nor a generation
-   counter promise a public history/checkout API. No reset, migration or online
-   pruning is part of this first contract.
+7. Keep all complete objects and manifests initially. Neither retained files nor
+   a generation counter promise a public history/checkout API. No reset,
+   migration or online pruning is part of this first contract.
 
-## Manifest choices
+## Disk layout and authority
 
-The mutable authority is small: select one complete version. Neither choice
-below changes RDF5D or replaces its mmap access with database blob reads.
+```text
+root/
+  .ontoenv-snapshots.lock      # stable exclusive writer lock
+  .ontoenv-snapshots/
+    CURRENT                   # schema, manifest file name, BLAKE3 of its bytes
+    manifests/
+      manifest-<unique>.json   # version info, catalog, config, object reference
+    objects/
+      object-<unique>/
+        store.r5tu            # complete immutable RDF5D artifact
+```
 
-| Concern | Current redb manifest | Immutable manifests and an atomic `CURRENT` file |
-| --- | --- | --- |
-| Selected state | One short transaction reads the complete head record | Read `CURRENT` once, then the named immutable manifest |
-| Publication | Durable database commit after object durability | Sync object and manifest, replace `CURRENT`, then sync its parent |
-| Writer exclusion | Stable OntoEnv writer lock plus database locking | Stable OntoEnv writer lock |
-| Live readers | Experimental redb multiprocess mode | Readers briefly open pointer/manifest files; retain RDF5D mappings |
-| Unclean writer exit | New read-only opens require a repairing writer with the pinned backend | Intended to need no writer recovery; must be demonstrated with crash tests |
-| Dependencies | redb 4.3.0, experimental multiprocess feature, Rust 1.90+ | Filesystem publication implementation and platform-specific durability work |
-| History | Internal generation table, no public history API | Retained manifests, no public history API required |
+Pointer and manifest schemas are version 2. Names are validated as restricted
+single path components before use. Random names avoid collision with abandoned
+attempts; version numbers describe committed versions rather than filenames.
+Readers follow only `CURRENT`, validate the selected manifest's checksum/schema,
+then map exactly its object. Missing/corrupt selected content is an error, not
+permission to scan for another manifest. Objects retain RDF5D's existing CRC
+validation; the manifest checksum does not make external mutation of mmap data
+safe.
 
-The pinned redb implementation was inspected locally, including its read-only
-recovery tests in `src/db.rs`. OntoEnv's child-process test now also checks that
-fresh read-only open is refused after an abrupt writer exit, before opening a
-writer for recovery. Retained RDF5D views continue reading during this interval.
-This is an availability limitation of the current prototype, rather than a
-reason to move transaction logic into RDF5D.
+Earlier redb-based experimental environments are rejected explicitly. Neither
+those environments nor legacy `.ontoenv/` stores are migrated or overwritten.
+The public Rust reader/update API remains the same.
 
-For this single-record workload, **prefer an immutable-manifest publication
-design as the next focused experiment**. It potentially removes the manifest
-database and its recovery dependency. Keep redb as the current draft's reference
-implementation until the replacement passes the same failure and concurrency
-tests. Do not add a public backend abstraction or maintain two supported
-backends merely to conduct that experiment.
+## Publication protocol
 
-The alternative protocol must be concrete before replacing redb:
+1. Hold the stable writer lock. Prepare and validate the complete candidate.
+2. If graphs changed, finish, validate and sync a unique RDF5D object and sync
+   its containing directory entries. Metadata-only updates reuse the old object.
+3. Check the expected environment identity/head under the writer lock. Write a
+   unique manifest, sync its bytes, retain it, close it and sync `manifests/`.
+4. Write a small temporary pointer in the directory containing `CURRENT`, naming
+   that manifest and its BLAKE3 checksum. Sync its bytes and close the handle.
+5. Atomically replace `CURRENT` using `tempfile::TempPath::persist`, then sync its
+   parent directory. Replacement is the visibility point. No unlink/truncate
+   of the old pointer occurs. Prepare the writer's in-memory snapshot before
+   this step so installing it afterward cannot fail through file I/O.
 
-1. Hold the stable writer lock and prepare/validate the full candidate.
-2. Write the unique RDF5D object if needed; sync it and its directory entries.
-3. Write a unique immutable manifest containing environment identity, version,
-   parent, time, object reference/length, catalog and configuration. Sync its
-   bytes and the directory that makes it discoverable.
-4. Write a small temporary `CURRENT` file in the same directory as `CURRENT`.
-   Include the manifest's unique name and a digest of its bytes. Sync the file.
-5. Atomically replace `CURRENT` and sync its parent directory before returning
-   durable success. Any uncertain publication error disables further commits
-   until reopen. An atomic rename is the visibility point; it alone does not
-   establish the complete crash-durability contract.
-6. A reader reads one complete `CURRENT`, validates the named manifest, then
-   opens exactly the referenced object. It may legitimately see the previous
-   version if publication races with open. Refresh follows the same sequence.
+The expected-head check is not a compare-and-swap for processes bypassing the
+stable writer lock. All cooperating writers must take that lock. Initialization
+prepares version zero in a private sibling directory, then renames the complete
+directory into place. The writer lock remains outside that directory and is
+never replaced or removed.
 
-Use restricted single-component names for manifests/objects and version their
-schema. Unique names prevent abandoned attempts from colliding with later ones.
-Because nothing is pruned, a reader needs no lock spanning selection and mmap.
-Do not scan for the highest numbered manifest or use mtimes as a recovery rule.
-Missing/corrupt selected content is an error, not permission to select another
-version silently.
+A reader closes `CURRENT` and the manifest before mapping RDF5D. A concurrent
+publication may mean it selects the previous version; that is a valid coherent
+snapshot. Since nothing is pruned, both the selected manifest and its object
+remain available without a lock spanning selection and mapping. Fresh readers
+need no writer to repair files after an abrupt process exit. Unreferenced files
+left by interrupted attempts are ignored and retained.
 
-Readers must close pointer and manifest handles promptly. Verify replacement
-with concurrent opens on Windows, and verify platform-specific sync behavior.
-Rust documents different `rename` implementations on Unix and Windows; it does
-not by itself supply this complete publication protocol.
-[Rust filesystem documentation](https://doc.rust-lang.org/std/fs/fn.rename.html).
-The current prototype's `sync_directory` performs a sync on Unix and is a no-op
-elsewhere, so passing Windows process tests does not establish power-loss
-durability there.
+The existing tempfile dependency provides the platform replacement operation,
+including Windows. Its documented atomic replacement does not sync file bytes
+or directories; OntoEnv explicitly performs those syncs where implemented.
+[TempPath::persist documentation](https://docs.rs/tempfile/3.27.0/tempfile/struct.TempPath.html#method.persist).
+Directory sync currently runs on Unix and is a no-op elsewhere. Passing Windows
+process tests establishes normal-operation/process-exit behavior, not a Windows
+power-loss guarantee. Filesystem and device flush semantics also matter on Unix.
+No power-failure simulation has been performed.
 
-## Review findings and acceptance work
+## Why replace the manifest database?
 
-The current reader selects metadata in one read transaction, opens an immutable
-object, and installs it only after validation. No pruning means ending the
-manifest transaction before opening the object is safe. Graph files are prepared
-before manifest publication, and the writer prepares its local snapshot before
-the durable publication point. Initialization uses a private directory and a
-stable external writer lock.
+The mutable authority is one selected version. The earlier redb prototype used
+experimental multiprocess support to coordinate this small head. It also needed
+a writer to recover before a fresh read-only open after an unclean writer exit.
+The file publisher removes that availability dependency, database handles,
+internal history table and redb's higher compiler requirement. It keeps direct
+RDF5D mmap access and does not introduce a public backend abstraction.
 
-One gap was found and fixed: a database publication error previously left the
-writer usable with a possibly stale in-memory head. The writer now refuses later
-commits until reopen. Fault-injection tests cover both durable outcomes and
-verify a rejected retry creates no further object. Known failures before the
-publication call still allow retry.
+This is a simplicity/availability experiment, not a claim that files are faster
+than a database. Two synced files and directory barriers have a cost. The updated
+profile compares this implementation with the saved redb baseline; neither is a
+controlled filesystem benchmark. Whole-file rewrites, rather than query or codec
+changes, remain the chosen starting point.
 
-Existing acceptance coverage includes empty versus removed graphs, explicit
-aliases and configuration, source IRI changes, strict-import rollback, failed
-refresh preserving old state, child-process readers alongside a live writer,
-writer exclusion, and abrupt process exits before and after publication. These
-are process-crash tests, not a simulated power-failure study.
+## Acceptance coverage and remaining work
 
-Before adopting an alternative manifest publisher, add overlapping multi-reader
-open/refresh loops while a writer repeatedly publishes, and crash injection
-around each manifest/pointer step. Establish post-crash read-only availability
-without a recovery writer. Run the matrix on Linux, macOS and Windows. Record
-supported durability guarantees separately from successful normal operation.
+The Linux test suite covers explicit refresh and retained views, writer exclusion,
+rollback, aliases/configuration, empty versus removed graphs, source IRI changes,
+failed refresh, invalid CURRENT paths/schema/checksum, invalid selected manifests,
+and explicit rejection of earlier redb environments.
 
-Whole-file rewrite measurements should decide whether more disk COW is needed.
-Do not split graph files, change dictionary ownership, add a WAL, or implement
-online GC in this review. Cold reads, query-index memory across processes, and
-writer peak memory still require workload-specific measurement. The diagnostic
-profile separates source staging, full-file publication, metadata-only commits,
-refresh and retained bytes; warm opens do not measure cold-cache behavior.
+Child-process tests exit at eight points: object ready, manifest written, manifest
+synced, manifest directory synced, pointer written, pointer synced, pointer
+replaced, and final directory synced. At every point a fresh reader opens before
+any recovery writer, selecting exactly the old or new complete version. A new
+writer can then publish immediately. Injected publication errors on either side
+of replacement disable retry until reopen; known preparation failures allow retry.
 
-Only after the publication choice and failure contract are settled should we
-adapt the normal Rust/Python/CLI paths, add recursive source updates and explicit
-legacy migration. Automatic cleanup remains separate and must account for every
-retained view and sleeping reader.
+A second test runs three reader processes opening and refreshing while a writer
+publishes twenty successive changes. Each reader checks graph content, aliases
+and configuration against its selected version and retains its original view.
+Dedicated feature CI runs these tests on Linux, macOS and Windows at Rust 1.88;
+consult the PR checks for results on the current revision.
+
+Before normal Rust/Python/CLI integration, review platform durability guarantees,
+measure cold reads and query-index memory across processes, and add recursive
+source updates and explicit legacy migration. Online cleanup requires a separate
+protocol covering sleeping readers and every retained query view. Per-graph disk
+COW remains deferred until complete-file publication measurements justify changes
+to dictionary ownership and cross-graph queries.

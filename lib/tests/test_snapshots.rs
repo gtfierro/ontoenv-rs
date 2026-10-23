@@ -378,3 +378,120 @@ fn cross_process_reader_opens_and_refreshes_with_live_writer() -> Result<()> {
     );
     Ok(())
 }
+
+fn publish_revision(writer: &mut SnapshotWriter, revision: u64) -> Result<()> {
+    let mut update = writer.begin_update();
+    update.add_from_bytes(
+        source("urn:a"),
+        ttl("urn:a", &revision.to_string()),
+        Some(RdfFormat::Turtle),
+    )?;
+    update
+        .config_mut()
+        .namespaces
+        .insert("revision".into(), format!("urn:revision:{revision}:"));
+    update.add_alias(&format!("urn:revision:{revision}"), "urn:a")?;
+    let snapshot = update.commit()?;
+    assert_eq!(snapshot.info().generation, revision);
+    Ok(())
+}
+
+fn assert_coherent_revision(snapshot: &EnvironmentSnapshot) -> Result<()> {
+    let revision = snapshot.info().generation;
+    let id = snapshot
+        .resolve(NamedNode::new("urn:a")?.as_ref())
+        .context("missing ontology")?;
+    assert_value(snapshot, &id, &revision.to_string())?;
+    assert_eq!(
+        snapshot.config().namespaces["revision"],
+        format!("urn:revision:{revision}:")
+    );
+    assert_eq!(
+        snapshot.resolve(NamedNode::new(format!("urn:revision:{revision}"))?.as_ref()),
+        Some(id)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "child process refresh stress helper"]
+fn snapshot_refresh_worker() -> Result<()> {
+    let root = std::path::PathBuf::from(std::env::var("ONTOENV_SNAPSHOT_TEST_ROOT")?);
+    let worker = std::env::var("ONTOENV_SNAPSHOT_TEST_WORKER")?;
+    let mut reader = SnapshotReader::open(&root)?;
+    let retained = reader.snapshot();
+    assert_eq!(retained.info().generation, 1);
+    assert_coherent_revision(&retained)?;
+    fs::write(root.join(format!("reader-ready-{worker}")), b"ready")?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut previous = 1;
+    loop {
+        let done = root.join("writer-done").exists();
+        let fresh = SnapshotReader::open(&root)?;
+        assert_coherent_revision(&fresh.snapshot())?;
+        reader.refresh()?;
+        let current = reader.snapshot();
+        assert!(current.info().generation >= previous);
+        previous = current.info().generation;
+        assert_coherent_revision(&current)?;
+        assert_coherent_revision(&retained)?;
+        if done {
+            assert_eq!(current.info().generation, 21);
+            break;
+        }
+        anyhow::ensure!(Instant::now() < deadline, "writer did not finish");
+        thread::yield_now();
+    }
+    Ok(())
+}
+
+#[test]
+fn multiple_processes_open_and_refresh_during_repeated_publications() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    publish_revision(&mut writer, 1)?;
+    // Kill and reap helpers on early failure as well as normal completion.
+    struct Workers(Vec<std::process::Child>);
+    impl Drop for Workers {
+        fn drop(&mut self) {
+            for child in &mut self.0 {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+    let mut workers = Workers(Vec::new());
+    for worker in 0..3 {
+        workers.0.push(
+            Command::new(std::env::current_exe()?)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "snapshot_refresh_worker",
+                    "--nocapture",
+                ])
+                .env("ONTOENV_SNAPSHOT_TEST_ROOT", dir.path())
+                .env("ONTOENV_SNAPSHOT_TEST_WORKER", worker.to_string())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?,
+        );
+    }
+    for worker in 0..3 {
+        wait_for(&dir.path().join(format!("reader-ready-{worker}")))?;
+    }
+    for revision in 2..=21 {
+        publish_revision(&mut writer, revision)?;
+    }
+    fs::write(dir.path().join("writer-done"), b"done")?;
+    while let Some(child) = workers.0.pop() {
+        let output = child.wait_with_output()?;
+        assert!(
+            output.status.success(),
+            "reader failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}

@@ -132,8 +132,14 @@ fn main() -> Result<()> {
         })
         .collect::<std::io::Result<_>>()?;
     let retained_bytes: u64 = objects.iter().sum();
-    let manifest_bytes =
-        std::fs::metadata(directory.path().join(".ontoenv-snapshots/manifest.redb"))?.len();
+    let manifest_bytes: u64 =
+        std::fs::read_dir(directory.path().join(".ontoenv-snapshots/manifests"))?
+            .map(|entry| Ok(entry?.metadata()?.len()))
+            .collect::<std::io::Result<Vec<u64>>>()?
+            .into_iter()
+            .sum();
+    let current_bytes =
+        std::fs::metadata(directory.path().join(".ontoenv-snapshots/CURRENT"))?.len();
     println!(
         "{graphs} graphs, {} triples, {:.2} MiB RDF5D",
         graphs * (triples + 1),
@@ -147,7 +153,7 @@ fn main() -> Result<()> {
     println!("one-graph source generation/parse/staging: {update_stage:?}");
     println!("one-graph change / complete-file commit: {rewrite_commit:?}");
     println!("metadata-only commit (same RDF5D mapping): {metadata_commit:?}");
-    println!("retained objects: {}; total RDF5D bytes: {retained_bytes}; manifest bytes: {manifest_bytes}", objects.len());
+    println!("retained objects: {}; total RDF5D bytes: {retained_bytes}; manifest bytes: {manifest_bytes}; CURRENT bytes: {current_bytes}", objects.len());
     println!(
         "reader refresh: {refresh:?}; retained generation: {}",
         retained.info().generation

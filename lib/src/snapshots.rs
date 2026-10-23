@@ -1,9 +1,10 @@
 //! Experimental atomic publication of OntoEnv versions backed by immutable RDF5D files.
 //!
-//! Enable `transactional-snapshots` (Rust 1.90+). This API uses a separate
+//! Enable `transactional-snapshots`. This API uses a separate
 //! `.ontoenv-snapshots` directory and does not migrate or modify legacy stores.
-//! Graph changes are staged as an overlay on an immutable base; redb publishes
-//! graph references, metadata, aliases and configuration in one transaction.
+//! Graph changes are staged over an immutable base. An atomically replaced
+//! `CURRENT` file selects an immutable manifest bundling graph references,
+//! metadata, aliases and configuration. No database or reader recovery is needed.
 //! Published objects are retained indefinitely until online retention is added.
 
 use crate::config::Config;
@@ -18,20 +19,23 @@ use fs2::FileExt;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{Graph, NamedNodeRef};
 use rdf5d::{Quint, Snapshot, StreamingWriter, WriterOptions};
-use redb::{
-    ConcurrencyMode, Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const DIRECTORY: &str = ".ontoenv-snapshots";
-const SCHEMA_VERSION: u32 = 1;
-const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
-const GENERATIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("generations");
-const HEAD: &str = "head";
+const SCHEMA_VERSION: u32 = 2;
+const CURRENT: &str = "CURRENT";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Head {
+    schema_version: u32,
+    manifest: String,
+    manifest_hash: String,
+}
 
 /// Stable identity and timing of one committed environment generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,21 +133,15 @@ impl EnvironmentSnapshot {
 /// Read-only connection whose current snapshot changes only on explicit refresh.
 pub struct SnapshotReader {
     directory: PathBuf,
-    database: ReadOnlyDatabase,
     current: Arc<EnvironmentSnapshot>,
 }
 
 impl SnapshotReader {
     /// Open the committed head while a writer may remain open and commit.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
-        let directory = root.as_ref().join(DIRECTORY);
-        let database = database_builder().open_read_only(directory.join("manifest.redb"))?;
-        let current = open_head(&database, &directory)?;
-        Ok(Self {
-            directory,
-            database,
-            current,
-        })
+        let directory = fs::canonicalize(root.as_ref())?.join(DIRECTORY);
+        let current = open_head(&directory)?;
+        Ok(Self { directory, current })
     }
 
     /// Retain a snapshot independently of this reader and subsequent refreshes.
@@ -153,7 +151,7 @@ impl SnapshotReader {
 
     /// Compare with committed head without changing this reader's snapshot.
     pub fn is_current(&self) -> Result<bool> {
-        let head = read_head(&self.database)?;
+        let head = read_head(&self.directory)?;
         Ok(head.info.environment_id == self.current.info.environment_id
             && head.info.generation == self.current.info.generation)
     }
@@ -161,7 +159,7 @@ impl SnapshotReader {
     /// Validate and swap the latest snapshot as a unit. Errors preserve the old one.
     /// Returns whether the selected committed generation changed.
     pub fn refresh(&mut self) -> Result<bool> {
-        let generation = read_head(&self.database)?;
+        let generation = read_head(&self.directory)?;
         if generation.info.environment_id == self.current.info.environment_id
             && generation.info.generation == self.current.info.generation
         {
@@ -178,12 +176,11 @@ impl SnapshotReader {
 /// Unlike legacy `OntoEnv`, dropping this handle never publishes graph changes.
 pub struct SnapshotWriter {
     directory: PathBuf,
-    database: Database,
     current: Arc<EnvironmentSnapshot>,
     // A failed publication may already be durable. Never publish again from a
     // possibly stale base until a new writer has reconciled the manifest.
     needs_reopen: bool,
-    // Keep the stable lock held until after the database closes.
+    // Keep the stable writer lock held for the lifetime of this handle.
     _writer_lock: File,
 }
 
@@ -210,7 +207,7 @@ impl SnapshotWriter {
             .prefix(".ontoenv-snapshots-init-")
             .tempdir_in(&config.root)?;
         fs::create_dir(initialization.path().join("objects"))?;
-        let database = database_builder().create(initialization.path().join("manifest.redb"))?;
+        fs::create_dir(initialization.path().join("manifests"))?;
         let mut environment = Environment::new();
         environment.set_default_policy(&config.resolution_policy)?;
         let (object_id, object_length, rdf) =
@@ -232,20 +229,16 @@ impl SnapshotWriter {
             environment,
             config,
         };
-        publish(&database, &generation, None)?;
-        // Close database file handles before renaming their parent directory.
-        drop(database);
+        publish(initialization.path(), &generation, None)?;
         sync_directory(initialization.path())?;
         fs::rename(initialization.path(), &directory)?;
         let _initialized_path = initialization.keep();
         sync_directory(&generation.config.root).context(
             "Snapshot initialization was published, but syncing its parent failed; open to inspect",
         )?;
-        let database = database_builder().open(directory.join("manifest.redb"))?;
         let current = snapshot_from_generation(generation, rdf);
         Ok(Self {
             directory,
-            database,
             current,
             needs_reopen: false,
             _writer_lock: writer_lock,
@@ -257,11 +250,9 @@ impl SnapshotWriter {
         let root = fs::canonicalize(root.as_ref())?;
         let writer_lock = acquire_writer_lock(&root)?;
         let directory = root.join(DIRECTORY);
-        let database = database_builder().open(directory.join("manifest.redb"))?;
-        let current = open_head(&database, &directory)?;
+        let current = open_head(&directory)?;
         Ok(Self {
             directory,
-            database,
             current,
             needs_reopen: false,
             _writer_lock: writer_lock,
@@ -429,12 +420,12 @@ impl SnapshotUpdate<'_> {
         Ok(())
     }
 
-    /// Discard all staged changes without writing an object or database state.
+    /// Discard all staged changes without publishing an object or manifest.
     pub fn abort(self) {}
 
     /// Validate, serialize and atomically publish the complete candidate.
     /// Validation or serialization failure leaves the committed head unchanged.
-    /// A redb commit error may have an uncertain durable outcome: reopen the
+    /// A publication I/O error may have an uncertain durable outcome: reopen the
     /// writer and inspect its generation before retrying an update.
     pub fn commit(self) -> Result<Arc<EnvironmentSnapshot>> {
         self.commit_before_publish(|| Ok(()))
@@ -449,11 +440,11 @@ impl SnapshotUpdate<'_> {
     }
 
     // The publisher hook lets tests model an error both before and after a
-    // successful database commit, without corrupting live database files.
+    // successful head replacement, without modifying live mapped files.
     fn commit_with_publisher(
         mut self,
         before_publish: impl FnOnce() -> Result<()>,
-        publisher: impl FnOnce(&Database, &Generation, Option<&SnapshotInfo>) -> Result<()>,
+        publisher: impl FnOnce(&Path, &Generation, Option<&SnapshotInfo>) -> Result<()>,
     ) -> Result<Arc<EnvironmentSnapshot>> {
         if self.writer.needs_reopen {
             bail!("A previous publication failed; close and reopen the writer before committing");
@@ -495,7 +486,7 @@ impl SnapshotUpdate<'_> {
         let record = snapshot.record();
         before_publish()?;
         self.writer.needs_reopen = true;
-        publisher(&self.writer.database, &record, Some(&base.info))?;
+        publisher(&self.writer.directory, &record, Some(&base.info))?;
         self.writer.current = Arc::clone(&snapshot);
         self.writer.needs_reopen = false;
         Ok(snapshot)
@@ -545,14 +536,6 @@ impl EnvironmentSnapshot {
     }
 }
 
-fn database_builder() -> redb::Builder {
-    let mut builder = Database::builder();
-    builder
-        .set_concurrency_mode(ConcurrencyMode::SingleWriter)
-        .set_cache_size(8 * 1024 * 1024);
-    builder
-}
-
 fn normalize_source_location(location: OntologyLocation, root: &Path) -> OntologyLocation {
     match location {
         OntologyLocation::File(path) => {
@@ -580,15 +563,41 @@ fn acquire_writer_lock(root: &Path) -> Result<File> {
     Ok(file)
 }
 
-fn read_head(database: &impl ReadableDatabase) -> Result<Generation> {
-    let tx = database.begin_read()?;
-    let table = tx.open_table(STATE)?;
-    let value = table
-        .get(HEAD)?
-        .context("Snapshot manifest has no committed head")?;
-    let generation: Generation = serde_json::from_slice(value.value())?;
+fn read_head(directory: &Path) -> Result<Generation> {
+    let bytes = fs::read(directory.join(CURRENT)).with_context(|| {
+        if directory.join("manifest.redb").exists() {
+            "This environment uses the earlier redb prototype; automatic migration is unsupported"
+        } else {
+            "Cannot read the selected OntoEnv version (CURRENT)"
+        }
+    })?;
+    let head: Head = serde_json::from_slice(&bytes).context("Invalid CURRENT file")?;
+    if head.schema_version != SCHEMA_VERSION {
+        bail!("Unsupported CURRENT schema version {}", head.schema_version);
+    }
+    let valid_name = head
+        .manifest
+        .strip_prefix("manifest-")
+        .and_then(|name| name.strip_suffix(".json"))
+        .is_some_and(valid_id);
+    if !valid_name {
+        bail!("Invalid manifest name in CURRENT");
+    }
+    let bytes = fs::read(directory.join("manifests").join(&head.manifest))
+        .context("Cannot read the manifest selected by CURRENT")?;
+    if blake3::hash(&bytes).to_hex().as_str() != head.manifest_hash {
+        bail!("Selected manifest checksum mismatch");
+    }
+    let generation: Generation = serde_json::from_slice(&bytes)?;
     validate_record(&generation)?;
     Ok(generation)
+}
+
+fn valid_id(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
 }
 
 fn validate_record(generation: &Generation) -> Result<()> {
@@ -598,12 +607,7 @@ fn validate_record(generation: &Generation) -> Result<()> {
             generation.schema_version
         );
     }
-    if generation.object_id.is_empty()
-        || !generation
-            .object_id
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
-    {
+    if !valid_id(&generation.object_id) {
         bail!("Invalid snapshot object ID");
     }
     let mut names = HashSet::new();
@@ -618,12 +622,10 @@ fn validate_record(generation: &Generation) -> Result<()> {
     Ok(())
 }
 
-fn open_head(
-    database: &impl ReadableDatabase,
-    directory: &Path,
-) -> Result<Arc<EnvironmentSnapshot>> {
-    // No pruning exists yet: the object stays available after this transaction ends.
-    open_generation(read_head(database)?, directory)
+fn open_head(directory: &Path) -> Result<Arc<EnvironmentSnapshot>> {
+    // Nothing is pruned: the selected manifest and object remain available after
+    // CURRENT closes, even if a writer publishes another version in between.
+    open_generation(read_head(directory)?, directory)
 }
 
 fn open_generation(generation: Generation, directory: &Path) -> Result<Arc<EnvironmentSnapshot>> {
@@ -678,35 +680,88 @@ fn snapshot_from_generation(
 }
 
 fn publish(
-    database: &Database,
+    directory: &Path,
     generation: &Generation,
     expected: Option<&SnapshotInfo>,
 ) -> Result<()> {
+    publish_with_hook(directory, generation, expected, |_| Ok(()))
+}
+
+// Private injection points cover process exits and I/O failures on either side
+// of the one visibility change. Production uses a no-op hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicationPhase {
+    ManifestWritten,
+    ManifestSynced,
+    ManifestDurable,
+    CurrentWritten,
+    CurrentSynced,
+    CurrentReplaced,
+    Durable,
+}
+
+fn publish_with_hook(
+    directory: &Path,
+    generation: &Generation,
+    expected: Option<&SnapshotInfo>,
+    mut at: impl FnMut(PublicationPhase) -> Result<()>,
+) -> Result<()> {
     validate_record(generation)?;
-    let bytes = serde_json::to_vec(generation)?;
-    let mut tx = database.begin_write()?;
-    tx.set_durability(redb::Durability::Immediate)?;
-    {
-        let mut state = tx.open_table(STATE)?;
-        match (state.get(HEAD)?, expected) {
-            (None, None) => {}
-            (Some(value), Some(expected)) => {
-                let current: Generation = serde_json::from_slice(value.value())?;
-                if current.info.environment_id != expected.environment_id
-                    || current.info.generation != expected.generation
-                {
-                    bail!("Committed head changed since update began; reopen the writer");
-                }
-            }
-            _ => bail!("Unexpected snapshot manifest head; reopen the writer"),
+    // The stable exclusive writer lock serializes this check and replacement.
+    // This is not a compare-and-swap for writers bypassing that lock.
+    if let Some(expected) = expected {
+        let current = read_head(directory)?;
+        if current.info.environment_id != expected.environment_id
+            || current.info.generation != expected.generation
+        {
+            bail!("Committed head changed since update began; reopen the writer");
         }
-        state.insert(HEAD, bytes.as_slice())?;
-        let mut history = tx.open_table(GENERATIONS)?;
-        history.insert(generation.info.generation, bytes.as_slice())?;
+    } else if directory.join(CURRENT).try_exists()? {
+        bail!("Unexpected snapshot manifest head; reopen the writer");
     }
-    tx.commit().context(
-        "Manifest commit failed; durable outcome may be uncertain; reopen before retrying",
-    )?;
+    let bytes = serde_json::to_vec(generation)?;
+    let manifests = directory.join("manifests");
+    let mut manifest = tempfile::Builder::new()
+        .prefix("manifest-")
+        .suffix(".json")
+        .tempfile_in(&manifests)?;
+    manifest.write_all(&bytes)?;
+    at(PublicationPhase::ManifestWritten)?;
+    manifest.as_file().sync_all()?;
+    at(PublicationPhase::ManifestSynced)?;
+    let (file, manifest_path) = manifest.keep()?;
+    drop(file);
+    sync_directory(&manifests)?;
+    at(PublicationPhase::ManifestDurable)?;
+
+    let head = Head {
+        schema_version: SCHEMA_VERSION,
+        manifest: manifest_path
+            .file_name()
+            .context("Manifest has no file name")?
+            .to_str()
+            .context("Manifest name is not UTF-8")?
+            .to_owned(),
+        manifest_hash: blake3::hash(&bytes).to_hex().to_string(),
+    };
+    // This tempfile is on the same filesystem as CURRENT. persist atomically
+    // replaces the destination on Unix and Windows; it never unlinks CURRENT
+    // first. Close the writing handle before replacement.
+    let mut pointer = tempfile::Builder::new()
+        .prefix(".CURRENT-")
+        .tempfile_in(directory)?;
+    pointer.write_all(&serde_json::to_vec(&head)?)?;
+    at(PublicationPhase::CurrentWritten)?;
+    pointer.as_file().sync_all()?;
+    at(PublicationPhase::CurrentSynced)?;
+    pointer
+        .into_temp_path()
+        .persist(directory.join(CURRENT))
+        .context("CURRENT replacement failed; reopen before retrying")?;
+    at(PublicationPhase::CurrentReplaced)?;
+    sync_directory(directory)
+        .context("CURRENT was replaced but syncing its parent failed; reopen to inspect")?;
+    at(PublicationPhase::Durable)?;
     Ok(())
 }
 
@@ -717,7 +772,7 @@ fn write_object(
 ) -> Result<(String, u64, Arc<Snapshot>)> {
     let objects = directory.join("objects");
     // A randomly named private object directory cannot collide with an abandoned
-    // commit attempt. It is unreferenced until the manifest transaction commits.
+    // commit attempt. It is unreferenced until CURRENT selects its manifest.
     let staging = tempfile::Builder::new()
         .prefix("object-")
         .tempdir_in(&objects)?;
@@ -825,18 +880,41 @@ mod tests {
         let mut writer = SnapshotWriter::open(root)?;
         let mut update = stage(&mut writer, "new")?;
         update.add_alias("urn:committed-alias", "urn:a")?;
-        if phase == "before" {
+        update
+            .config_mut()
+            .namespaces
+            .insert("revision".into(), "urn:new:".into());
+        if phase == "ObjectReady" {
             update.commit_before_publish(|| std::process::exit(71))?;
         } else {
-            update.commit()?;
-            std::process::exit(71);
+            update.commit_with_publisher(
+                || Ok(()),
+                |directory, generation, expected| {
+                    publish_with_hook(directory, generation, expected, |at| {
+                        if format!("{at:?}") == phase {
+                            std::process::exit(71);
+                        }
+                        Ok(())
+                    })
+                },
+            )?;
         }
         unreachable!()
     }
 
     #[test]
-    fn crash_before_or_after_publication_exposes_one_complete_generation() -> Result<()> {
-        for phase in ["before", "after"] {
+    fn crash_at_each_publication_step_allows_read_only_open_without_recovery() -> Result<()> {
+        for phase in [
+            "ObjectReady",
+            "ManifestWritten",
+            "ManifestSynced",
+            "ManifestDurable",
+            "CurrentWritten",
+            "CurrentSynced",
+            "CurrentReplaced",
+            "Durable",
+        ] {
+            let published = matches!(phase, "CurrentReplaced" | "Durable");
             let dir = tempfile::tempdir()?;
             let mut writer = SnapshotWriter::create(config(dir.path()))?;
             stage(&mut writer, "old")?.commit()?;
@@ -861,33 +939,32 @@ mod tests {
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
-            // redb refuses a fresh read-only open after an unclean writer exit:
-            // recovery requires a writer, even though retained RDF5D views work.
-            assert!(SnapshotReader::open(dir.path()).is_err());
-            assert!(retained
-                .get_graph(&id)?
-                .iter()
-                .any(|t| t.object.to_string() == "\"old\""));
-            // Reopen a writer to let redb perform any required crash recovery.
-            let writer = SnapshotWriter::open(dir.path())?;
+            // Open read-only before any writer recovery or cleanup. CURRENT is
+            // the sole authority, regardless of abandoned higher manifests.
+            let fresh = SnapshotReader::open(dir.path())?;
             assert_eq!(
-                writer.snapshot().info().generation,
-                if phase == "before" { 1 } else { 2 }
+                fresh.snapshot().info().generation,
+                if published { 2 } else { 1 },
+                "{phase}"
             );
-            assert_eq!(reader.refresh()?, phase == "after");
+            assert_eq!(reader.refresh()?, published, "{phase}");
             let snapshot = reader.snapshot();
             assert_eq!(
                 snapshot
                     .environment()
                     .resolve_alias("urn:committed-alias")
                     .is_some(),
-                phase == "after"
+                published
             );
-            let expected = if phase == "before" {
-                "\"old\""
-            } else {
-                "\"new\""
-            };
+            assert_eq!(
+                snapshot
+                    .config()
+                    .namespaces
+                    .get("revision")
+                    .map(String::as_str),
+                if published { Some("urn:new:") } else { None }
+            );
+            let expected = if !published { "\"old\"" } else { "\"new\"" };
             assert!(snapshot
                 .get_graph(&id)?
                 .iter()
@@ -896,6 +973,13 @@ mod tests {
                 .get_graph(&id)?
                 .iter()
                 .any(|t| t.object.to_string() == "\"old\""));
+            // Reopening a writer needs no repair and can immediately publish.
+            let mut writer = SnapshotWriter::open(dir.path())?;
+            stage(&mut writer, "next")?.commit()?;
+            assert_eq!(
+                writer.snapshot().info().generation,
+                if published { 3 } else { 2 }
+            );
         }
         Ok(())
     }
@@ -938,11 +1022,19 @@ mod tests {
             let id = retained.resolve(NamedNode::new("urn:a")?.as_ref()).unwrap();
             let result = stage(&mut writer, "new")?.commit_with_publisher(
                 || Ok(()),
-                |database, generation, expected| {
-                    if did_commit {
-                        publish(database, generation, expected)?;
-                    }
-                    bail!("injected uncertain publication outcome")
+                |directory, generation, expected| {
+                    publish_with_hook(directory, generation, expected, |phase| {
+                        if phase
+                            == if did_commit {
+                                PublicationPhase::CurrentReplaced
+                            } else {
+                                PublicationPhase::CurrentSynced
+                            }
+                        {
+                            bail!("injected uncertain publication outcome");
+                        }
+                        Ok(())
+                    })
                 },
             );
             assert!(result.is_err());
@@ -974,6 +1066,99 @@ mod tests {
                 .any(|t| t.object.to_string() == expected));
             stage(&mut writer, "retry")?.commit()?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_selected_manifest_never_falls_back_or_replaces_a_reader() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut writer = SnapshotWriter::create(config(dir.path()))?;
+        stage(&mut writer, "old")?.commit()?;
+        let mut reader = SnapshotReader::open(dir.path())?;
+        let retained = reader.snapshot();
+        stage(&mut writer, "new")?.commit()?;
+        let directory = dir.path().join(DIRECTORY);
+        let selected = fs::read(directory.join(CURRENT))?;
+        let mut cases = vec![b"not json".to_vec()];
+        for (name, hash, schema) in [
+            ("../outside.json", "unused", SCHEMA_VERSION),
+            ("manifest-../outside.json", "unused", SCHEMA_VERSION),
+            ("manifest-.json", "unused", SCHEMA_VERSION),
+            ("manifest-missing.json", "unused", SCHEMA_VERSION),
+        ] {
+            cases.push(serde_json::to_vec(&Head {
+                schema_version: schema,
+                manifest: name.into(),
+                manifest_hash: hash.into(),
+            })?);
+        }
+        let mut wrong_schema: Head = serde_json::from_slice(&selected)?;
+        wrong_schema.schema_version += 1;
+        cases.push(serde_json::to_vec(&wrong_schema)?);
+        let mut wrong_hash: Head = serde_json::from_slice(&selected)?;
+        wrong_hash.manifest_hash = "0".repeat(64);
+        cases.push(serde_json::to_vec(&wrong_hash)?);
+        // A checksum-valid manifest must also pass schema, object-path and JSON
+        // validation. None of these bad manifests is mapped graph data.
+        let mut wrong_record = read_head(&directory)?;
+        wrong_record.schema_version += 1;
+        let mut wrong_object = read_head(&directory)?;
+        wrong_object.object_id = "../outside".into();
+        for bytes in [
+            serde_json::to_vec(&wrong_record)?,
+            serde_json::to_vec(&wrong_object)?,
+            b"not json".to_vec(),
+        ] {
+            let mut manifest = tempfile::Builder::new()
+                .prefix("manifest-")
+                .suffix(".json")
+                .tempfile_in(directory.join("manifests"))?;
+            manifest.write_all(&bytes)?;
+            cases.push(serde_json::to_vec(&Head {
+                schema_version: SCHEMA_VERSION,
+                manifest: manifest
+                    .path()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .into(),
+                manifest_hash: blake3::hash(&bytes).to_hex().to_string(),
+            })?);
+            let (file, _) = manifest.keep()?;
+            drop(file);
+        }
+        for bytes in cases {
+            fs::write(directory.join(CURRENT), bytes)?;
+            assert!(SnapshotReader::open(dir.path()).is_err());
+            assert!(reader.is_current().is_err());
+            assert!(reader.refresh().is_err());
+            assert!(Arc::ptr_eq(&reader.snapshot(), &retained));
+        }
+        fs::write(directory.join(CURRENT), selected)?;
+        assert!(reader.refresh()?);
+        assert_eq!(reader.snapshot().info().generation, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn earlier_redb_prototype_is_rejected_without_modifying_its_files() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let directory = dir.path().join(DIRECTORY);
+        fs::create_dir(&directory)?;
+        fs::write(directory.join("manifest.redb"), b"earlier prototype")?;
+        let error = SnapshotReader::open(dir.path())
+            .err()
+            .context("expected migration error")?;
+        assert!(error
+            .to_string()
+            .contains("automatic migration is unsupported"));
+        assert!(SnapshotWriter::open(dir.path()).is_err());
+        assert!(!directory.join(CURRENT).exists());
+        assert_eq!(
+            fs::read(directory.join("manifest.redb"))?,
+            b"earlier prototype"
+        );
         Ok(())
     }
 }

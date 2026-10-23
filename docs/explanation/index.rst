@@ -38,7 +38,7 @@ Explanation
 
 :doc:`environment-publication`
    Why atomic publication belongs to OntoEnv, the RDF5D boundary, and the
-   manifest-backend decision still under review.
+   immutable-manifest publication protocol.
 
 .. toctree::
    :hidden:
