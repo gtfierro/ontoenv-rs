@@ -3209,7 +3209,7 @@ enum StoreGroupedRows {
     Empty,
     Streaming {
         rows: GroupedScan,
-        names_by_gid: HashMap<u64, String>,
+        snapshot: Arc<Snapshot>,
         patch: Option<Arc<rdf5d::ClosurePatch>>,
     },
     Closure {
@@ -3226,7 +3226,7 @@ impl StoreGroupedRows {
             Self::Empty => None,
             Self::Streaming {
                 rows,
-                names_by_gid,
+                snapshot,
                 patch,
             } => {
                 for row in rows {
@@ -3238,9 +3238,9 @@ impl StoreGroupedRows {
                     }
                     let mut contexts = Vec::new();
                     for gid in row.gids {
-                        if let Some(name) = names_by_gid.get(&gid) {
-                            if !contexts.contains(name) {
-                                contexts.push(name.clone());
+                        if let Some(name) = snapshot.graph_name_for_gid(gid) {
+                            if !contexts.iter().any(|context| context == name) {
+                                contexts.push(name.to_owned());
                             }
                         }
                     }
@@ -3280,16 +3280,9 @@ fn streaming_store_rows(
     let rows = snapshot
         .grouped_scan(pat, scope)
         .map_err(r5error_to_pyerr)?;
-    let names_by_gid = snapshot
-        .file()
-        .enumerate_all()
-        .map_err(r5error_to_pyerr)?
-        .into_iter()
-        .map(|graph| (graph.gid, graph.graphname))
-        .collect();
     Ok(StoreGroupedRows::Streaming {
         rows,
-        names_by_gid,
+        snapshot: snapshot.clone(),
         patch,
     })
 }

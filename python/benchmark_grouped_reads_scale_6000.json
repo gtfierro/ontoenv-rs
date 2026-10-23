@@ -1,0 +1,67 @@
+{
+  "bind_ms": {
+    "closure": 3.725075,
+    "dataset": 34.901809
+  },
+  "closure": {
+    "object": {
+      "median_ms": 0.013527,
+      "rows": 62
+    },
+    "predicate": {
+      "median_ms": 0.0027995,
+      "rows": 1
+    },
+    "predicate_object": {
+      "median_ms": 0.003357,
+      "rows": 1
+    },
+    "subject": {
+      "median_ms": 0.0033480000000000003,
+      "rows": 1
+    },
+    "unbound": {
+      "median_ms": 1.5476615,
+      "rows": 6002
+    }
+  },
+  "dataset": {
+    "object": {
+      "median_ms": 0.025636,
+      "rows": 62
+    },
+    "predicate": {
+      "median_ms": 0.0038545000000000003,
+      "rows": 1
+    },
+    "predicate_object": {
+      "median_ms": 0.004496,
+      "rows": 1
+    },
+    "subject": {
+      "median_ms": 0.004054,
+      "rows": 1
+    },
+    "unbound": {
+      "median_ms": 2.4978875,
+      "rows": 6007
+    }
+  },
+  "fixture": {
+    "closure_names": [
+      "urn:bench:leaf",
+      "urn:bench:mid",
+      "urn:bench:root"
+    ],
+    "named_graphs": 4,
+    "offline": true,
+    "shared_triple_in_all_graphs": true,
+    "triples_per_graph": 6000
+  },
+  "peak_kib": {
+    "after_dataset_bind": 59244,
+    "after_queries": 64860,
+    "before_bind": 51712
+  },
+  "repeat": 30
+}

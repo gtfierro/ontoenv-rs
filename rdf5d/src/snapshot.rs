@@ -13,7 +13,7 @@
 //! ([`crate::sparql`]) and the higher-level store APIs are both expressed on
 //! top of it, so the "index-or-scan" decision lives in exactly one place.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::iter::{empty, once};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -86,6 +86,7 @@ struct LogicalGraph {
 pub struct Snapshot {
     file: Arc<R5tuFile>,
     by_name: HashMap<String, LogicalGraph>,
+    names_by_gid: HashMap<u64, String>,
     // Permutation indexes, built in memory from `file` on first use. Each is
     // independent so we only pay for the permutations a workload queries.
     // `None` inside the cell means the build failed (logged).
@@ -106,54 +107,97 @@ pub struct GroupedMatch {
     pub gids: Vec<u64>,
 }
 
-/// Streams grouped triples from the SPO index, retaining only one subject's
-/// matches at a time. It owns the snapshot so it can outlive a Python call.
+/// Streams grouped triples by merging per-graph sorted index blocks. It owns
+/// the snapshot and stores offsets rather than self-referential index borrows.
 pub struct GroupedScan {
     snapshot: Arc<Snapshot>,
     gids: HashSet<u64>,
     pattern: Pattern,
+    kind: IdxKind,
     next_key: usize,
     end_key: usize,
-    pending: std::vec::IntoIter<GroupedMatch>,
+    cursors: Vec<GroupCursor>,
+    key: u64,
+}
+
+struct GroupCursor {
+    block: usize,
+    pos: usize,
+    end: usize,
 }
 
 impl Iterator for GroupedScan {
     type Item = GroupedMatch;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(row) = self.pending.next() {
-            return Some(row);
-        }
-        if self.next_key >= self.end_key {
+        if self.next_key == self.end_key
+            && self.cursors.iter().all(|cursor| cursor.pos == cursor.end)
+        {
             return None;
         }
-        let section = self.snapshot.mem_section(IdxKind::Spo)?;
-        while self.next_key < self.end_key {
-            let s = section.keys[self.next_key];
-            self.next_key += 1;
-            let mut rows: BTreeMap<(u64, u64), Vec<u64>> = BTreeMap::new();
-            for (gid, p, o) in section.lookup(s)?.iter_all() {
-                if self.gids.contains(&gid)
-                    && self.pattern.p.is_none_or(|wanted| wanted == p)
-                    && self.pattern.o.is_none_or(|wanted| wanted == o)
-                {
-                    rows.entry((p, o)).or_default().push(gid);
+        let section = self.snapshot.mem_section(self.kind)?;
+        loop {
+            if self.cursors.iter().all(|cursor| cursor.pos == cursor.end) {
+                if self.next_key == self.end_key {
+                    return None;
+                }
+                self.key = section.keys[self.next_key];
+                self.next_key += 1;
+                self.cursors.clear();
+                let posting = &section.postings[self.next_key - 1];
+                let seek = match self.kind {
+                    IdxKind::Spo => self.pattern.p,
+                    IdxKind::Pos => self.pattern.o,
+                    IdxKind::Pso => self.pattern.s,
+                    IdxKind::Osp => self.pattern.s,
+                    IdxKind::PClos => unreachable!(),
+                };
+                for (block, &gid) in posting.gids.iter().enumerate() {
+                    if !self.gids.contains(&(gid as u64)) {
+                        continue;
+                    }
+                    let pairs = &posting.blocks[block];
+                    let pos = seek.map_or(0, |value| pairs.partition_point(|pair| pair.0 < value));
+                    let end = seek.map_or(pairs.len(), |value| {
+                        pairs.partition_point(|pair| pair.0 <= value)
+                    });
+                    if pos < end {
+                        self.cursors.push(GroupCursor { block, pos, end });
+                    }
+                }
+                if self.cursors.is_empty() {
+                    continue;
                 }
             }
-            self.pending = rows
-                .into_iter()
-                .map(|((p, o), mut gids)| {
-                    gids.sort_unstable();
-                    gids.dedup();
-                    GroupedMatch { s, p, o, gids }
-                })
-                .collect::<Vec<_>>()
-                .into_iter();
-            if let Some(row) = self.pending.next() {
-                return Some(row);
+            let posting = &section.postings[self.next_key - 1];
+            let minimum = self
+                .cursors
+                .iter()
+                .filter_map(|cursor| posting.blocks[cursor.block].get(cursor.pos).copied())
+                .min()?;
+            let mut gids = Vec::new();
+            for cursor in &mut self.cursors {
+                let pairs = &posting.blocks[cursor.block];
+                while cursor.pos < cursor.end && pairs[cursor.pos] == minimum {
+                    gids.push(posting.gids[cursor.block] as u64);
+                    cursor.pos += 1;
+                }
+            }
+            let (s, p, o) = match self.kind {
+                IdxKind::Spo => (self.key, minimum.0, minimum.1),
+                IdxKind::Pso => (minimum.0, self.key, minimum.1),
+                IdxKind::Pos => (minimum.1, self.key, minimum.0),
+                IdxKind::Osp => (minimum.0, minimum.1, self.key),
+                IdxKind::PClos => unreachable!(),
+            };
+            if self.pattern.s.is_none_or(|wanted| wanted == s)
+                && self.pattern.p.is_none_or(|wanted| wanted == p)
+                && self.pattern.o.is_none_or(|wanted| wanted == o)
+            {
+                gids.dedup();
+                return Some(GroupedMatch { s, p, o, gids });
             }
         }
-        None
     }
 }
 
@@ -175,7 +219,9 @@ impl Snapshot {
     /// graphs by name to form the logical-graph view.
     pub fn from_file(file: Arc<R5tuFile>) -> Result<Self> {
         let mut grouped: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
+        let mut names_by_gid = HashMap::new();
         for graph in file.enumerate_all()? {
+            names_by_gid.insert(graph.gid, graph.graphname.clone());
             grouped
                 .entry(graph.graphname)
                 .or_default()
@@ -196,6 +242,7 @@ impl Snapshot {
         Ok(Self {
             file,
             by_name,
+            names_by_gid,
             mem_pso: OnceLock::new(),
             mem_pos: OnceLock::new(),
             mem_spo: OnceLock::new(),
@@ -212,6 +259,11 @@ impl Snapshot {
     /// The distinct logical-graph names in this snapshot.
     pub fn graph_names(&self) -> impl Iterator<Item = &str> {
         self.by_name.keys().map(String::as_str)
+    }
+
+    /// Graph name for a physical graph id in this snapshot.
+    pub fn graph_name_for_gid(&self, gid: u64) -> Option<&str> {
+        self.names_by_gid.get(&gid).map(String::as_str)
     }
 
     /// Eagerly build all four permutation indexes (PSO, POS, SPO, OSP) so the
@@ -289,8 +341,8 @@ impl Snapshot {
         }
     }
 
-    /// Group matching triples by value while keeping memory bounded by one
-    /// subject's matches. Useful for APIs that return graph contexts per row.
+    /// Group matching triples by value with memory bounded by active graph
+    /// cursors and the current triple's graph ids.
     pub fn grouped_scan(self: &Arc<Self>, pat: Pattern, scope: Scope<'_>) -> Result<GroupedScan> {
         let gids = match scope {
             Scope::All => self.all_gids(),
@@ -301,13 +353,32 @@ impl Snapshot {
                 .map(|graph| graph.gids.clone())
                 .unwrap_or_default(),
         };
-        let (next_key, end_key) = if gids.is_empty() {
+        let kind = if pat.s.is_some() || (pat.p.is_none() && pat.o.is_none()) {
+            IdxKind::Spo
+        } else if pat.p.is_some() && pat.o.is_some() {
+            IdxKind::Pos
+        } else if pat.p.is_some() {
+            IdxKind::Pso
+        } else {
+            IdxKind::Osp
+        };
+        let (next_key, end_key) = if gids.is_empty()
+            || [pat.s, pat.p, pat.o]
+                .iter()
+                .any(|bound| bound.is_some_and(|id| id >= self.file.num_terms()))
+        {
             (0, 0)
         } else {
             let section = self
-                .mem_section(IdxKind::Spo)
-                .ok_or(R5Error::Invalid("SPO index unavailable for grouped scan"))?;
-            match pat.s {
+                .mem_section(kind)
+                .ok_or(R5Error::Invalid("index unavailable for grouped scan"))?;
+            let bound_key = match kind {
+                IdxKind::Spo => pat.s,
+                IdxKind::Pso | IdxKind::Pos => pat.p,
+                IdxKind::Osp => pat.o,
+                IdxKind::PClos => unreachable!(),
+            };
+            match bound_key {
                 Some(subject) => match section.keys.binary_search(&subject) {
                     Ok(index) => (index, index + 1),
                     Err(_) => (0, 0),
@@ -319,9 +390,11 @@ impl Snapshot {
             snapshot: self.clone(),
             gids: gids.into_iter().collect(),
             pattern: pat,
+            kind,
             next_key,
             end_key,
-            pending: Vec::new().into_iter(),
+            cursors: Vec::new(),
+            key: 0,
         })
     }
 
