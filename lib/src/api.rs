@@ -476,6 +476,32 @@ fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 impl OntoEnv {
+    /// Open an experimental publication-backed reader with explicit refresh.
+    /// Returned snapshots remain immutable and can outlive this reader. Unlike
+    /// [`Self::open`], this selects `.ontoenv-snapshots` and returns a type with
+    /// no mutation/save API. Requires the `transactional-snapshots` feature.
+    #[cfg(feature = "transactional-snapshots")]
+    pub fn open_snapshot(root: impl AsRef<Path>) -> Result<crate::snapshots::SnapshotReader> {
+        crate::snapshots::SnapshotReader::open(root)
+    }
+
+    /// Create an empty experimental publication-backed environment.
+    /// Changes are staged through the returned writer and published by explicit
+    /// commit; neither this entry point nor Drop migrates legacy stores.
+    #[cfg(feature = "transactional-snapshots")]
+    pub fn create_snapshot(config: Config) -> Result<crate::snapshots::SnapshotWriter> {
+        crate::snapshots::SnapshotWriter::create(config)
+    }
+
+    /// Open the sole writer for an existing experimental snapshot environment.
+    /// Readers and retained query views can remain open while it publishes.
+    #[cfg(feature = "transactional-snapshots")]
+    pub fn open_snapshot_writer(
+        root: impl AsRef<Path>,
+    ) -> Result<crate::snapshots::SnapshotWriter> {
+        crate::snapshots::SnapshotWriter::open(root)
+    }
+
     /// Wait briefly for a marker held by a live writer to clear. A marker left
     /// behind after the writer releases its lock still requires recovery.
     fn pending_marker_after_active_writer(config: &Config) -> PendingMarkerState {

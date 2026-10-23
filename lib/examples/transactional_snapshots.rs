@@ -2,9 +2,9 @@
 //! --example transactional_snapshots`.
 
 use anyhow::Result;
+use ontoenv::api::OntoEnv;
 use ontoenv::config::Config;
 use ontoenv::ontology::OntologyLocation;
-use ontoenv::snapshots::{SnapshotReader, SnapshotWriter};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::NamedNode;
 
@@ -17,7 +17,7 @@ fn main() -> Result<()> {
         .offline(true)
         .locations(vec![])
         .build()?;
-    let mut writer = SnapshotWriter::create(config)?;
+    let mut writer = OntoEnv::create_snapshot(config)?;
     let source = OntologyLocation::InMemory {
         identifier: "example".to_owned(),
     };
@@ -31,10 +31,10 @@ fn main() -> Result<()> {
     update.commit()?;
 
     // The reader opens even though the writer remains alive.
-    let mut reader = SnapshotReader::open(directory.path())?;
+    let mut reader = OntoEnv::open_snapshot(directory.path())?;
     let old = reader.snapshot();
     let rdf = old.rdf();
-    let old_view = rdf5d::View::from_names(&rdf, &["urn:example"]);
+    let old_view = old.graph_view(&id)?;
 
     let mut update = writer.begin_update();
     update.add_from_bytes(

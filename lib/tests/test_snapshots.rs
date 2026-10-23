@@ -1,6 +1,7 @@
 #![cfg(feature = "transactional-snapshots")]
 
 use anyhow::{Context, Result};
+use ontoenv::api::OntoEnv;
 use ontoenv::config::Config;
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::snapshots::{EnvironmentSnapshot, SnapshotReader, SnapshotWriter};
@@ -9,6 +10,7 @@ use oxigraph::model::{Graph, NamedNode};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -70,6 +72,157 @@ fn readers_pin_generations_while_writer_remains_open() -> Result<()> {
     assert_value(&retained, &id, "old")?;
     assert_eq!(retained_rdf.triple_count(rdf5d::Scope::All)?, 2);
     assert!(!reader.refresh()?);
+    Ok(())
+}
+
+#[test]
+fn cloned_handles_and_metadata_refresh_share_the_rdf_snapshot() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = OntoEnv::create_snapshot(config(dir.path()))?;
+    let id = add(&mut writer, "urn:a", "old")?;
+    let mut reader = OntoEnv::open_snapshot(dir.path())?;
+    let old = reader.snapshot();
+    let cloned = reader.snapshot();
+    assert!(Arc::ptr_eq(&old, &cloned));
+    let rdf = old.rdf();
+    assert!(Arc::ptr_eq(&rdf, &cloned.rdf()));
+    assert_eq!(
+        rdf.grouped_scan(rdf5d::Pattern::ANY, rdf5d::Scope::All)?
+            .count(),
+        2
+    );
+    assert!(!reader.refresh()?);
+    assert!(Arc::ptr_eq(&old, &reader.snapshot()));
+    let old_metadata = Arc::downgrade(&old);
+    let mut update = writer.begin_update();
+    update.add_alias("urn:new-alias", "urn:a")?;
+    update.commit()?;
+    assert!(reader.refresh()?);
+    assert!(!Arc::ptr_eq(&old, &reader.snapshot()));
+    assert!(Arc::ptr_eq(&rdf, &reader.snapshot().rdf()));
+    assert!(old
+        .resolve(NamedNode::new("urn:new-alias")?.as_ref())
+        .is_none());
+    assert_eq!(
+        reader
+            .snapshot()
+            .resolve(NamedNode::new("urn:new-alias")?.as_ref()),
+        Some(id)
+    );
+    drop(old);
+    drop(cloned);
+    assert!(old_metadata.upgrade().is_none());
+    Ok(())
+}
+
+#[test]
+fn ordinary_refresh_releases_unreferenced_metadata_and_indexes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    let id = add(&mut writer, "urn:a", "old")?;
+    let mut reader = SnapshotReader::open(dir.path())?;
+    let old = reader.snapshot();
+    let metadata = Arc::downgrade(&old);
+    let rdf = old.rdf();
+    let indexes = Arc::downgrade(&rdf);
+    assert_eq!(
+        rdf.grouped_scan(rdf5d::Pattern::ANY, rdf5d::Scope::All)?
+            .count(),
+        2
+    );
+    drop(rdf);
+    drop(old);
+    add(&mut writer, "urn:a", "new")?;
+    assert!(reader.refresh()?);
+    assert!(metadata.upgrade().is_none());
+    assert!(indexes.upgrade().is_none());
+    assert_value(&reader.snapshot(), &id, "new")?;
+    Ok(())
+}
+
+#[test]
+fn owned_query_iterator_pins_only_its_original_rdf_until_dropped() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    add(&mut writer, "urn:a", "old")?;
+    let mut reader = SnapshotReader::open(dir.path())?;
+    let old = reader.snapshot();
+    let metadata = Arc::downgrade(&old);
+    let rdf = old.rdf();
+    let indexes = Arc::downgrade(&rdf);
+    let p = rdf
+        .file()
+        .term_id(&rdf5d::DecodedTerm::Iri("urn:value".into()))
+        .unwrap();
+    let mut rows = rdf.grouped_scan(
+        rdf5d::Pattern {
+            p: Some(p),
+            ..rdf5d::Pattern::ANY
+        },
+        rdf5d::Scope::All,
+    )?;
+    drop(rdf);
+    drop(old);
+    add(&mut writer, "urn:a", "new")?;
+    reader.refresh()?;
+    assert!(metadata.upgrade().is_none());
+    let row = rows.next().context("missing old query result")?;
+    let decoder = indexes.upgrade().context("iterator lost its backing")?;
+    assert!(
+        matches!(decoder.file().decoded_term(row.o)?, rdf5d::DecodedTerm::Literal { lex, .. } if lex == "old")
+    );
+    drop(decoder);
+    drop(rows);
+    assert!(indexes.upgrade().is_none());
+    Ok(())
+}
+
+#[test]
+fn normal_api_scoped_views_keep_the_selected_environment_version() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = OntoEnv::create_snapshot(config(dir.path()))?;
+    let id = add(&mut writer, "urn:a", "old")?;
+    let reader = OntoEnv::open_snapshot(dir.path())?;
+    let snapshot = reader.snapshot();
+    let old = Arc::downgrade(&snapshot);
+    let view = snapshot.graph_view(&id)?;
+    assert_eq!(view.triple_count()?, 2);
+    let p = snapshot
+        .rdf()
+        .file()
+        .term_id(&rdf5d::DecodedTerm::Iri("urn:value".into()))
+        .unwrap();
+    let pattern = rdf5d::Pattern {
+        p: Some(p),
+        ..rdf5d::Pattern::ANY
+    };
+    assert_eq!(
+        view.scan(pattern)
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .len(),
+        1
+    );
+    drop(reader);
+    drop(writer);
+    let mut writer = OntoEnv::open_snapshot_writer(dir.path())?;
+    let mut update = writer.begin_update();
+    update.replace_graph(&id, Graph::new())?;
+    update.commit()?;
+    assert_eq!(view.triple_count()?, 2);
+    assert_eq!(
+        view.scan(pattern)
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .len(),
+        1
+    );
+    assert_eq!(writer.snapshot().graph_view(&id)?.triple_count()?, 0);
+    let mut update = writer.begin_update();
+    update.remove(&id)?;
+    update.commit()?;
+    assert!(writer.snapshot().graph_view(&id).is_err());
+    drop(view);
+    drop(snapshot);
+    assert!(old.upgrade().is_none());
     Ok(())
 }
 

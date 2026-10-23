@@ -31,23 +31,64 @@ an alias, then refreshes the reader. A retained old query view still reads the
 old generation.
 
 ```rust
-let mut writer = SnapshotWriter::create(config)?;
+use ontoenv::api::OntoEnv;
+
+let mut writer = OntoEnv::create_snapshot(config)?;
 let mut update = writer.begin_update();
 let id = update.add_from_bytes(location, bytes, format)?;
 update.add_alias("urn:alias", id.name().as_str())?;
 let committed = update.commit()?;
 
-let mut reader = SnapshotReader::open(root)?;
+let mut reader = OntoEnv::open_snapshot(root)?;
 let old = reader.snapshot();
+let old_view = old.graph_view(&id)?;
 // Further writer commits do not change `old` or reader.snapshot().
 reader.refresh()?;
 ```
+
+These feature-gated `OntoEnv` entry points return the existing specialized
+`SnapshotWriter` and `SnapshotReader` types. `OntoEnv::open_snapshot_writer(root)`
+opens an existing writer. They are the initial Rust API integration; the legacy
+`OntoEnv::open/create` behavior and CLI/Python persistence are unchanged.
 
 Readers expose catalog listings, aliases, configuration, graph copies, generation
 information and the existing RDF5D `Snapshot`/`View` engine. They have no mutation
 or save methods. `committed_at` records the time while preparing publication;
 generation numbers, not timestamps, order commits. `opened_at` records this
 process's snapshot creation time.
+
+## Snapshot and index ownership
+
+`reader.snapshot()` clones an `Arc` to the reader's selected environment version;
+it does not reopen the file. Calls to `snapshot.rdf()` clone the same RDF5D `Arc`,
+so they share that object's lazy whole-store indexes. Independently opened
+readers and separate processes own their own heap indexes; there is no global
+snapshot registry.
+
+An ordinary graph-changing refresh replaces the reader's owning `Arc`. If no
+caller retains the old snapshot, view or iterator, its mapping and indexes become
+reclaimable. A retained environment snapshot keeps its metadata and graph backing;
+an owned RDF5D grouped iterator keeps only the RDF backing/indexes it needs. These
+lifetimes are covered with weak-reference tests. Allocator behavior still controls
+when freed heap pages leave RSS.
+
+Metadata-only refresh installs new catalog/configuration values while reusing
+the same immutable RDF5D mapping and whole-store indexes. Old retained metadata
+does not change. Refresh with an unchanged generation leaves the existing
+environment snapshot itself untouched.
+
+`snapshot.graph_view(&id)` and `snapshot.view(&ids)` return borrowed scoped
+`rdf5d::View`s. Their lifetime is tied to the selected environment snapshot, and
+they validate graph identifiers against that catalog. Keep a view across queries
+to reuse its scoped indexes. Those scoped indexes are independent of whole-store
+indexes so scoped transitive closures cannot follow unrelated graphs.
+
+The paired ownership diagnostic at ~19.5 MiB with four active reader processes
+measured aggregate PSS of approximately 204 MiB before refresh and 204 MiB after
+refresh when old handles were released. Keeping both indexed versions raised it
+from approximately 204 MiB to 392 MiB. This is a diagnostic result, not a memory
+guarantee; raw reports are in `docs/reviews/snapshot-ownership-2026-10-23.json`.
+Memory reclamation does not prune retained files on disk.
 
 ## Commit protocol and copy-on-write
 

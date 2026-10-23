@@ -2,7 +2,7 @@
 
 Build the snapshot_workload release example first. Uses only temporary fixtures
 below --work; per-file POSIX_FADV_DONTNEED never clears the host's global cache.
-It is an eviction request, not proof of cold storage reads. All samples are kept.
+It is an eviction request, not proof of cold storage reads. Worker reports are kept.
 """
 
 import argparse
@@ -59,6 +59,7 @@ def main():
     parser.add_argument("--cases", default="100:500,100:700,200:1000")
     parser.add_argument("--readers", type=int, default=4)
     parser.add_argument("--burst", type=int, default=3)
+    parser.add_argument("--retention", choices=["retain", "release", "both"], default="retain")
     args = parser.parse_args()
     assert args.readers > 0 and args.burst > 0
     args.work.mkdir(parents=True, exist_ok=True)
@@ -71,11 +72,13 @@ def main():
                          "Active readers retain their original version while writer publishes.",
                          "Reader samples during updates retain the first 4096 timings; maximum includes all queries.",
                          "RSS sums double-count shared pages; PSS apportions shared pages.",
-                         "Refresh retains old query indexes and builds indexes for the new version."], "cases": []}
+                         "Retention mode selects whether old query indexes remain owned across refresh."], "cases": []}
     print(f"Artifacts: {work}", flush=True)
-    for case in args.cases.split(","):
-        graphs, triples = map(int, case.split(":"))
-        root = work / f"{graphs}-{triples}"
+    modes = ["retain", "release"] if args.retention == "both" else [args.retention]
+    cases = [(int(case.split(":")[0]), int(case.split(":")[1]), mode)
+             for case in args.cases.split(",") for mode in modes]
+    for graphs, triples, retention in cases:
+        root = work / f"{graphs}-{triples}-{retention}"
         prepared = invoke(binary, "prepare", root, graphs, triples)
         initial = stored(root)
         for path in root.rglob("*"):
@@ -90,7 +93,8 @@ def main():
         children = []
         try:
             for _ in range(args.readers):
-                children.append(subprocess.Popen([str(binary), "read", str(root), "hold"],
+                child_mode = "hold" if retention == "retain" else "hold-release"
+                children.append(subprocess.Popen([str(binary), "read", str(root), child_mode],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
             ready = [receive(child) for child in children]
             assert all(sample["kind"] == "reader_ready" for sample in ready)
@@ -101,7 +105,8 @@ def main():
                 child.stdin.flush()
             refreshed = [receive(child) for child in children]
             assert all(sample["kind"] == "reader_refreshed" and sample["generation"] == args.burst + 2
-                       and sample["retained_generation"] == 1 for sample in refreshed)
+                       and sample["retained_generation"] == (1 if retention == "retain" else None)
+                       and sample["old_snapshot_released"] == (retention == "release") for sample in refreshed)
             memory_after = memory(children)
             for child in children:
                 child.stdin.write("exit\n")
@@ -110,6 +115,7 @@ def main():
                 _, error = child.communicate(timeout=30)
                 assert child.returncode == 0, error
             sample = {"graphs": graphs, "triples_per_graph": triples, "readers": args.readers,
+                      "retention_mode": retention,
                       "prepare": prepared, "initial_storage": initial, "eviction_requested_read": evicted,
                       "warm_fresh_process_reads": warm, "active_readers_initial": ready,
                       "readers_memory_before": memory_before, "update_burst": updated,
@@ -117,7 +123,7 @@ def main():
                       "final_storage": stored(root)}
             results["cases"].append(sample)
             (work / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-            print(f"{graphs} graphs x {triples}: {initial['object_bytes'] / 1048576:.2f} MiB; "
+            print(f"{graphs} graphs x {triples}, {retention}: {initial['object_bytes'] / 1048576:.2f} MiB; "
                   f"commit ms {updated['commit_ms']}; reader PSS KiB "
                   f"{memory_before['pss_kib']} -> {memory_after['pss_kib']}", flush=True)
         finally:

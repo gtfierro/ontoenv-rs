@@ -103,6 +103,30 @@ impl EnvironmentSnapshot {
         Arc::clone(&self.rdf)
     }
 
+    /// Borrow a graph-scoped query view from this immutable environment version.
+    /// Keep the view to reuse its lazy scoped indexes across queries. These are
+    /// distinct from the whole-store indexes shared through [`Self::rdf`].
+    pub fn graph_view(&self, id: &GraphIdentifier) -> Result<rdf5d::View<'_>> {
+        self.view(std::slice::from_ref(id))
+    }
+
+    /// Borrow a scoped query view, rejecting identifiers outside this catalog.
+    /// The Rust borrow keeps this version alive for the view's entire lifetime.
+    /// Empty catalog graphs are valid scopes with no physical triples.
+    pub fn view(&self, ids: &[GraphIdentifier]) -> Result<rdf5d::View<'_>> {
+        let mut names = Vec::with_capacity(ids.len());
+        for id in ids {
+            if !self.ontologies().contains_key(id) {
+                bail!(
+                    "Graph {id} is not present in generation {}",
+                    self.info.generation
+                );
+            }
+            names.push(id.name().as_str());
+        }
+        Ok(rdf5d::View::from_names(&self.rdf, &names))
+    }
+
     /// Copy one graph from this generation; empty and missing graphs differ.
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         if !self.environment.ontologies().contains_key(id) {
@@ -165,7 +189,17 @@ impl SnapshotReader {
         {
             return Ok(false);
         }
-        let next = open_generation(generation, &self.directory)?;
+        let next = if generation.info.environment_id == self.current.info.environment_id
+            && generation.object_id == self.current.object_id
+            && generation.object_length == self.current.object_length
+        {
+            // Metadata-only publication still selects the same immutable file.
+            // Preserve its mapping and lazy whole-store indexes across refresh.
+            validate_catalog(&generation, &self.current.rdf)?;
+            snapshot_from_generation(generation, Arc::clone(&self.current.rdf))
+        } else {
+            open_generation(generation, &self.directory)?
+        };
         self.current = next;
         Ok(true)
     }
@@ -637,6 +671,11 @@ fn open_generation(generation: Generation, directory: &Path) -> Result<Arc<Envir
         bail!("Snapshot object length does not match its committed manifest");
     }
     let rdf = Arc::new(Snapshot::open(&path)?);
+    validate_catalog(&generation, &rdf)?;
+    Ok(snapshot_from_generation(generation, rdf))
+}
+
+fn validate_catalog(generation: &Generation, rdf: &Snapshot) -> Result<()> {
     // Physical graphs may omit empty catalog graphs, but may not be orphaned.
     for name in rdf.graph_names() {
         if !generation
@@ -648,7 +687,7 @@ fn open_generation(generation: Generation, directory: &Path) -> Result<Arc<Envir
             bail!("RDF5D contains graph {name} absent from the committed catalog");
         }
     }
-    Ok(snapshot_from_generation(generation, rdf))
+    Ok(())
 }
 
 fn snapshot_from_generation(

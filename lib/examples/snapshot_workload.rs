@@ -1,5 +1,5 @@
 //! Diagnostic worker for lib/tests/support/snapshot_workload.py.
-//! prepare ROOT GRAPHS TRIPLES | read ROOT [hold] | update ROOT TRIPLES BURST
+//! prepare ROOT GRAPHS TRIPLES | read ROOT [hold|hold-release] | update ROOT TRIPLES BURST
 
 use anyhow::{Context, Result};
 use ontoenv::config::Config;
@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::fmt::Write as _;
 use std::io::{BufRead, Write as _};
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 fn source(graph: usize, triples: usize, revision: usize) -> Vec<u8> {
@@ -159,7 +159,13 @@ fn main() -> Result<()> {
                 "open_ms":open, "first_graph_ms":graph_read, "first_index_query_ms":first_query,
                 "warm_query_p50_ms":percentile(&mut warm, 50), "memory":memory()}),
             )?;
-            if args.get(2).is_some_and(|value| value == "hold") {
+            if args
+                .get(2)
+                .is_some_and(|value| value == "hold" || value == "hold-release")
+            {
+                let retain_old = args[2] == "hold";
+                let retained_generation = retained.info().generation;
+                let old_rdf = Arc::downgrade(&retained.rdf());
                 let (send, receive) = mpsc::channel();
                 std::thread::spawn(move || {
                     for line in std::io::stdin().lock().lines() {
@@ -191,16 +197,30 @@ fn main() -> Result<()> {
                     }
                     count += 1;
                 }
+                let held = if retain_old {
+                    Some(retained)
+                } else {
+                    drop(retained);
+                    None
+                };
                 let start = Instant::now();
                 anyhow::ensure!(reader.refresh()?, "Writer did not publish");
                 let refresh = milliseconds(start);
+                let old_released = old_rdf.upgrade().is_none();
+                anyhow::ensure!(
+                    old_released != retain_old,
+                    "Unexpected old snapshot ownership"
+                );
                 let start = Instant::now();
                 query(&reader.snapshot())?;
                 let new_index = milliseconds(start);
-                anyhow::ensure!(retained.get_graph(&id)? == graph, "Retained view changed");
+                if let Some(old) = &held {
+                    anyhow::ensure!(old.get_graph(&id)? == graph, "Retained view changed");
+                }
                 emit(
                     json!({"kind":"reader_refreshed", "generation":reader.snapshot().info().generation,
-                    "retained_generation":retained.info().generation, "refresh_ms":refresh,
+                    "retained_generation":if retain_old {Some(retained_generation)} else {None},
+                    "old_snapshot_released":old_released, "refresh_ms":refresh,
                     "new_index_query_ms":new_index, "queries_during_hold":count,
                     "sample_count":samples.len(), "query_p50_ms":if samples.is_empty() {0.0} else {percentile(&mut samples, 50)},
                     "query_p95_ms":if samples.is_empty() {0.0} else {percentile(&mut samples, 95)},

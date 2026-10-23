@@ -70,3 +70,15 @@ RSS/PSS and writer peak RSS, and reports retained object/manifest lengths.
 The first 4,096 query timings per active reader are kept for percentiles; the
 maximum covers every query. RSS sums count shared mappings repeatedly; PSS
 apportions shared pages. These are diagnostics, not controlled performance SLOs.
+
+Use `--retention both` to compare that deliberate two-version case with ordinary
+refresh after releasing old handles. Each mode uses an independent fixture.
+Release-mode workers check a weak reference to ensure the old RDF snapshot has
+been destroyed before indexing the refreshed version. The paired target-size
+report is `docs/reviews/snapshot-ownership-2026-10-23.json`:
+
+```sh
+python3 lib/tests/support/snapshot_workload.py \
+  --binary target/release/examples/snapshot_workload \
+  --work /tmp/ontoenv-benchmark-review --cases 100:700 --retention both
+```

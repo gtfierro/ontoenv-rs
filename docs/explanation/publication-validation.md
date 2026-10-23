@@ -120,9 +120,36 @@ some of them. They are not new public latency/memory promises or statistically
 validated p95 thresholds. Revisit them with real ontology/query workloads before
 making the new publisher the default or expanding its supported durability scope.
 
-The next useful step is reviewing snapshot/index ownership and the API for releasing
-old views, then adapting the normal APIs behind the opt-in path. Avoid implicit
-refresh of retained views: their stable identity is the consistency guarantee.
-Per-graph disk COW would not directly remove per-process in-memory query indexes;
-it is not justified by these measurements alone. Recursive source updates,
-explicit migration and eventual safe cleanup remain separate integration work.
+## Ownership follow-up and initial Rust integration
+
+The focused ownership review found no cycle requiring a new release mechanism.
+Weak-reference tests check that ordinary refresh frees unreferenced old metadata
+and RDF5D snapshots, while owned query iterators retain their RDF backing until
+dropped. Cloned handles share a snapshot, and metadata-only refresh now preserves
+the same mapped RDF5D object and its whole-store indexes. Scoped View indexes
+remain view-local to preserve scope-specific property-path semantics.
+
+A paired ~19.5 MiB run with four active readers confirms the difference between
+ordinary refresh and intentionally retaining history:
+
+| Reader behavior | Aggregate PSS before | Aggregate PSS after | Refresh median | New index/query median |
+| --- | ---: | ---: | ---: | ---: |
+| Keep old and new indexed versions | 204 MiB | 392 MiB | 36 ms | 57 ms |
+| Release old view before refresh | 204 MiB | 204 MiB | 57 ms | 47 ms |
+
+Ordinary refresh includes destruction of the old state; retained-view refresh
+defers that work. All four release-mode workers confirmed the old RDF snapshot
+was destroyed before building the new index. File retention remains unchanged.
+This is one diagnostic run per mode with independent equivalent fixtures, not
+a controlled latency/memory guarantee. Raw worker reports, commands and hashes
+are in `docs/reviews/snapshot-ownership-2026-10-23.json`.
+
+The first opt-in integration adds `OntoEnv::create_snapshot`,
+`OntoEnv::open_snapshot` and `OntoEnv::open_snapshot_writer`, returning specialized
+reader/writer handles. Environment snapshots now expose borrowed graph/scoped
+views tied to their selected version. The legacy mutable API and CLI/Python
+persistence have not been switched to this backend. Avoid implicit refresh of
+retained views: their stable identity is the consistency guarantee. Per-graph
+disk COW would not directly remove per-process in-memory query indexes and is
+not justified by these measurements alone. Recursive source updates, broader
+API adapters, explicit migration and safe cleanup remain integration work.
