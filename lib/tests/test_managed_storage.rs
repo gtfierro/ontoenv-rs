@@ -185,6 +185,50 @@ fn migration_refuses_active_legacy_handles_and_interrupted_mutations() -> Result
 }
 
 #[test]
+fn migration_rejects_duplicate_canonical_iris_without_installing_or_changing_legacy() -> Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    legacy_fixture(dir.path())?;
+    let legacy = dir.path().join(".ontoenv");
+    let catalog = legacy.join(ontoenv::catalog::CATALOG_FILE);
+    let (mut environment, _, _) = ontoenv::catalog::load(&catalog)?;
+    let mut io = PersistentGraphIO::new(legacy.clone(), true, true)?;
+    let duplicate = io.add_from_bytes(
+        OntologyLocation::InMemory {
+            identifier: "second-source-for-the-same-iri".into(),
+        },
+        ttl("urn:a", "second source"),
+        Some(RdfFormat::Turtle),
+        Overwrite::Allow,
+    )?;
+    environment.add_ontology(duplicate)?;
+    assert_eq!(environment.ontologies().len(), 2);
+    io.flush()?;
+    ontoenv::catalog::save(
+        &catalog,
+        &environment,
+        io.store_state()?,
+        Default::default(),
+    )?;
+    drop(io);
+    let before = files(&legacy);
+
+    let error = OntoEnv::migrate(dir.path()).unwrap_err();
+    assert!(
+        error.to_string().contains("duplicate graph IRI"),
+        "{error:#}"
+    );
+    assert!(!dir.path().join(".ontoenv-snapshots").exists());
+    assert_eq!(files(&legacy), before);
+    assert!(dir.path().read_dir()?.all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".ontoenv-snapshots-init-")));
+    Ok(())
+}
+
+#[test]
 fn nested_transactions_restore_overlay_and_settings_and_publish_once() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut env = OntoEnv::create(config(dir.path()), false)?;
@@ -231,6 +275,56 @@ fn nested_transactions_restore_overlay_and_settings_and_publish_once() -> Result
     );
     assert_eq!(env.ontologies().len(), 2);
     add(&mut env, "urn:retry", "ok")?;
+    Ok(())
+}
+
+#[test]
+fn nested_rollback_restores_parsed_contents_after_staged_reads_and_rename() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut env = OntoEnv::create(config(dir.path()), false)?;
+    env.transaction(|env| {
+        env.add_from_bytes(
+            OntologyLocation::InMemory {
+                identifier: "duplicates".into(),
+            },
+            b"<urn:a> a <http://www.w3.org/2002/07/owl#Ontology>; <urn:value> \"old\", \"old\" ."
+                .to_vec(),
+            Some(RdfFormat::Turtle),
+            Overwrite::Allow,
+            RefreshStrategy::Force,
+        )?;
+        let id = env
+            .resolve(ResolveTarget::Graph(NamedNode::new("urn:a")?))
+            .unwrap();
+        let expected = env.get_graph(&id)?;
+        assert_eq!(expected.len(), 2);
+        let mut copy = env.get_graph(&id)?;
+        copy.clear();
+        assert_eq!(env.get_graph(&id)?, expected);
+        let failed: Result<()> = env.transaction(|env| {
+            add(env, "urn:a", "discard")?;
+            let replaced = env
+                .resolve(ResolveTarget::Graph(NamedNode::new("urn:a")?))
+                .unwrap();
+            assert!(env
+                .get_graph(&replaced)?
+                .iter()
+                .any(|t| t.object.to_string() == "\"discard\""));
+            env.rename_graph_iri(&replaced, NamedNode::new("urn:renamed")?)?;
+            anyhow::bail!("restore parsed source after indexed rename");
+        });
+        assert!(failed.is_err());
+        assert!(env
+            .resolve(ResolveTarget::Graph(NamedNode::new("urn:renamed")?))
+            .is_none());
+        assert_eq!(env.get_graph(&id)?, expected);
+        Ok(())
+    })?;
+    let selected = env.snapshot().unwrap();
+    assert_eq!(selected.info().generation, 1);
+    let id = selected.resolve(NamedNode::new("urn:a")?.as_ref()).unwrap();
+    assert_eq!(selected.get_graph(&id)?.len(), 2);
+    assert_eq!(selected.rdf().triple_count(rdf5d::Scope::All)?, 2);
     Ok(())
 }
 

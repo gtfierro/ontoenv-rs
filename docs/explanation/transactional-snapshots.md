@@ -131,6 +131,12 @@ An update clones small catalog/configuration values and holds a graph overlay
 of replacements and deletions. Untouched content remains in the immutable,
 mmap-backed base. It does not clone the entire decoded store at transaction start.
 
+Parsed replacements are staged as shared, deduplicated triple buffers, without
+building OxRDF graph indexes. The serializer iterates those buffers directly.
+Explicit staged graph reads materialize an independent graph on demand; repeated
+reads can therefore repeat that work. Callers that supply an existing graph keep
+that representation. Nested checkpoints share either form through `Arc`.
+
 On a graph-changing commit, it streams unchanged graphs and replacements into a
 new complete RDF5D file. Complete files preserve the existing shared term
 dictionary and cross-graph query engine. Empty replacements override old graph

@@ -8,6 +8,7 @@ use crate::io::{fetch_source, parse_ontology_source, GraphIO, ParsedOntology, St
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::options::Overwrite;
 use crate::snapshots::{EnvironmentSnapshot, SnapshotReader, SnapshotWriter};
+use crate::staged_graph::StagedGraph;
 use crate::FailedImport;
 use anyhow::{bail, Result};
 use oxigraph::io::RdfFormat;
@@ -20,7 +21,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 struct PendingGraph {
     id: GraphIdentifier,
-    graph: Arc<Graph>,
+    graph: Arc<StagedGraph>,
     ontology: Option<Ontology>,
 }
 
@@ -101,11 +102,18 @@ impl SnapshotGraphIO {
                     if let Some(ontology) = &pending.ontology {
                         return Ok(ontology.clone());
                     }
-                    return Ontology::from_graph(
-                        &pending.graph,
-                        pending.id.location().clone(),
-                        self.require_names,
-                    );
+                    return match &*pending.graph {
+                        StagedGraph::Triples(triples) => Ontology::from_triples(
+                            triples,
+                            pending.id.location().clone(),
+                            self.require_names,
+                        ),
+                        StagedGraph::Indexed(graph) => Ontology::from_graph(
+                            graph,
+                            pending.id.location().clone(),
+                            self.require_names,
+                        ),
+                    };
                 }
                 Some(None) => {}
                 None => {
@@ -120,15 +128,22 @@ impl SnapshotGraphIO {
                 }
             }
         }
+        let ParsedOntology {
+            ontology,
+            triples,
+            bytes,
+            ..
+        } = parsed;
+        drop(bytes);
         state.pending.insert(
             name,
             Some(PendingGraph {
-                id: parsed.ontology.id().clone(),
-                graph: Arc::new(parsed.to_graph()),
-                ontology: Some(parsed.ontology.clone()),
+                id: ontology.id().clone(),
+                graph: Arc::new(StagedGraph::from_triples(triples)),
+                ontology: Some(ontology.clone()),
             }),
         );
-        Ok(parsed.ontology)
+        Ok(ontology)
     }
 }
 
@@ -255,7 +270,7 @@ impl GraphIO for SnapshotGraphIO {
             id.name().as_str().into(),
             Some(PendingGraph {
                 id,
-                graph: Arc::new(graph),
+                graph: Arc::new(StagedGraph::Indexed(Box::new(graph))),
                 ontology: None,
             }),
         );
@@ -273,7 +288,7 @@ impl GraphIO for SnapshotGraphIO {
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let state = self.state.lock().unwrap();
         match state.pending.get(id.name().as_str()) {
-            Some(Some(pending)) => Ok((*pending.graph).clone()),
+            Some(Some(pending)) => Ok(pending.graph.to_graph()),
             Some(None) => Ok(Graph::new()),
             None => {
                 let snapshot = state.connection.snapshot();

@@ -265,6 +265,75 @@ fn abort_and_failed_strict_commit_leave_no_partial_state() -> Result<()> {
 }
 
 #[test]
+fn parsed_staging_preserves_sets_blank_nodes_and_literal_lexical_forms() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    let mut tx = writer.begin_update();
+    let bytes = br#"
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+        <urn:duplicates> a owl:Ontology; <urn:node> _:shared .
+        _:shared <urn:text> "salut"@fr;
+            <urn:number> "01"^^xsd:integer, "1"^^xsd:integer .
+        <urn:duplicates> <urn:node> _:other .
+        _:other <urn:text> "salut"@fr .
+        # Repeated, nonadjacent triples remain set members, not extra rows.
+        <urn:duplicates> <urn:node> _:shared .
+        _:shared <urn:text> "salut"@fr .
+    "#;
+    let id = tx.add_from_bytes(
+        source("duplicates"),
+        bytes.to_vec(),
+        Some(RdfFormat::Turtle),
+    )?;
+    let staged = tx.get_graph(&id)?;
+    assert_eq!(staged.len(), 7);
+    let mut copy = tx.get_graph(&id)?;
+    copy.clear();
+    assert_eq!(tx.get_graph(&id)?.len(), 7);
+    let committed = tx.commit()?;
+    assert_eq!(committed.get_graph(&id)?, staged);
+    assert_eq!(
+        committed
+            .rdf()
+            .triple_count(rdf5d::Scope::ByName("urn:duplicates"))?,
+        7
+    );
+    drop(writer);
+    let reader = SnapshotReader::open(dir.path())?;
+    assert_eq!(reader.snapshot().get_graph(&id)?, staged);
+    Ok(())
+}
+
+#[test]
+fn indexed_replacement_and_parsed_replacement_share_transaction_behavior() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    let id = add(&mut writer, "urn:a", "old")?;
+    let retained = writer.snapshot();
+    let mut tx = writer.begin_update();
+    let graph = tx.get_graph(&id)?;
+    tx.replace_graph(&id, graph.clone())?;
+    assert_eq!(tx.get_graph(&id)?, graph);
+    tx.add_alias("urn:alias", "urn:a")?;
+    tx.add_from_bytes(
+        source("urn:a"),
+        ttl("urn:a", "new"),
+        Some(RdfFormat::Turtle),
+    )?;
+    let parsed = tx.get_graph(&id)?;
+    let committed = tx.commit()?;
+    assert_eq!(committed.get_graph(&id)?, parsed);
+    assert_eq!(
+        committed.resolve(NamedNode::new("urn:alias")?.as_ref()),
+        Some(id.clone())
+    );
+    assert_value(&retained, &id, "old")?;
+    assert_value(&committed, &id, "new")?;
+    Ok(())
+}
+
+#[test]
 fn empty_replacement_and_deletion_are_distinct_after_reopen() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut writer = SnapshotWriter::create(config(dir.path()))?;

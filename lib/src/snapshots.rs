@@ -13,6 +13,7 @@ use crate::io::{
     fetch_source, oxigraph_object_to_r5term, oxigraph_subject_to_r5term, parse_ontology_source,
 };
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
+use crate::staged_graph::StagedGraph;
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
@@ -447,7 +448,7 @@ impl SnapshotWriter {
         &mut self,
         environment: Environment,
         config: Config,
-        changes: BTreeMap<String, Option<Arc<Graph>>>,
+        changes: BTreeMap<String, Option<Arc<StagedGraph>>>,
     ) -> Result<Arc<EnvironmentSnapshot>> {
         let mut update = self.begin_update();
         update.environment = environment;
@@ -468,7 +469,7 @@ pub struct SnapshotUpdate<'a> {
     writer: &'a mut SnapshotWriter,
     environment: Environment,
     config: Config,
-    changes: BTreeMap<String, Option<Arc<Graph>>>,
+    changes: BTreeMap<String, Option<Arc<StagedGraph>>>,
     validate_imports: bool,
 }
 
@@ -485,7 +486,7 @@ impl SnapshotUpdate<'_> {
     }
 
     // Only metadata derived from the candidate graph can enter the catalog.
-    fn put_ontology(&mut self, ontology: Ontology, graph: Graph) -> Result<GraphIdentifier> {
+    fn put_ontology(&mut self, ontology: Ontology, graph: StagedGraph) -> Result<GraphIdentifier> {
         if ontology.location().is_none() {
             bail!("Cannot stage an ontology without a source location");
         }
@@ -543,7 +544,7 @@ impl SnapshotUpdate<'_> {
                 id.name()
             );
         }
-        self.put_ontology(ontology, graph)?;
+        self.put_ontology(ontology, StagedGraph::Indexed(Box::new(graph)))?;
         Ok(())
     }
 
@@ -565,8 +566,14 @@ impl SnapshotUpdate<'_> {
         let location = normalize_source_location(location, &self.config.root);
         let parsed =
             parse_ontology_source(location, bytes, format, self.config.require_ontology_names)?;
-        let graph = parsed.to_graph();
-        self.put_ontology(parsed.ontology, graph)
+        let crate::io::ParsedOntology {
+            ontology,
+            triples,
+            bytes,
+            ..
+        } = parsed;
+        drop(bytes);
+        self.put_ontology(ontology, StagedGraph::from_triples(triples))
     }
 
     /// Read staged contents, falling through to the mapped base for untouched graphs.
@@ -575,7 +582,7 @@ impl SnapshotUpdate<'_> {
             bail!("Graph {id} is not present in the candidate");
         }
         match self.changes.get(id.name().as_str()) {
-            Some(Some(graph)) => Ok((**graph).clone()),
+            Some(Some(graph)) => Ok(graph.to_graph()),
             Some(None) => bail!("Graph {id} is deleted in the candidate"),
             None => self.writer.current.get_graph(id),
         }
@@ -980,7 +987,7 @@ fn publish_with_hook(
 fn write_object(
     directory: &Path,
     base: Option<&Snapshot>,
-    changes: &BTreeMap<String, Option<Arc<Graph>>>,
+    changes: &BTreeMap<String, Option<Arc<StagedGraph>>>,
 ) -> Result<(String, u64, Arc<Snapshot>)> {
     let objects = directory.join("objects");
     // A randomly named private object directory cannot collide with an abandoned
