@@ -89,7 +89,7 @@ The public Rust reader/update API remains the same.
    unique manifest, sync its bytes, retain it, close it and sync `manifests/`.
 4. Write a small temporary pointer in the directory containing `CURRENT`, naming
    that manifest and its BLAKE3 checksum. Sync its bytes and close the handle.
-5. Atomically replace `CURRENT` using `tempfile::TempPath::persist`, then sync its
+5. Atomically replace `CURRENT` using `std::fs::rename`, then sync its
    parent directory. Replacement is the visibility point. No unlink/truncate
    of the old pointer occurs. Prepare the writer's in-memory snapshot before
    this step so installing it afterward cannot fail through file I/O.
@@ -107,10 +107,14 @@ remain available without a lock spanning selection and mapping. Fresh readers
 need no writer to repair files after an abrupt process exit. Unreferenced files
 left by interrupted attempts are ignored and retained.
 
-The existing tempfile dependency provides the platform replacement operation,
-including Windows. Its documented atomic replacement does not sync file bytes
-or directories; OntoEnv explicitly performs those syncs where implemented.
-[TempPath::persist documentation](https://docs.rs/tempfile/3.27.0/tempfile/struct.TempPath.html#method.persist).
+The tempfile dependency creates unique pointer files and clears temporary file
+attributes before the writing handle closes. Rust's `std::fs::rename` performs
+replacement without first unlinking CURRENT. On Windows it has a POSIX-semantics
+fallback for replacing a file whose readers still hold it open; tempfile's
+MoveFileExW-only persistence failed the concurrent-reader stress test. A regression
+test now keeps the old CURRENT handle open throughout publication and checks
+that it still reads the old bytes after new opens select the new pointer.
+[Rust 1.88 Windows implementation](https://github.com/rust-lang/rust/blob/1.88.0/library/std/src/sys/fs/windows.rs#L1170).
 Directory sync currently runs on Unix and is a no-op elsewhere. Passing Windows
 process tests establishes normal-operation/process-exit behavior, not a Windows
 power-loss guarantee. Filesystem and device flush semantics also matter on Unix.

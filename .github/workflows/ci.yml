@@ -111,6 +111,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - name: Test snapshot transactions, recovery and concurrent processes
         run: cargo test -p ontoenv --locked --release --features transactional-snapshots --lib --test test_snapshots --test test_concurrency
+      - name: Repeat Windows concurrent publication stress
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          for ($iteration = 0; $iteration -lt 10; $iteration++) {
+            cargo test -p ontoenv --locked --release --features transactional-snapshots --test test_snapshots multiple_processes_open_and_refresh_during_repeated_publications -- --exact
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
   msrv:
     name: Rust 1.88 MSRV

@@ -744,9 +744,8 @@ fn publish_with_hook(
             .to_owned(),
         manifest_hash: blake3::hash(&bytes).to_hex().to_string(),
     };
-    // This tempfile is on the same filesystem as CURRENT. persist atomically
-    // replaces the destination on Unix and Windows; it never unlinks CURRENT
-    // first. Close the writing handle before replacement.
+    // This tempfile is on the same filesystem as CURRENT. Close the writing
+    // handle and clear Windows temporary attributes before replacement.
     let mut pointer = tempfile::Builder::new()
         .prefix(".CURRENT-")
         .tempfile_in(directory)?;
@@ -754,10 +753,16 @@ fn publish_with_hook(
     at(PublicationPhase::CurrentWritten)?;
     pointer.as_file().sync_all()?;
     at(PublicationPhase::CurrentSynced)?;
-    pointer
-        .into_temp_path()
-        .persist(directory.join(CURRENT))
-        .context("CURRENT replacement failed; reopen before retrying")?;
+    let (file, pointer_path) = pointer.keep()?;
+    drop(file);
+    // Unlike tempfile's MoveFileExW-only persist, std::fs::rename has a Windows
+    // FileRenameInfoEx/POSIX fallback when the old CURRENT has open readers.
+    // Existing handles keep reading the old inode; new opens select the new one.
+    let replacement = fs::rename(&pointer_path, directory.join(CURRENT));
+    if replacement.is_err() {
+        let _ = fs::remove_file(&pointer_path);
+    }
+    replacement.context("CURRENT replacement failed; reopen before retrying")?;
     at(PublicationPhase::CurrentReplaced)?;
     sync_directory(directory)
         .context("CURRENT was replaced but syncing its parent failed; reopen to inspect")?;
@@ -1066,6 +1071,32 @@ mod tests {
                 .any(|t| t.object.to_string() == expected));
             stage(&mut writer, "retry")?.commit()?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn publication_replaces_current_while_an_old_pointer_is_open() -> Result<()> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let dir = tempfile::tempdir()?;
+        let mut writer = SnapshotWriter::create(config(dir.path()))?;
+        stage(&mut writer, "old")?.commit()?;
+        let current = dir.path().join(DIRECTORY).join(CURRENT);
+        let before = fs::read(&current)?;
+        let mut open_pointer = File::open(&current)?;
+        stage(&mut writer, "new")?.commit()?;
+        assert_ne!(fs::read(&current)?, before);
+        open_pointer.seek(SeekFrom::Start(0))?;
+        let mut retained = Vec::new();
+        open_pointer.read_to_end(&mut retained)?;
+        assert_eq!(retained, before);
+        assert_eq!(
+            SnapshotReader::open(dir.path())?
+                .snapshot()
+                .info()
+                .generation,
+            2
+        );
         Ok(())
     }
 
