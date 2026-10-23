@@ -1353,15 +1353,33 @@ ex:B a owl:Class .
         env2.close()
 
     def test_get_dependencies(self):
-        """Test env.get_dependencies()."""
-        self.env = OntoEnv(path=self.test_dir, recreate=True, offline=False)
-        self.env.add(str(self.brick_file_path))
+        """Resolve a known transitive closure without depending on live QUDT."""
+        quantity_path = self.test_dir / "quantitykind.ttl"
+        dimension_path = self.test_dir / "dimensionvector.ttl"
+        quantity_iri = quantity_path.resolve().as_uri()
+        dimension_iri = dimension_path.resolve().as_uri()
+        dimension_path.write_text(
+            f'<{dimension_iri}> a <{OWL.Ontology}> .\n', encoding="utf-8"
+        )
+        quantity_path.write_text(
+            f'''@prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+            <{quantity_iri}> a owl:Ontology;
+                owl:imports <{dimension_iri}>;
+                sh:declare [ sh:prefix "fixture";
+                             sh:namespace "urn:fixture:"^^xsd:anyURI ] .
+            ''', encoding="utf-8"
+        )
+        self.env = OntoEnv(
+            path=self.test_dir, recreate=True, offline=True, search_directories=[]
+        )
+        self.env.add(str(quantity_path.resolve()))
 
         g = Graph()
-        brick_ontology_uri = URIRef(self.brick_name)
-        g.add((brick_ontology_uri, RDF.type, OWL.Ontology))
-        # add an import to be resolved
-        g.add((brick_ontology_uri, OWL.imports, URIRef("http://qudt.org/3.1.8/vocab/quantitykind")))
+        root_uri = URIRef("urn:dependencies:root")
+        g.add((root_uri, RDF.type, OWL.Ontology))
+        g.add((root_uri, OWL.imports, URIRef(quantity_iri)))
 
         num_triples_before = len(g)
         deps_g, imported = self.env.get_dependencies(g)
@@ -1373,8 +1391,8 @@ ex:B a owl:Class .
         # new graph should have content
         self.assertGreater(len(deps_g), 0)
         self.assertGreater(len(imported), 0)
-        self.assertIn("http://qudt.org/3.1.8/vocab/quantitykind", imported)
-        self.assertIn("http://qudt.org/3.1.8/vocab/dimensionvector", imported)
+        self.assertIn(quantity_iri, imported)
+        self.assertIn(dimension_iri, imported)
 
         # without graph_name: each closure ontology keeps its own owl:Ontology declaration;
         # the result is a proper union, not an ownerless bag.
@@ -1391,6 +1409,7 @@ ex:B a owl:Class .
         all_named_decls = list(deps_named.triples((None, RDF.type, OWL.Ontology)))
         self.assertEqual(len(all_named_decls), 1, "named deps graph should have exactly one owl:Ontology declaration")
         self.assertEqual(str(all_named_decls[0][0]), named_uri, "the single declaration should be for graph_name")
+        self.assertEqual(len(list(deps_named.objects(URIRef(named_uri), SH.declare))), 1)
 
     def test_update_force_flag(self):
         """Test env.update(force=True) forces reloading of all ontologies."""
