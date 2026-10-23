@@ -3,28 +3,12 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn ontoenv_bin() -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("target")
-        .join("debug")
-        .join(if cfg!(windows) {
-            "ontoenv.exe"
-        } else {
-            "ontoenv"
-        });
-    if !p.exists() {
-        p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("target")
-            .join("release")
-            .join(if cfg!(windows) {
-                "ontoenv.exe"
-            } else {
-                "ontoenv"
-            });
-    }
-    assert!(p.exists(), "ontoenv binary not found at {:?}", p);
-    p
+    PathBuf::from(env!("CARGO_BIN_EXE_ontoenv"))
+}
+
+fn saved_config(root: &std::path::Path) -> serde_json::Value {
+    let reader = ontoenv::snapshots::SnapshotReader::open(root).expect("open saved snapshot");
+    serde_json::to_value(reader.snapshot().config()).expect("serialize configuration")
 }
 
 fn tmp_dir(name: &str) -> PathBuf {
@@ -100,32 +84,49 @@ fn discovery_from_subdirectory() {
 }
 
 #[test]
-fn recover_rebuilds_catalog_and_removes_pending_marker() {
+fn legacy_recovery_precedes_explicit_migration() {
+    use ontoenv::io::{GraphIO, PersistentGraphIO};
     let exe = ontoenv_bin();
     let root = tmp_dir("recover");
     let iri = "http://example.org/ont/Recoverable";
-    write_ttl(&root.join("recoverable.ttl"), iri, "");
-
-    let out = Command::new(&exe)
-        .current_dir(&root)
-        .arg("init")
-        .arg(".")
-        .output()
-        .expect("run init");
-    assert!(
-        out.status.success(),
-        "init failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let source = root.join("recoverable.ttl");
+    write_ttl(&source, iri, "");
+    let legacy = root.join(".ontoenv");
+    fs::create_dir_all(&legacy).unwrap();
+    let config = ontoenv::config::Config::builder()
+        .root(root.clone())
+        .locations(vec![])
+        .offline(true)
+        .build()
+        .unwrap();
+    config.save_to_file(&legacy.join("ontoenv.json")).unwrap();
+    let mut backend = PersistentGraphIO::new(legacy.clone(), true, false).unwrap();
+    let ontology = backend
+        .add(
+            ontoenv::ontology::OntologyLocation::File(source),
+            ontoenv::options::Overwrite::Allow,
+        )
+        .unwrap();
+    let mut environment = ontoenv::environment::Environment::new();
+    environment.add_ontology(ontology).unwrap();
+    backend.flush().unwrap();
+    ontoenv::catalog::save(
+        &legacy.join(ontoenv::catalog::CATALOG_FILE),
+        &environment,
+        backend.store_state().unwrap(),
+        Default::default(),
+    )
+    .unwrap();
+    drop(backend);
 
     let pending = root.join(".ontoenv").join("catalog.pending");
     fs::write(&pending, r#"{"mutation_id":"test","graphs":[]}"#).expect("write pending marker");
 
     let out = Command::new(&exe)
         .current_dir(&root)
-        .arg("status")
+        .arg("migrate")
         .output()
-        .expect("run blocked status");
+        .expect("run blocked migration");
     assert!(!out.status.success(), "status should require recovery");
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("ontoenv recover"),
@@ -151,6 +152,19 @@ fn recover_rebuilds_catalog_and_removes_pending_marker() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(!pending.exists(), "successful recovery must remove marker");
+    assert!(!root.join(".ontoenv-snapshots").exists());
+    let migrated = Command::new(&exe)
+        .current_dir(&nested)
+        .arg("migrate")
+        .output()
+        .expect("run migrate");
+    assert!(
+        migrated.status.success(),
+        "migration failed: {}",
+        String::from_utf8_lossy(&migrated.stderr)
+    );
+    assert!(root.join(".ontoenv-snapshots/CURRENT").exists());
+    assert!(legacy.join("ontoenv.json").exists());
 
     let out = Command::new(&exe)
         .current_dir(&root)
@@ -193,7 +207,7 @@ fn ontoenv_dir_override() {
     let elsewhere = tmp_dir("elsewhere");
     let out = Command::new(&exe)
         .current_dir(&elsewhere)
-        .env("ONTOENV_DIR", env_root.join(".ontoenv"))
+        .env("ONTOENV_DIR", env_root.join(".ontoenv-snapshots"))
         .arg("list")
         .arg("ontologies")
         .output()
@@ -444,10 +458,11 @@ fn get_jsonld_output() {
 
 // Get command: disambiguate with --location when same IRI at two locations
 #[test]
-fn get_with_location_disambiguates() {
+fn get_with_location_selects_registered_source() {
     let exe = ontoenv_bin();
     let root = tmp_dir("get_loc");
-    let iri = "http://example.org/ont/Dup";
+    let iri = "http://example.org/ont/Version1";
+    let iri2 = "http://example.org/ont/Version2";
     let p1 = root.join("dup_v1.ttl");
     let p2 = root.join("dup_v2.ttl");
     // add distinguishing triples
@@ -458,7 +473,7 @@ fn get_with_location_disambiguates() {
     );
     write_ttl(
         &p2,
-        iri,
+        iri2,
         "<http://example.org/x> <http://example.org/p> \"v2\" .",
     );
 
@@ -492,7 +507,7 @@ fn get_with_location_disambiguates() {
     let out = Command::new(&exe)
         .current_dir(&root)
         .arg("get")
-        .arg(iri)
+        .arg(iri2)
         .arg("-l")
         .arg(p2.to_str().unwrap())
         .output()
@@ -526,9 +541,7 @@ fn init_offline_flag_persists_on_existing_env() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let cfg_path = root.join(".ontoenv").join("ontoenv.json");
-    let raw = fs::read_to_string(&cfg_path).expect("read ontoenv.json");
-    let json: serde_json::Value = serde_json::from_str(&raw).expect("parse json");
+    let json = saved_config(&root);
     assert_eq!(
         json["offline"].as_bool(),
         Some(false),
@@ -549,8 +562,7 @@ fn init_offline_flag_persists_on_existing_env() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let raw2 = fs::read_to_string(&cfg_path).expect("read ontoenv.json after second init");
-    let json2: serde_json::Value = serde_json::from_str(&raw2).expect("parse json2");
+    let json2 = saved_config(&root);
     assert_eq!(
         json2["offline"].as_bool(),
         Some(true),
@@ -571,8 +583,7 @@ fn init_offline_flag_persists_on_existing_env() {
         "init --offline=false failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let raw3 = fs::read_to_string(&cfg_path).expect("read config after explicit false");
-    let json3: serde_json::Value = serde_json::from_str(&raw3).expect("parse config");
+    let json3 = saved_config(&root);
     assert_eq!(json3["offline"].as_bool(), Some(false));
 }
 
@@ -769,10 +780,7 @@ fn config_bind_and_unbind_namespaces() {
 
     run(&["config", "unbind", "other"]);
     run(&["config", "unbind", "ex2"]);
-    let cfg: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join(".ontoenv").join("ontoenv.json")).expect("read config"),
-    )
-    .expect("parse config");
+    let cfg = saved_config(&root);
     assert!(cfg.get("namespaces").is_none());
 
     let out = Command::new(&exe)

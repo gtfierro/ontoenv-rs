@@ -57,7 +57,7 @@ Saving, changing, and removing a binding
 ----------------------------------------
 
 In Python, these calls save changes immediately in
-``.ontoenv/ontoenv.json`` for a writable persistent environment:
+the selected version’s configuration for a writable persistent environment:
 
 .. code-block:: python
 

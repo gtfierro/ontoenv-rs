@@ -83,8 +83,8 @@ mutating the environment, ask again or refresh in place:
    env.flush()
    env.refresh_dataset(dataset)
 
-These calls form a sequence. ``add`` changes the environment, ``flush``
-publishes the pending store snapshot, and ``refresh_dataset`` rebinds the
+These calls form a sequence. ``add`` atomically publishes the managed update, ``flush`` is an optional
+persistence boundary, and ``refresh_dataset`` rebinds the
 existing dataset to that snapshot. Without the final call, ``dataset`` remains
 the point-in-time view returned earlier.
 

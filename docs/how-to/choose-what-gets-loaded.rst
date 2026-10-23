@@ -106,7 +106,7 @@ files and raises if one has no ontology declaration.
 Change filters on an existing environment
 -----------------------------------------
 
-Filters are saved in ``.ontoenv/config.json`` and re-applied by every later
+Filters are saved in the selected version’s configuration and re-applied by every later
 command. The following are independent examples of inspecting and editing the
 path-based lists:
 
@@ -120,7 +120,7 @@ path-based lists:
 ``locations``, ``includes``, and ``excludes`` are list-valued, so they take
 ``config add`` / ``config remove`` rather than ``config set``. The
 ontology-IRI regex lists (``include_ontologies``, ``exclude_ontologies``) have
-no ``config`` support — edit ``.ontoenv/config.json`` directly, or pass the
+no CLI list-edit support — use Python lifecycle overrides, or pass the
 flags on the next command.
 
 These ``config`` commands do not scan sources. Run ``ontoenv update`` after

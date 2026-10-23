@@ -1,0 +1,208 @@
+{
+  "kernel_sha256": "49b4787056970e18a9e487b522254c070f597f4a3a6fa035ee4d8ca8eee22754",
+  "probe_sha256": "23951796e87d32b22eedfe0af48c3cc24b6ba00e438267e8051d0a07f273a725",
+  "qemu": "QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)",
+  "filesystem": "ext4 (mkfs defaults), guest journal recovery, application verification on read-only mount",
+  "disk": "64 MiB raw image, virtio-blk, QEMU cache=none, no host mounts or network",
+  "scope": "Guest kernel/page-cache loss. Host/device volatile caches are not power-cycled.",
+  "runs": [
+    {
+      "cycle": 1,
+      "phase": "ObjectReady",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "ManifestWritten",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "ManifestSynced",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "ManifestDurable",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "CurrentWritten",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "CurrentSynced",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "CurrentReplaced",
+      "expected": "either",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "Durable",
+      "expected": "new",
+      "generation": 2,
+      "verified": true
+    },
+    {
+      "cycle": 1,
+      "phase": "Acknowledged",
+      "expected": "new",
+      "generation": 2,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "ObjectReady",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "ManifestWritten",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "ManifestSynced",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "ManifestDurable",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "CurrentWritten",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "CurrentSynced",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "CurrentReplaced",
+      "expected": "either",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "Durable",
+      "expected": "new",
+      "generation": 2,
+      "verified": true
+    },
+    {
+      "cycle": 2,
+      "phase": "Acknowledged",
+      "expected": "new",
+      "generation": 2,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "ObjectReady",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "ManifestWritten",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "ManifestSynced",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "ManifestDurable",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "CurrentWritten",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "CurrentSynced",
+      "expected": "old",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "CurrentReplaced",
+      "expected": "either",
+      "generation": 1,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "Durable",
+      "expected": "new",
+      "generation": 2,
+      "verified": true
+    },
+    {
+      "cycle": 3,
+      "phase": "Acknowledged",
+      "expected": "new",
+      "generation": 2,
+      "verified": true
+    }
+  ],
+  "date": "2026-10-23",
+  "guest_kernel": "7.2.6-76070206-generic; installed-version package downloaded/extracted without host installation",
+  "fixture": "One ontology with an old/new literal, configuration revision and explicit alias. Existing initialized environment; this is a publication protocol test, not a large-store or initialization crash test.",
+  "reproduction": "lib/tests/support/snapshot_vm.py; --cycles 3 --timeout 60",
+  "artifacts": "/tmp/ontoenv-durability-vm/snapshot-vm-3fgh3zyo (serial logs and disk images retained locally)",
+  "source_sha256": {
+    "lib/src/snapshots.rs": "b3f6e4b51421631dcdf74d7301f99ede3f8bf6ae62de05362aa53b7b4d002818",
+    "lib/tests/support/snapshot_vm.py": "b2e755efe1e35e8d90bc7bfaa4dca17a559fd66d0541e9979eee329ff2761333"
+  }
+}

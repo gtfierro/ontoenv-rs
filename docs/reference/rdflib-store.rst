@@ -104,7 +104,7 @@ plugin name ``"ontoenv"`` once the ``ontoenv`` package is imported.
 
 ``env.get_dataset()`` binds the environment's known namespaces and keys each
 named graph by its ontology IRI. It chooses storage automatically: a zero-copy
-rdf5d view over ``.ontoenv/store.r5tu`` when one exists — unavailable for
+rdf5d view over the selected immutable artifact when managed storage exists — unavailable for
 temporary environments and those with a custom ``graph_store=`` — and an
 in-memory copy otherwise.
 

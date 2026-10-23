@@ -105,6 +105,9 @@ pub mod ontology;
 pub mod options;
 pub mod policy;
 pub mod progress;
+mod snapshot_io;
+pub mod snapshots;
+mod staged_graph;
 #[macro_use]
 pub mod util;
 pub mod transform;

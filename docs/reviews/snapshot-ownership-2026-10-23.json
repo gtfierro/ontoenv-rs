@@ -1,0 +1,534 @@
+{
+  "platform": "Linux-7.0.11-76070011-generic-x86_64-with-glibc2.39",
+  "binary_sha256": "64d30b4b11f494fa82ad4bba2352f4165414352e2d97adf1731ced6daf71a02b",
+  "notes": [
+    "Synthetic, local, offline release-build diagnostic; not a controlled hardware benchmark.",
+    "Cache eviction is advisory, not guaranteed cold reads.",
+    "First query builds a PSO index; subsequent queries reuse it.",
+    "Active readers retain their original version while writer publishes.",
+    "Reader samples during updates retain the first 4096 timings; maximum includes all queries.",
+    "RSS sums double-count shared pages; PSS apportions shared pages.",
+    "Retention mode selects whether old query indexes remain owned across refresh."
+  ],
+  "cases": [
+    {
+      "graphs": 100,
+      "triples_per_graph": 700,
+      "readers": 4,
+      "retention_mode": "retain",
+      "prepare": {
+        "commit_ms": 276.03008800000003,
+        "graphs": 100,
+        "kind": "prepared",
+        "memory": {
+          "peak_rss_kib": 238796,
+          "rss_kib": 167368
+        },
+        "staging_ms": 174.88927800000002,
+        "triples": 70100
+      },
+      "initial_storage": {
+        "objects": 2,
+        "object_bytes": 20418528,
+        "manifests": 2,
+        "manifest_bytes": 37695
+      },
+      "eviction_requested_read": {
+        "first_graph_ms": 0.838587,
+        "first_index_query_ms": 28.237928,
+        "generation": 1,
+        "kind": "reader_ready",
+        "memory": {
+          "peak_rss_kib": 70260,
+          "rss_kib": 70260
+        },
+        "open_ms": 27.739766,
+        "pid": 9,
+        "warm_query_p50_ms": 0.018244999999999997
+      },
+      "warm_fresh_process_reads": [
+        {
+          "first_graph_ms": 1.13492,
+          "first_index_query_ms": 42.916887,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70512,
+            "rss_kib": 70512
+          },
+          "open_ms": 16.061466,
+          "pid": 10,
+          "warm_query_p50_ms": 0.016947
+        },
+        {
+          "first_graph_ms": 0.956412,
+          "first_index_query_ms": 39.429328999999996,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70364,
+            "rss_kib": 70364
+          },
+          "open_ms": 15.944856999999999,
+          "pid": 11,
+          "warm_query_p50_ms": 0.017063
+        },
+        {
+          "first_graph_ms": 0.954484,
+          "first_index_query_ms": 39.210065,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70184,
+            "rss_kib": 70184
+          },
+          "open_ms": 15.898862999999999,
+          "pid": 12,
+          "warm_query_p50_ms": 0.01695
+        },
+        {
+          "first_graph_ms": 0.9502929999999999,
+          "first_index_query_ms": 39.421728,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70412,
+            "rss_kib": 70412
+          },
+          "open_ms": 15.989619,
+          "pid": 13,
+          "warm_query_p50_ms": 0.016718
+        },
+        {
+          "first_graph_ms": 1.142174,
+          "first_index_query_ms": 39.366645999999996,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70384,
+            "rss_kib": 70384
+          },
+          "open_ms": 16.015666000000003,
+          "pid": 14,
+          "warm_query_p50_ms": 0.016788
+        }
+      ],
+      "active_readers_initial": [
+        {
+          "first_graph_ms": 0.957933,
+          "first_index_query_ms": 44.680423,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70508,
+            "rss_kib": 70508
+          },
+          "open_ms": 16.047117999999998,
+          "pid": 15,
+          "warm_query_p50_ms": 0.016942000000000002
+        },
+        {
+          "first_graph_ms": 0.9381539999999999,
+          "first_index_query_ms": 44.801299,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70080,
+            "rss_kib": 70080
+          },
+          "open_ms": 15.906984,
+          "pid": 16,
+          "warm_query_p50_ms": 0.028575
+        },
+        {
+          "first_graph_ms": 0.916448,
+          "first_index_query_ms": 32.455598,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70232,
+            "rss_kib": 70232
+          },
+          "open_ms": 15.78119,
+          "pid": 17,
+          "warm_query_p50_ms": 0.020818999999999997
+        },
+        {
+          "first_graph_ms": 0.926597,
+          "first_index_query_ms": 34.055312,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70248,
+            "rss_kib": 70248
+          },
+          "open_ms": 15.762886,
+          "pid": 18,
+          "warm_query_p50_ms": 0.020656
+        }
+      ],
+      "readers_memory_before": {
+        "rss_kib": 281388,
+        "pss_kib": 208442
+      },
+      "update_burst": {
+        "commit_ms": [
+          444.19456099999996,
+          413.779012,
+          412.124961
+        ],
+        "generation": 5,
+        "kind": "updated",
+        "memory": {
+          "peak_rss_kib": 182752,
+          "rss_kib": 69788
+        },
+        "metadata_commit_ms": 24.511462
+      },
+      "active_readers_refreshed": [
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 133628,
+            "rss_kib": 133628
+          },
+          "new_index_query_ms": 56.823078,
+          "old_snapshot_released": false,
+          "queries_during_hold": 38157,
+          "query_max_ms": 0.232523,
+          "query_p50_ms": 0.017391999999999998,
+          "query_p95_ms": 0.036564,
+          "refresh_ms": 36.385765,
+          "retained_generation": 1,
+          "sample_count": 4096
+        },
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 133456,
+            "rss_kib": 133456
+          },
+          "new_index_query_ms": 56.452036,
+          "old_snapshot_released": false,
+          "queries_during_hold": 37814,
+          "query_max_ms": 0.05583,
+          "query_p50_ms": 0.017893999999999997,
+          "query_p95_ms": 0.0368,
+          "refresh_ms": 36.364431,
+          "retained_generation": 1,
+          "sample_count": 4096
+        },
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 133604,
+            "rss_kib": 133604
+          },
+          "new_index_query_ms": 56.86443,
+          "old_snapshot_released": false,
+          "queries_during_hold": 37641,
+          "query_max_ms": 0.175394,
+          "query_p50_ms": 0.035835,
+          "query_p95_ms": 0.046399,
+          "refresh_ms": 38.157391,
+          "retained_generation": 1,
+          "sample_count": 4096
+        },
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 133580,
+            "rss_kib": 133580
+          },
+          "new_index_query_ms": 56.797236,
+          "old_snapshot_released": false,
+          "queries_during_hold": 38011,
+          "query_max_ms": 0.597534,
+          "query_p50_ms": 0.03532,
+          "query_p95_ms": 0.046076,
+          "refresh_ms": 36.464728,
+          "retained_generation": 1,
+          "sample_count": 4096
+        }
+      ],
+      "readers_memory_after": {
+        "rss_kib": 534268,
+        "pss_kib": 401490
+      },
+      "final_storage": {
+        "objects": 5,
+        "object_bytes": 81671739,
+        "manifests": 6,
+        "manifest_bytes": 185497
+      }
+    },
+    {
+      "graphs": 100,
+      "triples_per_graph": 700,
+      "readers": 4,
+      "retention_mode": "release",
+      "prepare": {
+        "commit_ms": 268.896437,
+        "graphs": 100,
+        "kind": "prepared",
+        "memory": {
+          "peak_rss_kib": 238248,
+          "rss_kib": 166816
+        },
+        "staging_ms": 173.394373,
+        "triples": 70100
+      },
+      "initial_storage": {
+        "objects": 2,
+        "object_bytes": 20418763,
+        "manifests": 2,
+        "manifest_bytes": 37697
+      },
+      "eviction_requested_read": {
+        "first_graph_ms": 0.963303,
+        "first_index_query_ms": 39.746704,
+        "generation": 1,
+        "kind": "reader_ready",
+        "memory": {
+          "peak_rss_kib": 70296,
+          "rss_kib": 70296
+        },
+        "open_ms": 30.807937,
+        "pid": 25,
+        "warm_query_p50_ms": 0.047472999999999994
+      },
+      "warm_fresh_process_reads": [
+        {
+          "first_graph_ms": 0.9539350000000001,
+          "first_index_query_ms": 31.457572000000003,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70252,
+            "rss_kib": 70252
+          },
+          "open_ms": 15.909460000000001,
+          "pid": 26,
+          "warm_query_p50_ms": 0.020848000000000002
+        },
+        {
+          "first_graph_ms": 0.9676389999999999,
+          "first_index_query_ms": 42.791768,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70180,
+            "rss_kib": 70180
+          },
+          "open_ms": 15.944725,
+          "pid": 27,
+          "warm_query_p50_ms": 0.016721
+        },
+        {
+          "first_graph_ms": 0.963661,
+          "first_index_query_ms": 39.427759,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70228,
+            "rss_kib": 70228
+          },
+          "open_ms": 15.892428,
+          "pid": 28,
+          "warm_query_p50_ms": 0.016756999999999998
+        },
+        {
+          "first_graph_ms": 1.128122,
+          "first_index_query_ms": 39.336813,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70472,
+            "rss_kib": 70472
+          },
+          "open_ms": 15.960601,
+          "pid": 29,
+          "warm_query_p50_ms": 0.016872
+        },
+        {
+          "first_graph_ms": 0.960672,
+          "first_index_query_ms": 40.948904,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70432,
+            "rss_kib": 70432
+          },
+          "open_ms": 15.903489,
+          "pid": 30,
+          "warm_query_p50_ms": 0.017841
+        }
+      ],
+      "active_readers_initial": [
+        {
+          "first_graph_ms": 1.102287,
+          "first_index_query_ms": 43.138227,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70448,
+            "rss_kib": 70448
+          },
+          "open_ms": 16.100029,
+          "pid": 31,
+          "warm_query_p50_ms": 0.017502
+        },
+        {
+          "first_graph_ms": 1.043196,
+          "first_index_query_ms": 37.853607999999994,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70364,
+            "rss_kib": 70364
+          },
+          "open_ms": 15.843138999999999,
+          "pid": 32,
+          "warm_query_p50_ms": 0.021015000000000002
+        },
+        {
+          "first_graph_ms": 1.013762,
+          "first_index_query_ms": 47.050358,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70504,
+            "rss_kib": 70504
+          },
+          "open_ms": 15.784378000000002,
+          "pid": 33,
+          "warm_query_p50_ms": 0.019476
+        },
+        {
+          "first_graph_ms": 0.944851,
+          "first_index_query_ms": 48.261672,
+          "generation": 1,
+          "kind": "reader_ready",
+          "memory": {
+            "peak_rss_kib": 70360,
+            "rss_kib": 70360
+          },
+          "open_ms": 15.798433000000001,
+          "pid": 34,
+          "warm_query_p50_ms": 0.022489000000000002
+        }
+      ],
+      "readers_memory_before": {
+        "rss_kib": 281996,
+        "pss_kib": 209031
+      },
+      "update_burst": {
+        "commit_ms": [
+          435.756123,
+          402.115243,
+          410.24073
+        ],
+        "generation": 5,
+        "kind": "updated",
+        "memory": {
+          "peak_rss_kib": 182668,
+          "rss_kib": 69732
+        },
+        "metadata_commit_ms": 26.668563
+      },
+      "active_readers_refreshed": [
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 90212,
+            "rss_kib": 70600
+          },
+          "new_index_query_ms": 46.14303,
+          "old_snapshot_released": true,
+          "queries_during_hold": 37579,
+          "query_max_ms": 0.336838,
+          "query_p50_ms": 0.018275,
+          "query_p95_ms": 0.036868,
+          "refresh_ms": 58.140813,
+          "retained_generation": null,
+          "sample_count": 4096
+        },
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 90180,
+            "rss_kib": 70516
+          },
+          "new_index_query_ms": 46.408836,
+          "old_snapshot_released": true,
+          "queries_during_hold": 37730,
+          "query_max_ms": 0.142287,
+          "query_p50_ms": 0.018093,
+          "query_p95_ms": 0.036481,
+          "refresh_ms": 57.533125,
+          "retained_generation": null,
+          "sample_count": 4096
+        },
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 90272,
+            "rss_kib": 70656
+          },
+          "new_index_query_ms": 47.6742,
+          "old_snapshot_released": true,
+          "queries_during_hold": 37631,
+          "query_max_ms": 0.249163,
+          "query_p50_ms": 0.018421,
+          "query_p95_ms": 0.036729,
+          "refresh_ms": 56.925509999999996,
+          "retained_generation": null,
+          "sample_count": 4096
+        },
+        {
+          "generation": 5,
+          "kind": "reader_refreshed",
+          "memory": {
+            "peak_rss_kib": 90072,
+            "rss_kib": 70512
+          },
+          "new_index_query_ms": 46.599559,
+          "old_snapshot_released": true,
+          "queries_during_hold": 37249,
+          "query_max_ms": 0.06674100000000001,
+          "query_p50_ms": 0.01864,
+          "query_p95_ms": 0.036786000000000006,
+          "refresh_ms": 56.956922999999996,
+          "retained_generation": null,
+          "sample_count": 4096
+        }
+      ],
+      "readers_memory_after": {
+        "rss_kib": 282284,
+        "pss_kib": 209319
+      },
+      "final_storage": {
+        "objects": 5,
+        "object_bytes": 81673828,
+        "manifests": 6,
+        "manifest_bytes": 185503
+      }
+    }
+  ],
+  "date": "2026-10-23",
+  "comparison": "Paired independent 100-graph/700-triple fixtures, four query readers, three graph commits plus metadata commit. Retain vs release old reader snapshot before explicit refresh.",
+  "command": "python3 lib/tests/support/snapshot_workload.py --binary /tmp/ontoenv-snapshot-review-target/release/examples/snapshot_workload --work /tmp/ontoenv-benchmark-review --cases 100:700 --retention both",
+  "source_sha256": {
+    "lib/src/snapshots.rs": "4e44bc55254aa76b622275df23d9e33bb463c0261b5073b77d466809f062405a",
+    "lib/src/api.rs": "c73304af0ba8d5dd0046fb63335aa8b2dfae753e87bfe24d784630fed3491c40",
+    "lib/examples/snapshot_workload.rs": "aa9c52abca74b3a5511663769212cfa0d450695a77bf702d0c70212f5d1675ad",
+    "lib/tests/support/snapshot_workload.py": "f898ed43b415855e28f8764dec80c327099a898ae9e8c1841e3069f1fb391106"
+  }
+}

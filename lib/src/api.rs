@@ -166,7 +166,7 @@ pub fn find_ontoenv_root_from(start_dir: &Path) -> Option<PathBuf> {
     // Walk up the directory tree to find the nearest .ontoenv marker.
     let mut current_dir = Some(start_dir);
     while let Some(dir) = current_dir {
-        if dir.join(".ontoenv").is_dir() {
+        if dir.join(".ontoenv").is_dir() || dir.join(".ontoenv-snapshots").is_dir() {
             return Some(dir.to_path_buf());
         }
         current_dir = dir.parent();
@@ -294,6 +294,7 @@ struct BatchScope<'a> {
     env: &'a mut OntoEnv,
     completed: bool,
     outermost: bool,
+    checkpoint: Option<(EnvTransaction, Config)>,
 }
 
 enum PendingMarkerState {
@@ -336,6 +337,11 @@ impl<'a> BatchScope<'a> {
             return Err(err);
         }
         Ok(Self {
+            checkpoint: if env.snapshot().is_some() {
+                Some((EnvTransaction::snapshot(env), env.config.clone()))
+            } else {
+                None
+            },
             env,
             completed: false,
             outermost,
@@ -344,6 +350,28 @@ impl<'a> BatchScope<'a> {
 
     fn run<T>(mut self, f: impl FnOnce(&mut OntoEnv) -> Result<T>) -> Result<T> {
         let result = f(self.env);
+        if self.checkpoint.is_some() {
+            let result = result.and_then(|value| {
+                self.env.io.end_batch()?;
+                if self.outermost {
+                    self.env.save_to_directory()?;
+                }
+                Ok(value)
+            });
+            if result.is_err() {
+                self.env.io.abort_batch()?;
+                let (checkpoint, config) = self.checkpoint.take().unwrap();
+                checkpoint.restore(self.env);
+                self.env.config = config;
+                self.env.sync_runtime_config()?;
+            }
+            self.env.batch_state.end();
+            self.completed = true;
+            if result.is_ok() {
+                self.env.backend_state = self.env.io.store_state()?;
+            }
+            return result;
+        }
         let end_result = self.env.io.end_batch().and_then(|_| self.env.io.flush());
         self.env.batch_state.end();
         self.completed = true;
@@ -393,6 +421,14 @@ impl<'a> Drop for BatchScope<'a> {
         if self.completed {
             return;
         }
+        if let Some((checkpoint, config)) = self.checkpoint.take() {
+            let _ = self.env.io.abort_batch();
+            checkpoint.restore(self.env);
+            self.env.config = config;
+            let _ = self.env.sync_runtime_config();
+            self.env.batch_state.end();
+            return;
+        }
         if let Err(err) = self.env.io.end_batch() {
             error!("Failed to finalize batched RDF write: {err}");
         }
@@ -406,14 +442,14 @@ impl<'a> Drop for BatchScope<'a> {
 /// that can fail partway through (e.g. dependency-graph construction that
 /// hits a strict-mode unresolved import after several successful adds).
 ///
-/// Not transactional with respect to `self.io` writes (rdf5d/oxigraph store
-/// mutations). A rollback may leave the IO store with orphan named graphs;
-/// see the note above [`OntoEnv::add_ids_to_dependency_graph`].
+/// Managed storage also checkpoints its private graph overlay in `BatchScope`.
+/// Caller-provided GraphIO backends must supply their own rollback semantics.
 pub(crate) struct EnvTransaction {
     env: Environment,
     dependency_graph: DiGraph<GraphIdentifier, (), petgraph::Directed>,
     dependency_graph_index: HashMap<GraphIdentifier, NodeIndex>,
     failed_resolutions: HashSet<NamedNode>,
+    seen_locations: HashSet<OntologyLocation>,
 }
 
 impl EnvTransaction {
@@ -425,6 +461,7 @@ impl EnvTransaction {
             dependency_graph: target.dependency_graph.clone(),
             dependency_graph_index: target.dependency_graph_index.clone(),
             failed_resolutions: target.failed_resolutions.clone(),
+            seen_locations: target.batch_state.seen_locations.clone(),
         }
     }
 
@@ -435,6 +472,7 @@ impl EnvTransaction {
         target.dependency_graph = self.dependency_graph;
         target.dependency_graph_index = self.dependency_graph_index;
         target.failed_resolutions = self.failed_resolutions;
+        target.batch_state.seen_locations = self.seen_locations;
     }
 }
 
@@ -476,6 +514,77 @@ fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 impl OntoEnv {
+    /// Open a publication-backed reader with explicit refresh.
+    /// Returned snapshots remain immutable and can outlive this reader. The
+    /// specialized reader type has no mutation/save API.
+    pub fn open_snapshot(root: impl AsRef<Path>) -> Result<crate::snapshots::SnapshotReader> {
+        crate::snapshots::SnapshotReader::open(root)
+    }
+
+    /// Create an empty publication-backed environment.
+    /// Changes are staged through the returned writer and published by explicit
+    /// commit; neither this entry point nor Drop migrates legacy stores.
+    pub fn create_snapshot(config: Config) -> Result<crate::snapshots::SnapshotWriter> {
+        crate::snapshots::SnapshotWriter::create(config)
+    }
+
+    /// Open the sole writer for an existing snapshot environment.
+    /// Readers and retained query views can remain open while it publishes.
+    pub fn open_snapshot_writer(
+        root: impl AsRef<Path>,
+    ) -> Result<crate::snapshots::SnapshotWriter> {
+        crate::snapshots::SnapshotWriter::open(root)
+    }
+
+    /// Explicitly migrate a closed legacy environment, preserving rollback files.
+    pub fn migrate(root: impl AsRef<Path>) -> Result<Self> {
+        let writer = crate::snapshots::SnapshotWriter::migrate(root.as_ref())?;
+        Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::from_writer(writer)?)
+    }
+
+    fn from_managed_io(io: crate::snapshot_io::SnapshotGraphIO) -> Result<Self> {
+        let snapshot = io.environment_snapshot().expect("managed snapshot");
+        let mut environment = Self {
+            env: snapshot.environment().clone(),
+            config: snapshot.config().clone(),
+            io: Box::new(io),
+            dependency_graph: DiGraph::new(),
+            dependency_graph_index: HashMap::new(),
+            failed_resolutions: HashSet::new(),
+            batch_state: BatchState::default(),
+            graph_revisions: HashMap::new(),
+            backend_state: None,
+            _lock_file: None,
+        };
+        environment.sync_runtime_config()?;
+        environment.rebuild_dependency_graph_from_metadata();
+        environment.backend_state = environment.io.store_state()?;
+        Ok(environment)
+    }
+
+    fn open_managed(root: &Path, read_only: bool) -> Result<Self> {
+        Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::open(root, read_only)?)
+    }
+
+    /// The committed immutable version selected by managed storage.
+    pub fn snapshot(&self) -> Option<std::sync::Arc<crate::snapshots::EnvironmentSnapshot>> {
+        self.io.environment_snapshot()
+    }
+
+    /// Explicitly refresh a managed read handle without inspecting source files.
+    pub fn refresh(&mut self) -> Result<bool> {
+        let changed = self.io.refresh_environment()?;
+        if changed {
+            let snapshot = self.io.environment_snapshot().expect("managed snapshot");
+            self.env = snapshot.environment().clone();
+            self.config = snapshot.config().clone();
+            self.sync_runtime_config()?;
+            self.rebuild_dependency_graph_from_metadata();
+            self.backend_state = self.io.store_state()?;
+        }
+        Ok(changed)
+    }
+
     /// Wait briefly for a marker held by a live writer to clear. A marker left
     /// behind after the writer releases its lock still requires recovery.
     fn pending_marker_after_active_writer(config: &Config) -> PendingMarkerState {
@@ -518,6 +627,12 @@ impl OntoEnv {
 
     // Constructors
     fn new(env: Environment, io: Box<dyn GraphIO>, config: Config) -> Result<Self> {
+        if !config.temporary
+            && config.root.join(".ontoenv-snapshots").exists()
+            && io.environment_snapshot().is_none()
+        {
+            return Err(anyhow!("Cannot attach an independent graph backend to a managed environment; use a separate root"));
+        }
         let backend_state = io.store_state().ok().flatten();
         let read_only = io.io_type() == "read-only";
         let lock_file = Self::acquire_environment_lock(&config, read_only)?;
@@ -605,6 +720,35 @@ impl OntoEnv {
         read_only: bool,
         overrides: ConfigOverrides,
     ) -> Result<Self> {
+        if config.temporary {
+            return Err(anyhow!("OntoEnv::connect requires a persistent environment; use OntoEnv::init for temporary environments"));
+        }
+        if config.external_graph_store.is_none() {
+            let root = config.root.clone();
+            if root.join(".ontoenv-snapshots").exists() {
+                let mut environment = Self::open_managed(&root, read_only)?;
+                let changed = environment.apply_config_overrides(&overrides)?;
+                if changed && !read_only {
+                    environment.save_to_directory()?;
+                }
+                return Ok(environment);
+            }
+            if root.join(".ontoenv").exists() {
+                return Err(anyhow!(
+                    "Legacy environment requires explicit migration: run `ontoenv migrate`"
+                ));
+            }
+            if sync == ConnectSync::Catalog {
+                return Err(anyhow!("sync=\"catalog\" requires an existing catalog"));
+            }
+            if read_only {
+                return Err(anyhow!("Environment does not exist at {}", root.display()));
+            }
+            let mut config = config;
+            config.apply_overrides(&overrides)?;
+            config.use_cached_ontologies = crate::options::CacheMode::Enabled;
+            return Self::init(config, false);
+        }
         let mut config = Self::connect_config(config)?;
         let config_changed = config.apply_overrides(&overrides)?;
         let ontoenv_dir = config.root.join(".ontoenv");
@@ -639,6 +783,9 @@ impl OntoEnv {
     /// the catalog, and removes the pending marker only after the replacement
     /// catalog has been published successfully.
     pub fn recover(config: Config) -> Result<Self> {
+        if config.root.join(".ontoenv-snapshots").exists() {
+            return Self::open_managed(&config.root, false);
+        }
         let config = Self::connect_config(config)?;
         let ontoenv_dir = config.root.join(".ontoenv");
         let io: Box<dyn GraphIO> = Box::new(crate::io::PersistentGraphIO::new(
@@ -873,6 +1020,16 @@ impl OntoEnv {
     /// `GraphIO` before passing it to [`Self::connect_with_graph_io`].
     #[doc(hidden)]
     pub fn connect_config(requested: Config) -> Result<Config> {
+        if requested.external_graph_store.is_some()
+            && requested.root.join(".ontoenv-snapshots").exists()
+        {
+            return Err(anyhow!(
+                "Cannot attach a custom graph store to a managed environment"
+            ));
+        }
+        if let Some(config) = crate::snapshots::read_config(&requested.root)? {
+            return Ok(config);
+        }
         let path = requested.root.join(".ontoenv").join("ontoenv.json");
         if !path.exists() {
             return Ok(requested);
@@ -1005,7 +1162,9 @@ impl OntoEnv {
         let root = config.root.clone();
 
         let existing_root = if let Some(found_root) = find_ontoenv_root_from(&root) {
-            if found_root.join(".ontoenv").exists() {
+            if found_root.join(".ontoenv").exists()
+                || found_root.join(".ontoenv-snapshots").exists()
+            {
                 Some(found_root)
             } else {
                 None
@@ -1202,6 +1361,40 @@ impl OntoEnv {
         graphs: Option<Vec<String>>,
         full: bool,
     ) -> Result<SyncReport> {
+        if self.snapshot().is_some() {
+            if graphs.is_some() || full {
+                return Err(anyhow!("Managed storage refresh selects a complete version; targeted/full backend reconciliation is unsupported"));
+            }
+            let old: HashSet<_> = self
+                .env
+                .ontologies()
+                .keys()
+                .map(|id| id.name().as_str().to_owned())
+                .collect();
+            let changed = self.refresh()?;
+            let current: HashSet<_> = self
+                .env
+                .ontologies()
+                .keys()
+                .map(|id| id.name().as_str().to_owned())
+                .collect();
+            return Ok(SyncReport {
+                mode: SyncMode::Incremental,
+                added: current.difference(&old).cloned().collect(),
+                removed: old.difference(&current).cloned().collect(),
+                changed: if changed {
+                    current.intersection(&old).cloned().collect()
+                } else {
+                    vec![]
+                },
+                unchanged: if changed {
+                    vec![]
+                } else {
+                    current.into_iter().collect()
+                },
+                still_pending: vec![],
+            });
+        }
         if full && graphs.is_some() {
             return Err(anyhow!("graphs cannot be combined with full=true"));
         }
@@ -1455,8 +1648,11 @@ impl OntoEnv {
         }
     }
 
-    /// Saves the current environment to the .ontoenv directory.
+    /// Publish the managed candidate/configuration, or save a custom-store catalog.
     pub fn save_to_directory(&self) -> Result<()> {
+        if self.io.publish_environment(&self.env, &self.config)? {
+            return Ok(());
+        }
         if self.config.temporary {
             warn!("Cannot save a temporary environment");
             return Ok(());
@@ -1477,7 +1673,7 @@ impl OntoEnv {
     }
 
     fn write_pending_marker(&self) -> Result<()> {
-        if self.config.temporary {
+        if self.config.temporary || self.snapshot().is_some() {
             return Ok(());
         }
         let directory = self.config.root.join(".ontoenv");
@@ -1505,7 +1701,7 @@ impl OntoEnv {
     }
 
     fn remove_pending_marker(&self) -> Result<()> {
-        if self.config.temporary {
+        if self.config.temporary || self.snapshot().is_some() {
             return Ok(());
         }
         let path = self
@@ -1571,6 +1767,18 @@ impl OntoEnv {
 
     /// Loads the environment from the .ontoenv directory.
     pub fn load_from_directory(root: PathBuf, read_only: bool) -> Result<Self> {
+        if root.join(".ontoenv-snapshots").exists() {
+            return Self::open_managed(&root, read_only);
+        }
+        // External stores retain their explicit catalog-backed connection API.
+        if root.join(".ontoenv").exists() {
+            let config = Config::from_file(&root.join(".ontoenv/ontoenv.json"))?;
+            if config.external_graph_store.is_none() {
+                return Err(anyhow!(
+                    "Legacy environment requires explicit migration: run `ontoenv migrate`"
+                ));
+            }
+        }
         // Load configuration and the authoritative metadata catalog. Ontology
         // graph contents are deliberately not touched on this path.
         let ontoenv_dir = root.join(".ontoenv");
@@ -1706,7 +1914,24 @@ impl OntoEnv {
     // Core API methods
     pub fn flush(&mut self) -> Result<()> {
         // Force pending writes to the underlying store implementation.
-        self.io.flush()
+        self.io.flush()?;
+        if self.snapshot().is_some() {
+            self.save_to_directory()?;
+        }
+        Ok(())
+    }
+
+    /// Publish several operations as one managed-storage update. An error or
+    /// unwind restores staged graphs, metadata and configuration. Custom and
+    /// temporary backends must provide their own transaction semantics.
+    pub fn transaction<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.snapshot().is_none() {
+            return Err(StoreCapabilityError {
+                message: "Transactions require managed persistent storage".into(),
+            }
+            .into());
+        }
+        self.with_io_batch(f)
     }
 
     fn with_io_batch<T, F>(&mut self, f: F) -> Result<T>
@@ -1739,6 +1964,24 @@ impl OntoEnv {
 
     /// Calculates and returns the environment status
     pub fn status(&self) -> Result<EnvironmentStatus> {
+        if let Some(snapshot) = self.snapshot() {
+            let directory = self.config.root.join(".ontoenv-snapshots");
+            let size = walkdir::WalkDir::new(&directory)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+                .filter_map(|entry| entry.metadata().ok())
+                .filter(|m| m.is_file())
+                .map(|m| m.len())
+                .sum();
+            return Ok(EnvironmentStatus {
+                exists: true,
+                ontoenv_path: Some(directory),
+                num_ontologies: self.env.ontologies().len(),
+                last_updated: Some(snapshot.info().committed_at),
+                store_size: size,
+                missing_imports: self.missing_imports(),
+            });
+        }
         let ontoenv_dir = self.config.root.join(".ontoenv");
         let ontoenv_path = fs::canonicalize(&ontoenv_dir).unwrap_or_else(|_| ontoenv_dir.clone());
         let last_updated: DateTime<Utc> = std::fs::metadata(&ontoenv_dir)?.modified()?.into();
@@ -1797,13 +2040,56 @@ impl OntoEnv {
 
     /// Initializes a new API environment based on `config`.
     ///
-    /// For persistent environments (`config.temporary == false`), if the target `.ontoenv`
-    /// directory already exists this will remove and recreate it when `overwrite` is `true`,
-    /// otherwise it returns an error. Temporary environments never touch the filesystem, so
+    /// For managed persistent environments, `overwrite` publishes a replacement
+    /// catalog and requested source scan while retaining old snapshots and artifacts.
+    /// Otherwise an existing environment is an error. Temporary environments never touch the filesystem, so
     /// the `overwrite` flag is ignored. When the cache mode is disabled the initializer runs
     /// a discovery pass so the store eagerly reflects on-disk content; when the cache mode is
     /// enabled the environment starts empty and only fetches when explicitly asked to.
     pub fn init(config: Config, overwrite: bool) -> Result<Self> {
+        if !config.temporary && config.external_graph_store.is_none() {
+            if config.root.join(".ontoenv-snapshots").exists() {
+                if !overwrite {
+                    return Err(anyhow!("Environment already exists; use open/connect"));
+                }
+                let mut environment = Self::open_managed(&config.root, false)?;
+                let mut config = config;
+                config.root = environment.config.root.clone();
+                environment.transaction(move |env| {
+                    let old_ids: Vec<_> = env.env.ontologies().keys().cloned().collect();
+                    for id in old_ids {
+                        env.io.remove(&id)?;
+                    }
+                    env.env = Environment::new();
+                    env.failed_resolutions.clear();
+                    env.config = config;
+                    env.sync_runtime_config()?;
+                    env.rebuild_dependency_graph_from_metadata();
+                    if !env.config.use_cached_ontologies.is_enabled() {
+                        env.update_all(false)?;
+                    }
+                    Ok(())
+                })?;
+                return Ok(environment);
+            }
+            if config.root.join(".ontoenv").exists() {
+                return Err(anyhow!(
+                    "Legacy environment requires explicit migration: run `ontoenv migrate`"
+                ));
+            }
+            let discover = !config.use_cached_ontologies.is_enabled();
+            let mut result =
+                Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::create(config)?)?;
+            if discover {
+                result.update_all(false)?;
+            }
+            Ok(result)
+        } else {
+            Self::init_legacy_or_temporary(config, overwrite)
+        }
+    }
+
+    fn init_legacy_or_temporary(config: Config, overwrite: bool) -> Result<Self> {
         // Create a fresh environment, optionally overwriting existing data on disk.
         let ontoenv_dir = config.root.join(".ontoenv");
 
@@ -1866,14 +2152,34 @@ impl OntoEnv {
         Ok(ontoenv)
     }
 
-    /// Deletes the .ontoenv directory, searching from the current directory upwards.
+    /// Reset the nearest managed environment by publishing an empty version.
+    /// Legacy/custom environments retain their existing directory-removal behavior.
     pub fn reset() -> Result<()> {
-        // Remove the nearest .ontoenv directory if one exists.
         if let Some(root) = find_ontoenv_root() {
+            Self::reset_at(&root)?;
+        }
+        Ok(())
+    }
+
+    /// Reset an explicitly selected root without changing the working directory.
+    pub fn reset_at(root: &Path) -> Result<()> {
+        if root.join(".ontoenv-snapshots").exists() {
+            let mut environment = Self::open_managed(root, false)?;
+            environment.transaction(|env| {
+                let old_ids: Vec<_> = env.env.ontologies().keys().cloned().collect();
+                for id in old_ids {
+                    env.io.remove(&id)?;
+                }
+                env.env = Environment::new();
+                env.failed_resolutions.clear();
+                env.sync_runtime_config()?;
+                env.rebuild_dependency_graph_from_metadata();
+                Ok(())
+            })?;
+        } else {
             let ontoenv_dir = root.join(".ontoenv");
-            info!("Removing ontology environment at: {ontoenv_dir:?}");
             if ontoenv_dir.exists() {
-                std::fs::remove_dir_all(&ontoenv_dir)?;
+                std::fs::remove_dir_all(ontoenv_dir)?;
             }
         }
         Ok(())
@@ -1961,8 +2267,10 @@ impl OntoEnv {
         refresh: RefreshStrategy,
         rename: NamedNode,
     ) -> Result<GraphIdentifier> {
-        let old_id = self.add(location, overwrite, refresh)?;
-        self.apply_graph_rename(&old_id, rename)
+        self.with_io_batch(move |env| {
+            let old_id = env.add(location, overwrite, refresh)?;
+            env.apply_graph_rename(&old_id, rename)
+        })
     }
 
     /// Like [`Self::add_with_rename`] but does not traverse `owl:imports`.
@@ -1973,8 +2281,10 @@ impl OntoEnv {
         refresh: RefreshStrategy,
         rename: NamedNode,
     ) -> Result<GraphIdentifier> {
-        let old_id = self.add_no_imports(location, overwrite, refresh)?;
-        self.apply_graph_rename(&old_id, rename)
+        self.with_io_batch(move |env| {
+            let old_id = env.add_no_imports(location, overwrite, refresh)?;
+            env.apply_graph_rename(&old_id, rename)
+        })
     }
 
     /// Rename the graph IRI of an already-loaded ontology.
@@ -2058,17 +2368,15 @@ impl OntoEnv {
     /// The alias will route to the same graph as the canonical IRI.
     /// Aliases only point to canonical IRIs (not other aliases) to avoid chains.
     pub fn add_alias(&mut self, alias_iri: &str, canonical_iri: &str) -> Result<()> {
-        self.env.add_alias(alias_iri, canonical_iri)?;
-        self.save_to_directory()?;
-        Ok(())
+        self.with_io_batch(|env| env.env.add_alias(alias_iri, canonical_iri))
     }
 
     /// Remove an alias.
     pub fn remove_alias(&mut self, alias_iri: &str) -> Result<()> {
-        if self.env.remove_alias(alias_iri)?.is_some() {
-            self.save_to_directory()?;
-        }
-        Ok(())
+        self.with_io_batch(|env| {
+            env.env.remove_alias(alias_iri)?;
+            Ok(())
+        })
     }
 
     /// Get the canonical GraphIdentifier for an alias.
@@ -2209,7 +2517,34 @@ impl OntoEnv {
                 info!("Excluding ontology {} due to ontology filters", id);
                 continue;
             }
-            self.env.add_ontology(ontology)?;
+            if self.snapshot().is_some() {
+                let old: Vec<_> = self
+                    .env
+                    .ontologies()
+                    .keys()
+                    .filter(|old| old.name() == id.name() || old.location() == id.location())
+                    .cloned()
+                    .collect();
+                let aliases: Vec<_> = self
+                    .env
+                    .aliases()
+                    .iter()
+                    .filter(|(_, target)| old.contains(target))
+                    .map(|(alias, _)| alias.clone())
+                    .collect();
+                for old in old {
+                    self.env.remove_ontology(&old)?;
+                    if old.name() != id.name() {
+                        self.io.remove(&old)?;
+                    }
+                }
+                self.env.add_ontology(ontology)?;
+                for alias in aliases {
+                    self.env.add_alias(&alias, id.name().as_str())?;
+                }
+            } else {
+                self.env.add_ontology(ontology)?;
+            }
             ids.push(id);
         }
 
@@ -3008,7 +3343,9 @@ impl OntoEnv {
                 }
             }
         }
-        Ok(files.into_iter().collect())
+        let mut files: Vec<_> = files.into_iter().collect();
+        files.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        Ok(files)
     }
 
     /// Runs `f` against `self` inside a state snapshot. On `Ok`, the snapshot
@@ -4100,13 +4437,13 @@ mod tests {
 
         {
             let env = OntoEnv::open_or_init(config.clone(), false).unwrap();
-            assert!(root.join(".ontoenv").is_dir());
+            assert!(root.join(".ontoenv-snapshots").is_dir());
             drop(env);
         }
 
         {
             let env = OntoEnv::open_or_init(config, false).unwrap();
-            assert!(root.join(".ontoenv").is_dir());
+            assert!(root.join(".ontoenv-snapshots").is_dir());
             drop(env);
         }
     }
@@ -4124,7 +4461,7 @@ mod tests {
             .unwrap();
 
         let environment = OntoEnv::connect(config.clone(), ConnectSync::Auto, false).unwrap();
-        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        assert!(root.join(".ontoenv-snapshots/CURRENT").exists());
         drop(environment);
 
         let reopened = OntoEnv::connect(config, ConnectSync::Auto, true).unwrap();
@@ -4162,7 +4499,7 @@ mod tests {
             .use_cached_ontologies(CacheMode::Enabled)
             .build()
             .unwrap();
-        let environment = OntoEnv::init(config, false).unwrap();
+        let environment = OntoEnv::init_legacy_or_temporary(config, false).unwrap();
         drop(environment);
 
         std::fs::write(
@@ -4170,7 +4507,7 @@ mod tests {
             r#"{"mutation_id":"test","graphs":["https://example.org/o"]}"#,
         )
         .unwrap();
-        let error = OntoEnv::load_from_directory(root, false).unwrap_err();
+        let error = OntoEnv::migrate(&root).unwrap_err();
         assert!(error.downcast_ref::<CatalogRecoveryError>().is_some());
         assert!(error.to_string().contains("https://example.org/o"));
     }
@@ -4187,7 +4524,7 @@ mod tests {
             .use_cached_ontologies(CacheMode::Enabled)
             .build()
             .unwrap();
-        let mut environment = OntoEnv::init(config, false).unwrap();
+        let mut environment = OntoEnv::init_legacy_or_temporary(config, false).unwrap();
 
         let missing = OntologyLocation::File(root.join("missing.ttl"));
         assert!(environment
@@ -4199,91 +4536,7 @@ mod tests {
         );
 
         drop(environment);
-        OntoEnv::load_from_directory(root, false).unwrap();
-    }
-
-    #[test]
-    fn startup_waits_for_an_active_pending_mutation_to_finish() {
-        let temporary = tempdir().unwrap();
-        let root = temporary.path().join("env");
-        let config = Config::builder()
-            .root(root.clone())
-            .offline(true)
-            .temporary(false)
-            .locations(vec![])
-            .use_cached_ontologies(CacheMode::Enabled)
-            .build()
-            .unwrap();
-        let environment = OntoEnv::init(config.clone(), false).unwrap();
-        drop(environment);
-
-        let pending = root.join(".ontoenv").join(catalog::PENDING_FILE);
-        std::fs::write(&pending, r#"{"mutation_id":"active","graphs":[]}"#).unwrap();
-        let lock_path = root.join(".ontoenv").join("store.lock");
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let writer = std::thread::spawn(move || {
-            let lock = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(lock_path)
-                .unwrap();
-            FileExt::lock_exclusive(&lock).unwrap();
-            ready_tx.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(100));
-            std::fs::remove_file(pending).unwrap();
-        });
-        ready_rx.recv().unwrap();
-
-        // A reader waits for the writer's shared-lock handoff, including the
-        // interval after it removes the marker but before it drops its lock.
-        // A writable open can legitimately fail during that interval.
-        let reopened = OntoEnv::load_from_directory(root, true).unwrap();
-        drop(reopened);
-        writer.join().unwrap();
-    }
-
-    #[test]
-    fn startup_reports_an_active_mutation_as_retryable_not_stale() {
-        let temporary = tempdir().unwrap();
-        let root = temporary.path().join("env");
-        let config = Config::builder()
-            .root(root.clone())
-            .offline(true)
-            .temporary(false)
-            .locations(vec![])
-            .use_cached_ontologies(CacheMode::Enabled)
-            .build()
-            .unwrap();
-        let environment = OntoEnv::init(config, false).unwrap();
-        drop(environment);
-
-        let pending = root.join(".ontoenv").join(catalog::PENDING_FILE);
-        std::fs::write(&pending, r#"{"mutation_id":"active","graphs":[]}"#).unwrap();
-        let lock_path = root.join(".ontoenv").join("store.lock");
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let writer = std::thread::spawn(move || {
-            let lock = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(lock_path)
-                .unwrap();
-            FileExt::lock_exclusive(&lock).unwrap();
-            ready_tx.send(()).unwrap();
-            // Keep the lock until the caller has observed the active mutation.
-            // A fixed sleep races with the two-second startup timeout on CI.
-            release_rx.recv_timeout(Duration::from_secs(30)).unwrap();
-        });
-        ready_rx.recv().unwrap();
-
-        let result = OntoEnv::load_from_directory(root, false);
-        release_tx.send(()).unwrap();
-        writer.join().unwrap();
-        let error = result.unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("external process is mutating this OntoEnv"));
-        assert!(error.downcast_ref::<CatalogRecoveryError>().is_none());
+        OntoEnv::migrate(&root).unwrap();
     }
 
     #[test]
@@ -4298,7 +4551,7 @@ mod tests {
             .use_cached_ontologies(CacheMode::Enabled)
             .build()
             .unwrap();
-        let environment = OntoEnv::init(config.clone(), false).unwrap();
+        let environment = OntoEnv::init_legacy_or_temporary(config.clone(), false).unwrap();
         drop(environment);
 
         let pending = root.join(".ontoenv").join(catalog::PENDING_FILE);
@@ -4312,7 +4565,7 @@ mod tests {
         assert!(recovered.ontologies().is_empty());
         assert!(!pending.exists());
         drop(recovered);
-        OntoEnv::load_from_directory(root, false).unwrap();
+        OntoEnv::migrate(&root).unwrap();
     }
 
     #[test]
@@ -4328,15 +4581,16 @@ mod tests {
             .use_cached_ontologies(CacheMode::Enabled)
             .build()
             .unwrap();
-        let environment = OntoEnv::init(config, false).unwrap();
+        let environment = OntoEnv::init_legacy_or_temporary(config, false).unwrap();
         let legacy_path = root.join(".ontoenv").join("environment.json");
         write_json_file(&legacy_path, &environment.env).unwrap();
         drop(environment);
         std::fs::remove_file(root.join(".ontoenv").join(catalog::CATALOG_FILE)).unwrap();
 
-        let migrated = OntoEnv::load_from_directory(root.clone(), false).unwrap();
+        let migrated = OntoEnv::migrate(&root).unwrap();
         assert!(migrated.ontologies().is_empty());
-        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        assert!(root.join(".ontoenv-snapshots/CURRENT").exists());
+        assert!(!root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
         assert!(legacy_path.exists());
     }
 
@@ -4358,18 +4612,19 @@ mod tests {
             .locations(vec![root.clone()])
             .build()
             .unwrap();
-        let environment = OntoEnv::init(config, false).unwrap();
+        let environment = OntoEnv::init_legacy_or_temporary(config, false).unwrap();
         let legacy_path = root.join(".ontoenv").join("environment.json");
         write_json_file(&legacy_path, &environment.env).unwrap();
         drop(environment);
         std::fs::remove_file(root.join(".ontoenv").join(catalog::CATALOG_FILE)).unwrap();
 
-        let migrated = OntoEnv::load_from_directory(root.clone(), false).unwrap();
+        let migrated = OntoEnv::migrate(&root).unwrap();
         assert!(migrated
             .ontologies()
             .keys()
             .any(|id| id.name().as_str() == "https://example.org/legacy"));
-        assert!(root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
+        assert!(root.join(".ontoenv-snapshots/CURRENT").exists());
+        assert!(!root.join(".ontoenv").join(catalog::CATALOG_FILE).exists());
         assert!(legacy_path.exists());
     }
 
@@ -4391,7 +4646,7 @@ mod tests {
             .locations(vec![root.clone()])
             .build()
             .unwrap();
-        let environment = OntoEnv::init(config, false).unwrap();
+        let environment = OntoEnv::init_legacy_or_temporary(config, false).unwrap();
         let id = environment.ontologies().keys().next().unwrap().clone();
         let legacy_path = root.join(".ontoenv").join("environment.json");
         write_json_file(&legacy_path, &environment.env).unwrap();
@@ -4404,7 +4659,7 @@ mod tests {
         backend.flush().unwrap();
         drop(backend);
 
-        let error = OntoEnv::load_from_directory(root, false).unwrap_err();
+        let error = OntoEnv::migrate(&root).unwrap_err();
         assert!(error
             .to_string()
             .contains("legacy metadata does not match backend graph IDs"));

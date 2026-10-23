@@ -2,7 +2,6 @@ use anyhow::Result;
 use ontoenv::api::{OntoEnv, ResolveTarget};
 use ontoenv::config::{Config, ConfigOverrides};
 use ontoenv::consts::IMPORTS;
-use ontoenv::io::{GraphIO, PersistentGraphIO};
 use ontoenv::ontology::OntologyLocation;
 use ontoenv::options::{CacheMode, Overwrite, RefreshStrategy};
 use ontoenv::ToUriString;
@@ -1564,10 +1563,13 @@ fn test_init_with_config_new_dir() -> Result<()> {
     // Initialize with recreate=true (implicit in init)
     let env = OntoEnv::init(cfg, true)?; // recreate = true
 
-    let ontoenv_meta_dir = env_path.join(".ontoenv");
+    let ontoenv_meta_dir = env_path.join(".ontoenv-snapshots");
     assert!(ontoenv_meta_dir.is_dir());
     assert!(env.store_path().is_some()); // Should have a store path for non-temporary
-    assert!(env.store_path().unwrap().starts_with(&ontoenv_meta_dir));
+    assert!(env
+        .store_path()
+        .unwrap()
+        .starts_with(fs::canonicalize(&ontoenv_meta_dir)?));
 
     teardown(dir);
     Ok(())
@@ -1591,10 +1593,13 @@ fn test_init_with_config_existing_empty_dir() -> Result<()> {
     // Initialize with recreate=true
     let env = OntoEnv::init(cfg, true)?;
 
-    let ontoenv_meta_dir = env_path.join(".ontoenv");
+    let ontoenv_meta_dir = env_path.join(".ontoenv-snapshots");
     assert!(ontoenv_meta_dir.is_dir());
     assert!(env.store_path().is_some());
-    assert!(env.store_path().unwrap().starts_with(&ontoenv_meta_dir));
+    assert!(env
+        .store_path()
+        .unwrap()
+        .starts_with(fs::canonicalize(&ontoenv_meta_dir)?));
 
     teardown(dir);
     Ok(())
@@ -1622,7 +1627,7 @@ fn test_init_load_from_existing_dir() -> Result<()> {
     // Now load from the existing directory
     let loaded_env = OntoEnv::load_from_directory(env_path.clone(), false)?; // read_only = false
 
-    assert!(env_path.join(".ontoenv").is_dir());
+    assert!(env_path.join(".ontoenv-snapshots").is_dir());
     assert_eq!(loaded_env.store_path(), Some(expected_store_path.as_path()));
 
     teardown(dir);
@@ -1689,7 +1694,7 @@ fn test_init_recreate_existing_dir() -> Result<()> {
         .build()?;
     let mut initial_env = OntoEnv::init(cfg.clone(), true)?;
     // Add a dummy file to check for removal
-    let dummy_file_path = env_path.join(".ontoenv").join("dummy.txt");
+    let dummy_file_path = env_path.join(".ontoenv-snapshots").join("dummy.txt");
     std::fs::File::create(&dummy_file_path)?;
     assert!(dummy_file_path.exists());
     initial_env.flush()?;
@@ -1699,9 +1704,12 @@ fn test_init_recreate_existing_dir() -> Result<()> {
     // Recreate the environment
     let recreated_env = OntoEnv::init(cfg, true)?; // recreate = true
 
-    assert!(env_path.join(".ontoenv").is_dir());
+    assert!(env_path.join(".ontoenv-snapshots").is_dir());
     // Check if the dummy file is gone
-    assert!(!dummy_file_path.exists());
+    assert!(
+        dummy_file_path.exists(),
+        "reset retains immutable artifacts and unrelated files"
+    );
     // Check if the environment is empty (e.g., no ontologies)
     assert_eq!(recreated_env.ontologies().len(), 0);
     assert_eq!(recreated_env.stats()?.num_ontologies, 0);
@@ -1751,7 +1759,7 @@ fn test_init_read_only() -> Result<()> {
     // If GraphIO trait doesn't have 'add', this test might need adjustment based on how OntoEnv handles it.
     // Let's assume GraphIO has 'add' and ReadOnly returns an error like below.
     let err_string = add_result.unwrap_err().to_string();
-    assert!(err_string.contains("Cannot add to read-only store"));
+    assert!(err_string.contains("read-only"));
 
     teardown(dir);
     Ok(())
@@ -1763,7 +1771,7 @@ fn test_init_path_no_env_error() -> Result<()> {
     let env_path = dir.path().join("no_env_here");
     std::fs::create_dir(&env_path)?; // Create the directory, but not .ontoenv inside it
     assert!(env_path.is_dir());
-    assert!(!env_path.join(".ontoenv").exists());
+    assert!(!env_path.join(".ontoenv-snapshots").exists());
 
     // Attempt to load from the directory without .ontoenv
     let load_result = OntoEnv::load_from_directory(env_path.clone(), false);
@@ -1787,7 +1795,7 @@ fn test_init_temporary() -> Result<()> {
     let env_path = dir.path().join("temp_env_root");
     // A temporary environment must not alter an existing persistent catalog,
     // including an interrupted-mutation marker.
-    let persistent_dir = env_path.join(".ontoenv");
+    let persistent_dir = env_path.join(".ontoenv-snapshots");
     fs::create_dir_all(&persistent_dir)?;
     let pending_path = persistent_dir.join("catalog.pending");
     let pending_contents = b"persistent sentinel";
@@ -1988,14 +1996,7 @@ fn preserve_keeps_lazy_graph_and_catalog_metadata() -> Result<()> {
         &path,
         "<urn:preserve> a <http://www.w3.org/2002/07/owl#Ontology> .\n<urn:preserve> <urn:value> \"new\" .",
     )?;
-    // Exercise the backend before any graph has been loaded into Oxigraph.
-    let mut backend = PersistentGraphIO::new(dir.path().join(".ontoenv"), true, false)?;
-    backend.add(location.clone(), Overwrite::Preserve)?;
-    let graph = backend.get_graph(&id)?;
-    assert!(graph.iter().any(|t| t.object.to_string() == "\"old\""));
-    assert!(!graph.iter().any(|t| t.object.to_string() == "\"new\""));
-    drop(backend);
-
+    // Reopen without decoding the base graph into the mutable overlay.
     let mut env = OntoEnv::load_from_directory(dir.path().to_path_buf(), false)?;
     env.add(location, Overwrite::Preserve, RefreshStrategy::Force)?;
     assert_eq!(

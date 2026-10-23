@@ -618,7 +618,9 @@ def test_reopen_configuration_overrides_are_explicit_and_persisted(
     assert overridden.remote_cache_ttl_secs() == 7
     overridden.close()
 
-    config = json.loads((tmp_path / ".ontoenv" / "ontoenv.json").read_text())
+    reopened = OntoEnv.open(tmp_path, read_only=True)
+    config = reopened.snapshot().config
+    reopened.close()
     assert config["locations"] == []
     assert config["includes"] == []
     assert config["excludes"] == []

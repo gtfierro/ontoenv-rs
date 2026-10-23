@@ -1,7 +1,7 @@
 Configuration
 =============
 
-Settings live in ``.ontoenv/config.json`` and are re-applied by every command
+Settings are captured in the selected immutable manifest and are re-applied by every command
 and every reopen. They can be set at init time, changed with ``ontoenv
 config``, passed to a Python lifecycle method, or changed at runtime with a
 ``set_*`` method.

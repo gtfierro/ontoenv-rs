@@ -2089,7 +2089,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "ontoenv"
-version = "0.6.5"
+version = "0.7.0-rc.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2105,6 +2105,7 @@ dependencies = [
  "log",
  "oxigraph",
  "petgraph",
+ "rand",
  "rdf5d",
  "regex",
  "reqwest",
@@ -2119,7 +2120,7 @@ dependencies = [
 
 [[package]]
 name = "ontoenv-cli"
-version = "0.6.5"
+version = "0.7.0-rc.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2134,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "ontoenv-python"
-version = "0.6.5"
+version = "0.7.0-rc.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2149,6 +2150,7 @@ dependencies = [
  "pyo3-build-config",
  "rand",
  "rdf5d",
+ "serde_json",
  "spareval",
  "spargebra",
 ]
@@ -2743,7 +2745,7 @@ dependencies = [
 
 [[package]]
 name = "rdf5d"
-version = "0.6.5"
+version = "0.7.0-rc.1"
 dependencies = [
  "clap",
  "criterion",

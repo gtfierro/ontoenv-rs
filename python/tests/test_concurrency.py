@@ -29,7 +29,7 @@ def _ro_open_worker(path_str, graph_uri, result_queue):
         result_queue.put(("error", graph_uri, str(e)))
 
 
-def _rw_open_worker(path_str, graph_uri, result_queue):
+def _rw_open_worker(path_str, graph_uri, result_queue, ready=None, release=None):
     try:
         from pathlib import Path
         from ontoenv import OntoEnv
@@ -44,14 +44,16 @@ def _rw_open_worker(path_str, graph_uri, result_queue):
         ont = env.get_ontology(graph_uri)
         ok_meta = (ont.id == graph_uri)
 
-        time.sleep(1.0)
+        if ready is not None:
+            ready.set()
+            assert release.wait(30), "timed out waiting to release writer"
         env.close()
         result_queue.put(("ok", graph_uri) if (ok_graph and ok_meta) else ("missing", graph_uri))
     except Exception as e:
         result_queue.put(("error", graph_uri, str(e)))
 
 
-def _writer_hold_worker(path_str, hold_secs, graph_uri, result_queue):
+def _writer_hold_worker(path_str, ready, release, graph_uri, result_queue):
     try:
         import time
         from pathlib import Path
@@ -64,8 +66,8 @@ def _writer_hold_worker(path_str, hold_secs, graph_uri, result_queue):
         g = env.get_graph(graph_uri)
         ok_graph = (URIRef(graph_uri), RDF.type, OWL.Ontology) in g and len(g) > 0
 
-        # Hold the exclusive writer lock for a bit
-        time.sleep(hold_secs)
+        ready.set()
+        assert release.wait(30), "timed out waiting to release writer"
         env.close()
         result_queue.put(("released", ok_graph))
     except Exception as e:
@@ -135,7 +137,7 @@ class TestOntoEnvReadOnlyConcurrency(unittest.TestCase):
         # A read-only open must not rewrite metadata on close. Apart from being
         # unnecessary, replacing the mmap-backed catalog fails on Windows while
         # another reader still has the original file open.
-        catalog_path = self.test_dir / ".ontoenv" / "catalog.r5tu"
+        catalog_path = self.test_dir / ".ontoenv-snapshots" / "CURRENT"
         fixed_timestamp_ns = 1_000_000_000
         os.utime(catalog_path, ns=(fixed_timestamp_ns, fixed_timestamp_ns))
 
@@ -213,14 +215,18 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
 
         ctx = multiprocessing.get_context("spawn")
         q = ctx.Queue()
-        p1 = ctx.Process(target=_rw_open_worker, args=(str(self.test_dir), name_a, q))
+        ready, release = ctx.Event(), ctx.Event()
+        p1 = ctx.Process(target=_rw_open_worker, args=(str(self.test_dir), name_a, q, ready, release))
         p2 = ctx.Process(target=_rw_open_worker, args=(str(self.test_dir), name_b, q))
 
         p1.start()
-        p2.start()
-
+        try:
+            self.assertTrue(ready.wait(30), "first writer did not acquire lock")
+            p2.start()
+            r2 = q.get(timeout=30)
+        finally:
+            release.set()
         r1 = q.get(timeout=30)
-        r2 = q.get(timeout=30)
 
         p1.join(timeout=30)
         p2.join(timeout=30)
@@ -250,8 +256,8 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
             msg=f"Unexpected error message: {err_msg}",
         )
 
-    def test_reader_waits_for_writer_then_reads(self):
-        """A read-only open should wait while a writer holds the exclusive lock, then succeed."""
+    def test_reader_opens_while_writer_stays_open(self):
+        """A read-only process opens a coherent snapshot while a writer holds its lock."""
         a_path = self.test_dir / "A.ttl"
         a_uri = "http://example.org/ont/A"
         a_path.write_text(
@@ -267,35 +273,23 @@ class TestOntoEnvRWConcurrency(unittest.TestCase):
 
         ctx = multiprocessing.get_context("spawn")
         q = ctx.Queue()
-        hold_secs = 1.0
-        writer = ctx.Process(target=_writer_hold_worker, args=(str(self.test_dir), hold_secs, a_uri, q))
+        ready, release = ctx.Event(), ctx.Event()
+        writer = ctx.Process(target=_writer_hold_worker, args=(str(self.test_dir), ready, release, a_uri, q))
         reader = ctx.Process(target=_ro_open_get_graph_worker, args=(str(self.test_dir), a_uri, q))
-
         writer.start()
-        import time
-        time.sleep(0.15)  # ensure writer started and holds the lock
-        t0 = time.time()
-        reader.start()
-
-        # First result should be from reader after writer releases
-        r1 = q.get(timeout=30)
-        r2 = q.get(timeout=30)
-
+        try:
+            self.assertTrue(ready.wait(30), "writer did not acquire lock")
+            reader.start()
+            # The writer cannot close until after this read finishes.
+            self.assertEqual(q.get(timeout=30), ("ok", True))
+            self.assertTrue(writer.is_alive())
+        finally:
+            release.set()
+        self.assertEqual(q.get(timeout=30), ("released", True))
         writer.join(timeout=30)
         reader.join(timeout=30)
-
-        self.assertFalse(writer.is_alive())
-        self.assertFalse(reader.is_alive())
         self.assertEqual(writer.exitcode, 0)
         self.assertEqual(reader.exitcode, 0)
-
-        elapsed = time.time() - t0
-        # Reader should have waited roughly the hold duration (minus start skew)
-        self.assertGreaterEqual(elapsed, 0.7)
-
-        results = {r1[0], r2[0]}
-        self.assertIn("released", results)
-        self.assertIn("ok", results)
 
 
 # Run out-of-process: if the store-backed view ever regresses to holding a Rust
