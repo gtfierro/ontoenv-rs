@@ -1,7 +1,7 @@
-//! Experimental atomic publication of OntoEnv versions backed by immutable RDF5D files.
+//! Atomic publication of OntoEnv versions backed by immutable RDF5D files.
 //!
-//! Enable `transactional-snapshots`. This API uses a separate
-//! `.ontoenv-snapshots` directory and does not migrate or modify legacy stores.
+//! Default managed storage uses `.ontoenv-snapshots`. Legacy stores require
+//! explicit migration, which retains the original files.
 //! Graph changes are staged over an immutable base. An atomically replaced
 //! `CURRENT` file selects an immutable manifest bundling graph references,
 //! metadata, aliases and configuration. No database or reader recovery is needed.
@@ -29,6 +29,14 @@ use std::sync::Arc;
 const DIRECTORY: &str = ".ontoenv-snapshots";
 const SCHEMA_VERSION: u32 = 2;
 const CURRENT: &str = "CURRENT";
+
+pub(crate) fn read_config(root: &Path) -> Result<Option<Config>> {
+    let directory = root.join(DIRECTORY);
+    if !directory.exists() {
+        return Ok(None);
+    }
+    Ok(Some(read_head(&directory)?.config))
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Head {
@@ -215,16 +223,30 @@ pub struct SnapshotWriter {
     // possibly stale base until a new writer has reconciled the manifest.
     needs_reopen: bool,
     // Keep the stable writer lock held for the lifetime of this handle.
-    _writer_lock: File,
+    _writer_lock: WriterLock,
 }
 
 impl SnapshotWriter {
-    /// Create an experimental environment, refusing to recreate existing data.
-    /// A legacy `.ontoenv` directory may coexist; it is not imported automatically.
-    pub fn create(mut config: Config) -> Result<Self> {
+    /// Create an empty environment, refusing to recreate existing data.
+    /// A legacy `.ontoenv` directory requires explicit migration.
+    pub fn create(config: Config) -> Result<Self> {
+        if config.root.join(".ontoenv").exists() {
+            bail!("Legacy environment requires explicit migration: run `ontoenv migrate`");
+        }
+        Self::initialize(config, Environment::new(), None, || Ok(()))
+    }
+
+    fn initialize(
+        mut config: Config,
+        mut environment: Environment,
+        source: Option<&Snapshot>,
+        before_install: impl FnOnce() -> Result<()>,
+    ) -> Result<Self> {
         if config.temporary || config.external_graph_store.is_some() {
             bail!("Snapshot storage requires persistent, managed graph storage");
         }
+        config.build_globsets()?;
+        config.build_ontology_regexes()?;
         fs::create_dir_all(&config.root)?;
         config.root = fs::canonicalize(&config.root)?;
         let writer_lock = acquire_writer_lock(&config.root)?;
@@ -242,10 +264,9 @@ impl SnapshotWriter {
             .tempdir_in(&config.root)?;
         fs::create_dir(initialization.path().join("objects"))?;
         fs::create_dir(initialization.path().join("manifests"))?;
-        let mut environment = Environment::new();
         environment.set_default_policy(&config.resolution_policy)?;
         let (object_id, object_length, rdf) =
-            write_object(initialization.path(), None, &BTreeMap::new())?;
+            write_object(initialization.path(), source, &BTreeMap::new())?;
         let info = SnapshotInfo {
             environment_id: blake3::hash(&rand::random::<[u8; 32]>())
                 .to_hex()
@@ -265,6 +286,7 @@ impl SnapshotWriter {
         };
         publish(initialization.path(), &generation, None)?;
         sync_directory(initialization.path())?;
+        before_install()?;
         fs::rename(initialization.path(), &directory)?;
         let _initialized_path = initialization.keep();
         sync_directory(&generation.config.root).context(
@@ -276,6 +298,107 @@ impl SnapshotWriter {
             current,
             needs_reopen: false,
             _writer_lock: writer_lock,
+        })
+    }
+
+    /// Explicitly copy a legacy managed environment into the new format.
+    /// Legacy files are retained and never opened through a writable backend.
+    pub fn migrate(root: impl AsRef<Path>) -> Result<Self> {
+        let root = fs::canonicalize(root.as_ref())?;
+        let legacy = root.join(".ontoenv");
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(legacy.join("store.lock"))?;
+        FileExt::try_lock_exclusive(&lock)
+            .context("Close all legacy environment handles before migration")?;
+        let _legacy_lock = WriterLock(lock);
+        let mut config = Config::from_file(&legacy.join("ontoenv.json"))?;
+        if config.external_graph_store.is_some() || config.temporary {
+            bail!("Migration requires a managed persistent RDF5D store");
+        }
+        if legacy.join(crate::catalog::PENDING_FILE).exists() {
+            return Err(crate::errors::CatalogRecoveryError {
+                message: format!("Legacy environment has an interrupted mutation; run `ontoenv recover` before migration: {}", fs::read_to_string(legacy.join(crate::catalog::PENDING_FILE))?),
+            }.into());
+        }
+        let catalog_path = legacy.join(crate::catalog::CATALOG_FILE);
+        let (environment, expected, _) = if catalog_path.exists() {
+            crate::catalog::load(&catalog_path)?
+        } else {
+            (
+                serde_json::from_slice(&fs::read(legacy.join("environment.json"))?)?,
+                None,
+                HashMap::new(),
+            )
+        };
+        let store_path = legacy.join("store.r5tu");
+        let before = crate::io::file_backend_state(&store_path)?;
+        if expected
+            .as_ref()
+            .is_some_and(|expected| expected != &before)
+        {
+            bail!(
+                "Legacy catalog and graph store do not match; recover/reconcile before migration"
+            );
+        }
+        let metadata_paths = [
+            legacy.join("ontoenv.json"),
+            if catalog_path.exists() {
+                catalog_path
+            } else {
+                legacy.join("environment.json")
+            },
+        ];
+        let hashes: Vec<_> = metadata_paths
+            .iter()
+            .map(|path| fs::read(path).map(|bytes| blake3::hash(&bytes)))
+            .collect::<std::io::Result<_>>()?;
+        let source = if store_path.exists() {
+            Some(Snapshot::open(&store_path)?)
+        } else {
+            None
+        };
+        let physical: HashSet<_> = source
+            .as_ref()
+            .into_iter()
+            .flat_map(|source| source.graph_names())
+            .collect();
+        // JSON-only catalogs have no persisted revision to distinguish an
+        // intentionally empty graph from missing graph data. Require exact
+        // graph names rather than silently migrating an incomplete store.
+        if !metadata_paths[1].ends_with(crate::catalog::CATALOG_FILE)
+            && environment
+                .ontologies()
+                .keys()
+                .any(|id| !physical.contains(id.name().as_str()))
+        {
+            bail!("legacy metadata does not match backend graph IDs");
+        }
+        if physical.iter().any(|name| {
+            !environment
+                .ontologies()
+                .keys()
+                .any(|id| id.name().as_str() == *name)
+        }) {
+            bail!("Legacy graph data contains uncatalogued graphs; reconcile before migration");
+        }
+        if source.is_none() && !environment.ontologies().is_empty() {
+            bail!("Legacy graph store is missing");
+        }
+        config.root = root;
+        Self::initialize(config, environment, source.as_ref(), || {
+            if crate::io::file_backend_state(&store_path)? != before {
+                bail!("Legacy graph store changed during migration");
+            }
+            for (path, hash) in metadata_paths.iter().zip(&hashes) {
+                if blake3::hash(&fs::read(path)?) != *hash {
+                    bail!("Legacy metadata changed during migration");
+                }
+            }
+            Ok(())
         })
     }
 
@@ -310,7 +433,30 @@ impl SnapshotWriter {
             environment,
             config,
             changes: BTreeMap::new(),
+            validate_imports: true,
         }
+    }
+
+    /// Publish only configuration, preserving graph/catalog contents. This
+    /// validates settings without reinterpreting previously bounded imports.
+    pub fn publish_config(&mut self, config: Config) -> Result<Arc<EnvironmentSnapshot>> {
+        self.publish_state(self.current.environment.clone(), config, BTreeMap::new())
+    }
+
+    pub(crate) fn publish_state(
+        &mut self,
+        environment: Environment,
+        config: Config,
+        changes: BTreeMap<String, Option<Arc<Graph>>>,
+    ) -> Result<Arc<EnvironmentSnapshot>> {
+        let mut update = self.begin_update();
+        update.environment = environment;
+        update.config = config;
+        update.changes = changes;
+        // The normal import pipeline applies strictness and explicit depth
+        // limits before publishing. Do not re-fetch or reinterpret those limits.
+        update.validate_imports = false;
+        update.commit()
     }
 }
 
@@ -322,7 +468,8 @@ pub struct SnapshotUpdate<'a> {
     writer: &'a mut SnapshotWriter,
     environment: Environment,
     config: Config,
-    changes: BTreeMap<String, Option<Graph>>,
+    changes: BTreeMap<String, Option<Arc<Graph>>>,
+    validate_imports: bool,
 }
 
 impl SnapshotUpdate<'_> {
@@ -371,7 +518,7 @@ impl SnapshotUpdate<'_> {
         for alias in aliases {
             self.environment.add_alias(&alias, &name)?;
         }
-        self.changes.insert(name, Some(graph));
+        self.changes.insert(name, Some(Arc::new(graph)));
         Ok(id)
     }
 
@@ -428,7 +575,7 @@ impl SnapshotUpdate<'_> {
             bail!("Graph {id} is not present in the candidate");
         }
         match self.changes.get(id.name().as_str()) {
-            Some(Some(graph)) => Ok(graph.clone()),
+            Some(Some(graph)) => Ok((**graph).clone()),
             Some(None) => bail!("Graph {id} is deleted in the candidate"),
             None => self.writer.current.get_graph(id),
         }
@@ -497,7 +644,7 @@ impl SnapshotUpdate<'_> {
                 Arc::clone(&base.rdf),
             )
         } else {
-            write_object(&self.writer.directory, Some(base), &self.changes)?
+            write_object(&self.writer.directory, Some(&base.rdf), &self.changes)?
         };
         self.environment
             .set_default_policy(&self.config.resolution_policy)?;
@@ -533,7 +680,9 @@ impl SnapshotUpdate<'_> {
         {
             bail!("An update cannot change storage root, temporary mode or graph backend");
         }
-        if self.config.strict {
+        self.config.build_globsets()?;
+        self.config.build_ontology_regexes()?;
+        if self.config.strict && self.validate_imports {
             for ontology in self.environment.ontologies().values() {
                 for import in &ontology.imports {
                     if self
@@ -584,7 +733,18 @@ fn normalize_source_location(location: OntologyLocation, root: &Path) -> Ontolog
     }
 }
 
-fn acquire_writer_lock(root: &Path) -> Result<File> {
+// Explicit unlock matters when a concurrent process spawn temporarily inherits
+// an open file description before exec: closing only our descriptor can leave
+// that lock held by the child even after the writer is dropped.
+struct WriterLock(File);
+
+impl Drop for WriterLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
+fn acquire_writer_lock(root: &Path) -> Result<WriterLock> {
     let path = root.join(".ontoenv-snapshots.lock");
     let file = OpenOptions::new()
         .read(true)
@@ -592,9 +752,13 @@ fn acquire_writer_lock(root: &Path) -> Result<File> {
         .create(true)
         .truncate(false)
         .open(&path)?;
-    FileExt::try_lock_exclusive(&file)
-        .with_context(|| format!("Another snapshot writer owns {}", path.display()))?;
-    Ok(file)
+    FileExt::try_lock_exclusive(&file).with_context(|| {
+        format!(
+            "Cannot acquire exclusive lock; another snapshot writer owns {}",
+            path.display()
+        )
+    })?;
+    Ok(WriterLock(file))
 }
 
 fn read_head(directory: &Path) -> Result<Generation> {
@@ -622,8 +786,12 @@ fn read_head(directory: &Path) -> Result<Generation> {
     if blake3::hash(&bytes).to_hex().as_str() != head.manifest_hash {
         bail!("Selected manifest checksum mismatch");
     }
-    let generation: Generation = serde_json::from_slice(&bytes)?;
+    let mut generation: Generation = serde_json::from_slice(&bytes)?;
     validate_record(&generation)?;
+    // The opened location is operational state, not an authority inherited
+    // from the machine/path that originally published this manifest.
+    generation.config.root =
+        fs::canonicalize(directory.parent().context("Missing environment root")?)?;
     Ok(generation)
 }
 
@@ -811,8 +979,8 @@ fn publish_with_hook(
 
 fn write_object(
     directory: &Path,
-    base: Option<&EnvironmentSnapshot>,
-    changes: &BTreeMap<String, Option<Graph>>,
+    base: Option<&Snapshot>,
+    changes: &BTreeMap<String, Option<Arc<Graph>>>,
 ) -> Result<(String, u64, Arc<Snapshot>)> {
     let objects = directory.join("objects");
     // A randomly named private object directory cannot collide with an abandoned
@@ -829,11 +997,11 @@ fn write_object(
         },
     );
     if let Some(base) = base {
-        for group in base.rdf.file().enumerate_all()? {
+        for group in base.file().enumerate_all()? {
             if changes.contains_key(&group.graphname) {
                 continue;
             }
-            for triple in base.rdf.file().oxigraph_triples(group.gid)? {
+            for triple in base.file().oxigraph_triples(group.gid)? {
                 let triple = triple?;
                 writer.add(Quint {
                     id: group.id.clone(),
@@ -1208,6 +1376,21 @@ mod tests {
         fs::write(directory.join(CURRENT), selected)?;
         assert!(reader.refresh()?);
         assert_eq!(reader.snapshot().info().generation, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn dropped_writer_explicitly_unlocks_even_with_an_inherited_descriptor() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let lock = acquire_writer_lock(dir.path())?;
+        let inherited = lock.0.try_clone()?;
+        assert!(acquire_writer_lock(dir.path()).is_err());
+        drop(lock);
+        let next = acquire_writer_lock(dir.path())?;
+        drop(inherited);
+        assert!(acquire_writer_lock(dir.path()).is_err());
+        drop(next);
+        acquire_writer_lock(dir.path())?;
         Ok(())
     }
 

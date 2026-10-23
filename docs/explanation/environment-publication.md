@@ -1,9 +1,8 @@
 # Atomic publication belongs to OntoEnv
 
-Status: experimental implementation in PR #36, October 23, 2026. The draft now
-uses immutable manifests and an atomic `CURRENT` file instead of redb. It does
-not change the default persistence API. See [the prototype guide](transactional-snapshots.md)
-for the Rust API and measurements.
+Status: 0.7.0-rc.1 preparation in PR #36, October 23, 2026. Immutable manifests
+and an atomic `CURRENT` file are the default managed storage in Rust, Python and
+the CLI. See [the snapshot guide](transactional-snapshots.md) for APIs and measurements.
 
 ## The boundary
 
@@ -26,8 +25,8 @@ There is no independent catalog save after graph publication.
 | OntoEnv reader | Retain one version until explicit refresh |
 
 All publication code lives in `lib/src/snapshots.rs`; the RDF5D crate gains no
-transaction machinery. Keep the experimental API/feature names for now rather
-than mixing a terminology rename into persistence changes.
+transaction machinery. The old Cargo feature name is an empty compatibility
+feature; managed storage no longer requires opting in.
 
 ## Minimal contract
 
@@ -50,8 +49,9 @@ data, with bursty writes and readers explicitly refreshing:
    from that writer are rejected until close/reopen reconciles head.
    Its last confirmed snapshot remains readable but may be behind durable head.
 7. Keep all complete objects and manifests initially. Neither retained files nor
-   a generation counter promise a public history/checkout API. No reset,
-   migration or online pruning is part of this first contract.
+   a generation counter promise a public history/checkout API. Reset publishes
+   a replacement version. Migration is explicit and preserves legacy files.
+   Online pruning is not supported.
 
 ## Disk layout and authority
 
@@ -77,8 +77,9 @@ validation; the manifest checksum does not make external mutation of mmap data
 safe.
 
 Earlier redb-based experimental environments are rejected explicitly. Neither
-those environments nor legacy `.ontoenv/` stores are migrated or overwritten.
-The public Rust reader/update API remains the same.
+those environments nor legacy `.ontoenv/` stores are overwritten by normal
+open/create calls. Legacy managed stores have an explicit copy migration.
+The specialized Rust reader/update API remains available alongside the normal API.
 
 ## Publication protocol
 

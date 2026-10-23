@@ -33,7 +33,7 @@ Explanation
    explains the results.
 
 :doc:`transactional-snapshots`
-   An experimental Rust API for immutable mmap-backed generations, concurrent
+   Default managed storage with immutable mmap-backed generations, concurrent
    readers, staged updates, and explicit snapshot refresh.
 
 :doc:`environment-publication`
@@ -42,7 +42,7 @@ Explanation
 
 :doc:`publication-validation`
    Platform results, guest crash/reboot tests, multi-process workloads and
-   provisional acceptance budgets for the experimental publisher.
+   provisional acceptance budgets for the publisher.
 
 .. toctree::
    :hidden:

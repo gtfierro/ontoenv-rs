@@ -27,7 +27,7 @@ and that something is what OntoEnv is.
 An environment is a name-to-location index
 ------------------------------------------
 
-An environment is a directory — ``.ontoenv/`` by default — holding two things:
+An environment is a directory — ``.ontoenv-snapshots/`` for managed storage — holding two things:
 
 **The graphs themselves**, in a compact binary format (rdf5d) that can be
 memory-mapped and read without parsing RDF text.
@@ -128,7 +128,7 @@ CI, where silently incomplete output is worse than a failure.
 Persistent and temporary environments
 -------------------------------------
 
-A persistent environment writes to ``.ontoenv/`` and reopens quickly because
+A persistent environment writes immutable versions under ``.ontoenv-snapshots/`` and reopens quickly because
 of its saved catalog. A temporary one (``--temporary`` /
 ``OntoEnv(temporary=True)``) keeps graphs and catalog in memory, leaves
 nothing behind, and starts from scratch every time. The API is otherwise

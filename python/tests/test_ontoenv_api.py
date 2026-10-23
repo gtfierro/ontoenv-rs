@@ -49,7 +49,7 @@ class TestOntoEnvAPI(unittest.TestCase):
     def test_constructor_path(self):
         """Test OntoEnv(path=...) constructor."""
         self.env = OntoEnv(path=self.test_dir, recreate=True)
-        self.assertTrue((self.test_dir / ".ontoenv").is_dir())
+        self.assertTrue((self.test_dir / ".ontoenv-snapshots").is_dir())
 
     def test_constructor_with_config(self):
         """Test OntoEnv(...flags...) constructor."""
@@ -541,8 +541,7 @@ exr:RootClass a owl:Class .
         second = self.env.get_graph(name)
         self.assertIs(first.store, second.store)
 
-        # flush rebinds the cached store in place so existing Graph views and
-        # subsequent get_graph calls share the same refreshed store.
+        # A no-op flush retains the same selected generation and cached store.
         self.env.flush()
         after_flush = self.env.get_graph(name)
         self.assertIs(after_flush.store, first.store)

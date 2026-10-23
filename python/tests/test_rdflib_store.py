@@ -249,7 +249,7 @@ def test_get_graph_view_survives_unrelated_snapshot_rewrite(persistent_env: Onto
     assert set(graph.triples((None, None, None))) == before
 
 
-def test_get_graph_view_observes_post_flush_mutation(
+def test_get_graph_view_keeps_its_version_after_flush(
     persistent_env: OntoEnv, tmp_path: Path
 ) -> None:
     persistent_env.add(str(FIRST_TTL))
@@ -279,7 +279,10 @@ def test_get_graph_view_observes_post_flush_mutation(
     persistent_env.add(str(replacement), overwrite=True)
     persistent_env.flush()
 
-    assert sentinel in set(graph.triples((None, None, None)))
+    assert sentinel not in set(graph.triples((None, None, None)))
+    current = persistent_env.get_graph("urn:example:first")
+    assert sentinel in current
+    assert current.store is not graph.store
 
 
 def test_dataset_from_env_with_other_store_forces_copy(persistent_env: OntoEnv) -> None:

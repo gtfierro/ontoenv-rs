@@ -1,29 +1,27 @@
-# Experimental OntoEnv publication and snapshots
+# OntoEnv publication and snapshots
+
+Starting with 0.7.0-rc.1, immutable publication is the default storage backend
+for new managed persistent environments in Rust, Python and the CLI. It is
+always compiled; `transactional-snapshots` remains an empty compatibility
+feature. Temporary environments and caller-provided graph stores retain their
+existing behavior and their backend's transaction guarantees.
 
 Publication coordinates an OntoEnv catalog, configuration and immutable RDF5D
-artifact. RDF5D itself remains a file builder and query engine; it does not
-implement environment transactions. The feature name remains
-`transactional-snapshots` while this is experimental. See
-[the boundary and manifest review](environment-publication.md) before treating
-this prototype as a production storage design.
-The subsequent [validation report](publication-validation.md) records the Windows
-replacement fix, guest crash/reboot campaign, larger multi-reader workloads and
-provisional acceptance budgets.
+artifact. RDF5D remains the file builder and query engine. OntoEnv implements
+writer exclusion, commit and refresh with immutable JSON manifests and an atomic
+`CURRENT` file, without a database dependency. See [the design review](environment-publication.md)
+and [validation report](publication-validation.md) for the protocol and measured limits.
 
-The `transactional-snapshots` feature adds an experimental Rust storage API:
-`SnapshotWriter`, `SnapshotUpdate`, `SnapshotReader`, and `EnvironmentSnapshot`.
-It uses immutable JSON manifests and an atomic `CURRENT` file. The redb
-dependency has been removed; feature CI now tests the workspace Rust 1.88 floor.
-Earlier redb-based prototype environments are rejected without automatic migration.
-
-This is a separate prototype, not a migration of the CLI/Python API. It writes
-`.ontoenv-snapshots/` and leaves an existing `.ontoenv/` alone.
+Existing `.ontoenv/` environments require [explicit migration](../how-to/migrate-storage.md).
+Migration copies the stored RDF and metadata, retains the original files, and
+publishes the new directory only after validation. Earlier redb-based prototype
+environments are rejected without automatic conversion.
 
 ## Try it
 
 ```sh
-cargo run -p ontoenv --features transactional-snapshots --example transactional_snapshots
-cargo test -p ontoenv --features transactional-snapshots --lib --test test_snapshots --test test_concurrency
+cargo run -p ontoenv --example transactional_snapshots
+cargo test -p ontoenv --lib --test test_snapshots --test test_concurrency
 ```
 
 The example keeps a writer open, opens a reader, publishes new graph content and
@@ -46,10 +44,47 @@ let old_view = old.graph_view(&id)?;
 reader.refresh()?;
 ```
 
-These feature-gated `OntoEnv` entry points return the existing specialized
-`SnapshotWriter` and `SnapshotReader` types. `OntoEnv::open_snapshot_writer(root)`
-opens an existing writer. They are the initial Rust API integration; the legacy
-`OntoEnv::open/create` behavior and CLI/Python persistence are unchanged.
+These explicit entry points return `SnapshotWriter` and `SnapshotReader`.
+`OntoEnv::open_snapshot_writer(root)` opens an existing writer. Normal
+`OntoEnv::connect/create/open` also use this backend, with the existing source
+and import pipeline. Their successful graph mutations publish before returning.
+`env.snapshot()` captures the selected committed version; `env.refresh()`
+advances a managed read handle without reading sources. Rust callers can group
+operations with `env.transaction(|env| { ...; Ok(()) })`; nested errors and
+unwinding restore staged graphs, catalog, configuration and runtime settings.
+
+Python uses the same lifecycle:
+
+```python
+from ontoenv import OntoEnv
+
+writer = OntoEnv.connect("./env", offline=True)
+writer.add("./ontology.ttl")
+reader = OntoEnv.open("./env", read_only=True)
+old = reader.snapshot()
+dataset = old.get_dataset()
+print(old.info)  # environment ID, generation, parent, committed_at, opened_at
+writer.update()
+reader.refresh()  # select a complete newer version, if one exists
+# old, dataset and previously returned graph/closure views keep their version.
+reader.close()
+writer.close()
+```
+
+`EnvironmentSnapshot` provides `get_ontology_names()`, `get_ontologies()`,
+`get_graph()`, `get_dataset()`, namespace access, a copied `config` dictionary
+and `info`. These handles remain usable after the environment closes.
+`get_graph`, `get_dataset`, `get_closure` and `get_union` views pin their backing
+version. Fetch another view to see an update, or explicitly call
+`env.refresh_dataset(dataset)` to rebind that dataset to the handle's selected
+version. Existing iterators finish on their original backing and term cache.
+Reader refresh and dataset rebind are separate operations; `flush` does not
+advance readers or mutate already returned managed views.
+
+Each managed version contains one graph per canonical IRI and one registration
+per source. A replacement updates that registration and preserves its explicit
+aliases. Multiple source versions of one IRI must be assigned distinct graph
+IRIs; duplicate legacy registrations are rejected during migration.
 
 Readers expose catalog listings, aliases, configuration, graph copies, generation
 information and the existing RDF5D `Snapshot`/`View` engine. They have no mutation
@@ -107,22 +142,29 @@ A synced temporary pointer atomically replaces `CURRENT`; OntoEnv then syncs its
 parent directory and installs the already-prepared committed snapshot. A metadata-only update
 reuses the same mapped file and performs no RDF5D rewrite.
 
-Dropping or aborting an update publishes nothing. Strict commits reject unresolved
-imports across the complete candidate. `add_source` and `add_from_bytes` currently
-stage one ontology; stage its dependencies in the same transaction. Recursive
-discovery/fetching and non-strict failure reports are not implemented yet.
+Dropping or aborting an explicit `SnapshotUpdate` publishes nothing. Its strict
+commits reject unresolved imports across the complete candidate; `add_source`
+and `add_from_bytes` stage one ontology each, so stage their dependencies too.
+The normal `OntoEnv` API retains recursive imports, configured filters, strict
+and non-strict behavior and explicit import depth limits. That pipeline validates
+its candidate before publication. “Add with rename” publishes once, including
+both ingestion and renaming.
 
 The sole writer holds a stable `.ontoenv-snapshots.lock` outside the data directory.
 Readers briefly read `CURRENT` and its checksum-verified immutable manifest,
 then retain the immutable graph mapping. They hold no writer lock or database
 connection. Initialization is prepared in a private directory and renamed
-into place only after generation zero is complete. Recreation is deliberately
-unsupported rather than deleting a live lock or mapped files.
+into place only after generation zero is complete. Recreation and reset publish
+a replacement catalog; they retain old mapped files and the stable lock.
+Close the active writer before recreation. Normal new-environment creation
+installs an empty generation before any requested source scan; a failed initial
+scan leaves an openable empty environment.
 
 ## Retention and recovery limits
 
 Published manifests and complete objects, including unreferenced files, are
-**retained indefinitely**. Automatic pruning, reset and migration are not exposed. Do not
+**retained indefinitely**. Reset does not reclaim disk space. Automatic pruning
+is not exposed. Do not
 delete old objects manually while any reader or query view can use them. This
 initial policy avoids GC races and lets sleeping readers retain snapshots.
 
@@ -147,7 +189,7 @@ such mutation safe.
 ## Measure before adding more complexity
 
 ```sh
-cargo run --release -p ontoenv --features transactional-snapshots --example snapshot_profile -- 100 500
+cargo run --release -p ontoenv --example snapshot_profile -- 100 500
 ```
 
 This diagnostic profile reports encoded size, serialization/publication time,
@@ -203,10 +245,9 @@ not isolated reader memory or a measurement of many reader processes. Cold
 reads, realistic queries, index-building memory and writer allocation attribution
 still need measurement before choosing on-disk graph-level COW.
 
-Before replacing legacy persistence, review the file publication protocol and
-its platform durability contract. Then add recursive imports/source updates,
-dependency-closure conveniences, CLI/Python adapters and explicit migration.
-Online retention needs process-safe snapshot pins before any objects can be
+The release candidate integrates recursive source updates, dependency views,
+CLI/Python entry points and explicit legacy migration. The remaining operational
+limit is indefinite retention. Online retention needs process-safe snapshot pins before any objects can be
 deleted. Per-graph on-disk COW is a later option if measurements show complete
 generation writes dominate; it also requires coordinating term dictionaries and
 blank-node identity across graph files.

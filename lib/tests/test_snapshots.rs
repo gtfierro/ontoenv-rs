@@ -1,5 +1,3 @@
-#![cfg(feature = "transactional-snapshots")]
-
 use anyhow::{Context, Result};
 use ontoenv::api::OntoEnv;
 use ontoenv::config::Config;

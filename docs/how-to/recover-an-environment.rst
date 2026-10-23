@@ -1,6 +1,15 @@
 Recover an interrupted environment
 ==================================
 
+.. note::
+
+   This interrupted-mutation procedure applies to legacy and caller-provided
+   stores. The default 0.7 managed backend opens the complete version selected
+   by ``CURRENT`` after process exit, without a recovery writer. Invalid selected
+   state raises an error; it never scans for a fallback. See
+   :doc:`migrate-storage` for explicit legacy migration.
+
+
 The symptom
 -----------
 
@@ -88,11 +97,11 @@ If you would rather rebuild from your source files than recover:
 
 .. code-block:: console
 
-   $ ontoenv reset
-   $ ontoenv init ./ontologies
+   $ ontoenv init ./ontologies --overwrite
 
-These commands form a destructive sequence. ``reset`` asks for confirmation,
-then deletes ``.ontoenv/`` entirely, including its catalog, stored graphs, and
-cached remote ontologies. ``init`` creates a new environment, scans
-``./ontologies``, and follows its imports; remote imports must be downloaded
-again. The source files under ``./ontologies`` are not deleted.
+For legacy stores, ``reset`` asks for confirmation and deletes ``.ontoenv/``.
+For managed 0.7 storage, it publishes an empty catalog while retaining old
+artifacts and views. To repopulate an existing managed environment, use
+``ontoenv init ./ontologies --overwrite``; this publishes the requested source
+scan as a replacement version. Source files are not deleted. Reset does not
+reclaim managed disk space.

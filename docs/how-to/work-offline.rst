@@ -23,7 +23,7 @@ To create a new environment in offline mode:
 
    $ ontoenv init ./ontologies --offline
 
-``init`` creates ``.ontoenv/`` and scans ``./ontologies`` for local RDF files.
+``init`` creates ``.ontoenv-snapshots/`` and scans ``./ontologies`` for local RDF files.
 The ``--offline`` flag prevents it from fetching any remote imports and saves
 offline mode in the new environment.
 
@@ -138,7 +138,7 @@ Build and check the environment on a machine with network access:
 its reachable imports in that environment. ``list missing`` should produce no
 output; any listed IRI still requires a graph that has not been stored.
 
-Copy the project, including its ``.ontoenv/`` directory, to the offline
+Close the writer, then copy the project, including its ``.ontoenv-snapshots/`` directory, to the offline
 machine. On that machine, disable network access in the saved configuration:
 
 .. code-block:: console
@@ -148,6 +148,6 @@ machine. On that machine, disable network access in the saved configuration:
 This command changes only the configuration. It does not scan sources or
 attempt a network request.
 
-The stored graphs and their catalog live under ``.ontoenv/``. Offline mode
+The stored graphs and their catalog live under ``.ontoenv-snapshots/``. Offline mode
 cannot retrieve a graph that was not copied, which is why ``list missing`` is
 run on the networked machine before the project is moved.

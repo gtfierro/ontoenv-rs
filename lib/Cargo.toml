@@ -34,23 +34,21 @@ tempfile = "3.10.1"
 fs2 = "0.4"
 url = "2.5"
 blake3.workspace = true
-rand = { workspace = true, optional = true }
+rand.workspace = true
 
 [features]
 rocksdb = ["oxigraph/rocksdb"]
-transactional-snapshots = ["dep:rand"]
+# Compatibility feature; publication support is always built.
+transactional-snapshots = []
 
 [[example]]
 name = "transactional_snapshots"
-required-features = ["transactional-snapshots"]
 
 [[example]]
 name = "snapshot_profile"
-required-features = ["transactional-snapshots"]
 
 [[example]]
 name = "snapshot_workload"
-required-features = ["transactional-snapshots"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

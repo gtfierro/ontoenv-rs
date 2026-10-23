@@ -13,6 +13,30 @@ This page groups the public API by purpose and documents behavior not
 represented in a signature: source access, mutation, persistence, and errors.
 :doc:`api` contains generated signatures and docstrings.
 
+Managed snapshots in 0.7
+------------------------
+
+New managed persistent environments use immutable publication. Existing
+``.ontoenv/`` data requires :doc:`../how-to/migrate-storage`.
+``OntoEnv.migrate(path)`` copies the stored data and returns a writable handle;
+legacy files remain available for rollback. Custom stores and temporary
+connections retain their own storage semantics.
+
+``env.snapshot()`` returns an ``EnvironmentSnapshot`` independent of the live
+handle. It exposes ``info`` (environment ID, generation, parent generation,
+commit and open timestamps), a copied ``config`` dictionary,
+``get_ontology_names()``, ``get_ontologies()``, ``get_graph(iri)``,
+``get_dataset()``, ``get_namespaces()``, ``get_bound_namespaces()`` and
+``resolve_alias(iri)``. No refresh or write methods exist on this handle.
+
+``env.refresh()`` advances a managed reader to the latest complete version,
+returning whether it changed. A writer already selects its last commit.
+Previously returned graph, closure, union and dataset views retain their version,
+even after flush, refresh or close. Request another view to see the new selection,
+or call ``env.refresh_dataset(dataset)`` to rebind that dataset explicitly.
+Outstanding iterators keep their original backing. Successful managed mutations
+publish before returning; ``flush`` does not refresh readers.
+
 Opening an environment
 ----------------------
 
@@ -236,7 +260,7 @@ Inspecting
    * - ``get_namespaces(ontology=None, include_closure=False)``
      - Prefix → namespace mapping, including saved bindings.
    * - ``bind_namespace(prefix, namespace)`` / ``unbind_namespace(prefix)``
-     - Save or remove a prefix binding in ``.ontoenv/ontoenv.json``.
+     - Save or remove a prefix binding in the selected version’s configuration.
    * - ``get_bound_namespaces()``
      - The saved prefix bindings.
    * - ``store_path()``

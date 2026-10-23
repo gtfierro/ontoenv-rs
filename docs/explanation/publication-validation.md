@@ -1,9 +1,10 @@
 # Publication validation and acceptance gates
 
-Status: experimental snapshot branch, October 23, 2026. These results describe
-the prototype and synthetic fixtures; they are not production performance SLOs
-or a proof of durability on every local filesystem. The normal CLI/Python
-persistence path is unchanged.
+Status: storage release candidate, October 23, 2026. The measurements below
+were taken on the publisher before its default Rust/Python/CLI integration.
+They describe synthetic fixtures, not production performance SLOs or a proof
+of durability on every local filesystem. The publication protocol remains the
+same in 0.7.0-rc.1; application integration has separate regression coverage.
 
 ## Platform correctness
 
@@ -144,12 +145,47 @@ This is one diagnostic run per mode with independent equivalent fixtures, not
 a controlled latency/memory guarantee. Raw worker reports, commands and hashes
 are in `docs/reviews/snapshot-ownership-2026-10-23.json`.
 
-The first opt-in integration adds `OntoEnv::create_snapshot`,
+The initial explicit integration added `OntoEnv::create_snapshot`,
 `OntoEnv::open_snapshot` and `OntoEnv::open_snapshot_writer`, returning specialized
-reader/writer handles. Environment snapshots now expose borrowed graph/scoped
-views tied to their selected version. The legacy mutable API and CLI/Python
-persistence have not been switched to this backend. Avoid implicit refresh of
-retained views: their stable identity is the consistency guarantee. Per-graph
-disk COW would not directly remove per-process in-memory query indexes and is
-not justified by these measurements alone. Recursive source updates, broader
-API adapters, explicit migration and safe cleanup remain integration work.
+reader/writer handles. The 0.7 release candidate additionally uses the publisher
+through the normal Rust, Python and CLI APIs, including recursive source updates,
+explicit migration and independently owned Python query views. Regression tests
+cover nested rollback/unwinding, bounded imports, coherent reader refresh,
+recreation, in-flight dataset iterators, copied roots and release upgrades.
+A writer-lock guard explicitly unlocks before closing so inherited descriptors
+from concurrent process spawning cannot prolong a dropped writer's lock.
+
+Avoid implicit refresh of retained views: their stable identity is the
+consistency guarantee. Per-graph disk COW would not directly remove per-process
+in-memory query indexes and is not justified by these measurements alone.
+Safe online file cleanup remains future work.
+
+## Default backend release candidate
+
+The 0.7.0-rc.1 integration passed local validation on October 23, 2026:
+
+- `cargo test --workspace --release --offline`: **240 passed**, including
+  doctests; seven process helpers/examples remained intentionally ignored.
+- `cargo clippy --workspace --all-targets --all-features --offline -- -D warnings`
+  and `cargo fmt --all -- --check`: passed.
+- The release abi3 wheel built successfully; its complete Python 3.14 suite
+  passed **165 tests**. The 21 warnings were existing deprecation warnings from
+  rdflib and compatibility APIs. The pyontoenv shim import test also passed.
+- A fresh environment created by the released **0.5.5** wheel migrated through
+  the new wheel. Stored triples survived, legacy file contents remained intact,
+  and ordinary open refused the old format before explicit migration.
+- Sphinx rebuilt with warnings treated as errors; workspace version checks and
+  diff whitespace checks passed.
+
+The additional tests exercise ordinary import/update/rename publication,
+configuration changes with deliberately bounded imports, rollback and unwinding,
+reader refresh, retained graph/closure/dataset views, explicit dataset rebinding
+with an outstanding iterator, migration/recovery, copied publication roots,
+logical recreation, and config/reset root selection through `ONTOENV_DIR`.
+Staged graph contents are shared through `Arc` across nested checkpoints and
+publication preparation; graph-copy APIs still allocate their requested copies.
+
+These local results do not replace the Linux/macOS/Windows CI matrix for the
+new default integration. The earlier VM crash and workload measurements above
+exercise the underlying publisher, not the complete new API facade. No new
+power-loss or performance guarantee is inferred from the integration tests.

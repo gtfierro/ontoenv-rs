@@ -35,12 +35,20 @@ def verify(root: Path) -> None:
     """Open and validate the old environment with the current source."""
     from ontoenv import OntoEnv
 
-    environment = OntoEnv.open(root)
+    legacy = {p.relative_to(root): p.read_bytes() for p in (root / ".ontoenv").rglob("*") if p.is_file()}
+    try:
+        OntoEnv.open(root)
+    except ValueError as error:
+        assert "migration" in str(error)
+    else:
+        raise AssertionError("legacy storage must require explicit migration")
+    environment = OntoEnv.migrate(root)
     assert ROOT_IRI in environment.get_ontology_names()
     graph = environment.copy_graph(ROOT_IRI)
     assert (URIRef(ROOT_IRI), PREDICATE, VALUE) in graph
     environment.close()
-    assert (root / ".ontoenv" / "catalog.r5tu").exists()
+    assert (root / ".ontoenv-snapshots" / "CURRENT").exists()
+    assert all((root / path).read_bytes() == data for path, data in legacy.items())
 
 
 def main() -> None:

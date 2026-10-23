@@ -96,15 +96,17 @@ environment is genuinely empty until ``update()`` or ``add()`` runs.
 ``recreate=True`` is not a reconnect
 ------------------------------------
 
-The direct constructor accepts ``recreate=True``, and it is destructive:
+The direct constructor accepts ``recreate=True`` to replace the selected state:
 
 .. code-block:: python
 
    env = OntoEnv(path=".demo-env", recreate=True, search_directories=["./brick"])
 
-Each call deletes ``.demo-env/.ontoenv/``, creates fresh storage, and
-immediately scans ``./brick``. The saved catalog and all cached graphs are
-gone. (The surrounding directory and your source files are untouched.)
+With managed storage, each call stages an empty replacement catalog and any
+requested source scan, then publishes that replacement. Old readers retain
+their versions. Files remain in ``.demo-env/.ontoenv-snapshots/``; recreation
+and reset do not reclaim disk space. Close the active writer before recreating.
+Source files are untouched.
 
 That is occasionally what you want, but it is not "open my environment". The
 non-destructive equivalent is:
@@ -122,7 +124,7 @@ And when you do mean the destructive version, the named form says so out loud:
 
 One more constructor behavior worth knowing: ``OntoEnv(path="./project")``
 without ``recreate`` searches ``./project`` *and its parents* for an existing
-``.ontoenv`` directory, opens what it finds, and raises ``FileNotFoundError``
+managed environment directory, opens what it finds, and raises ``FileNotFoundError``
 otherwise. Convenient interactively; too implicit for application code, where
 ``connect`` or ``open`` name the path and the intent.
 

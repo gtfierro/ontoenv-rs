@@ -1,0 +1,72 @@
+# Migrate to the 0.7 storage backend
+
+New managed persistent environments use `.ontoenv-snapshots/`. Opening a legacy
+`.ontoenv/` environment fails with a migration instruction; reading it never
+silently changes the format. Temporary environments and custom `graph_store=`
+backends keep their existing storage behavior.
+
+Close every process using the legacy environment, including read-only handles.
+Run this from its root or a child directory:
+
+```sh
+ontoenv migrate
+```
+
+Or use Python:
+
+```python
+from ontoenv import OntoEnv
+
+with OntoEnv.migrate("./ontology-env") as env:
+    print(env.snapshot().info)
+    print(env.get_ontology_names())
+```
+
+Rust exposes `OntoEnv::migrate(root)` and `SnapshotWriter::migrate(root)`.
+Migration acquires the legacy exclusive lock and the new writer lock, checks for
+interrupted mutations and mismatched catalog/store revisions, then copies the
+stored graphs, metadata, aliases and configuration. It does not fetch or reparse
+ontology sources. Only a complete validated generation zero is installed.
+The original `.ontoenv/` files remain in place; an operational `store.lock` is
+created if the old release did not provide it. Source file contents are unchanged.
+
+Preparation or validation failures leave the new directory uninstalled. Resolve
+the reported legacy inconsistency before retrying. An I/O error after the final
+directory rename can leave an installed version with uncertain durability;
+open it to inspect the selection before retrying. An interrupted legacy mutation requires
+`ontoenv recover` (or recovery using the old release) first. Duplicate canonical
+IRIs cannot be represented by the new one-graph-per-IRI catalog; normalize those
+registrations with the old release before migrating. A JSON-only catalog has no
+persisted graph revision, so migration requires exact graph-name agreement with
+the stored data and rejects catalog-only empty graph registrations.
+
+After migration, current APIs select the new directory even though `.ontoenv/`
+remains. Repeating migration fails; it never replaces the new environment.
+Old releases can still open the retained legacy directory, but they see only
+its pre-migration state. Writes to that retained copy are not synchronized with
+the new backend. Keep it as a rollback copy rather than running both versions
+as writers to the same logical environment.
+
+For rollback, stop all handles first, keep a separate copy of the new directory,
+and restore/use the legacy directory with the old release. There is no automatic
+downgrade of changes made after migration. Never delete objects from a running
+snapshot environment: old views may still map them. Reset and recreation retain
+old artifacts and do not reclaim disk space.
+
+Opening a copied environment uses its new root for publication; it does not
+rewrite stored absolute ontology source paths or search directories.
+
+A managed read-only handle now opens while the writer remains active. It keeps
+its selected version until `reader.refresh()`; old returned snapshots and views
+keep theirs. `writer.update()` reads sources and publishes changes.
+`reader.refresh()` selects a publication without accessing sources.
+`env.refresh_dataset(dataset)` explicitly rebinds that dataset to the handle's
+selected version. `flush()` does not advance readers or update old managed views.
+
+Graph changes currently write a complete RDF5D generation. Metadata-only commits
+reuse the existing artifact and indexes. Published files are retained indefinitely;
+plan disk space for roughly one full store per graph-changing commit.
+See [the snapshot guide](../explanation/transactional-snapshots.md) for memory,
+write-cost and durability measurements. Unix directory syncing is implemented;
+Windows directory syncing remains unsupported. The release candidate does not
+claim power-loss durability on untested filesystems or platforms.

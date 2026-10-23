@@ -4,14 +4,37 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
-## [Unreleased]
+## [0.7.0-rc.1] — 2026-10-23
+
+### Storage and compatibility
+- Immutable publication is the default for new managed persistent environments
+  in Rust, Python and the CLI. One writer stages changes privately and publishes
+  graphs, catalog, aliases and configuration together. Readers hold a consistent
+  mmap-backed version without blocking the writer, until explicit refresh.
+- Python `env.snapshot()` returns an independent `EnvironmentSnapshot` with
+  generation/timestamps, catalog, configuration and graph/dataset access.
+  Managed graph, closure and dataset views keep their version across updates,
+  flush and close. Re-fetch a view or explicitly rebind a dataset to advance it.
+- Rust `env.transaction(...)` groups normal operations into one publication,
+  with nested rollback and unwind handling. Add-with-rename publishes once.
+- Existing managed `.ontoenv/` data requires explicit `ontoenv migrate` or
+  `OntoEnv.migrate(path)`. Migration requires closed legacy handles, validates
+  the source and retains its files. External stores keep their existing APIs.
+- Recreation/reset publish replacement versions and retain existing objects.
+  No online garbage collection is provided; graph-changing commits retain one
+  complete RDF5D generation each. One graph per IRI/source is enforced.
+- Publication is always built. The `transactional-snapshots` Cargo feature is an
+  empty compatibility feature. Directory durability barriers are implemented
+  on Unix; Windows directory syncing remains unsupported. See the storage
+  validation report for tested crash scenarios and platform limits.
+
 
 ### Added
 - Prefix bindings can be saved in the environment: `ontoenv config bind
   <prefix> <namespace>` / `ontoenv config unbind <prefix>` from the CLI, and
   `env.bind_namespace()` / `env.unbind_namespace()` /
   `env.get_bound_namespaces()` from Python. They are stored under
-  `namespaces` in `.ontoenv/ontoenv.json` and take precedence over
+  the selected version's configuration and take precedence over
   ontology-declared prefixes in `ontoenv namespaces`, `get_namespaces()`,
   and the rdflib datasets.
 - `get_closure()` and `get_union()` views now carry the prefixes of the graphs

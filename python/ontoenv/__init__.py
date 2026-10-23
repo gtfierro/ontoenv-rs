@@ -6,6 +6,7 @@ from ontoenv._native import (  # type: ignore[attr-defined]
     UnresolvedImportError,
     ExternalStoreChangedError,
     OntoEnv,
+    EnvironmentSnapshot,
     Ontology,
     StoreCapabilityError,
     SyncReport,
@@ -24,6 +25,7 @@ __doc__ = getattr(_ext, "__doc__", None)  # type: ignore[assignment]
 # Export the main classes and functions
 __all__ = [
     "OntoEnv",
+    "EnvironmentSnapshot",
     "Ontology",
     "SyncReport",
     "ExternalStoreChangedError",

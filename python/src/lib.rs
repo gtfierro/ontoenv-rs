@@ -1,3 +1,4 @@
+mod snapshots;
 use anyhow::{anyhow, Error, Result};
 use ontoenv::api::{
     find_ontoenv_root_from, ConnectSync, OntoEnv as OntoEnvRs, ResolveTarget, SyncMode, SyncReport,
@@ -358,11 +359,19 @@ fn add_resolved_to_env(
     let preferred_name = resolved.preferred_name;
     let location = resolved.location;
 
-    let graph_id = match location {
-        OntologyLocation::InMemory { .. } => {
-            let bytes = rdflib_graph_to_turtle_bytes(py_location)?;
+    let bytes = if matches!(location, OntologyLocation::InMemory { .. }) {
+        Some(rdflib_graph_to_turtle_bytes(py_location)?)
+    } else {
+        None
+    };
+    let rename = rename
+        .map(NamedNode::new)
+        .transpose()
+        .map_err(|e| anyhow_to_pyerr(e.into()))?;
+    let operation = move |env: &mut OntoEnvRs| -> Result<GraphIdentifier> {
+        let id = if let Some(bytes) = bytes {
             if fetch_imports {
-                env.add_from_bytes(location, bytes, Some(RdfFormat::Turtle), overwrite, refresh)
+                env.add_from_bytes(location, bytes, Some(RdfFormat::Turtle), overwrite, refresh)?
             } else {
                 env.add_from_bytes_no_imports(
                     location,
@@ -370,28 +379,25 @@ fn add_resolved_to_env(
                     Some(RdfFormat::Turtle),
                     overwrite,
                     refresh,
-                )
+                )?
             }
+        } else if fetch_imports {
+            env.add(location, overwrite, refresh)?
+        } else {
+            env.add_no_imports(location, overwrite, refresh)?
+        };
+        if let Some(rename) = rename {
+            env.rename_graph_iri(&id, rename)
+        } else {
+            Ok(id)
         }
-        _ => {
-            if fetch_imports {
-                env.add(location, overwrite, refresh)
-            } else {
-                env.add_no_imports(location, overwrite, refresh)
-            }
-        }
+    };
+    let graph_id = if env.snapshot().is_some() {
+        env.transaction(operation)
+    } else {
+        operation(env)
     }
     .map_err(anyhow_to_pyerr)?;
-
-    // Apply rename if requested.
-    let graph_id = if let Some(new_iri_str) = rename {
-        let new_iri = NamedNode::new(new_iri_str)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        env.rename_graph_iri(&graph_id, new_iri)
-            .map_err(anyhow_to_pyerr)?
-    } else {
-        graph_id
-    };
 
     let actual_name = graph_id.to_uri_string();
     if let Some(pref) = preferred_name {
@@ -3111,6 +3117,7 @@ fn build_view_graph(
 struct DatasetCache {
     generation: u64,
     cached: Option<(u64, Py<PyAny>)>,
+    managed_cached: Option<(String, u64, Py<PyAny>)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -3532,6 +3539,9 @@ impl OntoEnv {
     }
 
     fn build_cached_view_dataset(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if self._published_snapshot()?.is_some() {
+            return self.build_dataset(py, "auto", None);
+        }
         let Some(store_path) = self.current_snapshot_store_path()? else {
             return self.build_dataset(py, "auto", None);
         };
@@ -3576,6 +3586,7 @@ impl OntoEnv {
     fn bump_generation(&self) {
         let mut cache = self.cache.lock_detached().unwrap();
         cache.generation = cache.generation.wrapping_add(1);
+        cache.managed_cached = None;
     }
 
     fn cached_view_dataset_exists(&self) -> bool {
@@ -3604,6 +3615,10 @@ impl OntoEnv {
     /// cached Dataset updates those existing views without requiring callers
     /// to fetch them again.
     fn refresh_cached_view_dataset(&self, py: Python<'_>) -> PyResult<()> {
+        if self._published_snapshot()?.is_some() {
+            self.cache.lock_detached().unwrap().cached = None;
+            return Ok(());
+        }
         let (target_generation, dataset) = {
             let cache = self.cache.lock_detached().unwrap();
             let Some((_, dataset)) = &cache.cached else {
@@ -3708,6 +3723,55 @@ impl OntoEnv {
 
 #[pymethods]
 impl OntoEnv {
+    /// Copy a closed legacy environment into the new backend, retaining its files.
+    #[staticmethod]
+    fn migrate(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        let env = py
+            .detach(move || OntoEnvRs::migrate(path))
+            .map_err(anyhow_to_pyerr)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Some(env))),
+            cache: Arc::new(Mutex::new(DatasetCache::default())),
+            read_only: false,
+        })
+    }
+
+    /// Capture the selected committed version independently of this handle.
+    fn snapshot(&self) -> PyResult<snapshots::PyEnvironmentSnapshot> {
+        self._published_snapshot()?.ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("Snapshots require managed persistent storage")
+        })
+    }
+
+    fn _published_snapshot(&self) -> PyResult<Option<snapshots::PyEnvironmentSnapshot>> {
+        let guard = self.inner.lock_detached().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("OntoEnv is closed"))?;
+        Ok(env
+            .snapshot()
+            .map(|inner| snapshots::PyEnvironmentSnapshot { inner }))
+    }
+
+    /// Select the latest publication without updating files or changing old views.
+    fn refresh(&self, py: Python<'_>) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let changed = py
+            .detach(move || {
+                let mut guard = inner.lock_detached().unwrap();
+                guard
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("OntoEnv is closed"))?
+                    .refresh()
+            })
+            .map_err(anyhow_to_pyerr)?;
+        if changed {
+            self.bump_generation();
+            self.cache.lock_detached().unwrap().cached = None;
+        }
+        Ok(changed)
+    }
+
     #[classmethod]
     /// Connect to a persistent environment.
     ///
@@ -3787,12 +3851,17 @@ impl OntoEnv {
             .transpose()?
             .unwrap_or(false);
         kwargs.del_item("overwrite").ok();
-        let root = if path.file_name() == Some(OsStr::new(".ontoenv")) {
+        let root = if path
+            .file_name()
+            .is_some_and(|name| name == ".ontoenv" || name == ".ontoenv-snapshots")
+        {
             path.parent().unwrap_or(Path::new(".")).to_path_buf()
         } else {
             path.clone()
         };
-        if root.join(".ontoenv").exists() && !(recreate || overwrite) {
+        if (root.join(".ontoenv").exists() || root.join(".ontoenv-snapshots").exists())
+            && !(recreate || overwrite)
+        {
             return Err(PyErr::new::<pyo3::exceptions::PyFileExistsError, _>(
                 format!(
                     "OntoEnv already exists at {}",
@@ -3984,7 +4053,7 @@ impl OntoEnv {
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
         if root_path
             .file_name()
-            .map(|n| n == OsStr::new(".ontoenv"))
+            .map(|n| n == OsStr::new(".ontoenv") || n == OsStr::new(".ontoenv-snapshots"))
             .unwrap_or(false)
         {
             if let Some(parent) = root_path.parent() {
@@ -5317,6 +5386,42 @@ impl OntoEnv {
     /// :py:meth:`copy_graph` for a mutable in-memory copy.
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let uri_string = pystring_to_string(uri)?;
+        if let Some(snapshot) = self._published_snapshot()? {
+            let name = NamedNode::new(&uri_string).map_err(|e| anyhow_to_pyerr(e.into()))?;
+            let id = snapshot.inner.resolve(name.as_ref()).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("No graph with URI: {uri_string}"))
+            })?;
+            let info = snapshot.inner.info();
+            let cached = {
+                let cache = self.cache.lock_detached().unwrap();
+                cache
+                    .managed_cached
+                    .as_ref()
+                    .filter(|(environment, generation, _)| {
+                        environment == &info.environment_id && *generation == info.generation
+                    })
+                    .map(|(_, _, dataset)| dataset.clone_ref(py))
+            };
+            let dataset = if let Some(dataset) = cached {
+                dataset
+            } else {
+                let dataset = snapshot.get_dataset(py)?;
+                self.cache.lock_detached().unwrap().managed_cached = Some((
+                    info.environment_id.clone(),
+                    info.generation,
+                    dataset.clone_ref(py),
+                ));
+                dataset
+            };
+            let identifier = py
+                .import("rdflib")?
+                .getattr("URIRef")?
+                .call1((id.name().as_str(),))?;
+            return Ok(dataset
+                .bind(py)
+                .call_method1("graph", (identifier,))?
+                .unbind());
+        }
         // Resolve up front so an unknown URI raises ValueError rather than
         // silently returning an empty Dataset.graph(URIRef(uri)) view. The
         // dataset is keyed by canonical GraphIdentifier; use the resolved id
@@ -5377,7 +5482,7 @@ impl OntoEnv {
         remove_owl_imports: bool,
         rewrite_sh_prefixes: bool,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let (requested_root, root_id, closure, names, namespaces, has_rdf5d_snapshot) = {
+        let (requested_root, root_id, closure, names, namespaces, has_rdf5d_snapshot, published) = {
             let iri = NamedNode::new(uri)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
@@ -5402,14 +5507,27 @@ impl OntoEnv {
             let namespaces = env
                 .get_namespaces_for_graphs(&closure)
                 .map_err(anyhow_to_pyerr)?;
-            let has_rdf5d_snapshot = env.store_path().is_some_and(|path| {
-                path.file_name().is_some_and(|name| name == "store.r5tu") && path.is_file()
-            });
-            (iri, graphid, closure, names, namespaces, has_rdf5d_snapshot)
+            let has_rdf5d_snapshot = env.snapshot().is_some()
+                || env.store_path().is_some_and(|path| {
+                    path.file_name().is_some_and(|name| name == "store.r5tu") && path.is_file()
+                });
+            (
+                iri,
+                graphid,
+                closure,
+                names,
+                namespaces,
+                has_rdf5d_snapshot,
+                env.snapshot(),
+            )
         };
 
         if has_rdf5d_snapshot {
-            let dataset = self.cached_view_dataset(py)?;
+            let dataset = if let Some(inner) = published {
+                snapshots::PyEnvironmentSnapshot { inner }.get_dataset(py)?
+            } else {
+                self.cached_view_dataset(py)?
+            };
             let config = ClosureViewConfig {
                 root_iri: requested_root.as_str().to_string(),
                 closure_iris: names.clone(),
@@ -5489,7 +5607,7 @@ impl OntoEnv {
         include_closures: bool,
         recursion_depth: i32,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let (names, namespaces) = {
+        let (names, namespaces, published) = {
             let graph_iris: Vec<NamedNode> = uris
                 .iter()
                 .map(|uri| {
@@ -5532,10 +5650,14 @@ impl OntoEnv {
                 .get_namespaces_for_graphs(&ids)
                 .map_err(anyhow_to_pyerr)?;
             let names: Vec<String> = ids.iter().map(GraphIdentifier::to_uri_string).collect();
-            (names, namespaces)
+            (names, namespaces, env.snapshot())
         };
 
-        let dataset = self.cached_view_dataset(py)?;
+        let dataset = if let Some(inner) = published {
+            snapshots::PyEnvironmentSnapshot { inner }.get_dataset(py)?
+        } else {
+            self.cached_view_dataset(py)?
+        };
         let view = build_view_graph(py, &dataset, &names, None, namespaces)?;
         Ok((view, names))
     }
@@ -6052,6 +6174,16 @@ impl OntoEnv {
         let inner = self.inner.clone();
         let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
+            if let Some(snapshot) = env.snapshot() {
+                return Ok(Some(
+                    snapshot
+                        .config()
+                        .root
+                        .join(".ontoenv-snapshots")
+                        .to_string_lossy()
+                        .into_owned(),
+                ));
+            }
             match env.store_path() {
                 Some(path) => {
                     let dir = path.parent().unwrap_or(path);
@@ -6072,22 +6204,28 @@ impl OntoEnv {
         py.detach(|| {
             let inner = self.inner.clone();
             let mut guard = inner.lock_detached().unwrap();
-            if let Some(env) = guard.as_mut() {
-                if !self.read_only {
-                    env.save_to_directory().map_err(anyhow_to_pyerr)?;
-                }
-                env.flush().map_err(anyhow_to_pyerr)?;
-            }
-            *guard = None;
-            // Release any cached Dataset so its store doesn't outlive the env.
-            self.cache.lock_detached().unwrap().cached = None;
-            Ok(())
+            // Always release the connection, including when publication had an
+            // uncertain outcome. Reopening must be possible after close errors.
+            let result = if let Some(mut env) = guard.take() {
+                (|| -> PyResult<()> {
+                    if !self.read_only {
+                        env.save_to_directory().map_err(anyhow_to_pyerr)?;
+                    }
+                    env.flush().map_err(anyhow_to_pyerr)
+                })()
+            } else {
+                Ok(())
+            };
+            drop(guard);
+            let mut cache = self.cache.lock_detached().unwrap();
+            cache.cached = None;
+            cache.managed_cached = None;
+            result
         })
     }
 
-    /// Flush pending changes and rebind cached Graph views to the new
-    /// snapshot. Graphs returned by prior `get_graph` calls share the cached
-    /// Dataset's store, so they observe post-flush state without re-fetching.
+    /// Persist explicit configuration edits. Managed mutations publish before
+    /// returning; previously returned managed views retain their version.
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         let track_cached_snapshot = self.cached_view_dataset_exists();
         let cached_dataset_is_stale = self.cached_view_dataset_is_stale();
@@ -6205,6 +6343,7 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = env_logger::try_init();
 
     m.add_class::<OntoEnv>()?;
+    m.add_class::<snapshots::PyEnvironmentSnapshot>()?;
     m.add_class::<PySyncReport>()?;
     m.add_class::<PyOntology>()?;
     m.add_class::<PyRdfLibStoreBackend>()?;

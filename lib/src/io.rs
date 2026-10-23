@@ -47,7 +47,7 @@ fn legacy_sidecar_path(r5tu: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-fn file_backend_state(path: &Path) -> Result<BackendState> {
+pub(crate) fn file_backend_state(path: &Path) -> Result<BackendState> {
     // The store file does not exist for a newly-created empty environment.
     // Canonicalize its existing parent so platform aliases such as macOS
     // `/var` -> `/private/var` still produce the same backend identity before
@@ -370,6 +370,32 @@ fn r5tu_union_graph(
 }
 
 pub trait GraphIO: Send + Sync {
+    /// Managed immutable environment selected by this backend, if supported.
+    fn environment_snapshot(
+        &self,
+    ) -> Option<std::sync::Arc<crate::snapshots::EnvironmentSnapshot>> {
+        None
+    }
+
+    /// Publish staged graphs and metadata together. True means persistence was
+    /// handled here rather than through the legacy independent catalog files.
+    fn publish_environment(
+        &self,
+        _env: &crate::environment::Environment,
+        _config: &crate::config::Config,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Discard the current nested batch's staged graph changes.
+    fn abort_batch(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Select the latest immutable environment, without updating source files.
+    fn refresh_environment(&mut self) -> Result<bool> {
+        anyhow::bail!("This backend does not expose immutable environment refresh")
+    }
     /// Returns true if the store is offline; if this is true, then the store
     /// will not fetch any data from the internet
     fn is_offline(&self) -> bool;
