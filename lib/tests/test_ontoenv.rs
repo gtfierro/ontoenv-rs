@@ -1566,7 +1566,10 @@ fn test_init_with_config_new_dir() -> Result<()> {
     let ontoenv_meta_dir = env_path.join(".ontoenv-snapshots");
     assert!(ontoenv_meta_dir.is_dir());
     assert!(env.store_path().is_some()); // Should have a store path for non-temporary
-    assert!(env.store_path().unwrap().starts_with(&ontoenv_meta_dir));
+    assert!(env
+        .store_path()
+        .unwrap()
+        .starts_with(fs::canonicalize(&ontoenv_meta_dir)?));
 
     teardown(dir);
     Ok(())
@@ -1593,7 +1596,10 @@ fn test_init_with_config_existing_empty_dir() -> Result<()> {
     let ontoenv_meta_dir = env_path.join(".ontoenv-snapshots");
     assert!(ontoenv_meta_dir.is_dir());
     assert!(env.store_path().is_some());
-    assert!(env.store_path().unwrap().starts_with(&ontoenv_meta_dir));
+    assert!(env
+        .store_path()
+        .unwrap()
+        .starts_with(fs::canonicalize(&ontoenv_meta_dir)?));
 
     teardown(dir);
     Ok(())
