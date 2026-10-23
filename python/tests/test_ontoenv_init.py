@@ -41,7 +41,9 @@ class TestOntoEnvInit(unittest.TestCase):
             del env
             # load existing
             env2 = OntoEnv(path=env_path, read_only=False)
-            self.assertEqual(env2.store_path(), str(env_path / ".ontoenv-snapshots"))
+            self.assertTrue(
+                Path(env2.store_path()).samefile(env_path / ".ontoenv-snapshots")
+            )
 
     def test_init_recreate_existing_dir(self):
         with tempfile.TemporaryDirectory() as td:
