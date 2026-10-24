@@ -311,12 +311,21 @@ impl SnapshotWriter {
         publish(initialization.path(), &generation, None)?;
         sync_directory(initialization.path())?;
         before_install()?;
-        fs::rename(initialization.path(), &directory)?;
+        // Windows refuses to rename a directory containing an open child pin.
+        // This private candidate has no external readers yet. Reopen and pin
+        // the installed selection before releasing the sole writer lock.
+        #[cfg(windows)]
+        drop(rdf);
+        fs::rename(initialization.path(), &directory)
+            .context("Cannot install the prepared snapshot directory")?;
         let _initialized_path = initialization.keep();
         sync_directory(&generation.config.root).context(
             "Snapshot initialization was published, but syncing its parent failed; open to inspect",
         )?;
+        #[cfg(not(windows))]
         let current = snapshot_from_generation(generation, rdf);
+        #[cfg(windows)]
+        let current = open_head(&directory)?;
         let mut writer = Self {
             directory,
             current,

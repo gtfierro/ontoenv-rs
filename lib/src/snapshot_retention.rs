@@ -39,7 +39,7 @@ pub(super) fn create_pin(object: &Path) -> Result<()> {
 
 pub(super) fn pin_object(object: &Path) -> Result<Arc<dyn std::fmt::Debug + Send + Sync>> {
     let file = File::open(object.join(PIN)).context("Cannot open snapshot reader pin")?;
-    FileExt::lock_shared(&file)?;
+    FileExt::lock_shared(&file).context("Cannot acquire snapshot reader pin")?;
     Ok(Arc::new(ObjectPin { _file: file }))
 }
 
@@ -72,7 +72,7 @@ pub(super) fn read_gate(directory: &Path) -> Result<Gate> {
             return Err(error).context("Cannot acquire snapshot reader gate");
         }
     };
-    FileExt::lock_shared(&file)?;
+    FileExt::lock_shared(&file).context("Cannot acquire snapshot reader gate")?;
     Ok(Gate(file))
 }
 
@@ -207,8 +207,12 @@ impl SnapshotWriter {
                         Err(error) => return Err(error.into()),
                     }
                 }
-                fs::rename(entry.path(), trash.join(entry.file_name()))?;
+                // The exclusive acquisition gate prevents new owners. Once
+                // exclusivity proves that no reader owns this object, close
+                // the collector's handle before renaming its parent directory
+                // (Windows rejects that rename while any child handle is open).
                 drop(pin);
+                fs::rename(entry.path(), trash.join(entry.file_name()))?;
                 Ok(())
             })();
             if let Err(error) = result {

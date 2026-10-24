@@ -15,6 +15,11 @@ format. No per-graph version store or read transaction was added.
   objects with shared pins and retires eligible directories into `trash/` before
   deletion. Startup, successful publication and explicit prune retry cleanup.
   A sleeping reader has no expiry. Process death releases its OS locks.
+- Windows requires closing child pin handles before renaming their directories
+  ([rename rules](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)).
+  Initialization closes the private candidate before installing and reopening
+  it under the writer lock. Cleanup closes its exclusive pin after checking for
+  readers and before retirement, while still holding the acquisition gate.
 - Failed retirement/deletion is retried; automatic cleanup never changes a
   successful commit into a reported publication failure. After an uncertain
   publication error the writer must reopen before either commit or prune.
