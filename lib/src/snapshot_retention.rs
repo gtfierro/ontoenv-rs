@@ -207,12 +207,24 @@ impl SnapshotWriter {
                         Err(error) => return Err(error.into()),
                     }
                 }
+                let destination = trash.join(entry.file_name());
+                // Windows rename can replace a file with a directory. Never
+                // overwrite an existing retirement entry, including symlinks.
+                // Only this writer can create targets in the managed trash.
+                match fs::symlink_metadata(&destination) {
+                    Ok(_) => bail!(
+                        "Retirement target already exists: {}",
+                        destination.display()
+                    ),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
                 // The exclusive acquisition gate prevents new owners. Once
                 // exclusivity proves that no reader owns this object, close
                 // the collector's handle before renaming its parent directory
                 // (Windows rejects that rename while any child handle is open).
                 drop(pin);
-                fs::rename(entry.path(), trash.join(entry.file_name()))?;
+                fs::rename(entry.path(), destination)?;
                 Ok(())
             })();
             if let Err(error) = result {
