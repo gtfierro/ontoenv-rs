@@ -66,7 +66,8 @@ immediately; with none, the current directory is used.
 
 ``--overwrite``
    Publish a replacement catalog and requested source scan. Existing views
-   and immutable objects are retained; this does not reclaim disk space.
+   retain their versions. Cleanup keeps current/previous publications and
+   backing objects owned by live views.
 
 Each line below is an independent example:
 
@@ -83,7 +84,22 @@ Stored graphs, metadata, aliases and configuration are validated before the
 new directory is installed. Original files are retained. See
 :doc:`../how-to/migrate-storage`.
 
+.. rubric:: ``ontoenv upgrade``
+
+Enable reader-safe cleanup for protocol-2 stores from earlier 0.7 development
+builds. Close every older process, including all read-only views, first. The
+offline upgrade validates the selected version and keeps its RDF file. See
+:doc:`../how-to/migrate-storage` for the protocol boundary and retry behavior.
+
+.. rubric:: ``ontoenv prune [--json]``
+
+Retry cleanup using the sole writer. Retains current/previous publications and
+all backing files pinned by live views in any process. Reports removed, pinned
+and pending counts plus deferred errors. Writer startup and successful commits
+also attempt cleanup; no background thread is required.
+
 .. rubric:: ``ontoenv add <LOCATION>``
+
 
 Register one ontology from a file path or URL, following ``owl:imports`` by
 default.

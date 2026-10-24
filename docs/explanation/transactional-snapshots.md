@@ -74,6 +74,21 @@ writer.close()
 `EnvironmentSnapshot` provides `get_ontology_names()`, `get_ontologies()`,
 `get_graph()`, `get_dataset()`, namespace access, a copied `config` dictionary
 and `info`. These handles remain usable after the environment closes.
+`OntoEnv.read_snapshot(path)` opens one owned version without retaining a live
+environment. A Python snapshot supports `close()`, `closed`, and `with`:
+
+```python
+with OntoEnv.read_snapshot("./ontology-env") as version:
+    graph = version.get_graph("urn:example:ontology")
+# The version handle is closed. The escaped graph still owns its backing.
+print(len(graph))
+del graph  # Releases this view's ownership; later cleanup can reclaim its file.
+```
+
+Closing releases only that handle. There is no read transaction to commit or
+roll back. Rust uses ordinary ownership: dropping the last `Arc`/owned iterator
+releases its backing pin.
+
 `get_graph`, `get_dataset`, `get_closure` and `get_union` views pin their backing
 version. Fetch another view to see an update, or explicitly call
 `env.refresh_dataset(dataset)` to rebind that dataset to the handle's selected
@@ -123,7 +138,9 @@ measured aggregate PSS of approximately 204 MiB before refresh and 204 MiB after
 refresh when old handles were released. Keeping both indexed versions raised it
 from approximately 204 MiB to 392 MiB. This is a diagnostic result, not a memory
 guarantee; raw reports are in `docs/reviews/snapshot-ownership-2026-10-23.json`.
-Memory reclamation does not prune retained files on disk.
+Releasing the last owner also releases its cross-process file pin. A subsequent
+cleanup pass can reclaim the backing on disk once it is outside retained head
+history.
 
 ## Commit protocol and copy-on-write
 
@@ -157,8 +174,10 @@ its candidate before publication. “Add with rename” publishes once, includin
 both ingestion and renaming.
 
 The sole writer holds a stable `.ontoenv-snapshots.lock` outside the data directory.
-Readers briefly read `CURRENT` and its checksum-verified immutable manifest,
-then retain the immutable graph mapping. They hold no writer lock or database
+Readers briefly share the `READERS` acquisition gate while reading `CURRENT`,
+validating its checksum-verified manifest, and pinning/opening the graph backing.
+They then release the gate and retain a shared OS lock on that object's `.pin`
+file. They hold no writer lock or database
 connection. Initialization is prepared in a private directory and renamed
 into place only after generation zero is complete. Recreation and reset publish
 a replacement catalog; they retain old mapped files and the stable lock.
@@ -168,11 +187,31 @@ scan leaves an openable empty environment.
 
 ## Retention and recovery limits
 
-Published manifests and complete objects, including unreferenced files, are
-**retained indefinitely**. Reset does not reclaim disk space. Automatic pruning
-is not exposed. Do not
-delete old objects manually while any reader or query view can use them. This
-initial policy avoids GC races and lets sleeping readers retain snapshots.
+Cleanup retains the **current and exact previous published manifest**, their RDF
+objects, and any older object owned by a live snapshot, view or iterator in any
+process. Metadata-only publications can share the same object. The previous
+manifest is recorded in `CURRENT`; abandoned publication attempts are never
+mistaken for published history.
+
+The writer tries cleanup at startup and after successful publication. Use
+`ontoenv prune`, `env.prune()` or Rust `SnapshotWriter::prune()` to retry sooner.
+There is no background reaper: releasing the last view makes a file eligible;
+the next pass removes it. A reader process exit releases its OS pins, including
+after a crash. A live sleeping reader never loses its backing to a timeout.
+
+Cleanup briefly takes the exclusive acquisition gate and nonblocking exclusive
+object pins. It skips busy objects, renames eligible object directories into
+`trash/`, then releases the gate before deleting them. Interrupted/failed
+deletions remain there for later retry. Cleanup errors are reported by explicit
+prune and logged by automatic passes; they do not turn a successful publication
+into a failed commit. Current/previous manifests and active pins are never
+deleted. Do not manually delete or move files in a running store.
+
+Reader protocol 3 introduces this ownership contract. Protocol-2 stores from
+earlier unreleased builds require the explicit
+[offline upgrade](../how-to/migrate-storage.md); all older readers must be closed
+first because their files are unpinned. Legacy `.ontoenv/` migration remains a
+separate operation.
 
 A process exit before `CURRENT` replacement leaves the previous generation selected;
 it may leave unreferenced files. An exit after replacement selects the complete
@@ -262,8 +301,8 @@ separately. Commands, allocation profiles and limitations are recorded in
 `docs/reviews/compact-staging-2026-10-23.md` and its raw reports.
 
 The release candidate integrates recursive source updates, dependency views,
-CLI/Python entry points and explicit legacy migration. The remaining operational
-limit is indefinite retention. Online retention needs process-safe snapshot pins before any objects can be
-deleted. Per-graph on-disk COW is a later option if measurements show complete
+CLI/Python entry points, explicit legacy migration and reader-safe cleanup.
+Long-lived views retain entire old RDF files; graph changes still rewrite the
+complete store. Per-graph on-disk COW is a later option if measurements show complete
 generation writes dominate; it also requires coordinating term dictionaries and
 blank-node identity across graph files.

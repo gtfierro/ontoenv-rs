@@ -148,6 +148,16 @@ impl SnapshotGraphIO {
 }
 
 impl GraphIO for SnapshotGraphIO {
+    fn prune_snapshots(&mut self) -> Result<crate::snapshots::PruneReport> {
+        let mut state = self.state.lock().unwrap();
+        if !state.pending.is_empty() || !state.checkpoints.is_empty() {
+            bail!("Cannot prune with staged changes");
+        }
+        match &mut state.connection {
+            Connection::Writer(writer) => writer.prune(),
+            Connection::Reader(_) => bail!("Cleanup requires a snapshot writer"),
+        }
+    }
     fn environment_snapshot(&self) -> Option<Arc<EnvironmentSnapshot>> {
         Some(self.state.lock().unwrap().connection.snapshot())
     }

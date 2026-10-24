@@ -35,6 +35,64 @@ fn write_ttl(path: &PathBuf, ontology_uri: &str, extra: &str) {
 
 // Git-like semantics
 #[test]
+fn offline_upgrade_runs_before_normal_open_and_prune_preserves_pinned_views() {
+    let root = tmp_dir("reader-protocol-upgrade");
+    let config = ontoenv::config::Config::builder()
+        .root(root.clone())
+        .temporary(false)
+        .offline(true)
+        .locations(vec![])
+        .build()
+        .unwrap();
+    let env = ontoenv::snapshots::SnapshotWriter::create(config).unwrap();
+    let before = env.snapshot().info().clone();
+    drop(env);
+    let directory = root.join(".ontoenv-snapshots");
+    let current = directory.join("CURRENT");
+    let mut head: serde_json::Value = serde_json::from_slice(&fs::read(&current).unwrap()).unwrap();
+    let manifest = directory
+        .join("manifests")
+        .join(head["manifest"].as_str().unwrap());
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    record["schema_version"] = 2.into();
+    let bytes = serde_json::to_vec(&record).unwrap();
+    fs::write(manifest, &bytes).unwrap();
+    head["schema_version"] = 2.into();
+    head["manifest_hash"] = blake3::hash(&bytes).to_hex().to_string().into();
+    fs::write(&current, serde_json::to_vec(&head).unwrap()).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(ontoenv_bin())
+            .current_dir(&root)
+            .env("ONTOENV_DIR", &root)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(!run(&["status"]).status.success());
+    let upgraded = run(&["upgrade"]);
+    assert!(
+        upgraded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&upgraded.stderr)
+    );
+    let reader = ontoenv::snapshots::SnapshotReader::open(&root).unwrap();
+    assert_eq!(reader.snapshot().info().generation, before.generation);
+    let cleaned = run(&["prune", "--json"]);
+    assert!(
+        cleaned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cleaned.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&cleaned.stdout).unwrap();
+    assert_eq!(report["errors"], serde_json::json!([]));
+    assert_eq!(
+        reader.snapshot().info().environment_id,
+        before.environment_id
+    );
+}
+
+#[test]
 fn non_init_command_errors_outside_env() {
     let exe = ontoenv_bin();
     let root = tmp_dir("noenv");

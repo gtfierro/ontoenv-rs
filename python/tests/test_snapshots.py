@@ -1,6 +1,10 @@
 """The normal Python API must pin catalog, namespaces and RDF to one version."""
 from datetime import datetime
+import gc
+import json
 from pathlib import Path
+
+import pytest
 
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF
@@ -84,3 +88,54 @@ def test_add_with_rename_has_one_publication_and_invalid_rename_writes_nothing(t
     assert env.snapshot().info["generation"] == before + 1
     assert env.get_ontology_names() == ["urn:renamed"]
     env.close()
+
+
+def test_snapshot_context_releases_only_its_handle_and_view_owns_old_files(tmp_path: Path):
+    with OntoEnv.connect(tmp_path, offline=True) as writer:
+        writer.add(graph("old"), fetch_imports=False)
+    with OntoEnv.read_snapshot(tmp_path) as snapshot:
+        directory = tmp_path / ".ontoenv-snapshots"
+        head = json.loads((directory / "CURRENT").read_text())
+        manifest = json.loads((directory / "manifests" / head["manifest"]).read_text())
+        old_path = directory / "objects" / manifest["object_id"]
+        view = snapshot.get_graph(str(NAME))
+        iterator = view.triples((None, None, None))
+        first = next(iterator)
+    assert snapshot.closed
+    snapshot.close()  # idempotent
+    for operation in (lambda: snapshot.info, snapshot.get_dataset, snapshot.get_ontology_names):
+        with pytest.raises(ValueError, match="closed"):
+            operation()
+    with pytest.raises(ValueError, match="closed"):
+        with snapshot:
+            pass
+    with OntoEnv.open(tmp_path) as writer:
+        writer.add(graph("new"), overwrite=True, fetch_imports=False)
+        writer.add(graph("newest"), overwrite=True, fetch_imports=False)
+        assert (NAME, PREDICATE, Literal("old")) in view
+        assert old_path.exists()
+        assert writer.prune()["pinned_objects"] == 1
+        del view
+        gc.collect()
+        assert writer.prune()["pinned_objects"] == 1
+        assert {first, *iterator} == set(graph("old"))
+        del iterator
+        gc.collect()
+        writer.prune()
+        assert not old_path.exists()
+
+
+def test_snapshot_context_closes_on_exception(tmp_path: Path):
+    OntoEnv.connect(tmp_path, offline=True).close()
+    snapshot = OntoEnv.read_snapshot(tmp_path)
+    with pytest.raises(RuntimeError, match="expected"):
+        with snapshot:
+            raise RuntimeError("expected")
+    assert snapshot.closed
+
+
+def test_cleanup_requires_writer(tmp_path: Path):
+    OntoEnv.connect(tmp_path, offline=True).close()
+    with OntoEnv.open(tmp_path, read_only=True) as reader:
+        with pytest.raises(ValueError, match="writer"):
+            reader.prune()

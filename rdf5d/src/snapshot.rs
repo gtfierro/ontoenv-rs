@@ -208,11 +208,26 @@ impl Snapshot {
     /// backing file to be atomically replaced while a mapping is alive, but
     /// OntoEnv snapshots intentionally outlive later store rewrites.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::from_file(Arc::new(Self::open_file(path)?))
+    }
+
+    /// Open a snapshot retaining an external backing-lifetime guard.
+    ///
+    /// The guard belongs to the underlying file, so cloned file handles and
+    /// owned iterators keep it even after this snapshot has been dropped.
+    pub fn open_with_guard(
+        path: &Path,
+        guard: Arc<dyn std::fmt::Debug + Send + Sync>,
+    ) -> Result<Self> {
+        Self::from_file(Arc::new(Self::open_file(path)?.with_lifetime_guard(guard)))
+    }
+
+    fn open_file(path: &Path) -> Result<R5tuFile> {
         #[cfg(all(feature = "mmap", not(windows)))]
         let file = R5tuFile::open_mmap(path)?;
         #[cfg(any(not(feature = "mmap"), windows))]
         let file = R5tuFile::open(path)?;
-        Self::from_file(Arc::new(file))
+        Ok(file)
     }
 
     /// Build a snapshot from an already-opened file. Groups the file's physical
@@ -746,6 +761,33 @@ mod tests {
         assert_eq!(s.graph_names().count(), 0);
         assert!(!s.has_graph("http://ex/g/shared"));
         assert_eq!(s.gids_for_name("http://ex/g/shared"), None);
+    }
+
+    #[test]
+    fn backing_guards_survive_snapshot_drop_and_are_additive() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("guarded.r5tu");
+        multi_gid_fixture(&path);
+        let first = Arc::new("first backing owner");
+        let second = Arc::new("second backing owner");
+        let first_weak = Arc::downgrade(&first);
+        let second_weak = Arc::downgrade(&second);
+        let file = Arc::new(
+            R5tuFile::open(&path)
+                .unwrap()
+                .with_lifetime_guard(first)
+                .with_lifetime_guard(second),
+        );
+        let snapshot = Arc::new(Snapshot::from_file(Arc::clone(&file)).unwrap());
+        let scan = snapshot.grouped_scan(Pattern::ANY, Scope::All).unwrap();
+        drop(snapshot);
+        assert!(first_weak.upgrade().is_some());
+        assert_eq!(scan.count(), 5);
+        // A caller retaining the raw file still owns both guards.
+        assert!(second_weak.upgrade().is_some());
+        drop(file);
+        assert!(first_weak.upgrade().is_none());
+        assert!(second_weak.upgrade().is_none());
     }
 
     #[test]

@@ -104,8 +104,10 @@ The direct constructor accepts ``recreate=True`` to replace the selected state:
 
 With managed storage, each call stages an empty replacement catalog and any
 requested source scan, then publishes that replacement. Old readers retain
-their versions. Files remain in ``.demo-env/.ontoenv-snapshots/``; recreation
-and reset do not reclaim disk space. Close the active writer before recreating.
+their versions. Cleanup in ``.demo-env/.ontoenv-snapshots/`` retains current and
+previous publications plus all files pinned by live views. Eligible files are
+reclaimed on writer startup, successful publication or ``env.prune()``.
+Close the active writer before recreating.
 Source files are untouched.
 
 That is occasionally what you want, but it is not "open my environment". The

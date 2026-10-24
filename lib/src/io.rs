@@ -370,6 +370,10 @@ fn r5tu_union_graph(
 }
 
 pub trait GraphIO: Send + Sync {
+    /// Reclaim unreferenced managed snapshots, preserving live reader ownership.
+    fn prune_snapshots(&mut self) -> Result<crate::snapshots::PruneReport> {
+        anyhow::bail!("Cleanup requires a managed snapshot writer")
+    }
     /// Managed immutable environment selected by this backend, if supported.
     fn environment_snapshot(
         &self,

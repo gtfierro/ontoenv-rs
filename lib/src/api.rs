@@ -542,6 +542,21 @@ impl OntoEnv {
         Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::from_writer(writer)?)
     }
 
+    /// Offline upgrade of a protocol-2 store. Close all older processes first.
+    pub fn upgrade(root: impl AsRef<Path>) -> Result<Self> {
+        let writer = crate::snapshots::SnapshotWriter::upgrade(root.as_ref())?;
+        Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::from_writer(writer)?)
+    }
+
+    /// Retry cleanup of old files, retaining current/previous versions and all
+    /// backing files owned by live snapshots, views and iterators.
+    pub fn prune(&mut self) -> Result<crate::snapshots::PruneReport> {
+        if self.batch_state.depth != 0 {
+            anyhow::bail!("Cannot prune during a batch");
+        }
+        self.io.prune_snapshots()
+    }
+
     fn from_managed_io(io: crate::snapshot_io::SnapshotGraphIO) -> Result<Self> {
         let snapshot = io.environment_snapshot().expect("managed snapshot");
         let mut environment = Self {

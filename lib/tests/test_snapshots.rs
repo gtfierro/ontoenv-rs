@@ -370,7 +370,7 @@ fn aliases_config_and_source_locations_survive_reopen() -> Result<()> {
     assert!(std::sync::Arc::ptr_eq(&base.rdf(), &committed.rdf()));
     assert_eq!(
         fs::read_dir(dir.path().join(".ontoenv-snapshots/objects"))?.count(),
-        2
+        1
     );
     // Replacing the source location should preserve explicit aliases.
     let mut tx = writer.begin_update();

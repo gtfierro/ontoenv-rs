@@ -3723,6 +3723,46 @@ impl OntoEnv {
 
 #[pymethods]
 impl OntoEnv {
+    /// Open an independently owned read snapshot without retaining an OntoEnv.
+    #[staticmethod]
+    fn read_snapshot(py: Python<'_>, path: PathBuf) -> PyResult<snapshots::PyEnvironmentSnapshot> {
+        py.detach(move || {
+            ontoenv::snapshots::SnapshotReader::open(path).map(|reader| reader.snapshot())
+        })
+        .map(snapshots::PyEnvironmentSnapshot::new)
+        .map_err(anyhow_to_pyerr)
+    }
+
+    /// Offline protocol-2 upgrade. Close every older process before calling.
+    #[staticmethod]
+    fn upgrade(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        let env = py
+            .detach(move || OntoEnvRs::upgrade(path))
+            .map_err(anyhow_to_pyerr)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Some(env))),
+            cache: Arc::new(Mutex::new(DatasetCache::default())),
+            read_only: false,
+        })
+    }
+
+    /// Retry garbage collection without invalidating live views.
+    fn prune(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        let report = py
+            .detach(move || {
+                inner
+                    .lock_detached()
+                    .unwrap()
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("OntoEnv is closed"))?
+                    .prune()
+            })
+            .map_err(anyhow_to_pyerr)?;
+        let json = serde_json::to_string(&report).map_err(|e| anyhow_to_pyerr(e.into()))?;
+        Ok(py.import("json")?.call_method1("loads", (json,))?.unbind())
+    }
+
     /// Copy a closed legacy environment into the new backend, retaining its files.
     #[staticmethod]
     fn migrate(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
@@ -3748,9 +3788,7 @@ impl OntoEnv {
         let env = guard
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("OntoEnv is closed"))?;
-        Ok(env
-            .snapshot()
-            .map(|inner| snapshots::PyEnvironmentSnapshot { inner }))
+        Ok(env.snapshot().map(snapshots::PyEnvironmentSnapshot::new))
     }
 
     /// Select the latest publication without updating files or changing old views.
@@ -5388,10 +5426,10 @@ impl OntoEnv {
         let uri_string = pystring_to_string(uri)?;
         if let Some(snapshot) = self._published_snapshot()? {
             let name = NamedNode::new(&uri_string).map_err(|e| anyhow_to_pyerr(e.into()))?;
-            let id = snapshot.inner.resolve(name.as_ref()).ok_or_else(|| {
+            let id = snapshot.snapshot()?.resolve(name.as_ref()).ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(format!("No graph with URI: {uri_string}"))
             })?;
-            let info = snapshot.inner.info();
+            let info = snapshot.snapshot()?.info();
             let cached = {
                 let cache = self.cache.lock_detached().unwrap();
                 cache
@@ -5524,7 +5562,7 @@ impl OntoEnv {
 
         if has_rdf5d_snapshot {
             let dataset = if let Some(inner) = published {
-                snapshots::PyEnvironmentSnapshot { inner }.get_dataset(py)?
+                snapshots::PyEnvironmentSnapshot::new(inner).get_dataset(py)?
             } else {
                 self.cached_view_dataset(py)?
             };
@@ -5654,7 +5692,7 @@ impl OntoEnv {
         };
 
         let dataset = if let Some(inner) = published {
-            snapshots::PyEnvironmentSnapshot { inner }.get_dataset(py)?
+            snapshots::PyEnvironmentSnapshot::new(inner).get_dataset(py)?
         } else {
             self.cached_view_dataset(py)?
         };

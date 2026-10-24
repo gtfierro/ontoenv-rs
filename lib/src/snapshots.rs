@@ -5,7 +5,7 @@
 //! Graph changes are staged over an immutable base. An atomically replaced
 //! `CURRENT` file selects an immutable manifest bundling graph references,
 //! metadata, aliases and configuration. No database or reader recovery is needed.
-//! Published objects are retained indefinitely until online retention is added.
+//! Owned readers pin their backing files across publication and writer restarts.
 
 use crate::config::Config;
 use crate::environment::Environment;
@@ -28,8 +28,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const DIRECTORY: &str = ".ontoenv-snapshots";
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const CURRENT: &str = "CURRENT";
+
+#[path = "snapshot_retention.rs"]
+mod retention;
+pub use retention::PruneReport;
 
 pub(crate) fn read_config(root: &Path) -> Result<Option<Config>> {
     let directory = root.join(DIRECTORY);
@@ -44,6 +48,23 @@ struct Head {
     schema_version: u32,
     manifest: String,
     manifest_hash: String,
+    #[serde(default)]
+    previous: Option<ManifestRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManifestRef {
+    manifest: String,
+    manifest_hash: String,
+}
+
+impl Head {
+    fn selected(&self) -> ManifestRef {
+        ManifestRef {
+            manifest: self.manifest.clone(),
+            manifest_hash: self.manifest_hash.clone(),
+        }
+    }
 }
 
 /// Stable identity and timing of one committed environment generation.
@@ -192,7 +213,8 @@ impl SnapshotReader {
     /// Validate and swap the latest snapshot as a unit. Errors preserve the old one.
     /// Returns whether the selected committed generation changed.
     pub fn refresh(&mut self) -> Result<bool> {
-        let generation = read_head(&self.directory)?;
+        let _gate = retention::read_gate(&self.directory)?;
+        let generation = read_head_unlocked(&self.directory)?;
         if generation.info.environment_id == self.current.info.environment_id
             && generation.info.generation == self.current.info.generation
         {
@@ -265,6 +287,7 @@ impl SnapshotWriter {
             .tempdir_in(&config.root)?;
         fs::create_dir(initialization.path().join("objects"))?;
         fs::create_dir(initialization.path().join("manifests"))?;
+        retention::prepare_layout(initialization.path())?;
         environment.set_default_policy(&config.resolution_policy)?;
         let (object_id, object_length, rdf) =
             write_object(initialization.path(), source, &BTreeMap::new())?;
@@ -294,12 +317,14 @@ impl SnapshotWriter {
             "Snapshot initialization was published, but syncing its parent failed; open to inspect",
         )?;
         let current = snapshot_from_generation(generation, rdf);
-        Ok(Self {
+        let mut writer = Self {
             directory,
             current,
             needs_reopen: false,
             _writer_lock: writer_lock,
-        })
+        };
+        writer.prune_best_effort();
+        Ok(writer)
     }
 
     /// Explicitly copy a legacy managed environment into the new format.
@@ -409,12 +434,14 @@ impl SnapshotWriter {
         let writer_lock = acquire_writer_lock(&root)?;
         let directory = root.join(DIRECTORY);
         let current = open_head(&directory)?;
-        Ok(Self {
+        let mut writer = Self {
             directory,
             current,
             needs_reopen: false,
             _writer_lock: writer_lock,
-        })
+        };
+        writer.prune_best_effort();
+        Ok(writer)
     }
 
     /// The writer's last confirmed snapshot; staged changes are private.
@@ -677,6 +704,7 @@ impl SnapshotUpdate<'_> {
         publisher(&self.writer.directory, &record, Some(&base.info))?;
         self.writer.current = Arc::clone(&snapshot);
         self.writer.needs_reopen = false;
+        self.writer.prune_best_effort();
         Ok(snapshot)
     }
 
@@ -769,6 +797,11 @@ fn acquire_writer_lock(root: &Path) -> Result<WriterLock> {
 }
 
 fn read_head(directory: &Path) -> Result<Generation> {
+    let _gate = retention::read_gate(directory)?;
+    read_head_unlocked(directory)
+}
+
+fn read_pointer(directory: &Path) -> Result<Head> {
     let bytes = fs::read(directory.join(CURRENT)).with_context(|| {
         if directory.join("manifest.redb").exists() {
             "This environment uses the earlier redb prototype; automatic migration is unsupported"
@@ -778,9 +811,20 @@ fn read_head(directory: &Path) -> Result<Generation> {
     })?;
     let head: Head = serde_json::from_slice(&bytes).context("Invalid CURRENT file")?;
     if head.schema_version != SCHEMA_VERSION {
+        if head.schema_version == 2 {
+            bail!("Snapshot reader protocol 2 requires an offline upgrade; close all older processes and run `ontoenv upgrade`");
+        }
         bail!("Unsupported CURRENT schema version {}", head.schema_version);
     }
-    let valid_name = head
+    Ok(head)
+}
+
+fn read_head_unlocked(directory: &Path) -> Result<Generation> {
+    read_manifest(directory, &read_pointer(directory)?.selected())
+}
+
+fn read_manifest(directory: &Path, reference: &ManifestRef) -> Result<Generation> {
+    let valid_name = reference
         .manifest
         .strip_prefix("manifest-")
         .and_then(|name| name.strip_suffix(".json"))
@@ -788,9 +832,9 @@ fn read_head(directory: &Path) -> Result<Generation> {
     if !valid_name {
         bail!("Invalid manifest name in CURRENT");
     }
-    let bytes = fs::read(directory.join("manifests").join(&head.manifest))
+    let bytes = fs::read(directory.join("manifests").join(&reference.manifest))
         .context("Cannot read the manifest selected by CURRENT")?;
-    if blake3::hash(&bytes).to_hex().as_str() != head.manifest_hash {
+    if blake3::hash(&bytes).to_hex().as_str() != reference.manifest_hash {
         bail!("Selected manifest checksum mismatch");
     }
     let mut generation: Generation = serde_json::from_slice(&bytes)?;
@@ -832,9 +876,9 @@ fn validate_record(generation: &Generation) -> Result<()> {
 }
 
 fn open_head(directory: &Path) -> Result<Arc<EnvironmentSnapshot>> {
-    // Nothing is pruned: the selected manifest and object remain available after
-    // CURRENT closes, even if a writer publishes another version in between.
-    open_generation(read_head(directory)?, directory)
+    // Selection and pin acquisition are one short operation relative to GC.
+    let _gate = retention::read_gate(directory)?;
+    open_generation(read_head_unlocked(directory)?, directory)
 }
 
 fn open_generation(generation: Generation, directory: &Path) -> Result<Arc<EnvironmentSnapshot>> {
@@ -845,7 +889,8 @@ fn open_generation(generation: Generation, directory: &Path) -> Result<Arc<Envir
     if fs::metadata(&path)?.len() != generation.object_length {
         bail!("Snapshot object length does not match its committed manifest");
     }
-    let rdf = Arc::new(Snapshot::open(&path)?);
+    let pin = retention::pin_object(path.parent().context("Missing object directory")?)?;
+    let rdf = Arc::new(Snapshot::open_with_guard(&path, pin)?);
     validate_catalog(&generation, &rdf)?;
     Ok(snapshot_from_generation(generation, rdf))
 }
@@ -918,21 +963,35 @@ fn publish_with_hook(
     directory: &Path,
     generation: &Generation,
     expected: Option<&SnapshotInfo>,
-    mut at: impl FnMut(PublicationPhase) -> Result<()>,
+    at: impl FnMut(PublicationPhase) -> Result<()>,
 ) -> Result<()> {
     validate_record(generation)?;
     // The stable exclusive writer lock serializes this check and replacement.
     // This is not a compare-and-swap for writers bypassing that lock.
-    if let Some(expected) = expected {
-        let current = read_head(directory)?;
+    let previous = if let Some(expected) = expected {
+        let head = read_pointer(directory)?;
+        let current = read_manifest(directory, &head.selected())?;
         if current.info.environment_id != expected.environment_id
             || current.info.generation != expected.generation
         {
             bail!("Committed head changed since update began; reopen the writer");
         }
-    } else if directory.join(CURRENT).try_exists()? {
-        bail!("Unexpected snapshot manifest head; reopen the writer");
-    }
+        Some(head.selected())
+    } else {
+        if directory.join(CURRENT).try_exists()? {
+            bail!("Unexpected snapshot manifest head; reopen the writer");
+        }
+        None
+    };
+    publish_manifest_with_hook(directory, generation, previous, at)
+}
+
+fn publish_manifest_with_hook(
+    directory: &Path,
+    generation: &Generation,
+    previous: Option<ManifestRef>,
+    mut at: impl FnMut(PublicationPhase) -> Result<()>,
+) -> Result<()> {
     let bytes = serde_json::to_vec(generation)?;
     let manifests = directory.join("manifests");
     let mut manifest = tempfile::Builder::new()
@@ -957,6 +1016,7 @@ fn publish_with_hook(
             .context("Manifest name is not UTF-8")?
             .to_owned(),
         manifest_hash: blake3::hash(&bytes).to_hex().to_string(),
+        previous,
     };
     // This tempfile is on the same filesystem as CURRENT. Close the writing
     // handle and clear Windows temporary attributes before replacement.
@@ -1035,7 +1095,11 @@ fn write_object(
         }
     }
     writer.finalize()?;
-    let rdf = Arc::new(Snapshot::open(&path)?);
+    retention::create_pin(staging.path())?;
+    let rdf = Arc::new(Snapshot::open_with_guard(
+        &path,
+        retention::pin_object(staging.path())?,
+    )?);
     let length = fs::metadata(&path)?.len();
     sync_directory(staging.path())?;
     let object_id = staging
@@ -1089,6 +1153,236 @@ mod tests {
             Some(RdfFormat::Turtle),
         )?;
         Ok(update)
+    }
+
+    #[test]
+    #[ignore = "independent reader lifetime helper"]
+    fn pinned_reader_worker() -> Result<()> {
+        use std::io::BufRead;
+        let root = PathBuf::from(std::env::var("ONTOENV_PIN_ROOT")?);
+        let reader = SnapshotReader::open(&root)?;
+        let rdf = reader.snapshot().rdf();
+        let scan = rdf.grouped_scan(rdf5d::Pattern::ANY, rdf5d::Scope::All)?;
+        drop(rdf);
+        drop(reader);
+        fs::write(root.join("reader-ready"), b"ready")?;
+        let mut command = String::new();
+        std::io::stdin().lock().read_line(&mut command)?;
+        assert_eq!(scan.count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn independent_iterators_pin_files_across_writer_restarts_and_process_death() -> Result<()> {
+        use std::process::Stdio;
+        for abrupt in [false, true] {
+            let dir = tempfile::tempdir()?;
+            let mut writer = SnapshotWriter::create(config(dir.path()))?;
+            stage(&mut writer, "old")?.commit()?;
+            let old_path = writer
+                .directory
+                .join("objects")
+                .join(&writer.current.object_id);
+            let mut child = Command::new(std::env::current_exe()?)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "snapshots::tests::pinned_reader_worker",
+                ])
+                .env("ONTOENV_PIN_ROOT", dir.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .spawn()?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !dir.path().join("reader-ready").exists() {
+                assert!(
+                    child.try_wait()?.is_none(),
+                    "reader exited before acquiring its view"
+                );
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "reader acquisition timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            stage(&mut writer, "new")?.commit()?;
+            stage(&mut writer, "newest")?.commit()?;
+            drop(writer);
+            let mut writer = SnapshotWriter::open(dir.path())?;
+            assert!(old_path.exists());
+            assert_eq!(writer.prune()?.pinned_objects, 1);
+            if abrupt {
+                child.kill()?;
+                child.wait()?;
+            } else {
+                child.stdin.take().unwrap().write_all(b"release\n")?;
+                assert!(child.wait()?.success());
+            }
+            assert!(writer.prune()?.errors.is_empty());
+            assert!(!old_path.exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn owned_iterator_retains_backing_after_snapshot_and_reader_drop() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut writer = SnapshotWriter::create(config(dir.path()))?;
+        stage(&mut writer, "old")?.commit()?;
+        let old_path = writer
+            .directory
+            .join("objects")
+            .join(&writer.current.object_id);
+        let snapshot = SnapshotReader::open(dir.path())?.snapshot();
+        let rdf = snapshot.rdf();
+        let mut iterator = rdf.grouped_scan(rdf5d::Pattern::ANY, rdf5d::Scope::All)?;
+        drop(rdf);
+        drop(snapshot);
+        stage(&mut writer, "new")?.commit()?;
+        stage(&mut writer, "newest")?.commit()?;
+        assert!(old_path.exists());
+        assert!(iterator.next().is_some());
+        drop(iterator);
+        writer.prune()?;
+        assert!(!old_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_retries_retirement_and_skips_snapshot_acquisition() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut writer = SnapshotWriter::create(config(dir.path()))?;
+        let gate = retention::read_gate(&writer.directory)?;
+        assert!(writer.prune()?.acquisition_busy);
+        drop(gate);
+        // Simulate an orphan and a failed retirement (destination occupied).
+        let object = writer.directory.join("objects/object-abandoned");
+        fs::create_dir(&object)?;
+        fs::write(object.join("store.r5tu"), b"aborted")?;
+        let blocker = writer.directory.join("trash/object-abandoned");
+        fs::write(&blocker, b"block retirement")?;
+        assert!(!writer.prune()?.errors.is_empty());
+        assert!(object.exists());
+        // Cleanup failure does not roll back an otherwise successful commit.
+        stage(&mut writer, "published despite garbage")?.commit()?;
+        assert_eq!(writer.current.info.generation, 1);
+        assert!(object.exists());
+        fs::remove_file(&blocker)?;
+        assert_eq!(writer.prune()?.removed_objects, 1);
+        assert!(!object.exists());
+        // A retired directory left by an interrupted deletion is retried too.
+        fs::create_dir(&blocker)?;
+        fs::write(blocker.join("partial"), b"leftover")?;
+        drop(writer);
+        let _writer = SnapshotWriter::open(dir.path())?;
+        assert!(!blocker.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn protocol_two_requires_explicit_offline_upgrade_without_rewriting_graphs() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut writer = SnapshotWriter::create(config(dir.path()))?;
+        stage(&mut writer, "old")?.commit()?;
+        let directory = writer.directory.clone();
+        let mut record = writer.current.record();
+        let path = directory
+            .join("objects")
+            .join(&record.object_id)
+            .join("store.r5tu");
+        let graph_hash = blake3::hash(&fs::read(&path)?);
+        drop(writer);
+        // Construct the exact previous reader protocol with no pin/gate files.
+        let mut head: Head = serde_json::from_slice(&fs::read(directory.join(CURRENT))?)?;
+        record.schema_version = 2;
+        let bytes = serde_json::to_vec(&record)?;
+        fs::write(directory.join("manifests").join(&head.manifest), &bytes)?;
+        head.schema_version = 2;
+        head.previous = None;
+        head.manifest_hash = blake3::hash(&bytes).to_hex().to_string();
+        let pointer = serde_json::to_vec(&head)?;
+        fs::write(directory.join(CURRENT), &pointer)?;
+        fs::remove_file(directory.join("READERS"))?;
+        fs::remove_file(path.parent().unwrap().join(".pin"))?;
+        assert!(SnapshotReader::open(dir.path())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("offline upgrade"));
+        assert!(SnapshotWriter::open(dir.path()).is_err());
+        assert_eq!(fs::read(directory.join(CURRENT))?, pointer);
+        let mut writer = SnapshotWriter::upgrade(dir.path())?;
+        assert_eq!(writer.current.info.generation, record.info.generation);
+        assert_eq!(writer.current.object_id, record.object_id);
+        assert_eq!(blake3::hash(&fs::read(path)?), graph_hash);
+        let held = writer.snapshot();
+        stage(&mut writer, "new")?.commit()?;
+        stage(&mut writer, "newest")?.commit()?;
+        assert_eq!(writer.prune()?.pinned_objects, 1);
+        drop(held);
+        assert!(writer.prune()?.errors.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn retired_deletion_retries_after_windows_handle_closes() -> Result<()> {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir()?;
+        let mut writer = SnapshotWriter::create(config(dir.path()))?;
+        let retired = writer.directory.join("trash/object-interrupted");
+        fs::create_dir(&retired)?;
+        let path = retired.join("store.r5tu");
+        fs::write(&path, b"retired")?;
+        // A non-protocol handle can prevent deletion without owning a pin.
+        let handle = OpenOptions::new().read(true).share_mode(1).open(path)?;
+        let report = writer.prune()?;
+        assert_eq!(report.pending_objects, 1);
+        assert!(!report.errors.is_empty());
+        drop(handle);
+        drop(writer);
+        let _writer = SnapshotWriter::open(dir.path())?;
+        assert!(!retired.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_preserves_exact_previous_publication_and_shared_metadata_backing() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut writer = SnapshotWriter::create(config(dir.path()))?;
+        stage(&mut writer, "old")?.commit()?;
+        let before = read_pointer(&writer.directory)?.selected();
+        let before_object = writer.current.object_id.clone();
+        let result = stage(&mut writer, "aborted")?.commit_with_publisher(
+            || Ok(()),
+            |directory, record, expected| {
+                publish_with_hook(directory, record, expected, |phase| {
+                    if phase == PublicationPhase::ManifestDurable {
+                        bail!("injected failure");
+                    }
+                    Ok(())
+                })
+            },
+        );
+        assert!(result.is_err());
+        drop(writer);
+        let mut writer = SnapshotWriter::open(dir.path())?;
+        stage(&mut writer, "new")?.commit()?;
+        let head = read_pointer(&writer.directory)?;
+        assert_eq!(head.previous.unwrap().manifest, before.manifest);
+        assert!(writer
+            .directory
+            .join("objects")
+            .join(before_object)
+            .exists());
+        let snapshot = writer.snapshot();
+        let mut config = snapshot.config().clone();
+        config.namespaces.insert("new".into(), "urn:new:".into());
+        writer.publish_config(config)?;
+        assert!(Arc::ptr_eq(&snapshot.rdf(), &writer.snapshot().rdf()));
+        assert_eq!(fs::read_dir(writer.directory.join("objects"))?.count(), 1);
+        assert_eq!(fs::read_dir(writer.directory.join("manifests"))?.count(), 2);
+        Ok(())
     }
 
     #[test]
@@ -1335,6 +1629,7 @@ mod tests {
                 schema_version: schema,
                 manifest: name.into(),
                 manifest_hash: hash.into(),
+                previous: None,
             })?);
         }
         let mut wrong_schema: Head = serde_json::from_slice(&selected)?;
@@ -1369,6 +1664,7 @@ mod tests {
                     .unwrap()
                     .into(),
                 manifest_hash: blake3::hash(&bytes).to_hex().to_string(),
+                previous: None,
             })?);
             let (file, _) = manifest.keep()?;
             drop(file);

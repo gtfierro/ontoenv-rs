@@ -29,6 +29,20 @@ commit and open timestamps), a copied ``config`` dictionary,
 ``get_dataset()``, ``get_namespaces()``, ``get_bound_namespaces()`` and
 ``resolve_alias(iri)``. No refresh or write methods exist on this handle.
 
+``OntoEnv.read_snapshot(path)`` opens one owned version directly. Use it as a
+context manager or call ``snapshot.close()`` to release that handle promptly.
+``snapshot.closed`` reports its state; operations on a closed handle raise
+``ValueError``. Closing is idempotent. Graphs, datasets and iterators obtained
+inside the scope retain independent ownership and remain usable after it exits.
+There is no read transaction to commit or roll back.
+
+``env.prune()`` retries cleanup on a writable managed connection and returns
+counts plus deferred errors. Cleanup also runs at writer startup and after
+successful publication, retaining current/previous versions and live views
+across processes. ``OntoEnv.upgrade(path)`` enables this protocol for earlier
+0.7 development stores; close every older process first. See
+:doc:`../how-to/migrate-storage`.
+
 ``env.refresh()`` advances a managed reader to the latest complete version,
 returning whether it changed. A writer already selects its last commit.
 Previously returned graph, closure, union and dataset views retain their version,

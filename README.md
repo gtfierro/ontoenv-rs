@@ -105,6 +105,9 @@ retained for rollback.
 | `.ontoenv-snapshots/CURRENT` | Atomic selection of one complete version |
 | `.ontoenv-snapshots/manifests/` | Immutable catalog, configuration and object references |
 | `.ontoenv-snapshots/objects/*/store.r5tu` | Immutable mmap-backed graph artifacts |
+| `.ontoenv-snapshots/objects/*/.pin` | Shared reader pin held for the backing's lifetime |
+| `.ontoenv-snapshots/READERS` | Brief selection/pinning gate shared by readers |
+| `.ontoenv-snapshots/trash/` | Retired objects awaiting deletion or retry |
 | `.ontoenv-snapshots.lock` | Stable exclusive writer lock; readers do not acquire it |
 
 Readers select one version until `env.refresh()` or reopen. Previously returned
@@ -112,8 +115,11 @@ snapshot, graph, closure and dataset views retain their version. Successful
 managed mutations publish before returning; `flush()` does not refresh readers.
 Malformed selected state fails explicitly; opens do not scan history or silently
 fall back. Graph-changing commits write a complete new RDF5D file; metadata-only
-commits share the old one. Old objects are retained indefinitely, including
-after reset, so disk usage grows with graph-changing commits.
+commits share the old one. Cleanup keeps the current and previous published
+versions plus files owned by live views in any process. It runs on writer open
+and successful publication; `ontoenv prune` / `env.prune()` retries it explicitly.
+Earlier builds of this unreleased branch (reader protocol 2) require an
+[offline upgrade](docs/how-to/migrate-storage.md) before cleanup is enabled.
 
 Caller-provided stores retain their own consistency and transaction guarantees.
 Their `.ontoenv/` catalogs and interrupted-mutation recovery remain supported;

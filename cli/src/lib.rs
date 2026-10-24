@@ -162,6 +162,14 @@ enum Commands {
     Version,
     /// Migrate a closed legacy managed environment, preserving its files
     Migrate,
+    /// Offline upgrade: close all older processes before enabling reader-safe cleanup
+    Upgrade,
+    /// Retry cleanup, retaining current/previous versions and all live views
+    Prune {
+        /// Output JSON instead of text
+        #[clap(long, action, default_value = "false")]
+        json: bool,
+    },
     /// Prints the status of the ontology environment
     Status {
         /// Output JSON instead of text
@@ -320,6 +328,8 @@ impl std::fmt::Display for Commands {
             Commands::Init { .. } => "Init",
             Commands::Version => "Version",
             Commands::Migrate => "Migrate",
+            Commands::Upgrade => "Upgrade",
+            Commands::Prune { .. } => "Prune",
             Commands::Status { .. } => "Status",
             Commands::Update { .. } => "Update",
             Commands::Closure { .. } => "Closure",
@@ -690,6 +700,20 @@ fn execute(cmd: Cli) -> Result<()> {
         .unwrap_or(false);
     info!("OntoEnv exists: {ontoenv_exists}");
 
+    if matches!(cmd.command, Commands::Upgrade) {
+        if cmd.temporary {
+            return Err(anyhow::anyhow!("Upgrade requires persistent storage"));
+        }
+        let root =
+            discovered_root.ok_or_else(|| anyhow::anyhow!("No snapshot environment found"))?;
+        let upgraded = OntoEnv::upgrade(&root)?;
+        println!(
+            "Upgraded {} ontologies; reader-safe cleanup enabled.",
+            upgraded.ontologies().len()
+        );
+        return Ok(());
+    }
+
     if matches!(cmd.command, Commands::Migrate) {
         if cmd.temporary {
             return Err(anyhow::anyhow!("Migration requires persistent storage"));
@@ -745,9 +769,12 @@ fn execute(cmd: Cli) -> Result<()> {
     // - if temporary is true, create a new env object each time
     // - if temporary is false, load the env from the .ontoenv directory if it exists
     // Determine if this command needs write access to the store
-    let needs_rw = matches!(cmd.command, Commands::Add { .. } | Commands::Update { .. });
+    let needs_rw = matches!(
+        cmd.command,
+        Commands::Add { .. } | Commands::Update { .. } | Commands::Prune { .. }
+    );
 
-    let env: Option<OntoEnv> = if cmd.temporary {
+    let mut env: Option<OntoEnv> = if cmd.temporary {
         // Create a new OntoEnv object in temporary mode
         let e = OntoEnv::init(config.clone(), false)?;
         Some(e)
@@ -1191,6 +1218,27 @@ fn execute(cmd: Cli) -> Result<()> {
             }
         }
         Commands::Migrate => unreachable!("migration handled before open"),
+        Commands::Upgrade => unreachable!("upgrade handled before open"),
+        Commands::Prune { json } => {
+            let report = env
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Cleanup requires an environment"))?
+                .prune()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Removed {} objects and {} manifests; {} pinned, {} pending.",
+                    report.removed_objects,
+                    report.removed_manifests,
+                    report.pinned_objects,
+                    report.pending_objects
+                );
+                for error in report.errors {
+                    eprintln!("Cleanup deferred: {error}");
+                }
+            }
+        }
         Commands::Recover => {
             // This command is handled before the environment is opened.
         }

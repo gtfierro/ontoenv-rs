@@ -15,14 +15,20 @@ All notable changes to this project are documented here. Releases follow [Semant
   generation/timestamps, catalog, configuration and graph/dataset access.
   Managed graph, closure and dataset views keep their version across updates,
   flush and close. Re-fetch a view or explicitly rebind a dataset to advance it.
+- `OntoEnv.read_snapshot(path)` opens an owned version directly. Snapshot scopes
+  support `with`, `close()` and `closed`; escaped views and iterators retain
+  independent backing ownership after the scope exits.
 - Rust `env.transaction(...)` groups normal operations into one publication,
   with nested rollback and unwind handling. Add-with-rename publishes once.
 - Existing managed `.ontoenv/` data requires explicit `ontoenv migrate` or
   `OntoEnv.migrate(path)`. Migration requires closed legacy handles, validates
   the source and retains its files. External stores keep their existing APIs.
-- Recreation/reset publish replacement versions and retain existing objects.
-  No online garbage collection is provided; graph-changing commits retain one
-  complete RDF5D generation each. One graph per IRI/source is enforced.
+- Reader-safe cleanup runs at writer startup and after successful publication;
+  `ontoenv prune` / `env.prune()` retries it explicitly. Current and previous
+  publications plus objects pinned by live views in any process are retained.
+  Graph changes still write a complete RDF5D file. One graph per IRI/source is
+  enforced. Earlier unreleased protocol-2 stores require `ontoenv upgrade` /
+  `OntoEnv.upgrade(path)` after closing every older process, including readers.
 - Publication is always built. The `transactional-snapshots` Cargo feature is an
   empty compatibility feature. Directory durability barriers are implemented
   on Unix; Windows directory syncing remains unsupported. See the storage

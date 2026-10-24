@@ -50,8 +50,8 @@ as writers to the same logical environment.
 For rollback, stop all handles first, keep a separate copy of the new directory,
 and restore/use the legacy directory with the old release. There is no automatic
 downgrade of changes made after migration. Never delete objects from a running
-snapshot environment: old views may still map them. Reset and recreation retain
-old artifacts and do not reclaim disk space.
+snapshot environment: old views may still map them. Reset and recreation publish
+new versions; cleanup respects all live views.
 
 Opening a copied environment uses its new root for publication; it does not
 rewrite stored absolute ontology source paths or search directories.
@@ -64,9 +64,38 @@ keep theirs. `writer.update()` reads sources and publishes changes.
 selected version. `flush()` does not advance readers or update old managed views.
 
 Graph changes currently write a complete RDF5D generation. Metadata-only commits
-reuse the existing artifact and indexes. Published files are retained indefinitely;
-plan disk space for roughly one full store per graph-changing commit.
+reuse the existing artifact and indexes. Cleanup retains the current and previous
+published versions and every object pinned by live views. Allow space for these
+versions plus one full candidate during graph-changing writes. A long-lived view
+can retain a full old store until released; deletion retries can require more space.
 See [the snapshot guide](../explanation/transactional-snapshots.md) for memory,
 write-cost and durability measurements. Unix directory syncing is implemented;
 Windows directory syncing remains unsupported. The release candidate does not
 claim power-loss durability on untested filesystems or platforms.
+
+## Upgrade earlier 0.7 development stores
+
+Earlier builds of this unreleased branch use reader protocol 2 and retain files
+indefinitely. The new protocol 3 enables cleanup. Ordinary opens reject protocol
+2 with an upgrade instruction; there is no silent upgrade.
+
+Close **all** processes using that store, including read-only processes and
+escaped views, before running this from its root or a child directory:
+
+```sh
+ontoenv upgrade
+```
+
+Python provides `OntoEnv.upgrade(path)` (returns a writer); Rust provides
+`OntoEnv::upgrade(root)` and `SnapshotWriter::upgrade(root)`. The writer lock
+detects another writer, but older readers have no pins, so the operator must
+ensure they are closed. Afterward, use only protocol-3-capable binaries.
+
+The upgrade validates the selected manifest and graph, provisions reader pins,
+and atomically selects a new manifest without rewriting/refetching graph data.
+An interrupted upgrade before selection can be retried. After an uncertain
+publication error, try opening the store to inspect whether upgrade completed.
+Protocol 2 recorded no exact manifest ancestry: retention starts at the selected
+version; older unreferenced versions become eligible for cleanup. Back up the
+closed directory beforehand if those versions are needed. This protocol upgrade
+is separate from `migrate`, which copies legacy `.ontoenv/` stores.
