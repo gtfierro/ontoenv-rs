@@ -177,7 +177,7 @@ def main():
     report["memory"]["after_refresh_retaining_old_views"] = memory()
     assert reader.resolve_alias("urn:review:alias") == MODEL
     assert (URIRef(MODEL), REVISION, Literal("1")) in reader.get_graph(MODEL)
-    assert (URIRef(MODEL), REVISION, Literal("0")) in old.get_graph(MODEL)
+    assert (URIRef(MODEL), REVISION, Literal("0")) in old.view_graph(MODEL)
     _, ms["explicit_dataset_rebind"] = timed(lambda: reader.refresh_dataset(dataset))
     assert (URIRef(MODEL), REVISION, Literal("1")) in dataset.graph(URIRef(MODEL))
     # An iterator created before publication/rebinding must finish its old graph.

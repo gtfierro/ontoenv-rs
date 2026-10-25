@@ -64,7 +64,7 @@ consolidation:
 Rust currently uses different return types: ``OntoEnv::get_graph`` and
 ``copy_graph`` both materialize an owned ``oxigraph::model::Graph``. Editing that
 value does not change the environment. A managed
-``EnvironmentSnapshot::graph_view`` or ``view`` borrows a query view without
+``EnvironmentSnapshot::view_graph`` or ``view`` borrows a query view without
 materializing the graph. The Python names in the table describe their Python
 return values, not a Rust mutability guarantee.
 

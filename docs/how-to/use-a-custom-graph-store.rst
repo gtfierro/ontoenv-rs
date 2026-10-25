@@ -72,7 +72,7 @@ For a scratch environment with no saved index:
 .. warning::
 
    ``graph_store=`` cannot be combined with ``recreate=True`` or the
-   deprecated ``create_or_use_cached=True``.
+   removed ``create_or_use_cached=True``.
 
 Connect to a store that already has graphs
 ------------------------------------------

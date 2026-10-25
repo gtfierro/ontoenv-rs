@@ -42,7 +42,7 @@ fn add(writer: &mut SnapshotWriter, name: &str, value: &str) -> Result<GraphIden
 }
 
 fn assert_value(snapshot: &EnvironmentSnapshot, id: &GraphIdentifier, value: &str) -> Result<()> {
-    let graph = snapshot.get_graph(id)?;
+    let graph = snapshot.copy_graph(id)?;
     assert!(graph
         .iter()
         .any(|triple| triple.object.to_string() == format!("\"{value}\"")));
@@ -72,7 +72,7 @@ fn snapshot_catalog_queries_retain_aliases_closures_and_namespaces() -> Result<(
     assert_eq!(old.get_namespaces(&a, true)?["chosen"], "urn:bound:");
     let mut tx = writer.begin_update();
     tx.remove_alias("urn:alias")?;
-    tx.replace_graph(&a, old.get_graph(&b)?)
+    tx.replace_graph(&a, old.copy_graph(&b)?)
         .expect_err("different canonical IRI must be rejected");
     tx.replace_graph(&a, Graph::new())?;
     tx.config_mut()
@@ -186,7 +186,7 @@ fn dataset_unions_keep_contexts_and_graph_projections_deduplicate() -> Result<()
     let graph = snapshot.copy_union(&ids)?;
     assert_eq!(dataset.len(), 4);
     assert_eq!(graph.len(), 3);
-    assert_eq!(snapshot.graph_view(&empty)?.triple_count()?, 0);
+    assert_eq!(snapshot.view_graph(&empty)?.triple_count()?, 0);
     assert!(snapshot.copy_dataset(&[])?.is_empty());
     assert!(snapshot.copy_union(&[])?.is_empty());
     let missing = GraphIdentifier::new_with_location(
@@ -224,9 +224,9 @@ fn readers_pin_generations_while_writer_remains_open() -> Result<()> {
 #[test]
 fn cloned_handles_and_metadata_refresh_share_the_rdf_snapshot() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let mut writer = OntoEnv::create_snapshot(config(dir.path()))?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
     let id = add(&mut writer, "urn:a", "old")?;
-    let mut reader = OntoEnv::open_snapshot(dir.path())?;
+    let mut reader = SnapshotReader::open(dir.path())?;
     let old = reader.snapshot();
     let cloned = reader.snapshot();
     assert!(Arc::ptr_eq(&old, &cloned));
@@ -326,12 +326,12 @@ fn owned_query_iterator_pins_only_its_original_rdf_until_dropped() -> Result<()>
 #[test]
 fn normal_api_scoped_views_keep_the_selected_environment_version() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let mut writer = OntoEnv::create_snapshot(config(dir.path()))?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
     let id = add(&mut writer, "urn:a", "old")?;
-    let reader = OntoEnv::open_snapshot(dir.path())?;
+    let reader = SnapshotReader::open(dir.path())?;
     let snapshot = reader.snapshot();
     let old = Arc::downgrade(&snapshot);
-    let view = snapshot.graph_view(&id)?;
+    let view = snapshot.view_graph(&id)?;
     assert_eq!(view.triple_count()?, 2);
     let p = snapshot
         .rdf()
@@ -350,7 +350,7 @@ fn normal_api_scoped_views_keep_the_selected_environment_version() -> Result<()>
     );
     drop(reader);
     drop(writer);
-    let mut writer = OntoEnv::open_snapshot_writer(dir.path())?;
+    let mut writer = SnapshotWriter::open(dir.path())?;
     let mut update = writer.begin_update();
     update.replace_graph(&id, Graph::new())?;
     update.commit()?;
@@ -361,11 +361,11 @@ fn normal_api_scoped_views_keep_the_selected_environment_version() -> Result<()>
             .len(),
         1
     );
-    assert_eq!(writer.snapshot().graph_view(&id)?.triple_count()?, 0);
+    assert_eq!(writer.snapshot().view_graph(&id)?.triple_count()?, 0);
     let mut update = writer.begin_update();
     update.remove(&id)?;
     update.commit()?;
-    assert!(writer.snapshot().graph_view(&id).is_err());
+    assert!(writer.snapshot().view_graph(&id).is_err());
     drop(view);
     drop(snapshot);
     assert!(old.upgrade().is_none());
@@ -387,7 +387,7 @@ fn abort_and_failed_strict_commit_leave_no_partial_state() -> Result<()> {
         )?;
         tx.config_mut().offline = false;
         tx.add_alias("urn:private", "urn:a")?;
-        assert_eq!(tx.get_graph(&id)?.len(), 2);
+        assert_eq!(tx.copy_graph(&id)?.len(), 2);
         // Drop is rollback, even when previous staging operations succeeded.
     }
     assert_value(&writer.snapshot(), &id, "old")?;
@@ -434,13 +434,13 @@ fn parsed_staging_preserves_sets_blank_nodes_and_literal_lexical_forms() -> Resu
         bytes.to_vec(),
         Some(RdfFormat::Turtle),
     )?;
-    let staged = tx.get_graph(&id)?;
+    let staged = tx.copy_graph(&id)?;
     assert_eq!(staged.len(), 7);
-    let mut copy = tx.get_graph(&id)?;
+    let mut copy = tx.copy_graph(&id)?;
     copy.clear();
-    assert_eq!(tx.get_graph(&id)?.len(), 7);
+    assert_eq!(tx.copy_graph(&id)?.len(), 7);
     let committed = tx.commit()?;
-    assert_eq!(committed.get_graph(&id)?, staged);
+    assert_eq!(committed.copy_graph(&id)?, staged);
     assert_eq!(
         committed
             .rdf()
@@ -449,7 +449,7 @@ fn parsed_staging_preserves_sets_blank_nodes_and_literal_lexical_forms() -> Resu
     );
     drop(writer);
     let reader = SnapshotReader::open(dir.path())?;
-    assert_eq!(reader.snapshot().get_graph(&id)?, staged);
+    assert_eq!(reader.snapshot().copy_graph(&id)?, staged);
     Ok(())
 }
 
@@ -460,18 +460,18 @@ fn indexed_replacement_and_parsed_replacement_share_transaction_behavior() -> Re
     let id = add(&mut writer, "urn:a", "old")?;
     let retained = writer.snapshot();
     let mut tx = writer.begin_update();
-    let graph = tx.get_graph(&id)?;
+    let graph = tx.copy_graph(&id)?;
     tx.replace_graph(&id, graph.clone())?;
-    assert_eq!(tx.get_graph(&id)?, graph);
+    assert_eq!(tx.copy_graph(&id)?, graph);
     tx.add_alias("urn:alias", "urn:a")?;
     tx.add_from_bytes(
         source("urn:a"),
         ttl("urn:a", "new"),
         Some(RdfFormat::Turtle),
     )?;
-    let parsed = tx.get_graph(&id)?;
+    let parsed = tx.copy_graph(&id)?;
     let committed = tx.commit()?;
-    assert_eq!(committed.get_graph(&id)?, parsed);
+    assert_eq!(committed.copy_graph(&id)?, parsed);
     assert_eq!(
         committed.resolve(NamedNode::new("urn:alias")?.as_ref()),
         Some(id.clone())
@@ -494,8 +494,8 @@ fn empty_replacement_and_deletion_are_distinct_after_reopen() -> Result<()> {
     tx.commit()?;
     drop(writer);
     let reader = SnapshotReader::open(dir.path())?;
-    assert!(reader.snapshot().get_graph(&a)?.is_empty());
-    assert!(reader.snapshot().get_graph(&b).is_err());
+    assert!(reader.snapshot().copy_graph(&a)?.is_empty());
+    assert!(reader.snapshot().copy_graph(&b).is_err());
     assert_eq!(reader.snapshot().ontologies().len(), 1);
     assert_value(&old, &a, "a")?;
     assert_value(&old, &b, "b")?;
@@ -617,7 +617,7 @@ fn changed_source_iri_removes_old_graph_and_preserves_explicit_aliases() -> Resu
     tx.commit()?;
     let reader = SnapshotReader::open(dir.path())?;
     assert_eq!(reader.snapshot().ontologies().len(), 1);
-    assert!(reader.snapshot().get_graph(&old_id).is_err());
+    assert!(reader.snapshot().copy_graph(&old_id).is_err());
     assert_eq!(
         reader
             .snapshot()
@@ -668,12 +668,12 @@ fn unchanged_graphs_keep_blank_nodes_and_literal_types() -> Result<()> {
     let bytes = b"<urn:a> a <http://www.w3.org/2002/07/owl#Ontology> ; <urn:p> _:shared . _:shared <urn:q> \"hello\"@en ; <urn:r> \"42\"^^<http://www.w3.org/2001/XMLSchema#integer> .";
     let id = tx.add_from_bytes(source("urn:a"), bytes.to_vec(), Some(RdfFormat::Turtle))?;
     tx.commit()?;
-    let before = writer.snapshot().get_graph(&id)?;
+    let before = writer.snapshot().copy_graph(&id)?;
     add(&mut writer, "urn:b", "new")?;
-    let after = writer.snapshot().get_graph(&id)?;
+    let after = writer.snapshot().copy_graph(&id)?;
     assert_eq!(before, after);
     let tx = writer.begin_update();
-    assert_eq!(tx.get_graph(&id)?, before);
+    assert_eq!(tx.copy_graph(&id)?, before);
     tx.abort();
     Ok(())
 }

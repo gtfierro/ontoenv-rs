@@ -42,25 +42,23 @@ def test_update_location_replaces_existing_graph(tmp_path: Path) -> None:
     env.close()
 
 
-def test_update_all_remains_a_deprecated_force_alias() -> None:
-    env = OntoEnv(temporary=True)
-
-    with pytest.warns(DeprecationWarning, match=r"use update\(force=\.\.\.\)"):
-        env.update(all=True)
-
-    with pytest.warns(DeprecationWarning, match=r"use update\(force=\.\.\.\)"):
-        env.update(False)
-
+def test_update_force_refetches_known_sources(tmp_path: Path) -> None:
+    source = tmp_path / "site.ttl"
+    write_ontology(source, "before")
+    env = OntoEnv(temporary=True, use_cached_ontologies=True)
+    ontology = env.add(source)
+    write_ontology(source, "after")
+    env.update(force=True)
+    assert (
+        URIRef("https://example.org/site"),
+        URIRef("https://example.org/value"),
+        Literal("after"),
+    ) in env.get_graph(ontology)
     env.close()
 
 
-def test_update_rejects_location_with_legacy_all(tmp_path: Path) -> None:
-    source = tmp_path / "site.ttl"
-    write_ontology(source, "value")
+def test_update_rejects_positional_force() -> None:
     env = OntoEnv(temporary=True)
-
-    with pytest.warns(DeprecationWarning):
-        with pytest.raises(TypeError, match="cannot combine a location"):
-            env.update(source, all=True)
-
+    with pytest.raises(TypeError, match="use force=True"):
+        env.update(True)
     env.close()

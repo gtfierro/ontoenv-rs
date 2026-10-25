@@ -125,21 +125,17 @@ For the design tradeoffs between these entry points, see
            remote_cache_ttl_secs=None, graph_store=None, root=".")
 
 Supported and used internally, but the named methods above express intent more
-clearly. Note that ``recreate=True`` **deletes and rebuilds** the target
-``.ontoenv`` directory — it is not a reconnect.
+clearly. For managed storage, ``recreate=True`` publishes replacement state
+while retained views keep their old version.
 
-.. deprecated:: 0.6
-   ``create_or_use_cached=True`` emits ``DeprecationWarning``; use
-   ``OntoEnv.connect(path)``. Removal planned for 0.7.
-
-.. deprecated:: 0.6
-   ``init_from_store=True``; use ``OntoEnv.adopt(path, graph_store)``.
+The 0.7 API removes ``create_or_use_cached`` and ``init_from_store``. Use
+``OntoEnv.connect(path)`` and ``OntoEnv.adopt(path, graph_store)`` respectively.
 
 Closing
 ~~~~~~~
 
 - ``env.close()`` — release resources.
-- ``env.flush()`` — write pending changes to storage.
+- ``env.flush()`` — flush the adapter; managed writes already publish before returning.
 - ``with OntoEnv.connect(...) as env:`` — calls ``close()`` on exit.
 
 Adding ontologies
@@ -180,8 +176,8 @@ Refreshing
 ``graphs=`` is an exact set of backend graph IDs and is never expanded.
 ``full=True`` cannot be combined with it.
 
-.. deprecated:: 0.6
-   ``update(all=True)``; use ``update(force=True)``.
+The 0.7 API removes ``update(all=True)`` and positional booleans; use
+``update(force=True)``.
 
 Reading graphs
 --------------
@@ -228,9 +224,8 @@ view. ``copy_*`` allocates a mutable ``rdflib`` object. See
      - ``None``
      - Re-snapshots the environment into an existing store-backed dataset.
 
-.. deprecated:: 0.6
-   ``snapshot_as_dataset(...)`` and ``to_rdflib_dataset(...)``; use
-   ``get_dataset()`` / ``copy_dataset()``.
+The 0.7 API removes ``snapshot_as_dataset(...)`` and
+``to_rdflib_dataset(...)``; use ``get_dataset()`` / ``copy_dataset()``.
 
 Streaming
 ~~~~~~~~~

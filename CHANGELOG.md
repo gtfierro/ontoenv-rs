@@ -29,8 +29,8 @@ All notable changes to this project are documented here. Releases follow [Semant
   Graph changes still write a complete RDF5D file. One graph per IRI/source is
   enforced. Earlier unreleased protocol-2 stores require `ontoenv upgrade` /
   `OntoEnv.upgrade(path)` after closing every older process, including readers.
-- Publication is always built. The `transactional-snapshots` Cargo feature is an
-  empty compatibility feature. Directory durability barriers are implemented
+- Publication is always built, without the former `transactional-snapshots`
+  feature flag. Directory durability barriers are implemented
   on Unix; Windows directory syncing remains unsupported. See the storage
   validation report for tested crash scenarios and platform limits.
 
@@ -51,6 +51,18 @@ All notable changes to this project are documented here. Releases follow [Semant
   `prefix()` work on them.
 
 ### Changed
+- Remove deprecated Python constructor flags (`create_or_use_cached`,
+  `init_from_store`), dataset aliases, positional update booleans/`all=`, and the
+  mutable `temporary_snapshot` helper. Immutable snapshots use paired `view_*`
+  and `copy_*` methods. Live `OntoEnv.get_*` convenience reads remain supported.
+- Rust snapshots use `view_graph` and `copy_graph`; acquire specialized handles
+  directly with `SnapshotReader::open` / `SnapshotWriter::create/open`.
+  Remove duplicate acquisition/adoption/refresh wrappers and the whole-environment
+  `new_temporary` copy helper. See the migration guide for replacements.
+- Rust configuration setters and namespace edits return `Result` and publish
+  before returning, or with an enclosing managed transaction. Failed publication
+  restores configuration and runtime flags. Managed flush/close release or flush
+  resources without becoming additional commit boundaries.
 - Managed updates share one candidate containing catalog, configuration and
   staged graph changes. Nested failures restore that candidate as a unit;
   publication retains the outer checkpoint until success. Idle managed handles

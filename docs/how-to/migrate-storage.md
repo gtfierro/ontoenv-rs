@@ -109,7 +109,7 @@ RDF5D backends and Python adapters return `StoreCapabilityError`, including afte
 a legacy graph has been loaded into its private cache.
 
 For backend-independent access, use `io.graph_ids()`, `io.size()`, graph/union
-operations, or a managed snapshot. `EnvironmentSnapshot::graph_view()` borrows
+operations, or a managed snapshot. `EnvironmentSnapshot::view_graph()` borrows
 a query view; Rust `get_graph()`/`copy_graph()` materialize owned graphs whose
 mutations do not affect the environment. Python `get_graph()` continues to
 return a read-only view.

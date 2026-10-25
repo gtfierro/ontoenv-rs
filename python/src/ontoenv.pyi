@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Any, Iterator, Optional, List, Union, Tuple, Dict, Literal
 from rdflib import Graph, Dataset
 from rdflib.query import Result
-from rdflib.store import Store
 
 # Exposed module metadata
 version: str
@@ -67,8 +66,6 @@ class EnvironmentSnapshot:
     def close(self) -> None: ...
     def __enter__(self) -> "EnvironmentSnapshot": ...
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
-    def get_graph(self, uri: str) -> Graph: ...
-    def get_dataset(self) -> Dataset: ...
     def view_graph(self, uri: str) -> Graph: ...
     def copy_graph(self, uri: str) -> Graph: ...
     def closure_iris(self, uri: str, recursion_depth: int = -1) -> List[str]: ...
@@ -196,7 +193,6 @@ class OntoEnv:
         self,
         path: Optional[Union[str, Path]] = None,
         recreate: bool = False,
-        create_or_use_cached: bool = False,
         read_only: bool = False,
         search_directories: Optional[List[str]] = None,
         require_ontology_names: Optional[bool] = None,
@@ -212,7 +208,6 @@ class OntoEnv:
         temporary: bool = False,
         remote_cache_ttl_secs: Optional[int] = None,
         graph_store: Optional[object] = None,
-        init_from_store: bool = False,
     ) -> None:
         """Create or open an ontology environment.
 
@@ -220,9 +215,8 @@ class OntoEnv:
         storage to the provided object (which must implement ``add_graph``,
         ``get_graph``, ``remove_graph``, and ``graph_ids``).
 
-        ``init_from_store`` is deprecated. Use ``OntoEnv.adopt(path,
-        graph_store)`` for a persistent pre-populated store. For a
-        catalog-free temporary store, construct it normally and call
+        Use ``OntoEnv.adopt(path, graph_store)`` for a persistent pre-populated
+        store. For a catalog-free temporary store, call
         ``refresh_from_store(full=True)`` explicitly.
 
         Posting-list indexes and the transitive-closure table for supported
@@ -234,28 +228,19 @@ class OntoEnv:
         read-only opens keep them session-local. Overrides do not trigger an
         implicit source scan or graph re-ingestion.
 
-        ``create_or_use_cached=True`` is deprecated and emits
-        ``DeprecationWarning``. Use :meth:`OntoEnv.connect` instead. The
-        compatibility option is planned for removal in 0.7.
-
-        ``temporary=True`` always creates an empty in-memory environment. Use
-        :meth:`temporary_snapshot` to make an isolated in-memory copy of an
-        existing environment.
+        ``temporary=True`` creates an empty in-memory environment. Use
+        ``snapshot()`` for fixed read-only access, or ``copy_graph()`` and
+        ``copy_dataset()`` for independently mutable data.
         """
         ...
 
     def __repr__(self) -> str: ...
-
-    def temporary_snapshot(self) -> "OntoEnv":
-        """Return an isolated in-memory copy of this environment and its graphs."""
-        ...
 
     def update(
         self,
         location: Optional[Union[str, Path, Graph]] = None,
         *,
         force: bool = False,
-        all: Optional[bool] = None,
     ) -> None:
         """Refresh ontology source files or URLs and follow their imports.
 
@@ -267,8 +252,6 @@ class OntoEnv:
         graph automatically. Pass ``force=True`` to reread it even when its
         cached copy appears current. In both forms, transitive ``owl:imports``
         are followed.
-
-        ``all=`` is a deprecated compatibility alias for ``force=``.
         """
         ...
 
@@ -697,33 +680,11 @@ class OntoEnv:
         """
         ...
 
-    def snapshot_as_dataset(
-        self,
-        backend: str = "auto",
-        store: Optional[Store] = None,
-    ) -> Dataset:
-        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-
-        Emits ``DeprecationWarning``. ``backend="copy"`` without *store*
-        returns :meth:`copy_dataset`; otherwise this returns a read-only
-        Dataset view using the requested backend.
-        """
-        ...
-
     def refresh_dataset(self, dataset: Dataset) -> None:
         """Re-snapshot ``self`` into an existing ``OntoEnvStore``-backed Dataset.
 
         Raises ``TypeError`` if ``dataset.store`` is not an
         :class:`ontoenv.OntoEnvStore`.
-        """
-        ...
-
-    def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
-        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-
-        Emits ``DeprecationWarning``. ``mode="copy"`` returns
-        :meth:`copy_dataset`; otherwise this returns a read-only Dataset view
-        using the requested mode.
         """
         ...
 
@@ -757,8 +718,12 @@ class OntoEnv:
 
     def store_path(self) -> Optional[str]: ...
 
-    def flush(self) -> None: ...
-    def close(self) -> None: ...
+    def flush(self) -> None:
+        """Flush the adapter; managed writes already publish before returning."""
+        ...
+    def close(self) -> None:
+        """Release the handle. Previously returned managed views remain usable."""
+        ...
 
     # ------------------------------------------------------------------ #
     # Pythonic sugar                                                       #

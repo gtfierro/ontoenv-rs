@@ -1,10 +1,10 @@
-//! Run with `cargo run -p ontoenv --features transactional-snapshots
+//! Run with `cargo run -p ontoenv
 //! --example transactional_snapshots`.
 
 use anyhow::Result;
-use ontoenv::api::OntoEnv;
 use ontoenv::config::Config;
 use ontoenv::ontology::OntologyLocation;
+use ontoenv::snapshots::{SnapshotReader, SnapshotWriter};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::NamedNode;
 
@@ -17,7 +17,7 @@ fn main() -> Result<()> {
         .offline(true)
         .locations(vec![])
         .build()?;
-    let mut writer = OntoEnv::create_snapshot(config)?;
+    let mut writer = SnapshotWriter::create(config)?;
     let source = OntologyLocation::InMemory {
         identifier: "example".to_owned(),
     };
@@ -31,10 +31,10 @@ fn main() -> Result<()> {
     update.commit()?;
 
     // The reader opens even though the writer remains alive.
-    let mut reader = OntoEnv::open_snapshot(directory.path())?;
+    let mut reader = SnapshotReader::open(directory.path())?;
     let old = reader.snapshot();
     let rdf = old.rdf();
-    let old_view = old.graph_view(&id)?;
+    let old_view = old.view_graph(&id)?;
 
     let mut update = writer.begin_update();
     update.add_from_bytes(
@@ -46,12 +46,12 @@ fn main() -> Result<()> {
     let committed = update.commit()?;
 
     assert_eq!(reader.snapshot().info().generation, 1);
-    assert_eq!(reader.snapshot().get_graph(&id)?.len(), 2);
+    assert_eq!(reader.snapshot().copy_graph(&id)?.len(), 2);
     assert!(!reader.is_current()?);
     reader.refresh()?;
-    assert_eq!(reader.snapshot().get_graph(&id)?.len(), 3);
+    assert_eq!(reader.snapshot().copy_graph(&id)?.len(), 3);
     assert_eq!(old_view.triple_count()?, 2);
-    assert_eq!(old.get_graph(&id)?.len(), 2);
+    assert_eq!(old.copy_graph(&id)?.len(), 2);
     assert!(reader
         .snapshot()
         .resolve(NamedNode::new("urn:alias")?.as_ref())
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
     println!(
         "Retained view: {} triples; current graph: {} triples",
         old_view.triple_count()?,
-        reader.snapshot().get_graph(&id)?.len()
+        reader.snapshot().copy_graph(&id)?.len()
     );
     println!("RDF5D mmap backing: {}", rdf.file().is_mmap_backed());
     Ok(())

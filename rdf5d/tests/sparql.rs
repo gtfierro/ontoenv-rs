@@ -462,6 +462,15 @@ fn closure_predicate_not_in_index_falls_back() -> Result<(), QueryEvaluationErro
             o: Term::Iri("http://example.org/Z".into()),
             gname: "http://example.org/graph/onto".into(),
         },
+        // An indexed predicate enables the closure optimizer, which must still
+        // leave unrelated predicates to the general path evaluator.
+        Quint {
+            id: "data".into(),
+            s: Term::Iri("http://example.org/ClassA".into()),
+            p: Term::Iri("http://www.w3.org/2000/01/rdf-schema#subClassOf".into()),
+            o: Term::Iri("http://example.org/ClassB".into()),
+            gname: "http://example.org/graph/onto".into(),
+        },
     ];
     write_file(&path, &quints).expect("custom predicate fixture");
     let snap = Snapshot::open(&path).expect("open fixture");

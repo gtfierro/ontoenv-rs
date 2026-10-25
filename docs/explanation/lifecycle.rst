@@ -161,6 +161,11 @@ Changing configuration never triggers a scan. Runtime modes such as ``offline``
 and ``strict`` take effect immediately; changed discovery paths and filters
 apply on the next ``update()``.
 
+Managed graph and configuration edits publish before their methods return.
+``flush()`` flushes adapters and ``close()`` releases the handle; neither adds a
+managed commit boundary. Rust callers can group edits with ``transaction``.
+Existing views keep their captured version after close.
+
 How long should the object live?
 --------------------------------
 
@@ -171,15 +176,10 @@ For a script, that automatic cleanup is convenient. For a server, it is the
 wrong shape entirely — connect once at startup, keep the object in application
 state, close it at shutdown. See :doc:`../how-to/use-in-a-service`.
 
-Deprecated: ``create_or_use_cached``
-------------------------------------
+Removed constructor flags
+-------------------------
 
-.. code-block:: python
-
-   env = OntoEnv("./env", create_or_use_cached=True)   # deprecated
-   env = OntoEnv.connect("./env")                      # equivalent, supported
-
-``create_or_use_cached=True`` had the same create-or-reopen intent but no
-vocabulary for the other lifecycle states, and no way to say anything about
-synchronization. It emits ``DeprecationWarning`` throughout 0.6.x and is
-planned for removal in 0.7.
+The 0.7 API removes ``create_or_use_cached`` and ``init_from_store``.
+Use ``OntoEnv.connect(path)`` to create or reopen an environment, and
+``OntoEnv.adopt(path, store)`` to catalog an existing external store.
+For temporary stores, call ``refresh_from_store(full=True)`` explicitly.

@@ -10,7 +10,7 @@ from ontoenv import (
     OntoEnv,
     OntoEnvStore,
 )
-from ontoenv.rdflib_store import refresh_dataset_from_env
+from ontoenv.rdflib_store import dataset_from_env, refresh_dataset_from_env
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "rdflib_store"
@@ -195,13 +195,13 @@ def test_dataset_from_env_auto_falls_back_to_copy_for_temporary_env(temporary_en
 def test_backend_rdf5d_rejects_temporary_and_graph_store_envs(temporary_env: OntoEnv) -> None:
     temporary_env.add(str(DEMO_TTL))
     with pytest.raises(ValueError, match="backend='rdf5d'"):
-        temporary_env.snapshot_as_dataset(backend="rdf5d")
+        dataset_from_env(temporary_env, mode="rdf5d")
 
     store = DictGraphStore()
     external_env = OntoEnv(graph_store=store, temporary=True)
     try:
         with pytest.raises(ValueError, match="backend='rdf5d'"):
-            external_env.snapshot_as_dataset(backend="rdf5d")
+            dataset_from_env(external_env, mode="rdf5d")
     finally:
         external_env.close()
 
@@ -290,9 +290,9 @@ def test_dataset_from_env_with_other_store_forces_copy(persistent_env: OntoEnv) 
     persistent_env.flush()
 
     with pytest.raises(ValueError, match="requires an OntoEnvStore"):
-        persistent_env.snapshot_as_dataset(backend="rdf5d", store=Graph().store)
+        dataset_from_env(persistent_env, mode="rdf5d", store=Graph().store)
 
-    dataset = persistent_env.copy_dataset()
+    dataset = dataset_from_env(persistent_env, store=Graph().store)
     rows = list(
         dataset.query(
             "SELECT ?label WHERE { GRAPH <urn:example:demo> { <urn:example:ahu1> <urn:example:hasLabel> ?label } }"

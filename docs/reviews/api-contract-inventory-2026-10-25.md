@@ -5,6 +5,34 @@ breaking cleanup in unreleased 0.7. Dataset views/copies and dataset results for
 unions are required. Backing storage, reader protocol, durability barriers and
 transaction-state ownership are unchanged by this slice.
 
+## Consolidated 0.7 surface
+
+The tables below retain the Phase 1 inventory for review history. Phase 5
+settles the primary workflow as follows:
+
+| Purpose | Supported surface |
+| --- | --- |
+| Normal source loading | `OntoEnv.connect/create/open`; temporary and custom-store construction remain explicit |
+| Immutable selection | `env.snapshot()`, Python `OntoEnv.read_snapshot(path)`, Rust `SnapshotReader::open` |
+| Read-only snapshot results | `view_graph`, `view_closure`, `view_union`, `view_dataset`; matching `copy_*` produces mutable data |
+| Specialized Rust graph view | `EnvironmentSnapshot::view_graph` / `view`; `copy_graph` materializes, including pending-update reads |
+| Normal publication | Source, alias and writable configuration methods publish before return; Rust `transaction` groups them |
+| Flush/close | Flush adapters or release ownership; no additional managed publication boundary |
+| External store reconciliation | `adopt`, `refresh_from_store`; no managed guarantees implied for custom stores |
+| Dataset integration | Retain `refresh_dataset` for explicit rdflib rebinding; in-flight iterators retain their original selection |
+
+Removed: deprecated Python constructor flags, dataset-conversion aliases,
+`update(all=...)`/positional booleans, mutable `temporary_snapshot` and Rust
+`new_temporary`, snapshot `get_graph/get_dataset` aliases, redundant Rust
+snapshot acquisition/adoption/refresh wrappers, and the empty snapshot feature
+flag. Live Python `OntoEnv.get_*` convenience reads remain supported.
+
+Rust configuration setters/namespace edits now return `Result`, share the
+candidate rollback boundary, and publish immediately outside a transaction.
+Read-only Rust overrides remain session-local until refresh. Adapters keep
+separate catalog/backend reconciliation; legacy migration and offline protocol
+upgrade remain maintenance operations. See the migration guide for replacements.
+
 ## Raw-store decision
 
 Replace `GraphIO::store() -> &Store` with

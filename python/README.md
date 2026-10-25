@@ -121,7 +121,7 @@ connection applies explicit overrides only for that session. Reconfiguration
 does not re-ingest the graph store; changed discovery paths and filters are
 used by the next explicit ``update()``.
 
-The older ``OntoEnv(..., create_or_use_cached=True)`` spelling is deprecated.
+The older ``OntoEnv(..., create_or_use_cached=True)`` spelling is removed in 0.7.
 It remains as a warning-emitting compatibility shim for 0.6.x and is planned
 for removal in 0.7; use ``OntoEnv.connect(path)``.
 
@@ -276,7 +276,7 @@ through ``env`` remain synchronized automatically, while out-of-band edits
 require ``sync="full"``.
 
 Temporary environments save no persistent ontology index. To scan a
-pre-populated temporary store without the deprecated `init_from_store` flag:
+pre-populated temporary store without the removed `init_from_store` flag:
 
 ```python
 env = OntoEnv(graph_store=store, temporary=True)

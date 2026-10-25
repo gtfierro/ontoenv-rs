@@ -138,7 +138,7 @@ fn managed_iri_conflicts_follow_overwrite_instead_of_retaining_policy_candidates
             .iter()
             .any(|t| t.object.to_string() == "\"second\""));
         assert!(held
-            .get_graph(&old)?
+            .copy_graph(&old)?
             .iter()
             .any(|t| t.object.to_string() == "\"first\""));
         drop(env);
@@ -168,7 +168,7 @@ fn default_storage_reader_refresh_and_old_views_are_coherent() -> Result<()> {
     assert!(reader.refresh()?);
     assert!(reader.resolve_alias("urn:alias").is_some());
     assert!(old
-        .get_graph(&id)?
+        .copy_graph(&id)?
         .iter()
         .any(|t| t.object.to_string() == "\"old\""));
     assert!(reader
@@ -219,16 +219,16 @@ fn publication_error_restores_catalog_graphs_and_preexisting_settings() -> Resul
     let dir = tempfile::tempdir()?;
     let mut env = OntoEnv::create(config(dir.path()), false)?;
     add(&mut env, "urn:existing", "old")?;
+    env.bind_namespace("before", "urn:before:")?;
     let selected = env.snapshot().unwrap();
-    env.bind_namespace("before", "urn:before:");
     let manifests = dir.path().join(".ontoenv-snapshots/manifests");
     let saved = dir.path().join("saved-manifests");
     std::fs::rename(&manifests, &saved)?;
     std::fs::write(&manifests, b"block manifest creation")?;
     let result = env.transaction(|env| {
         add(env, "urn:discard", "discard")?;
-        env.bind_namespace("discard", "urn:discard:");
-        env.set_offline(false);
+        env.bind_namespace("discard", "urn:discard:")?;
+        env.set_offline(false)?;
         Ok(())
     });
     assert!(result.is_err());
@@ -245,8 +245,52 @@ fn publication_error_restores_catalog_graphs_and_preexisting_settings() -> Resul
     drop(env);
     let mut reopened = OntoEnv::open(dir.path().to_path_buf(), false)?;
     assert_eq!(reopened.ontologies().len(), 1);
-    assert!(!reopened.bound_namespaces().contains_key("before"));
+    assert_eq!(reopened.bound_namespaces()["before"], "urn:before:");
     add(&mut reopened, "urn:retry", "ok")?;
+    Ok(())
+}
+
+#[test]
+fn configuration_publishes_before_return_and_flush_does_not_commit_a_transaction() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = OntoEnv::create(config(dir.path()), false)?;
+    let original = writer.snapshot().unwrap();
+    writer.set_offline(false)?;
+    let published = writer.snapshot().unwrap();
+    assert_eq!(published.info().generation, original.info().generation + 1);
+    assert!(!published.config().offline);
+    assert!(original.config().offline);
+    writer.set_offline(false)?;
+    assert_eq!(writer.snapshot().unwrap().info(), published.info());
+
+    writer.transaction(|writer| {
+        writer.set_strict(false)?;
+        writer.bind_namespace("ex", "urn:ex:")?;
+        writer.flush()?;
+        assert_eq!(writer.snapshot().unwrap().info(), published.info());
+        let reader = OntoEnv::open(dir.path().to_path_buf(), true)?;
+        assert!(reader.is_strict());
+        assert!(reader.bound_namespaces().is_empty());
+        Ok(())
+    })?;
+    assert_eq!(
+        writer.snapshot().unwrap().info().generation,
+        published.info().generation + 1
+    );
+    let reader = OntoEnv::open(dir.path().to_path_buf(), true)?;
+    assert!(!reader.is_offline());
+    assert!(!reader.is_strict());
+    assert_eq!(reader.bound_namespaces()["ex"], "urn:ex:");
+
+    let manifests = dir.path().join(".ontoenv-snapshots/manifests");
+    let saved = dir.path().join("saved-manifests");
+    std::fs::rename(&manifests, &saved)?;
+    std::fs::write(&manifests, b"block configuration publication")?;
+    assert!(writer.set_strict(true).is_err());
+    assert!(!writer.is_strict());
+    assert!(!writer.snapshot().unwrap().config().strict);
+    std::fs::remove_file(&manifests)?;
+    std::fs::rename(&saved, &manifests)?;
     Ok(())
 }
 
@@ -257,8 +301,8 @@ fn reader_overrides_are_session_settings_and_refresh_does_not_stage_writes() -> 
     add(&mut writer, "urn:a", "old")?;
     let mut reader = OntoEnv::open(dir.path().to_path_buf(), true)?;
     let old = reader.snapshot().unwrap();
-    reader.set_strict(false);
-    reader.set_offline(false);
+    reader.set_strict(false)?;
+    reader.set_offline(false)?;
     reader.set_resolution_policy("latest".into())?;
     assert!(!reader.is_strict());
     assert!(!reader.io().is_offline());
@@ -271,7 +315,7 @@ fn reader_overrides_are_session_settings_and_refresh_does_not_stage_writes() -> 
     assert_eq!(reader.resolution_policy(), "default");
     let id = old.resolve(NamedNode::new("urn:a")?.as_ref()).unwrap();
     assert!(old
-        .get_graph(&id)?
+        .copy_graph(&id)?
         .iter()
         .any(|t| t.object.to_string() == "\"old\""));
     Ok(())
@@ -391,8 +435,8 @@ fn nested_transactions_restore_overlay_and_settings_and_publish_once() -> Result
         add(env, "urn:first", "first")?;
         let failed: Result<()> = env.transaction(|env| {
             add(env, "urn:discard", "discard")?;
-            env.set_offline(false);
-            env.set_require_ontology_names(false);
+            env.set_offline(false)?;
+            env.set_require_ontology_names(false)?;
             anyhow::bail!("rollback this nested operation");
         });
         assert!(failed.is_err());
@@ -417,7 +461,7 @@ fn nested_transactions_restore_overlay_and_settings_and_publish_once() -> Result
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _: Result<()> = env.transaction(|env| {
             add(env, "urn:panic", "discard")?;
-            env.set_offline(false);
+            env.set_offline(false)?;
             panic!("abort update during unwinding");
         });
     }));
@@ -477,7 +521,7 @@ fn nested_rollback_restores_parsed_contents_after_staged_reads_and_rename() -> R
     let selected = env.snapshot().unwrap();
     assert_eq!(selected.info().generation, 1);
     let id = selected.resolve(NamedNode::new("urn:a")?.as_ref()).unwrap();
-    assert_eq!(selected.get_graph(&id)?.len(), 2);
+    assert_eq!(selected.copy_graph(&id)?.len(), 2);
     assert_eq!(selected.rdf().triple_count(rdf5d::Scope::All)?, 2);
     Ok(())
 }
@@ -490,14 +534,14 @@ fn logical_recreation_keeps_old_readers_and_views_valid() -> Result<()> {
     let mut reader = OntoEnv::open(dir.path().to_path_buf(), true)?;
     let old = reader.snapshot().unwrap();
     let id = old.ontologies().keys().next().unwrap().clone();
-    let old_view = old.graph_view(&id)?;
+    let old_view = old.view_graph(&id)?;
     drop(writer);
     let recreated = OntoEnv::create(config(dir.path()), true)?;
     assert!(recreated.ontologies().is_empty());
     assert_eq!(reader.ontologies().len(), 1);
     assert!(reader.refresh()?);
     assert!(reader.ontologies().is_empty());
-    assert!(!old.get_graph(&id)?.is_empty());
+    assert!(!old.copy_graph(&id)?.is_empty());
     assert!(old_view.triple_count()? > 0);
     Ok(())
 }

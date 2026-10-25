@@ -73,7 +73,7 @@ Constraints
 -----------
 
 - ``graph_store=`` cannot be combined with ``recreate=True`` or with the
-  deprecated ``create_or_use_cached=True``.
+  removed ``create_or_use_cached=True``.
 - Recovery for a custom store must go through
   ``OntoEnv.recover(path, graph_store=store)``; the ``ontoenv recover`` CLI
   command only handles the built-in persistent store.

@@ -16,7 +16,7 @@ distribution package into `/tmp`; no host package installation is necessary.
 Build the executable and use the path Cargo prints:
 
 ```sh
-cargo test -p ontoenv --locked --release --features transactional-snapshots --lib --no-run
+cargo test -p ontoenv --locked --release --lib --no-run
 python3 lib/tests/support/snapshot_vm.py \
   --kernel /path/to/vmlinuz \
   --probe /path/to/the/ontoenv-unit-test-executable \
@@ -47,7 +47,7 @@ fixture is small; this is a publication protocol check.
 Requirements: Linux, Python 3, and the release example:
 
 ```sh
-cargo build -p ontoenv --locked --release --features transactional-snapshots --example snapshot_workload
+cargo build -p ontoenv --locked --release --example snapshot_workload
 python3 lib/tests/support/snapshot_workload.py \
   --binary target/release/examples/snapshot_workload \
   --work /tmp/ontoenv-benchmark-review

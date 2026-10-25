@@ -2,8 +2,7 @@
 
 Starting with 0.7.0-rc.1, immutable publication is the default storage backend
 for new managed persistent environments in Rust, Python and the CLI. It is
-always compiled; `transactional-snapshots` remains an empty compatibility
-feature. Temporary environments and caller-provided graph stores retain their
+always compiled, without a feature flag. Temporary environments and caller-provided graph stores retain their
 existing behavior and their backend's transaction guarantees.
 
 Publication coordinates an OntoEnv catalog, configuration and immutable RDF5D
@@ -29,25 +28,25 @@ an alias, then refreshes the reader. A retained old query view still reads the
 old generation.
 
 ```rust
-use ontoenv::api::OntoEnv;
+use ontoenv::{SnapshotReader, SnapshotWriter};
 
-let mut writer = OntoEnv::create_snapshot(config)?;
+let mut writer = SnapshotWriter::create(config)?;
 let mut update = writer.begin_update();
 let id = update.add_from_bytes(location, bytes, format)?;
 update.add_alias("urn:alias", id.name().as_str())?;
 let committed = update.commit()?;
 
-let mut reader = OntoEnv::open_snapshot(root)?;
+let mut reader = SnapshotReader::open(root)?;
 let old = reader.snapshot();
-let old_view = old.graph_view(&id)?;
+let old_view = old.view_graph(&id)?;
 // Further writer commits do not change `old` or reader.snapshot().
 reader.refresh()?;
 ```
 
 These explicit entry points return `SnapshotWriter` and `SnapshotReader`.
-`OntoEnv::open_snapshot_writer(root)` opens an existing writer. Normal
+`SnapshotWriter::open(root)` opens an existing writer. Normal
 `OntoEnv::connect/create/open` also use this backend, with the existing source
-and import pipeline. Their successful graph mutations publish before returning.
+and import pipeline. Their successful graph and configuration mutations publish before returning.
 `env.snapshot()` captures the selected committed version; `env.refresh()`
 advances a managed read handle without reading sources. Rust callers can group
 operations with `env.transaction(|env| { ...; Ok(()) })`; nested errors and
@@ -62,7 +61,7 @@ writer = OntoEnv.connect("./env", offline=True)
 writer.add("./ontology.ttl")
 reader = OntoEnv.open("./env", read_only=True)
 old = reader.snapshot()
-dataset = old.get_dataset()
+dataset = old.view_dataset()
 print(old.info)  # environment ID, generation, parent, committed_at, opened_at
 writer.update()
 reader.refresh()  # select a complete newer version, if one exists
@@ -72,14 +71,14 @@ writer.close()
 ```
 
 `EnvironmentSnapshot` provides `get_ontology_names()`, `get_ontologies()`,
-`get_graph()`, `get_dataset()`, namespace access, a copied `config` dictionary
+paired `view_*`/`copy_*` queries, namespace access, a copied `config` dictionary
 and `info`. These handles remain usable after the environment closes.
 `OntoEnv.read_snapshot(path)` opens one owned version without retaining a live
 environment. A Python snapshot supports `close()`, `closed`, and `with`:
 
 ```python
 with OntoEnv.read_snapshot("./ontology-env") as version:
-    graph = version.get_graph("urn:example:ontology")
+    graph = version.view_graph("urn:example:ontology")
 # The version handle is closed. The escaped graph still owns its backing.
 print(len(graph))
 del graph  # Releases this view's ownership; later cleanup can reclaim its file.
@@ -127,7 +126,7 @@ the same immutable RDF5D mapping and whole-store indexes. Old retained metadata
 does not change. Refresh with an unchanged generation leaves the existing
 environment snapshot itself untouched.
 
-`snapshot.graph_view(&id)` and `snapshot.view(&ids)` return borrowed scoped
+`snapshot.view_graph(&id)` and `snapshot.view(&ids)` return borrowed scoped
 `rdf5d::View`s. Their lifetime is tied to the selected environment snapshot, and
 they validate graph identifiers against that catalog. Keep a view across queries
 to reuse its scoped indexes. Those scoped indexes are independent of whole-store

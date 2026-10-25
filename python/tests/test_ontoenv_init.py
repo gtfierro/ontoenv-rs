@@ -63,7 +63,7 @@ class TestOntoEnvInit(unittest.TestCase):
             self.assertTrue((env_path / ".ontoenv-snapshots").is_dir())
             self.assertTrue((env_path / ".ontoenv-snapshots" / "dummy.txt").exists())
             self.assertEqual(len(env.get_ontology_names()), 0)
-            self.assertEqual(len(old.get_graph("urn:reset")), 1)
+            self.assertEqual(len(old.view_graph("urn:reset")), 1)
 
     def test_init_read_only(self):
         with tempfile.TemporaryDirectory() as td:
@@ -88,26 +88,6 @@ class TestOntoEnvInit(unittest.TestCase):
             try:
                 with self.assertRaises(FileNotFoundError):
                     OntoEnv()
-            finally:
-                os.chdir(original_cwd)
-
-    def test_create_or_use_cached_warns(self):
-        original_cwd = Path.cwd()
-        with tempfile.TemporaryDirectory() as td:
-            os.chdir(td)
-            try:
-                with self.assertWarnsRegex(
-                    DeprecationWarning, "use OntoEnv.connect"
-                ):
-                    env = OntoEnv(create_or_use_cached=True)
-                self.assertTrue(Path(".ontoenv-snapshots").is_dir())
-                env.close()
-                with self.assertWarnsRegex(
-                    DeprecationWarning, "use OntoEnv.connect"
-                ):
-                    reopened = OntoEnv(create_or_use_cached=True)
-                self.assertTrue(Path(".ontoenv-snapshots").is_dir())
-                reopened.close()
             finally:
                 os.chdir(original_cwd)
 

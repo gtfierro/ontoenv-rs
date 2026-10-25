@@ -26,19 +26,19 @@ At a glance
      - breaking
    * - ``OntoEnv(..., create_or_use_cached=True)``
      - ``OntoEnv.connect(path)``
-     - deprecated
+     - removed in 0.7
    * - ``OntoEnv(..., init_from_store=True)``
      - ``OntoEnv.adopt(path, store)``
-     - deprecated
+     - removed in 0.7
    * - ``env.update(all=True)``
      - ``env.update(force=True)``
-     - deprecated
+     - removed in 0.7
    * - ``env.snapshot_as_dataset(...)``
      - ``env.get_dataset()`` / ``env.copy_dataset()``
-     - deprecated
+     - removed in 0.7
    * - ``env.to_rdflib_dataset(...)``
      - ``env.get_dataset()`` / ``env.copy_dataset()``
-     - deprecated
+     - removed in 0.7
    * - ``refresh_dataset_from_env(dataset, env)``
      - ``env.refresh_dataset(dataset)``
      - moved
@@ -94,8 +94,8 @@ Replace ``init_from_store=True`` with ``OntoEnv.adopt(path, store)``. Use
 ``env.refresh_from_store(full=True)`` only when an already-open environment
 must deliberately rescan its whole backend.
 
-``create_or_use_cached=True`` now emits ``DeprecationWarning``. The shim
-remains through 0.6.x; removal is planned for 0.7.
+The deprecated constructor flags and dataset-conversion aliases are removed
+in 0.7. The replacements above are the supported entry points.
 
 Background: :doc:`explanation/lifecycle`.
 
@@ -104,7 +104,7 @@ Refreshing
 
 ``env.update()`` refreshes ontology files and URLs. It now takes an optional
 source to update just that one, and ``force=True`` replaces the deprecated
-``all=True``.
+``all=True`` (removed in 0.7).
 
 ``env.refresh_from_store()`` reconciles graphs changed directly in a custom
 backend. The two are deliberately separate — see
@@ -176,3 +176,31 @@ Toolchain
 
 Python 3.11 or newer. Building the Rust crates from source requires Rust 1.88
 or newer, matching rdf5d's edition 2024 and the resolved dependency floor.
+
+Immutable snapshots in 0.7
+--------------------------
+
+Use ``env.snapshot()`` or ``OntoEnv.read_snapshot(path)`` for an owned,
+immutable version. On these snapshot objects, ``view_graph``, ``view_closure``,
+``view_union`` and ``view_dataset`` return read-only views; matching ``copy_*``
+methods return mutable copies. The earlier snapshot ``get_graph`` and
+``get_dataset`` aliases are removed. Live ``OntoEnv.get_*`` convenience methods
+remain available.
+
+The mutable ``temporary_snapshot()`` helper is removed. Create a fresh
+``OntoEnv(temporary=True)`` and add selected graph copies when an independent
+editable environment is needed.
+
+Rust callers acquire specialized handles with ``SnapshotReader::open`` and
+``SnapshotWriter::create/open`` instead of ``OntoEnv::*_snapshot*`` wrappers.
+``EnvironmentSnapshot::view_graph`` borrows a query view; ``copy_graph`` on a
+snapshot or pending update materializes a graph. ``OntoEnv::adopt`` replaces
+``new_with_graph_io_from_existing``; ``refresh_from_store`` replaces
+``refresh_from_graph_io``. Fresh temporary environments remain available;
+``new_temporary`` as a whole-environment copy helper is removed.
+
+Rust configuration setters and namespace edits now return ``Result``. They
+publish before returning on a managed writer, or join an enclosing
+``transaction``. ``flush`` and Python ``close`` do not commit pending managed
+edits; normal operations already finish their publication. Read-only Rust
+configuration overrides remain session-local and reset on refresh.

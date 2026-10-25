@@ -38,8 +38,6 @@ rand.workspace = true
 
 [features]
 rocksdb = ["oxigraph/rocksdb"]
-# Compatibility feature; publication support is always built.
-transactional-snapshots = []
 
 [[example]]
 name = "transactional_snapshots"

@@ -51,7 +51,7 @@ def test_reader_refresh_and_views_pin_catalog_config_and_data(tmp_path: Path):
     assert old.get_bound_namespaces()["chosen"] == "urn:old:"
     reader.close()
     writer.close()
-    for pinned in (view, closure, old.get_graph(str(NAME)), dataset.graph(NAME)):
+    for pinned in (view, closure, old.view_graph(str(NAME)), dataset.graph(NAME)):
         assert (NAME, PREDICATE, Literal("old")) in pinned
         assert (NAME, PREDICATE, Literal("new")) not in pinned
     assert old.get_ontology_names() == [str(NAME)]
@@ -98,12 +98,12 @@ def test_snapshot_context_releases_only_its_handle_and_view_owns_old_files(tmp_p
         head = json.loads((directory / "CURRENT").read_text())
         manifest = json.loads((directory / "manifests" / head["manifest"]).read_text())
         old_path = directory / "objects" / manifest["object_id"]
-        view = snapshot.get_graph(str(NAME))
+        view = snapshot.view_graph(str(NAME))
         iterator = view.triples((None, None, None))
         first = next(iterator)
     assert snapshot.closed
     snapshot.close()  # idempotent
-    for operation in (lambda: snapshot.info, snapshot.get_dataset, snapshot.get_ontology_names):
+    for operation in (lambda: snapshot.info, snapshot.view_dataset, snapshot.get_ontology_names):
         with pytest.raises(ValueError, match="closed"):
             operation()
     with pytest.raises(ValueError, match="closed"):

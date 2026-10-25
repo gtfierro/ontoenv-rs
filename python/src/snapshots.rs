@@ -139,12 +139,13 @@ impl PyEnvironmentSnapshot {
             term_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-    pub(crate) fn get_dataset(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.view_dataset(py, None)
-    }
     /// Fixed dataset selection. None selects all graphs; [] selects none.
     #[pyo3(signature = (uris = None))]
-    fn view_dataset(&self, py: Python<'_>, uris: Option<Vec<String>>) -> PyResult<Py<PyAny>> {
+    pub(crate) fn view_dataset(
+        &self,
+        py: Python<'_>,
+        uris: Option<Vec<String>>,
+    ) -> PyResult<Py<PyAny>> {
         let owner = Py::new(py, Self::new(Arc::clone(self.snapshot()?)))?;
         let names: Vec<_> = self
             .selected_ids(uris)?
@@ -167,12 +168,12 @@ impl PyEnvironmentSnapshot {
             .call1((view,))?
             .unbind())
     }
-    pub(crate) fn get_graph(&self, py: Python<'_>, uri: &str) -> PyResult<Py<PyAny>> {
+    pub(crate) fn view_graph(&self, py: Python<'_>, uri: &str) -> PyResult<Py<PyAny>> {
         let name = NamedNode::new(uri).map_err(|e| anyhow_to_pyerr(e.into()))?;
         let id = self.snapshot()?.resolve(name.as_ref()).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("No graph with URI: {uri}"))
         })?;
-        let dataset = self.get_dataset(py)?;
+        let dataset = self.view_dataset(py, None)?;
         let identifier = py
             .import("rdflib")?
             .getattr("URIRef")?
@@ -183,16 +184,11 @@ impl PyEnvironmentSnapshot {
             .unbind())
     }
 
-    /// Read-only graph view; the returned graph owns its selected backing.
-    fn view_graph(&self, py: Python<'_>, uri: &str) -> PyResult<Py<PyAny>> {
-        self.get_graph(py, uri)
-    }
-
     fn copy_graph(&self, py: Python<'_>, uri: &str) -> PyResult<Py<PyAny>> {
         let id = self.selected_ids(Some(vec![uri.to_owned()]))?.remove(0);
         Ok(graph_to_rdflib(
             py,
-            &self.snapshot()?.get_graph(&id).map_err(anyhow_to_pyerr)?,
+            &self.snapshot()?.copy_graph(&id).map_err(anyhow_to_pyerr)?,
         )?
         .unbind())
     }
@@ -221,7 +217,7 @@ impl PyEnvironmentSnapshot {
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
         let names = self.closure_iris(uri, recursion_depth)?;
         let namespaces = self.get_namespaces_for_graphs(names.clone())?;
-        let dataset = self.get_dataset(py)?;
+        let dataset = self.view_dataset(py, None)?;
         let config = ClosureViewConfig {
             root_iri: uri.to_owned(),
             closure_iris: names.clone(),
@@ -266,7 +262,7 @@ impl PyEnvironmentSnapshot {
             .snapshot()?
             .get_namespaces_for_graphs(&ids)
             .map_err(anyhow_to_pyerr)?;
-        let dataset = self.get_dataset(py)?;
+        let dataset = self.view_dataset(py, None)?;
         Ok((
             build_view_graph(py, &dataset, &names, None, namespaces)?,
             names,

@@ -1834,9 +1834,9 @@ fn test_init_temporary() -> Result<()> {
         ))
         .is_some());
 
-    let snapshot = env.new_temporary()?;
-    assert_eq!(snapshot.io().io_type(), "memory");
-    assert_eq!(snapshot.get_graph(&id)?, env.get_graph(&id)?);
+    let mut copy = env.copy_graph(&id)?;
+    copy.clear();
+    assert!(!env.get_graph(&id)?.is_empty());
 
     assert_eq!(fs::read(&pending_path)?, pending_contents);
     assert!(!persistent_dir.join("ontoenv.json").exists());
@@ -3340,7 +3340,7 @@ fn new_offline_mechanism_persists_flag() -> Result<()> {
     let mut loaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
     assert!(!loaded.is_offline());
     if !loaded.is_offline() {
-        loaded.set_offline(true);
+        loaded.set_offline(true)?;
         loaded.save_to_directory()?;
     }
     assert!(loaded.is_offline());
@@ -3373,7 +3373,7 @@ fn new_online_mechanism_persists_flag() -> Result<()> {
     let mut loaded = OntoEnv::load_from_directory(dir.path().into(), false)?;
     assert!(loaded.is_offline());
     if loaded.is_offline() {
-        loaded.set_offline(false);
+        loaded.set_offline(false)?;
         loaded.save_to_directory()?;
     }
     assert!(!loaded.is_offline());
@@ -3408,7 +3408,7 @@ fn parser_prefixes_are_recorded_in_catalog() -> Result<()> {
             .map(String::as_str),
         Some("urn:a#")
     );
-    env.bind_namespace("mine", "urn:mine#");
+    env.bind_namespace("mine", "urn:mine#")?;
     env.save_to_directory()?;
     drop(env);
 

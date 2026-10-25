@@ -51,7 +51,7 @@ def test_cli_init_queries_configuration_and_reset_share_managed_storage(tmp_path
     assert reader.get_ontology_names() == ["urn:cli"]
     assert reader.refresh() is True
     assert reader.get_ontology_names() == []
-    assert len(old.get_graph("urn:cli")) == 1
+    assert len(old.view_graph("urn:cli")) == 1
     reader.close()
 
 

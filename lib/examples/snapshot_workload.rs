@@ -143,7 +143,7 @@ fn main() -> Result<()> {
                 .context("Missing graph zero")?
                 .clone();
             let start = Instant::now();
-            let graph = retained.get_graph(&id)?;
+            let graph = retained.copy_graph(&id)?;
             let graph_read = milliseconds(start);
             let start = Instant::now();
             query(&retained)?;
@@ -215,7 +215,7 @@ fn main() -> Result<()> {
                 query(&reader.snapshot())?;
                 let new_index = milliseconds(start);
                 if let Some(old) = &held {
-                    anyhow::ensure!(old.get_graph(&id)? == graph, "Retained view changed");
+                    anyhow::ensure!(old.copy_graph(&id)? == graph, "Retained view changed");
                 }
                 emit(
                     json!({"kind":"reader_refreshed", "generation":reader.snapshot().info().generation,

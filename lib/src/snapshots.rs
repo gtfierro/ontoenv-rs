@@ -252,7 +252,7 @@ impl EnvironmentSnapshot {
     /// Borrow a graph-scoped query view from this immutable environment version.
     /// Keep the view to reuse its lazy scoped indexes across queries. These are
     /// distinct from the whole-store indexes shared through [`Self::rdf`].
-    pub fn graph_view(&self, id: &GraphIdentifier) -> Result<rdf5d::View<'_>> {
+    pub fn view_graph(&self, id: &GraphIdentifier) -> Result<rdf5d::View<'_>> {
         self.view(std::slice::from_ref(id))
     }
 
@@ -274,7 +274,7 @@ impl EnvironmentSnapshot {
     }
 
     /// Copy one graph from this generation; empty and missing graphs differ.
-    pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+    pub fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         if !self.environment.ontologies().contains_key(id) {
             bail!(
                 "Graph {id} is not present in generation {}",
@@ -758,14 +758,14 @@ impl SnapshotUpdate<'_> {
     }
 
     /// Read staged contents, falling through to the mapped base for untouched graphs.
-    pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
+    pub fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         if !self.candidate.environment.ontologies().contains_key(id) {
             bail!("Graph {id} is not present in the candidate");
         }
         match self.candidate.changes.get(id.name().as_str()) {
             Some(Some(graph)) => Ok(graph.to_graph()),
             Some(None) => bail!("Graph {id} is deleted in the candidate"),
-            None => self.writer.current.get_graph(id),
+            None => self.writer.current.copy_graph(id),
         }
     }
 
@@ -1642,11 +1642,11 @@ mod tests {
             );
             let expected = if !published { "\"old\"" } else { "\"new\"" };
             assert!(snapshot
-                .get_graph(&id)?
+                .copy_graph(&id)?
                 .iter()
                 .any(|t| t.object.to_string() == expected));
             assert!(retained
-                .get_graph(&id)?
+                .copy_graph(&id)?
                 .iter()
                 .any(|t| t.object.to_string() == "\"old\""));
             // Reopening a writer needs no repair and can immediately publish.
@@ -1725,7 +1725,7 @@ mod tests {
                 "rejected retry must not serialize another object"
             );
             assert!(retained
-                .get_graph(&id)?
+                .copy_graph(&id)?
                 .iter()
                 .any(|t| t.object.to_string() == "\"old\""));
             drop(writer);
@@ -1737,7 +1737,7 @@ mod tests {
             let expected = if did_commit { "\"new\"" } else { "\"old\"" };
             assert!(writer
                 .snapshot()
-                .get_graph(&id)?
+                .copy_graph(&id)?
                 .iter()
                 .any(|t| t.object.to_string() == expected));
             stage(&mut writer, "retry")?.commit()?;
@@ -1952,7 +1952,7 @@ mod tests {
                 .context("missing ontology")?;
             let value = if generation == 1 { "old" } else { "new" };
             assert!(snapshot
-                .get_graph(&id)?
+                .copy_graph(&id)?
                 .iter()
                 .any(|t| t.object.to_string() == format!("\"{value}\"")));
             assert_eq!(

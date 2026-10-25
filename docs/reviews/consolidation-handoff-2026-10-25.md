@@ -9,7 +9,7 @@ fallible raw Oxigraph capability, scratch-store removal, contract documentation,
 API inventory and regression coverage. The Phase 2 query slice now adds shared
 catalog traversal, immutable snapshot queries and scoped dataset unions. The
 backing comparison is complete and committed in `a601eca`. The managed-state
-rewrite is implemented and validated; API pruning remains. Do
+rewrite and API pruning are implemented and locally validated. Do
 not treat context reset as permission to discard the working tree.
 
 ## Latest workflow instruction
@@ -234,3 +234,39 @@ Then continue Phase 5 cleanup: remove obsolete public aliases/constructor flags,
 keep adapters and maintenance distinct, and document the primary view/copy and
 mutation workflow. Preserve useful temporary and custom-store behavior. No
 memory-limit API, backing switch or durability change is part of this work.
+
+
+## Phase 5 completion
+
+- Removed deprecated constructor flags, dataset aliases, positional update
+  booleans/`all=`, and the mutable whole-environment temporary-copy helper.
+  Python immutable snapshots expose paired `view_*`/`copy_*` methods; live
+  `OntoEnv.get_*` convenience reads remain. Rust snapshots use `view_graph` and
+  `copy_graph`; specialized handles are acquired directly. Removed duplicate
+  adoption/refresh wrappers and the empty snapshot feature flag.
+- Configuration and namespace edits now publish before return, or join an
+  enclosing managed transaction. Rust setters return `Result`. Failed publication
+  restores the candidate and runtime flags; no-op settings do not publish.
+  Read-only Rust overrides remain session-local. Managed flush/close do not
+  create an extra commit boundary. Adapters retain explicit reconciliation.
+- Fixed an independent query correctness issue: cached closure rewriting is
+  restricted to indexed predicates. The expanded regression failed before the
+  guard when an unrelated RDFS predicate enabled rewriting. Custom paths now
+  fall back to the general evaluator.
+- Updated callers, stubs, examples and migration guidance. Explicit rdflib
+  dataset rebinding remains for integration; existing iterators retain their
+  original selection. No backing, durability, memory-budget or reader-protocol
+  change was made.
+- Final local checks: 266 release Rust tests/doctests passed (eight ignored),
+  168 installed-wheel Python tests passed (115 focused + 53 source/API tests),
+  all-target/all-feature release clippy with denied warnings, formatting/diff
+  checks and strict Sphinx HTML passed. Source tests/docs needed network access.
+  Logs: `/tmp/ontoenv-consolidation-api-{rust,python,python-sources,clippy,docs}.log`.
+- Normal ~14 MB workload passed counts, graph/closure/dataset queries, retained
+  views/iterators, alias publication, parse rollback, retry and close. Artifact:
+  `consolidation-api-workload-2026-10-25.json`. Initial import ~1,005 ms,
+  one-source full-file publication ~1,031 ms, refresh ~26 ms (warm diagnostics).
+- Finish with ONE push, then verify Linux/macOS/Windows CI at that exact commit.
+  No PR, merge, tag or release is authorized. Windows power-loss durability
+  remains a release decision; memory limits and separate index-memory work stay
+  deferred. Preserve the older untracked final-review file.

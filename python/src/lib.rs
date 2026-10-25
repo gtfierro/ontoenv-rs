@@ -3717,7 +3717,7 @@ impl OntoEnv {
     /// Apply `f` to the user-declared namespace bindings and persist them.
     fn update_bound_namespaces<F>(&self, f: F) -> PyResult<bool>
     where
-        F: FnOnce(&mut OntoEnvRs) -> bool,
+        F: FnOnce(&mut OntoEnvRs) -> anyhow::Result<bool>,
     {
         if self.read_only {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -3731,9 +3731,10 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        let changed = f(env);
+        let changed = f(env).map_err(anyhow_to_pyerr)?;
+        drop(guard);
         if changed {
-            env.save_to_directory().map_err(anyhow_to_pyerr)?;
+            self.bump_generation();
         }
         Ok(changed)
     }
@@ -4169,7 +4170,6 @@ impl OntoEnv {
         }
         kwargs.set_item("path", path)?;
         kwargs.set_item("graph_store", graph_store)?;
-        kwargs.set_item("init_from_store", true)?;
         EXPLICIT_ADOPT.with(|flag| flag.set(true));
         let result = cls.call((), Some(&kwargs));
         EXPLICIT_ADOPT.with(|flag| flag.set(false));
@@ -4179,13 +4179,12 @@ impl OntoEnv {
     }
 
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=None, strict=None, offline=None, use_cached_ontologies=None, resolution_policy=None, root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
+    #[pyo3(signature = (path=None, recreate=false, read_only=false, search_directories=None, require_ontology_names=None, strict=None, offline=None, use_cached_ontologies=None, resolution_policy=None, root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
         recreate: bool,
-        create_or_use_cached: bool,
         read_only: bool,
         search_directories: Option<Vec<String>>,
         require_ontology_names: Option<bool>,
@@ -4201,48 +4200,16 @@ impl OntoEnv {
         temporary: bool,
         remote_cache_ttl_secs: Option<u64>,
         graph_store: Option<Py<PyAny>>,
-        init_from_store: bool,
     ) -> PyResult<Self> {
         if temporary && recreate {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "temporary and recreate cannot be combined; a temporary environment is always new",
             ));
         }
-        if temporary && create_or_use_cached {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "temporary and create_or_use_cached cannot be combined; use OntoEnv(temporary=True) for an empty environment or temporary_snapshot() for a copy",
-            ));
-        }
-        if recreate && create_or_use_cached {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "recreate and create_or_use_cached cannot be combined",
-            ));
-        }
         if recreate && read_only {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "recreate requires a writable environment",
             ));
-        }
-        if init_from_store && graph_store.is_none() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "init_from_store requires graph_store",
-            ));
-        }
-        if init_from_store && !EXPLICIT_ADOPT.with(Cell::get) {
-            PyErr::warn(
-                _py,
-                &_py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                c"init_from_store is deprecated; use OntoEnv.adopt(...) for first-time adoption",
-                1,
-            )?;
-        }
-        if create_or_use_cached {
-            PyErr::warn(
-                _py,
-                &_py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                c"create_or_use_cached=True is deprecated and will be removed in 0.7; use OntoEnv.connect(path) instead",
-                1,
-            )?;
         }
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
@@ -4259,7 +4226,6 @@ impl OntoEnv {
         // Strict Git-like behavior:
         // - temporary=True: create a temporary (in-memory) env
         // - recreate=True: create (or overwrite) an env at root_path
-        // - create_or_use_cached=True: deprecated compatibility alias for connect
         // - otherwise: discover upward; if not found, error
 
         let overrides = ConfigOverrides {
@@ -4314,9 +4280,9 @@ impl OntoEnv {
         let recover = RECOVER.with(Cell::get);
 
         if let Some(store) = graph_store {
-            if recreate || create_or_use_cached {
+            if recreate {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "graph_store cannot be combined with recreate or the deprecated create_or_use_cached option",
+                    "graph_store cannot be combined with recreate",
                 ));
             }
             let desc = graph_store_description(_py, store.bind(_py))?;
@@ -4339,8 +4305,8 @@ impl OntoEnv {
                 OntoEnvRs::connect_with_graph_io_resolved(cfg, Box::new(io), sync, read_only)
             } else if !cfg.temporary && catalog_exists && !explicit_adopt {
                 OntoEnvRs::open_with_graph_io(cfg, Box::new(io), read_only)
-            } else if init_from_store {
-                OntoEnvRs::new_with_graph_io_from_existing(cfg, Box::new(io))
+            } else if explicit_adopt {
+                OntoEnvRs::adopt(cfg, Box::new(io))
             } else {
                 OntoEnvRs::new_with_graph_io(cfg, Box::new(io))
             }
@@ -4370,9 +4336,6 @@ impl OntoEnv {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
-        } else if create_or_use_cached {
-            OntoEnvRs::open_or_init_with_overrides(cfg, read_only, overrides.clone())
-                .map_err(anyhow_to_pyerr)?
         } else {
             let load_root = if let Some(found_root) =
                 find_ontoenv_root_from(root_for_lookup.as_path())
@@ -4393,12 +4356,8 @@ impl OntoEnv {
             };
             let mut env =
                 OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?;
-            let config_changed = env
-                .apply_config_overrides(&overrides)
+            env.apply_config_overrides(&overrides)
                 .map_err(anyhow_to_pyerr)?;
-            if !read_only && config_changed {
-                env.save_to_directory().map_err(anyhow_to_pyerr)?;
-            }
             env
         };
 
@@ -4411,66 +4370,17 @@ impl OntoEnv {
         })
     }
 
-    /// Return an isolated in-memory copy of this environment.
-    ///
-    /// The catalog metadata and every graph are copied at the time of this
-    /// call. Changes to either environment afterwards are independent, and
-    /// the returned environment never writes a ``.ontoenv`` directory.
-    fn temporary_snapshot(&self) -> PyResult<Self> {
-        let inner = self.inner.clone();
-        let guard = inner.lock_detached().unwrap();
-        let env = guard
-            .as_ref()
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let snapshot = env.new_temporary().map_err(anyhow_to_pyerr)?;
-        drop(guard);
-        Ok(OntoEnv {
-            inner: Arc::new(Mutex::new(Some(snapshot))),
-            cache: Arc::new(Mutex::new(DatasetCache::default())),
-            read_only: false,
-        })
-    }
-
     /// Refresh known ontology sources, or one explicit source and its imports.
     ///
     /// A provided source replaces its existing stored graph automatically.
-    /// `force=true` bypasses timestamp and cache-age checks. `all` is retained
-    /// as a deprecated compatibility alias for `force`.
-    #[pyo3(signature = (location=None, *, force=false, all=None))]
-    fn update(
-        &self,
-        py: Python<'_>,
-        location: Option<&Bound<'_, PyAny>>,
-        force: bool,
-        all: Option<bool>,
-    ) -> PyResult<()> {
-        let mut location = location;
-        let mut legacy_all = all;
-        if let Some(value) = location {
-            if value.is_instance_of::<PyBool>() {
-                if legacy_all.is_some() {
-                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                        "update() received the deprecated all flag twice",
-                    ));
-                }
-                legacy_all = Some(value.extract::<bool>()?);
-                location = None;
-            }
-        }
-        if legacy_all.is_some() {
-            PyErr::warn(
-                py,
-                &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                c"update(all=...) is deprecated; use update(force=...)",
-                1,
-            )?;
-        }
-        if location.is_some() && legacy_all.is_some() {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "update() cannot combine a location with the deprecated all flag",
+    /// `force=true` bypasses timestamp and cache-age checks.
+    #[pyo3(signature = (location=None, *, force=false))]
+    fn update(&self, location: Option<&Bound<'_, PyAny>>, force: bool) -> PyResult<()> {
+        if location.is_some_and(|value| value.is_instance_of::<PyBool>()) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "update() expects a source; use force=True to refetch",
             ));
         }
-        let force = force || legacy_all.unwrap_or(false);
         let resolved = location.map(ontology_location_from_py).transpose()?;
         let inner = self.inner.clone();
         let mut guard = inner.lock_detached().unwrap();
@@ -5599,7 +5509,7 @@ impl OntoEnv {
             let dataset = if let Some(dataset) = cached {
                 dataset
             } else {
-                let dataset = snapshot.get_dataset(py)?;
+                let dataset = snapshot.view_dataset(py, None)?;
                 self.cache.lock_detached().unwrap().managed_cached = Some((
                     info.environment_id.clone(),
                     info.generation,
@@ -5718,7 +5628,7 @@ impl OntoEnv {
 
         if has_rdf5d_snapshot {
             let dataset = if let Some(inner) = published {
-                snapshots::PyEnvironmentSnapshot::new(inner).get_dataset(py)?
+                snapshots::PyEnvironmentSnapshot::new(inner).view_dataset(py, None)?
             } else {
                 self.cached_view_dataset(py)?
             };
@@ -5848,7 +5758,7 @@ impl OntoEnv {
         };
 
         let dataset = if let Some(inner) = published {
-            snapshots::PyEnvironmentSnapshot::new(inner).get_dataset(py)?
+            snapshots::PyEnvironmentSnapshot::new(inner).view_dataset(py, None)?
         } else {
             self.cached_view_dataset(py)?
         };
@@ -6023,7 +5933,7 @@ impl OntoEnv {
 
     /// Persistently bind ``prefix`` to ``namespace`` for this environment.
     ///
-    /// The binding is saved in ``.ontoenv/ontoenv.json`` and is included by
+    /// The binding is saved in the selected configuration and is included by
     /// :meth:`get_namespaces` (taking precedence over ontology-declared
     /// prefixes) and therefore by every Dataset returned from
     /// :meth:`get_dataset` / :meth:`copy_dataset`, including after reopening
@@ -6031,8 +5941,8 @@ impl OntoEnv {
     /// rebinding it under a new prefix replaces the old one.
     fn bind_namespace(&mut self, prefix: &str, namespace: &str) -> PyResult<()> {
         self.update_bound_namespaces(|env| {
-            env.bind_namespace(prefix, namespace);
-            true
+            env.bind_namespace(prefix, namespace)?;
+            Ok(true)
         })
         .map(|_| ())
     }
@@ -6110,32 +6020,6 @@ impl OntoEnv {
         Ok(dataset.unbind())
     }
 
-    /// Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-    #[pyo3(signature = (backend = "auto", store = None))]
-    fn snapshot_as_dataset(
-        &self,
-        py: Python,
-        backend: &str,
-        store: Option<Py<PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let warnings = py.import("warnings")?;
-        warnings.call_method1(
-            "warn",
-            (
-                "OntoEnv.snapshot_as_dataset() is deprecated; use \
-                 OntoEnv.get_dataset() for a read-only view or \
-                 OntoEnv.copy_dataset() for a mutable copy",
-                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                2u32,
-            ),
-        )?;
-        if backend == "copy" && store.is_none() {
-            self.copy_dataset(py, None)
-        } else {
-            self.build_dataset(py, backend, store)
-        }
-    }
-
     /// Refresh an existing read-only Dataset view from the current env.
     fn refresh_dataset(&self, py: Python<'_>, dataset: Py<PyAny>) -> PyResult<()> {
         let rdflib_store = py.import("ontoenv.rdflib_store")?;
@@ -6150,27 +6034,6 @@ impl OntoEnv {
         )?;
         refresh.call1((dataset, env_obj))?;
         Ok(())
-    }
-
-    /// Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-    #[pyo3(signature = (mode = "auto"))]
-    fn to_rdflib_dataset(&self, py: Python, mode: &str) -> PyResult<Py<PyAny>> {
-        let warnings = py.import("warnings")?;
-        warnings.call_method1(
-            "warn",
-            (
-                "OntoEnv.to_rdflib_dataset() is deprecated; use \
-                 OntoEnv.get_dataset() for a read-only view or \
-                 OntoEnv.copy_dataset() for a mutable copy",
-                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                2u32,
-            ),
-        )?;
-        if mode == "copy" {
-            self.copy_dataset(py, None)
-        } else {
-            self.build_dataset(py, mode, None)
-        }
     }
 
     // Config accessors
@@ -6199,8 +6062,7 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_offline(offline);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env.set_offline(offline).map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6231,8 +6093,7 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_strict(strict);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env.set_strict(strict).map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6263,8 +6124,9 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_require_ontology_names(require);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env
+            .set_require_ontology_names(require)
+            .map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6294,8 +6156,9 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_remote_cache_ttl_secs(ttl_secs);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env
+            .set_remote_cache_ttl_secs(ttl_secs)
+            .map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6325,8 +6188,9 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_use_cached_ontologies(CacheMode::from(enabled));
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env
+            .set_use_cached_ontologies(CacheMode::from(enabled))
+            .map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6357,8 +6221,7 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_resolution_policy(policy).map_err(anyhow_to_pyerr)?;
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env.set_resolution_policy(policy).map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6401,12 +6264,7 @@ impl OntoEnv {
             // Always release the connection, including when publication had an
             // uncertain outcome. Reopening must be possible after close errors.
             let result = if let Some(mut env) = guard.take() {
-                (|| -> PyResult<()> {
-                    if !self.read_only {
-                        env.save_to_directory().map_err(anyhow_to_pyerr)?;
-                    }
-                    env.flush().map_err(anyhow_to_pyerr)
-                })()
+                env.flush().map_err(anyhow_to_pyerr)
             } else {
                 Ok(())
             };
@@ -6418,8 +6276,8 @@ impl OntoEnv {
         })
     }
 
-    /// Persist explicit configuration edits. Managed mutations publish before
-    /// returning; previously returned managed views retain their version.
+    /// Flush the storage adapter. Managed mutations and configuration edits
+    /// publish before returning; existing views retain their version.
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         let track_cached_snapshot = self.cached_view_dataset_exists();
         let cached_dataset_is_stale = self.cached_view_dataset_is_stale();

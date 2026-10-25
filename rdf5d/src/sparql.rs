@@ -23,7 +23,7 @@ use spargebra::algebra::{GraphPattern, PropertyPathExpression};
 use spargebra::term::{GroundTerm, TermPattern, Variable};
 
 use crate::reader::{DecodedTerm, R5Error};
-use crate::snapshot::{Pattern, Scope, Snapshot};
+use crate::snapshot::{CLOSURE_PREDICATE_IRIS, Pattern, Scope, Snapshot};
 use crate::view::View;
 
 /// A read-only SPARQL dataset view over a [`Snapshot`], using logical (by-name)
@@ -450,6 +450,12 @@ impl<'a> PClosRewriter<'a> {
             },
             _ => return None,
         };
+        // A snapshot may have closures for other predicates. Only substitute
+        // paths actually covered by that index; general predicates must still
+        // be evaluated against the underlying triples.
+        if !CLOSURE_PREDICATE_IRIS.contains(&named.as_str()) {
+            return None;
+        }
         let p_id = self.predicate_id(named.as_str())?;
 
         // After reversal, the "forward" lookup direction corresponds to the

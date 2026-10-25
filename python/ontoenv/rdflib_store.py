@@ -170,7 +170,7 @@ def dataset_from_env(
     for ontology_name in selected.get_ontology_names():
         target_graph = dataset.graph(URIRef(ontology_name))
         source_graph = (
-            selected.get_graph(ontology_name)
+            snapshot.view_graph(ontology_name)
             if snapshot is not None else env.copy_graph(ontology_name)
         )
         target_graph += source_graph

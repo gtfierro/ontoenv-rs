@@ -2,7 +2,7 @@ use anyhow::{Error, Result};
 use clap::{Parser, Subcommand};
 use log::info;
 use ontoenv::api::{OntoEnv, ResolveTarget};
-use ontoenv::config::Config;
+use ontoenv::config::{Config, ConfigOverrides};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::options::{Overwrite, RefreshStrategy};
 use ontoenv::util::write_dataset_to_file;
@@ -813,37 +813,14 @@ fn execute(cmd: Cli) -> Result<()> {
                 // e.g. `ontoenv init --offline` makes the offline flag sticky without
                 // requiring a full --overwrite re-init.
                 let mut env = OntoEnv::load_from_directory(root, false)?;
-                let mut config_changed = false;
-                if let Some(offline) = cmd.offline {
-                    if offline != env.is_offline() {
-                        env.set_offline(offline);
-                        config_changed = true;
-                    }
-                }
-                if let Some(strict) = cmd.strict {
-                    if strict != env.is_strict() {
-                        env.set_strict(strict);
-                        config_changed = true;
-                    }
-                }
-                if let Some(require) = cmd.require_ontology_names {
-                    if require != env.requires_ontology_names() {
-                        env.set_require_ontology_names(require);
-                        config_changed = true;
-                    }
-                }
-                if let Some(policy) = cmd.policy {
-                    if policy != env.resolution_policy() {
-                        env.set_resolution_policy(policy)?;
-                        config_changed = true;
-                    }
-                }
-                if let Some(ttl) = cmd.remote_cache_ttl_secs {
-                    env.set_remote_cache_ttl_secs(ttl);
-                    config_changed = true;
-                }
-                if config_changed {
-                    env.save_to_directory()?;
+                if env.apply_config_overrides(&ConfigOverrides {
+                    offline: cmd.offline,
+                    strict: cmd.strict,
+                    require_ontology_names: cmd.require_ontology_names,
+                    resolution_policy: cmd.policy,
+                    remote_cache_ttl_secs: cmd.remote_cache_ttl_secs,
+                    ..Default::default()
+                })? {
                     println!("Configuration updated.");
                 }
 

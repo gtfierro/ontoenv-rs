@@ -508,28 +508,6 @@ impl OntoEnv {
         self.io.config_mut()
     }
 
-    /// Open a publication-backed reader with explicit refresh.
-    /// Returned snapshots remain immutable and can outlive this reader. The
-    /// specialized reader type has no mutation/save API.
-    pub fn open_snapshot(root: impl AsRef<Path>) -> Result<crate::snapshots::SnapshotReader> {
-        crate::snapshots::SnapshotReader::open(root)
-    }
-
-    /// Create an empty publication-backed environment.
-    /// Changes are staged through the returned writer and published by explicit
-    /// commit; neither this entry point nor Drop migrates legacy stores.
-    pub fn create_snapshot(config: Config) -> Result<crate::snapshots::SnapshotWriter> {
-        crate::snapshots::SnapshotWriter::create(config)
-    }
-
-    /// Open the sole writer for an existing snapshot environment.
-    /// Readers and retained query views can remain open while it publishes.
-    pub fn open_snapshot_writer(
-        root: impl AsRef<Path>,
-    ) -> Result<crate::snapshots::SnapshotWriter> {
-        crate::snapshots::SnapshotWriter::open(root)
-    }
-
     /// Explicitly migrate a closed legacy environment, preserving rollback files.
     pub fn migrate(root: impl AsRef<Path>) -> Result<Self> {
         let writer = crate::snapshots::SnapshotWriter::migrate(root.as_ref())?;
@@ -724,10 +702,7 @@ impl OntoEnv {
             let root = config.root.clone();
             if root.join(".ontoenv-snapshots").exists() {
                 let mut environment = Self::open_managed(&root, read_only)?;
-                let changed = environment.apply_config_overrides(&overrides)?;
-                if changed && !read_only {
-                    environment.save_to_directory()?;
-                }
+                environment.apply_config_overrides(&overrides)?;
                 return Ok(environment);
             }
             if root.join(".ontoenv").exists() {
@@ -1044,18 +1019,33 @@ impl OntoEnv {
         Ok(persisted)
     }
 
-    /// Apply explicit configuration changes to a live environment.
+    /// Apply explicit configuration changes without scanning ontology sources.
     ///
-    /// This updates runtime collaborators immediately but does not scan,
-    /// refresh, or re-ingest ontology sources.
+    /// Managed writers publish before returning, or with the surrounding
+    /// [`transaction`](Self::transaction). Read-only handles keep changes
+    /// session-local until refresh. Temporary environments keep them in memory.
     pub fn apply_config_overrides(&mut self, overrides: &ConfigOverrides) -> Result<bool> {
+        self.edit_config(|config| config.apply_overrides(overrides))
+    }
+
+    fn edit_config(&mut self, edit: impl FnOnce(&mut Config) -> Result<bool>) -> Result<bool> {
         let mut config = self.config().clone();
-        let changed = config.apply_overrides(overrides)?;
-        if changed {
-            *self.config_mut() = config;
-            self.sync_runtime_config()?;
+        if !edit(&mut config)? {
+            return Ok(false);
         }
-        Ok(changed)
+        if self.io.is_managed() && self.io.io_type() != "read-only" {
+            return self.with_io_batch(|env| {
+                *env.config_mut() = config;
+                env.sync_runtime_config()?;
+                Ok(true)
+            });
+        }
+        *self.config_mut() = config;
+        self.sync_runtime_config()?;
+        if !self.config().temporary && self.io.io_type() != "read-only" {
+            self.save_to_directory()?;
+        }
+        Ok(true)
     }
 
     fn load_catalog_with_graph_io(
@@ -1176,10 +1166,7 @@ impl OntoEnv {
 
         if let Some(load_root) = existing_root {
             let mut env = Self::load_from_directory(load_root, read_only)?;
-            let changed = env.apply_config_overrides(&overrides)?;
-            if !read_only && changed {
-                env.save_to_directory()?;
-            }
+            env.apply_config_overrides(&overrides)?;
             return Ok(env);
         }
 
@@ -1202,8 +1189,7 @@ impl OntoEnv {
         if let Some(root) = find_ontoenv_root() {
             let mut env = Self::load_from_directory(root, false)?;
             if env.is_offline() {
-                env.set_offline(false);
-                env.save_to_directory()?;
+                env.set_offline(false)?;
             }
             Ok(env)
         } else {
@@ -1229,8 +1215,7 @@ impl OntoEnv {
         if let Some(root) = find_ontoenv_root() {
             let mut env = Self::load_from_directory(root, false)?;
             if !env.is_offline() {
-                env.set_offline(true);
-                env.save_to_directory()?;
+                env.set_offline(true)?;
             }
             Ok(env)
         } else {
@@ -1256,8 +1241,7 @@ impl OntoEnv {
         if let Some(root) = find_ontoenv_root() {
             let mut env = Self::load_from_directory(root, false)?;
             if !env.is_offline() {
-                env.set_offline(true);
-                env.save_to_directory()?;
+                env.set_offline(true)?;
             }
             Ok(env)
         } else {
@@ -1338,20 +1322,6 @@ impl OntoEnv {
         ontoenv.graph_revisions = ontoenv.io.graph_revisions()?.unwrap_or_default();
         ontoenv.save_to_directory()?;
         Ok(ontoenv)
-    }
-
-    /// Creates a new OntoEnv by reading the graphs already present in a caller-provided
-    /// GraphIO store.  Ontology metadata and the import dependency graph are reconstructed
-    /// from the store contents; no filesystem discovery or network fetching is performed.
-    pub fn new_with_graph_io_from_existing(config: Config, io: Box<dyn GraphIO>) -> Result<Self> {
-        Self::adopt(config, io)
-    }
-
-    /// Re-synchronizes the environment with the current contents of the underlying GraphIO
-    /// store.  Use this when the store has been mutated externally and the in-memory
-    /// environment state (ontology metadata, import graph) needs to be brought up to date.
-    pub fn refresh_from_graph_io(&mut self) -> Result<()> {
-        self.refresh_from_store(None, true).map(|_| ())
     }
 
     /// Explicitly reconcile catalog metadata with the graph backend.
@@ -1715,20 +1685,6 @@ impl OntoEnv {
         }
     }
 
-    pub fn new_temporary(&self) -> Result<Self> {
-        // Snapshot both catalog metadata and graph content into an in-memory
-        // backend.  Cloning metadata alone would leave graph identifiers that
-        // cannot be resolved from the temporary store.
-        let mut io = crate::io::MemoryGraphIO::new(self.config().offline, self.config().strict)?;
-        for id in self.io.graph_ids()? {
-            io.add_graph(id.clone(), self.io.copy_graph(&id)?)?;
-        }
-        let mut config = self.config().clone();
-        config.temporary = true;
-        config.external_graph_store = None;
-        Self::new(self.environment().clone(), Box::new(io), config)
-    }
-
     fn ontology_filters(&self) -> Result<OntologyFilters> {
         let (include, exclude) = self.config().build_ontology_regexes()?;
         Ok(OntologyFilters { include, exclude })
@@ -1913,13 +1869,10 @@ impl OntoEnv {
     }
 
     // Core API methods
+    /// Flush the underlying adapter. Managed operations already publish before
+    /// returning; this does not commit an active managed transaction.
     pub fn flush(&mut self) -> Result<()> {
-        // Force pending writes to the underlying store implementation.
-        self.io.flush()?;
-        if self.snapshot().is_some() {
-            self.save_to_directory()?;
-        }
-        Ok(())
+        self.io.flush()
     }
 
     /// Publish several operations as one managed-storage update. An error or
@@ -3788,24 +3741,24 @@ impl OntoEnv {
         &self.config().namespaces
     }
 
-    /// Bind `prefix` to `namespace` in the environment configuration.
+    /// Bind `prefix` to `namespace`, publishing managed configuration before return.
     ///
-    /// User bindings take precedence over prefixes declared by ontologies in
-    /// [`get_namespaces`](Self::get_namespaces) and
-    /// [`get_all_namespaces`](Self::get_all_namespaces). A namespace can only
-    /// have one user-declared prefix, so rebinding a namespace under a new
-    /// prefix drops the old one. Call [`save_to_directory`](Self::save_to_directory)
-    /// to persist the change.
-    pub fn bind_namespace(&mut self, prefix: &str, namespace: &str) {
-        self.config_mut().namespaces.retain(|_, ns| ns != namespace);
-        self.config_mut()
-            .namespaces
-            .insert(prefix.to_string(), namespace.to_string());
+    /// User bindings take precedence over ontology prefixes. Rebinding a
+    /// namespace drops its former prefix. An enclosing transaction groups this
+    /// edit with its other changes; read-only settings remain session-local.
+    pub fn bind_namespace(&mut self, prefix: &str, namespace: &str) -> Result<()> {
+        self.edit_config(|config| {
+            let before = config.namespaces.clone();
+            config.namespaces.retain(|_, ns| ns != namespace);
+            config.namespaces.insert(prefix.into(), namespace.into());
+            Ok(config.namespaces != before)
+        })?;
+        Ok(())
     }
 
-    /// Remove a user-declared prefix binding. Returns `true` if it existed.
-    pub fn unbind_namespace(&mut self, prefix: &str) -> bool {
-        self.config_mut().namespaces.remove(prefix).is_some()
+    /// Remove and persist a user prefix binding. Returns whether it existed.
+    pub fn unbind_namespace(&mut self, prefix: &str) -> Result<bool> {
+        self.edit_config(|config| Ok(config.namespaces.remove(prefix).is_some()))
     }
 
     /// Merge an ontology and its imports closure into a single graph.
@@ -3867,7 +3820,7 @@ impl OntoEnv {
     /// This materializes an owned Rust graph through the underlying backend.
     /// Mutating the returned value does not update the environment. For a
     /// scoped query view without materialization, use a managed snapshot's
-    /// [`EnvironmentSnapshot::graph_view`](crate::snapshots::EnvironmentSnapshot::graph_view).
+    /// [`EnvironmentSnapshot::view_graph`](crate::snapshots::EnvironmentSnapshot::view_graph).
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         // Delegate graph retrieval to the IO backend.
         self.io.get_graph(id)
@@ -4047,9 +4000,13 @@ impl OntoEnv {
         self.config().offline
     }
 
-    pub fn set_offline(&mut self, offline: bool) {
-        self.config_mut().offline = offline;
-        self.io.set_offline(offline);
+    /// Set offline mode, persisting writable environments before returning.
+    pub fn set_offline(&mut self, offline: bool) -> Result<()> {
+        self.apply_config_overrides(&ConfigOverrides {
+            offline: Some(offline),
+            ..Default::default()
+        })?;
+        Ok(())
     }
 
     pub fn is_strict(&self) -> bool {
@@ -4057,10 +4014,13 @@ impl OntoEnv {
         self.config().strict
     }
 
-    pub fn set_strict(&mut self, strict: bool) {
-        // Update strict mode for future operations.
-        self.config_mut().strict = strict;
-        self.io.set_strict(strict);
+    /// Set strict import handling, persisting writable environments before returning.
+    pub fn set_strict(&mut self, strict: bool) -> Result<()> {
+        self.apply_config_overrides(&ConfigOverrides {
+            strict: Some(strict),
+            ..Default::default()
+        })?;
+        Ok(())
     }
 
     pub fn requires_ontology_names(&self) -> bool {
@@ -4068,10 +4028,13 @@ impl OntoEnv {
         self.config().require_ontology_names
     }
 
-    pub fn set_require_ontology_names(&mut self, require: bool) {
-        // Toggle name requirement to influence future imports/updates.
-        self.config_mut().require_ontology_names = require;
-        self.io.set_require_ontology_names(require);
+    /// Set ontology-name requirements and persist writable environments.
+    pub fn set_require_ontology_names(&mut self, require: bool) -> Result<()> {
+        self.apply_config_overrides(&ConfigOverrides {
+            require_ontology_names: Some(require),
+            ..Default::default()
+        })?;
+        Ok(())
     }
 
     /// Set the TTL (in seconds) for caching remote ontologies.
@@ -4079,8 +4042,12 @@ impl OntoEnv {
     /// Remote ontologies fetched via HTTP are cached locally. When the TTL
     /// expires the next `update` or `add` triggers a re-fetch. The default
     /// is 3600 seconds (1 hour).
-    pub fn set_remote_cache_ttl_secs(&mut self, ttl_secs: u64) {
-        self.config_mut().remote_cache_ttl_secs = ttl_secs;
+    pub fn set_remote_cache_ttl_secs(&mut self, ttl_secs: u64) -> Result<()> {
+        self.apply_config_overrides(&ConfigOverrides {
+            remote_cache_ttl_secs: Some(ttl_secs),
+            ..Default::default()
+        })?;
+        Ok(())
     }
 
     pub fn remote_cache_ttl_secs(&self) -> u64 {
@@ -4092,8 +4059,12 @@ impl OntoEnv {
     /// Controls whether `update` re-loads ontologies from their original
     /// source (file/URL) or uses cached copies. See [`CacheMode`] for
     /// available modes.
-    pub fn set_use_cached_ontologies(&mut self, mode: crate::options::CacheMode) {
-        self.config_mut().use_cached_ontologies = mode;
+    pub fn set_use_cached_ontologies(&mut self, mode: crate::options::CacheMode) -> Result<()> {
+        self.apply_config_overrides(&ConfigOverrides {
+            use_cached_ontologies: Some(mode),
+            ..Default::default()
+        })?;
+        Ok(())
     }
 
     pub fn uses_cached_ontologies(&self) -> bool {
@@ -4105,14 +4076,12 @@ impl OntoEnv {
         &self.config().resolution_policy
     }
 
+    /// Validate and persist the resolution policy without reloading sources.
     pub fn set_resolution_policy(&mut self, policy: String) -> Result<()> {
-        if crate::policy::policy_from_name(&policy).is_none() {
-            return Err(anyhow!("Unknown resolution policy: {policy}"));
-        }
-        if !self.io.is_managed() {
-            self.environment_mut().set_default_policy(&policy)?;
-        }
-        self.config_mut().resolution_policy = policy;
+        self.apply_config_overrides(&ConfigOverrides {
+            resolution_policy: Some(policy),
+            ..Default::default()
+        })?;
         Ok(())
     }
 }

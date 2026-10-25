@@ -269,7 +269,7 @@ impl GraphIO for SnapshotGraphIO {
                 let Some(id) = snapshot.resolve(id.name()) else {
                     return Ok(Graph::new());
                 };
-                snapshot.get_graph(&id)
+                snapshot.copy_graph(&id)
             }
         }
     }

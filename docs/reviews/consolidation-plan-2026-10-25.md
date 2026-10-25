@@ -6,8 +6,9 @@ The first Phase 1 slice is implemented on `refactor/graph-io-capabilities`; see
 `api-contract-inventory-2026-10-25.md`. The Phase 2 query slice implements shared
 catalog traversal and immutable graph/closure/union/dataset queries. The backing
 comparison is recorded in `snapshot-backing-profile-2026-10-25.md`.
-Managed-state consolidation is implemented and locally validated (265 Rust and
-101 Python tests plus a normal-API workload). Final public API pruning remains.
+Managed-state consolidation and public API pruning are implemented. Final local
+validation passes 266 Rust tests/doctests, 168 Python tests, lint, docs and the
+representative normal-API workload. Remote integration CI follows the final push.
 
 ## Objective
 
@@ -304,3 +305,15 @@ the contract inventory and the implemented fallible `oxigraph_store()` boundary,
 using the approved 0.7 breaking-change scope. The deployment
 Windows durability contract remains a release decision. The advisory memory
 estimate does not block implementation, integration or release.
+
+
+## Implementation completion
+
+All five consolidation phases are implemented on the approved branch. See
+`consolidation-review-2026-10-25.md` for the resulting ownership model, API
+removals and final local evidence. Mmap/pins and the Windows owned fallback
+remain; no memory-limit manager or index-memory project was added. Dataset
+rebinding remains an explicit rdflib integration operation with retained-iterator
+coverage. Configuration setters share normal publication/rollback, removing the
+old flush/close commit boundary. The final remote matrix must be checked at the
+pushed revision; the Windows power-loss contract remains a release decision.
