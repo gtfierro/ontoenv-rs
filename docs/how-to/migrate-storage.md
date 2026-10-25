@@ -99,3 +99,28 @@ Protocol 2 recorded no exact manifest ancestry: retention starts at the selected
 version; older unreferenced versions become eligible for cleanup. Back up the
 closed directory beforehand if those versions are needed. This protocol upgrade
 is separate from `migrate`, which copies legacy `.ontoenv/` stores.
+
+## Rust adapter API changes
+
+In 0.7, `GraphIO::store() -> &Store` is replaced by the fallible
+`GraphIO::oxigraph_store() -> Result<&Store>`. In-memory and caller-supplied
+Oxigraph backends return their actual store. Managed snapshots, lazy legacy
+RDF5D backends and Python adapters return `StoreCapabilityError`, including after
+a legacy graph has been loaded into its private cache.
+
+For backend-independent access, use `io.graph_ids()`, `io.size()`, graph/union
+operations, or a managed snapshot. `EnvironmentSnapshot::graph_view()` borrows
+a query view; Rust `get_graph()`/`copy_graph()` materialize owned graphs whose
+mutations do not affect the environment. Python `get_graph()` continues to
+return a read-only view.
+
+Custom Rust adapters with an authoritative Oxigraph store can implement
+`oxigraph_store()` as `Ok(&self.store)` and use the Oxigraph-backed defaults.
+Other adapters implement graph operations directly. Move any former
+`ensure_loaded()` behavior into the adapter's graph-read implementation; that
+trait hook is removed. A scratch or partial cache is not an authoritative raw
+store. Direct Oxigraph writes bypass the catalog and require the adapter's
+documented reconciliation procedure.
+
+These API changes do not change the on-disk reader protocol or require another
+storage upgrade.

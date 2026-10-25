@@ -2,7 +2,7 @@
 //! This includes reading graphs from files and URLs, and interacting with persistent or in-memory stores.
 
 use crate::catalog::BackendState;
-use crate::errors::OfflineRetrievalError;
+use crate::errors::{OfflineRetrievalError, StoreCapabilityError};
 use crate::ontology::{GraphIdentifier, Ontology, OntologyLocation};
 use crate::options::Overwrite;
 use crate::util::get_file_contents;
@@ -421,8 +421,24 @@ pub trait GraphIO: Send + Sync {
     /// Returns the path to the store, if it is a file-based store
     fn store_location(&self) -> Option<&Path>;
 
-    /// Returns a reference to the underlying store
-    fn store(&self) -> &Store;
+    /// Access the authoritative Oxigraph store, when this backend has one.
+    ///
+    /// File-backed snapshots, lazy RDF5D caches and Python adapters do not
+    /// provide this capability. Use graph operations or an environment snapshot
+    /// for backend-independent access. Defaults that require Oxigraph propagate
+    /// [`StoreCapabilityError`]; other backends must implement those operations.
+    ///
+    /// Direct mutations bypass OntoEnv's catalog and publication protocol. The
+    /// caller must reconcile externally changed stores through the adapter API.
+    fn oxigraph_store(&self) -> Result<&Store> {
+        Err(StoreCapabilityError {
+            message: format!(
+                "{} backend has no authoritative Oxigraph store; use graph or snapshot operations",
+                self.io_type()
+            ),
+        }
+        .into())
+    }
 
     /// Return an opaque backend identity and global revision in O(1), when
     /// supported. The revision must change after every backend mutation.
@@ -437,7 +453,7 @@ pub trait GraphIO: Send + Sync {
 
     /// Returns the identifiers of all graphs currently held in the store.
     fn graph_ids(&self) -> Result<Vec<GraphIdentifier>> {
-        self.store()
+        self.oxigraph_store()?
             .named_graphs()
             .map(|r| {
                 let named = r.map_err(|e| anyhow!(e.to_string()))?;
@@ -480,8 +496,8 @@ pub trait GraphIO: Send + Sync {
     /// existing graph at that name.  Used by the rename machinery after a transform.
     fn add_named_graph(&mut self, id: GraphIdentifier, graph: Graph) -> Result<()> {
         let graphname = id.graphname()?;
-        self.store().remove_named_graph(id.name())?;
-        let mut loader = self.store().bulk_loader();
+        self.oxigraph_store()?.remove_named_graph(id.name())?;
+        let mut loader = self.oxigraph_store()?.bulk_loader();
         loader.load_quads(
             graph
                 .iter()
@@ -491,21 +507,14 @@ pub trait GraphIO: Send + Sync {
         Ok(())
     }
 
-    /// Hook for backends that lazy-load graphs from on-disk storage into the
-    /// in-memory store on first access. Default is a no-op. Persistent backends
-    /// override this so that callers iterating `store()` directly (e.g.
-    /// `union_graph`) still see the graph's quads.
-    fn ensure_loaded(&self, _id: &GraphIdentifier) -> Result<()> {
-        Ok(())
-    }
-
-    /// Returns the graph with the given identifier
+    /// Materialize an owned graph for the given identifier. Mutating the
+    /// returned value does not write it back to the backend.
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let mut graph = Graph::new();
         let graphname = id.graphname()?;
-        for quad in self
-            .store()
-            .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
+        for quad in
+            self.oxigraph_store()?
+                .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
         {
             graph.insert(quad?.as_ref());
         }
@@ -514,18 +523,17 @@ pub trait GraphIO: Send + Sync {
 
     /// Returns a copy of the graph for mutable operations.
     ///
-    /// Backends that can provide a more efficient or semantically distinct
-    /// copy path (e.g. a Python graph store that returns a cached view from
-    /// `get_graph` but a fresh deep copy from `copy_graph`) should override
-    /// this. The default delegates to `get_graph`.
+    /// Adapters may override this to call a dedicated source copy hook.
+    /// Both methods return owned Rust graphs; the default delegates to
+    /// [`Self::get_graph`].
     fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         self.get_graph(id)
     }
 
     /// Returns the size of the underlying store.
     fn size(&self) -> Result<StoreStats> {
-        let num_graphs = self.store().named_graphs().count();
-        let num_triples = self.store().len()?;
+        let num_graphs = self.oxigraph_store()?.named_graphs().count();
+        let num_triples = self.oxigraph_store()?.len()?;
         Ok(StoreStats {
             num_graphs,
             num_triples,
@@ -535,14 +543,14 @@ pub trait GraphIO: Send + Sync {
     /// Removes the graph with the given identifier from the store and ontology metadata
     fn remove(&mut self, id: &GraphIdentifier) -> Result<()> {
         let graphname = id.name();
-        self.store().remove_named_graph(graphname)?;
+        self.oxigraph_store()?.remove_named_graph(graphname)?;
         Ok(())
     }
 
     /// Returns the best-effort union of the graphs with the given identifiers,
     /// along with a list of ids that could not be read.
     ///
-    /// A failure on any single id (bad graphname, ensure_loaded error, or a
+    /// A failure on any single id (bad graphname, unavailable capability, or a
     /// store iteration error mid-graph) is recorded in the returned
     /// `Vec<FailedImport>` and that id is skipped; the rest of the union is
     /// still assembled. Callers that need strict all-or-nothing semantics
@@ -552,12 +560,10 @@ pub trait GraphIO: Send + Sync {
         let mut failures = Vec::new();
         for id in ids {
             let result = id.graphname().and_then(|graphname| {
-                // For persistent backends, ensure the named graph is in the in-memory store.
-                self.ensure_loaded(id)?;
                 insert_graph_triples(
                     &mut dataset,
                     &graphname,
-                    store_graph_triples(self.store(), &graphname),
+                    store_graph_triples(self.oxigraph_store()?, &graphname),
                 )
             });
             if let Err(e) = result {
@@ -580,7 +586,7 @@ pub trait GraphIO: Send + Sync {
     fn flush(&mut self) -> Result<()> {
         #[cfg(feature = "rocksdb")]
         return self
-            .store()
+            .oxigraph_store()?
             .flush()
             .map_err(|e| anyhow!("Failed to flush store: {}", e));
         #[cfg(not(feature = "rocksdb"))]
@@ -936,10 +942,6 @@ impl GraphIO for PersistentGraphIO {
         Some(&self.store_path)
     }
 
-    fn store(&self) -> &Store {
-        &self.store
-    }
-
     fn store_state(&self) -> Result<Option<BackendState>> {
         Ok(Some(file_backend_state(&self.store_path)?))
     }
@@ -1017,17 +1019,13 @@ impl GraphIO for PersistentGraphIO {
         Ok(())
     }
 
-    fn ensure_loaded(&self, id: &GraphIdentifier) -> Result<()> {
-        self.ensure_graph_loaded(id.name().as_str())
-    }
-
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         let graphname = id.name().as_str();
         self.ensure_graph_loaded(graphname)?;
         let mut graph = Graph::new();
         let graphname = id.graphname()?;
         for quad in self
-            .store()
+            .store
             .quads_for_pattern(None, None, None, Some(graphname.as_ref()))
         {
             graph.insert(quad?.as_ref());
@@ -1179,10 +1177,6 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
         Some(&self.store_path)
     }
 
-    fn store(&self) -> &Store {
-        &self.store
-    }
-
     fn store_state(&self) -> Result<Option<BackendState>> {
         Ok(Some(file_backend_state(&self.store_path)?))
     }
@@ -1196,10 +1190,6 @@ impl GraphIO for ReadOnlyPersistentGraphIO {
                     .map_err(|error| anyhow!(error.to_string()))
             })
             .collect()
-    }
-
-    fn ensure_loaded(&self, id: &GraphIdentifier) -> Result<()> {
-        self.ensure_graph_loaded(id.name().as_str())
     }
 
     fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
@@ -1302,8 +1292,8 @@ impl GraphIO for ExternalStoreGraphIO {
         None
     }
 
-    fn store(&self) -> &Store {
-        &self.store
+    fn oxigraph_store(&self) -> Result<&Store> {
+        Ok(&self.store)
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {
@@ -1397,8 +1387,8 @@ impl GraphIO for MemoryGraphIO {
         None
     }
 
-    fn store(&self) -> &Store {
-        &self.store
+    fn oxigraph_store(&self) -> Result<&Store> {
+        Ok(&self.store)
     }
 
     fn add(&mut self, location: OntologyLocation, overwrite: Overwrite) -> Result<Ontology> {

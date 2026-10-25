@@ -83,6 +83,74 @@ fn legacy_fixture(root: &Path) -> Result<()> {
 }
 
 #[test]
+fn managed_iri_conflicts_follow_overwrite_instead_of_retaining_policy_candidates() -> Result<()> {
+    for policy in ["default", "latest", "version"] {
+        let dir = tempfile::tempdir()?;
+        let mut cfg = config(dir.path());
+        cfg.resolution_policy = policy.to_owned();
+        let mut env = OntoEnv::connect(cfg, ConnectSync::Auto, false)?;
+        let first = OntologyLocation::InMemory {
+            identifier: "first-source".into(),
+        };
+        let second = OntologyLocation::InMemory {
+            identifier: "second-source".into(),
+        };
+        let name = "urn:shared";
+        let versioned = |value: &str, version: u32| {
+            let mut bytes = ttl(name, value);
+            bytes.extend_from_slice(
+                format!(" <{name}> <http://www.w3.org/2002/07/owl#versionInfo> \"{version}\" .")
+                    .as_bytes(),
+            );
+            bytes
+        };
+        let old = env.add_from_bytes(
+            first.clone(),
+            versioned("first", 2),
+            Some(RdfFormat::Turtle),
+            Overwrite::Allow,
+            RefreshStrategy::Force,
+        )?;
+        let held = env.snapshot().unwrap();
+        env.add_alias("urn:chosen", name)?;
+        let preserved = env.add_from_bytes(
+            second.clone(),
+            versioned("second", 99),
+            Some(RdfFormat::Turtle),
+            Overwrite::Preserve,
+            RefreshStrategy::Force,
+        )?;
+        assert_eq!(preserved, old);
+        assert_eq!(env.ontologies().len(), 1);
+        assert_eq!(env.get_ontology(&old)?.location(), Some(&first));
+        let replacement = env.add_from_bytes(
+            second.clone(),
+            versioned("second", 1),
+            Some(RdfFormat::Turtle),
+            Overwrite::Allow,
+            RefreshStrategy::Force,
+        )?;
+        assert_eq!(env.ontologies().len(), 1);
+        assert_eq!(env.get_ontology(&replacement)?.location(), Some(&second));
+        assert_eq!(env.resolve_alias("urn:chosen"), Some(replacement.clone()));
+        assert!(env
+            .get_graph(&replacement)?
+            .iter()
+            .any(|t| t.object.to_string() == "\"second\""));
+        assert!(held
+            .get_graph(&old)?
+            .iter()
+            .any(|t| t.object.to_string() == "\"first\""));
+        drop(env);
+        let reader = OntoEnv::open(dir.path().to_path_buf(), true)?;
+        assert_eq!(reader.ontologies().len(), 1);
+        assert_eq!(reader.get_ontology(&replacement)?.location(), Some(&second));
+        assert_eq!(reader.resolve_alias("urn:chosen"), Some(replacement));
+    }
+    Ok(())
+}
+
+#[test]
 fn default_storage_reader_refresh_and_old_views_are_coherent() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut writer = OntoEnv::connect(config(dir.path()), ConnectSync::Auto, false)?;

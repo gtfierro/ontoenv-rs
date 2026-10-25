@@ -1,0 +1,143 @@
+# Consolidation handoff
+
+## Current task
+
+The user approved the consolidation plan, added a dataset consistency note,
+and then explicitly requested reading this handoff and beginning implementation.
+The first Phase 1 slice is implemented on `refactor/graph-io-capabilities`:
+fallible raw Oxigraph capability, scratch-store removal, contract documentation,
+API inventory and regression coverage. Later consolidation phases are not yet
+implemented. Do not treat context reset as permission to discard the working tree.
+
+## Workspace and baseline
+
+- Work in `/tmp/ontoenv-transactional-snapshots`.
+- Branch: `refactor/graph-io-capabilities`, based on
+  `feature/transactional-snapshots`. Inspect current HEAD and its PR state.
+- Baseline HEAD: `ca264072a8cb7715138d440b48ff493062abb55e`.
+- PR #36: <https://github.com/gtfierro/ontoenv-rs/pull/36>.
+- Last checked, all 22 CI checks passed at that exact baseline, including full
+  Linux/macOS/Windows jobs, snapshot suites, Rust 1.88, Python 3.11/3.14,
+  migration and docs. Recheck if HEAD or the remote state changes.
+- The main checkout `/home/gabe/src/ontoenv-rs` is on a different branch
+  (`gtf-namespaces`) and has unrelated untracked files. Leave it alone.
+- Preserve the existing untracked `docs/reviews/final-review-2026-10-23.md`.
+  It records an older review and is not the current CI state.
+- Preserve the approved consolidation plan and this handoff, including the
+  user's verbatim dataset note in the plan.
+
+## Plan and accepted decisions
+
+Read `docs/reviews/consolidation-plan-2026-10-25.md` in this worktree.
+
+- Breaking API cleanup is explicitly permitted in unreleased 0.7. Compatibility
+  wrappers are not required merely to preserve the unreleased API.
+- Approximately 14 MB encoded is representative. Approximately 100 MB encoded
+  is the high end, with fewer than ten reader processes. Use nine readers as
+  the upper-bound experiment point.
+- Local storage, infrequent writes, one writer, independent reader processes.
+- Keep atomic publication of coherent graph/catalog/alias/configuration state.
+- Owned views/iterators remain usable after parent-handle close, publication
+  by another process, and writer restart. Read scopes release ownership only.
+- Keep one graph per canonical IRI and full-file graph rewrites for now.
+- Windows is a deployment target.
+- Do not add another database, query engine, multiple writers, background GC,
+  general history APIs or per-graph disk COW during consolidation.
+- Dataset APIs must use the same view/copy model as graphs. Allow dataset
+  results for graph unions, with explicit named-graph and duplicate semantics.
+  Exact names/return-type choices should be settled in the Phase 1 proposal.
+- Memory/latency budgets remain to be agreed before selecting owned bytes
+  versus mmap. That experiment is not authorized to assume owned bytes win.
+- Preserve existing flushing. Windows power-loss guarantees remain a separate
+  release decision. Retaining an older file does not establish recovery.
+- No merge, release or tag has been requested.
+
+## Phase 1 scope and continuation
+
+The public contract inventory is in `api-contract-inventory-2026-10-25.md`.
+The raw-store boundary is implemented. Inspect current git/PR state before
+continuing or repeating work. Proceed autonomously within the approved scope;
+check in for material product decisions, not routine implementation choices.
+
+1. Read the plan and relevant repository instructions. Only `rdf5d/AGENTS.md`
+   was found previously; recheck applicable instructions for changed files.
+2. Inventory Rust/Python/CLI lifecycle, query, view/copy, mutation and maintenance
+   operations. Identify retained, removable and adapter-specific contracts.
+3. Implemented: `GraphIO::store() -> &Store` is replaced with fallible
+   `oxigraph_store()`. Memory/caller-supplied Oxigraph backends expose the actual
+   store; managed, lazy legacy and Python backends return `StoreCapabilityError`.
+   Both scratch stores and the obsolete trait-level `ensure_loaded` hook are
+   removed. Managed flush is explicitly independent of the raw capability.
+4. Evaluate each backend honestly: a lazily loaded or shadow Oxigraph store is
+   not automatically an authoritative capability. Migrate internal callers to
+   graph/query methods or explicit supported access. Do not replace the fake
+   store with a panic or invent a generic capability registry.
+5. Define graph/dataset view-versus-copy contracts and clarify canonical-IRI
+   conflict/discovery policies. Update contradictory documentation as those
+   contracts are settled.
+6. Keep this first implementation slice separate from snapshot-query extraction,
+   owned-byte policy changes, and the larger update-state rewrite.
+
+Relevant locations:
+
+- `lib/src/io.rs`: `GraphIO::oxigraph_store()` and its fallible default operations;
+  legacy private cache reads, memory/external capability implementations.
+- `lib/src/snapshot_io.rs`: no scratch store; explicit no-op backend flush.
+- `lib/src/errors.rs`: existing `StoreCapabilityError`.
+- `lib/src/api.rs`: public IO access, lifecycle paths, metadata checkpoints and
+  batching; these later require consolidation into one committed/pending state.
+- `python/src/lib.rs`: PythonGraphIO routes graph operations to the Python store;
+  no scratch store/raw capability. Public lifecycle/query methods and dataset cache.
+- `python/src/snapshots.rs`: immutable Python snapshot currently supports graphs,
+  datasets and metadata, but closure/union querying still lives on OntoEnv.
+- `python/src/ontoenv.pyi`, `python/ontoenv/rdflib_store.py`: public dataset and
+  view/copy contracts.
+- `docs/explanation/concepts.rst`: resolution-policy text must agree with the
+  one-canonical-IRI catalog invariant.
+
+Search current raw access with `rg -n 'oxigraph_store' lib python cli`.
+The old `.store()`/`fn store()` search should find no GraphIO accessor or calls;
+distinguish the unrelated atomic `.store(...)` call in progress reporting.
+
+## Later phases
+
+2. Complete shared snapshot-based querying, including dataset view/copy and
+   union results; preserve transforms, aliases, namespaces and iterator lifetime.
+3. Compare owned encoded bytes versus mmap using the same codec and normal APIs.
+   Measure aggregate memory and retained versions at approximately 14/100 MB
+   and 1/4/9 readers. No permanent user-facing backing toggle by default.
+4. Consolidate committed/pending state and necessary rollback checkpoints.
+5. Remove obsolete API paths and isolate external-store/legacy migration logic.
+
+Do not combine a storage-policy switch and transaction-state rewrite in one
+change. Removing pins would require protecting older mmap readers through an
+explicit protocol boundary, even though the public owned-view contract stays.
+
+## Validation and practical notes
+
+- Reusable Cargo target: `/tmp/ontoenv-snapshot-review-target`.
+- Run meaningful focused regressions for real behavior, then relevant clippy,
+  formatting and broader checks. Do not add tests that only mirror code.
+- Phase 1 needs managed capability refusal, authoritative supported-store access,
+  accurate normal reads/counts and affected external/custom-store coverage.
+- Local results for the implemented slice: 256 default-feature release Rust
+  workspace tests/doctests passed (eight ignored); all four capability tests
+  passed with and without RocksDB; 97 targeted Python tests passed against the
+  rebuilt installed wheel (21 existing warnings). Workspace all-target/all-feature
+  release clippy, formatting/diff checks and Sphinx HTML passed. Check the new
+  branch's CI rather than attributing baseline PR #36 results to this change.
+- All-feature local builds can compile RocksDB for a long time; start with
+  appropriate default-feature checks and expand when the change warrants it.
+- Python source-tree `_native.abi3.so` can shadow a rebuilt installed wheel.
+  Verify the imported extension. Use an isolated copied test directory for
+  installed-wheel checks; `test_ontoenv_api.py` expects a sibling `../brick`.
+- Existing URL-fetch Python tests need network access. A prior failing QUDT
+  dependency-closure test was deliberately replaced with local fixtures; the
+  dedicated URL tests remain.
+- GH CLI work requires the gh-cli skill. Installed `gh pr edit` previously
+  failed on deprecated projectCards; REST `gh api --method PATCH` works.
+- Check in with the user on meaningful decisions. Do not spawn sub-agents
+  unless the user or applicable instructions explicitly request them.
+
+The inventory contains proposed paired view/copy names and a scoped dataset
+union API for Phase 2; those query changes are not implemented by Phase 1.

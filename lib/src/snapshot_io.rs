@@ -13,7 +13,6 @@ use crate::FailedImport;
 use anyhow::{bail, Result};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{Dataset, Graph, QuadRef};
-use oxigraph::store::Store;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -49,20 +48,19 @@ struct State {
 
 pub(crate) struct SnapshotGraphIO {
     state: Mutex<State>,
-    // Compatibility scratch store; managed graph reads never treat it as an
-    // independently mutable authority. Use GraphIO graph operations for writes.
-    scratch: Store,
     directory: PathBuf,
     offline: bool,
     require_names: bool,
 }
 
 impl SnapshotGraphIO {
-    pub(crate) fn from_writer(writer: SnapshotWriter) -> Result<Self> {
+    pub(crate) fn from_writer(writer: SnapshotWriter) -> Self {
         Self::from_connection(Connection::Writer(writer))
     }
     pub(crate) fn create(config: Config) -> Result<Self> {
-        Self::from_connection(Connection::Writer(SnapshotWriter::create(config)?))
+        Ok(Self::from_connection(Connection::Writer(
+            SnapshotWriter::create(config)?,
+        )))
     }
     pub(crate) fn open(root: &Path, read_only: bool) -> Result<Self> {
         let connection = if read_only {
@@ -70,21 +68,20 @@ impl SnapshotGraphIO {
         } else {
             Connection::Writer(SnapshotWriter::open(root)?)
         };
-        Self::from_connection(connection)
+        Ok(Self::from_connection(connection))
     }
-    fn from_connection(connection: Connection) -> Result<Self> {
+    fn from_connection(connection: Connection) -> Self {
         let snapshot = connection.snapshot();
-        Ok(Self {
+        Self {
             offline: snapshot.config().offline,
             require_names: snapshot.config().require_ontology_names,
             directory: snapshot.config().root.join(".ontoenv-snapshots"),
-            scratch: Store::new()?,
             state: Mutex::new(State {
                 connection,
                 pending: BTreeMap::new(),
                 checkpoints: Vec::new(),
             }),
-        })
+        }
     }
     fn writable(&self) -> Result<()> {
         if matches!(self.state.lock().unwrap().connection, Connection::Reader(_)) {
@@ -162,9 +159,6 @@ impl GraphIO for SnapshotGraphIO {
         Some(self.state.lock().unwrap().connection.snapshot())
     }
     fn publish_environment(&self, environment: &Environment, config: &Config) -> Result<bool> {
-        if !self.scratch.is_empty()? {
-            bail!("Direct Oxigraph store mutations cannot be published by managed storage; use OntoEnv graph operations");
-        }
         let mut state = self.state.lock().unwrap();
         if matches!(state.connection, Connection::Reader(_)) {
             return Ok(true);
@@ -225,8 +219,10 @@ impl GraphIO for SnapshotGraphIO {
     fn store_location(&self) -> Option<&Path> {
         Some(&self.directory)
     }
-    fn store(&self) -> &Store {
-        &self.scratch
+    // Publication is handled by publish_environment, including its durability
+    // barriers. There is no separate Oxigraph store to flush, even with rocksdb.
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
     }
     fn store_state(&self) -> Result<Option<BackendState>> {
         let snapshot = self.environment_snapshot().unwrap();

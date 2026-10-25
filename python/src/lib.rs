@@ -24,7 +24,6 @@ use oxigraph::model::{
     BlankNode, Graph as OxigraphGraph, GraphName, Literal, NamedNode, NamedNodeRef,
     NamedOrBlankNode, NamedOrBlankNodeRef, Quad, Term, TermRef, Triple, TripleRef,
 };
-use oxigraph::store::Store;
 use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 #[cfg(not(feature = "cli"))]
 use pyo3::exceptions::PyRuntimeError;
@@ -940,19 +939,17 @@ struct PythonGraphIO {
     strict: bool,
     require_ontology_names: bool,
     read_only: bool,
-    scratch: Store,
 }
 
 impl PythonGraphIO {
-    fn new(store: Py<PyAny>, offline: bool, strict: bool, read_only: bool) -> Result<Self> {
-        Ok(Self {
+    fn new(store: Py<PyAny>, offline: bool, strict: bool, read_only: bool) -> Self {
+        Self {
             store: Mutex::new(store),
             offline,
             strict,
             require_ontology_names: false,
             read_only,
-            scratch: Store::new().map_err(|e| anyhow!(e.to_string()))?,
-        })
+        }
     }
 
     fn with_store<F, T>(&self, f: F) -> Result<T>
@@ -1038,10 +1035,6 @@ impl GraphIO for PythonGraphIO {
 
     fn store_location(&self) -> Option<&Path> {
         None
-    }
-
-    fn store(&self) -> &Store {
-        &self.scratch
     }
 
     fn store_state(&self) -> Result<Option<BackendState>> {
@@ -1161,9 +1154,8 @@ impl GraphIO for PythonGraphIO {
     /// Write a pre-built graph into the Python store under `id`, replacing any
     /// existing graph at that name.
     ///
-    /// The base `GraphIO` default writes into `self.store()`, which for a custom
-    /// `graph_store=` backend is only the empty scratch oxigraph store the
-    /// Python store never reads from. Route it through `add_graph(..., overwrite=True)`
+    /// Python stores do not expose the raw Oxigraph capability used by the
+    /// `GraphIO` default. Route this through `add_graph(..., overwrite=True)`
     /// so the rename machinery (`OntoEnv::rename_graph_iri`) actually persists to
     /// the backing store.
     fn add_named_graph(&mut self, id: GraphIdentifier, graph: OxigraphGraph) -> Result<()> {
@@ -1214,10 +1206,9 @@ impl GraphIO for PythonGraphIO {
         })
     }
 
-    /// Best-effort union assembled from `copy_graph` rather than the default
-    /// `store()`-streaming impl. A custom `graph_store=` keeps its data in
-    /// Python and exposes only an empty scratch oxigraph store, so the default
-    /// would silently union nothing. Routing through `copy_graph` (which
+    /// Best-effort union assembled from `copy_graph`. A custom `graph_store=`
+    /// keeps its data in Python and has no raw Oxigraph capability. Routing
+    /// through `copy_graph` (which
     /// dispatches to the Python store's `copy_graph` when available, else
     /// `get_graph`) gives `copy_closure`/`copy_union` correct results,
     /// including the prefix/imports/declaration transforms that run on the
@@ -1600,10 +1591,8 @@ impl Default for RdfLibStoreBackend {
 /// Pull every triple in the named graph identified by `id` into `out`.
 ///
 /// Routes through `env.get_graph(id)` (which dispatches to the IO backend's
-/// `get_graph`) rather than reading `env.io().store()` directly. Custom
-/// `graph_store=` backends keep their data in Python and expose an *empty*
-/// scratch oxigraph store, so reading the store directly would silently
-/// return nothing for them. The backend `get_graph` path is the one that
+/// `get_graph`). Custom `graph_store=` backends keep their data in Python
+/// and do not expose a raw Oxigraph store. The backend `get_graph` path
 /// works for every backend, matching `copy_graph`/`get_closure`.
 fn collect_graph_triples_into(
     env: &OntoEnvRs,
@@ -4174,8 +4163,7 @@ impl OntoEnv {
                 cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
                 config_changed = cfg.apply_overrides(&overrides).map_err(anyhow_to_pyerr)?;
             }
-            let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
-                .map_err(anyhow_to_pyerr)?;
+            let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only);
             let explicit_adopt = EXPLICIT_ADOPT.with(Cell::get);
             let env = if recover {
                 OntoEnvRs::recover_with_graph_io(cfg, Box::new(io))

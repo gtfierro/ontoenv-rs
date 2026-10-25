@@ -539,13 +539,13 @@ impl OntoEnv {
     /// Explicitly migrate a closed legacy environment, preserving rollback files.
     pub fn migrate(root: impl AsRef<Path>) -> Result<Self> {
         let writer = crate::snapshots::SnapshotWriter::migrate(root.as_ref())?;
-        Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::from_writer(writer)?)
+        Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::from_writer(writer))
     }
 
     /// Offline upgrade of a protocol-2 store. Close all older processes first.
     pub fn upgrade(root: impl AsRef<Path>) -> Result<Self> {
         let writer = crate::snapshots::SnapshotWriter::upgrade(root.as_ref())?;
-        Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::from_writer(writer)?)
+        Self::from_managed_io(crate::snapshot_io::SnapshotGraphIO::from_writer(writer))
     }
 
     /// Retry cleanup of old files, retaining current/previous versions and all
@@ -4052,10 +4052,10 @@ impl OntoEnv {
 
     /// Returns a read-only graph from the IO store for the given identifier.
     ///
-    /// This is the primary read path and dispatches to the underlying backend
-    /// (`PersistentGraphIO`, `PythonGraphIO`, etc.). The returned graph is a
-    /// snapshot and should not be mutated; use [`Self::copy_graph`] when you
-    /// need a mutable copy.
+    /// This materializes an owned Rust graph through the underlying backend.
+    /// Mutating the returned value does not update the environment. For a
+    /// scoped query view without materialization, use a managed snapshot's
+    /// [`EnvironmentSnapshot::graph_view`](crate::snapshots::EnvironmentSnapshot::graph_view).
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         // Delegate graph retrieval to the IO backend.
         self.io.get_graph(id)
@@ -4063,10 +4063,9 @@ impl OntoEnv {
 
     /// Returns a mutable copy of the graph for the given identifier.
     ///
-    /// Unlike [`Self::get_graph`], this returns a fresh in-memory copy that
-    /// can be freely mutated. Custom `GraphIO` backends can override
-    /// `copy_graph` to distinguish between returning a live view (via
-    /// `get_graph`) and returning a detached copy (via `copy_graph`).
+    /// Both this method and [`Self::get_graph`] return owned Rust graphs.
+    /// Custom adapters can select a dedicated source copy hook here; the
+    /// default GraphIO implementation delegates to `get_graph`.
     pub fn copy_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
         self.io.copy_graph(id)
     }

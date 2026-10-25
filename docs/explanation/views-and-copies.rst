@@ -1,7 +1,8 @@
 Views and copies
 ================
 
-Every read method on ``OntoEnv`` comes in two flavours:
+The Python graph and dataset query APIs distinguish read-only views from
+mutable copies:
 
 .. list-table::
    :header-rows: 1
@@ -22,6 +23,13 @@ Every read method on ``OntoEnv`` comes in two flavours:
    * - ``get_dataset()``
      - ``copy_dataset()``
      - the whole environment
+
+Rust currently uses different return types: ``OntoEnv::get_graph`` and
+``copy_graph`` both materialize an owned ``oxigraph::model::Graph``. Editing that
+value does not change the environment. A managed
+``EnvironmentSnapshot::graph_view`` or ``view`` borrows a query view without
+materializing the graph. The Python names in the table describe their Python
+return values, not a Rust mutability guarantee.
 
 Why the split exists
 --------------------
@@ -77,8 +85,8 @@ Choosing
 --------
 
 **Use a view when** you are querying, counting, iterating, or serializing;
-when the graph is large; when you are in a request handler; or when you want a
-compile-time guarantee that this code path cannot modify the environment.
+when the graph is large; or when you are in a request handler and need fixed,
+read-only graph contents. Python rejects writes to the returned view at runtime.
 
 **Use a copy when** you need to add or remove triples, or when you need an
 ``rdflib.Graph`` API a view does not implement.

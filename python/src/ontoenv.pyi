@@ -83,8 +83,9 @@ class OntoEnv:
     :meth:`create`, :meth:`open`, :meth:`adopt`, and :meth:`recover` methods
     express stricter lifecycle requirements.
 
-    ``recreate=True`` on the direct constructor deletes and rebuilds the
-    target ``.ontoenv`` directory. It is not equivalent to :meth:`connect`.
+    ``recreate=True`` on the direct constructor publishes replacement state
+    for managed storage, preserving old views. It is not equivalent to
+    :meth:`connect`.
     """
 
     @staticmethod
@@ -199,9 +200,8 @@ class OntoEnv:
         catalog-free temporary store, construct it normally and call
         ``refresh_from_store(full=True)`` explicitly.
 
-        PSO/POS/SPO/OSP posting-list indexes are built in memory when a
-        persistent ``.r5tu`` snapshot is first bound. The transitive-closure
-        table for supported property paths is built lazily on first use.
+        Posting-list indexes and the transitive-closure table for supported
+        property paths are built lazily as snapshot queries need them.
 
         For an existing persistent environment, ``None`` preserves persisted
         configuration. Explicit values—including ``False``, ``"default"``,

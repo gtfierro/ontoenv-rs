@@ -48,6 +48,13 @@ All notable changes to this project are documented here. Releases follow [Semant
   `prefix()` work on them.
 
 ### Changed
+- Rust `GraphIO::store()` is replaced by the fallible `oxigraph_store()`
+  capability. Only memory and caller-supplied Oxigraph backends expose their
+  authoritative store. Managed snapshots, legacy lazy RDF5D backends and Python
+  adapters return `StoreCapabilityError`; use graph operations or snapshots
+  for portable reads. The managed/Python scratch stores and the obsolete
+  `ensure_loaded` trait hook are removed. Adapter implementations using raw
+  Oxigraph defaults must opt into the capability explicitly.
 - Parser-level `@prefix`/`PREFIX` declarations are now recorded in the catalog
   when a source is parsed, so namespace lookups no longer re-read (or re-fetch)
   every source file. Ontologies in existing catalogs report only their SHACL

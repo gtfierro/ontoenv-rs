@@ -110,7 +110,7 @@ jobs:
       # Exercise the default publication path at the workspace compiler floor.
       - uses: dtolnay/rust-toolchain@1.88
       - name: Test snapshot transactions, recovery and concurrent processes
-        run: cargo test -p ontoenv --locked --release --lib --test test_snapshots --test test_concurrency --test test_managed_storage
+        run: cargo test -p ontoenv --locked --release --lib --test test_snapshots --test test_concurrency --test test_managed_storage --test test_graph_io_capabilities
       - name: Repeat Windows concurrent publication stress
         if: runner.os == 'Windows'
         shell: pwsh

@@ -100,8 +100,15 @@ transparently everywhere an IRI is accepted.
 Resolution policy
 -----------------
 
-When two files declare the same ontology IRI, something has to choose. The
-resolution policy decides:
+Managed storage keeps one registration per canonical IRI. When an explicit add
+encounters an IRI already in the catalog, its overwrite option controls whether
+the existing registration is preserved or replaced. Replacement changes the
+source/contents together and preserves explicit aliases. It does not retain
+multiple source versions for later policy selection.
+
+The ``resolution_policy`` setting selects among multiple registrations only
+where the catalog/backend can represent them, such as temporary or external
+store catalogs:
 
 ``default``
    Prefer the first-registered definition.
@@ -112,8 +119,11 @@ resolution policy decides:
 ``version``
    Prefer the highest ``owl:versionIRI`` / version property.
 
-``ontoenv doctor`` reports duplicate IRIs so you can decide whether the
-duplication is intentional at all.
+These policies do not rank competing source files during managed ingestion or
+override an explicit preserve/replace choice. For reproducible managed builds,
+choose the intended source explicitly; distinct versions that must coexist need
+distinct graph IRIs. Do not depend on directory traversal order to select one.
+``ontoenv doctor`` can report duplicate registrations in catalogs that allow them.
 
 Strict mode
 -----------

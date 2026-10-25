@@ -2,7 +2,9 @@
 //!
 //! It recursively discovers and resolves `owl:imports` statements, and provides an API for querying the dependency graph and retrieving a unified "imports closure" of an ontology.
 //!
-//! The environment is backed by an `Oxigraph` store.
+//! Managed environments use immutable RDF5D snapshots. Temporary and external
+//! backends provide their own graph operations; an authoritative raw Oxigraph
+//! store is an optional capability rather than a requirement for every backend.
 //!
 //! # Usage
 //!

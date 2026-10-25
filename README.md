@@ -501,7 +501,9 @@ fs::remove_dir_all(&test_dir)?;
 | `env.add(location, Overwrite, RefreshStrategy)` | Add by file/URL |
 | `env.add_no_imports(location, Overwrite, RefreshStrategy)` | Add without import traversal |
 | `env.add_from_bytes(location, bytes, format, Overwrite, RefreshStrategy)` | Add from in-memory RDF bytes |
-| `env.get_graph(id)` | Retrieve a single ontology |
+| `env.get_graph(id)` / `env.copy_graph(id)` | Materialize an owned Rust graph; editing it does not change the environment |
+| `snapshot.graph_view(id)` | Borrow a scoped read-only query view from an acquired managed `EnvironmentSnapshot` |
+| `env.io().oxigraph_store()` | Fallible advanced access to an authoritative Oxigraph store, available only for memory/caller-supplied Oxigraph backends |
 | `env.get_union_graph(ids)` | Merge multiple ontology graphs |
 | `env.get_closure(id, recursion_depth)` | Compute transitive imports closure |
 | `env.save_to_directory()` / `env.flush()` | Publish managed configuration; graph mutations already publish atomically |
