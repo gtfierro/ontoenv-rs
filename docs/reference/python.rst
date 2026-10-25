@@ -25,9 +25,16 @@ connections retain their own storage semantics.
 ``env.snapshot()`` returns an ``EnvironmentSnapshot`` independent of the live
 handle. It exposes ``info`` (environment ID, generation, parent generation,
 commit and open timestamps), a copied ``config`` dictionary,
-``get_ontology_names()``, ``get_ontologies()``, ``get_graph(iri)``,
-``get_dataset()``, ``get_namespaces()``, ``get_bound_namespaces()`` and
-``resolve_alias(iri)``. No refresh or write methods exist on this handle.
+``get_ontology_names()``, ``get_ontologies()``, ``get_namespaces()``,
+``get_bound_namespaces()`` and ``resolve_alias(iri)``. It also exposes paired
+``view_graph`` / ``copy_graph``, ``view_closure`` / ``copy_closure``,
+``view_union`` / ``copy_union`` and ``view_dataset`` / ``copy_dataset`` queries.
+Closure/union graph results return ``(result, canonical_iris)``. Dataset methods
+accept an optional IRI list: ``None`` selects all, ``[]`` selects none. Dataset
+unions preserve named-graph contexts, while graph unions deduplicate triples.
+``closure_iris``, ``get_importers`` and ``get_import_paths`` query only this
+catalog. No refresh or write methods exist on this handle. See
+:doc:`../explanation/views-and-copies` for scope and counting rules.
 
 ``OntoEnv.read_snapshot(path)`` opens one owned version directly. Use it as a
 context manager or call ``snapshot.close()`` to release that handle promptly.
@@ -206,8 +213,7 @@ view. ``copy_*`` allocates a mutable ``rdflib`` object. See
      - Materializes the same triple set as a mutable graph.
    * - ``get_union(uris, include_closures=False, recursion_depth=-1)``
      - ``(ViewGraph, graph_iris)``
-     - **Raw** merge of the listed graphs; no transform or cross-graph
-       de-duplication.
+     - Raw graph projection of the listed graphs; shared triples occur once.
    * - ``copy_union(uris, root, graph=None, include_closures=False, rewrite_sh_prefixes=False, remove_owl_imports=False, recursion_depth=-1)``
      - ``(Graph, graph_iris)``
      - Raw and mutable by default. Transform flags opt into declaration and

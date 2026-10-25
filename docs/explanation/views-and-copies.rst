@@ -4,6 +4,43 @@ Views and copies
 The Python graph and dataset query APIs distinguish read-only views from
 mutable copies:
 
+For several queries that must agree, capture one snapshot first. Its graph,
+closure and dataset results use the same catalog, aliases, configuration and RDF:
+
+.. code-block:: python
+
+   with OntoEnv.read_snapshot(path) as snapshot:
+       graph = snapshot.view_graph(iri)
+       closure, names = snapshot.view_closure(iri)
+       dataset = snapshot.view_dataset(names)
+       editable = snapshot.copy_dataset(names)
+
+   # graph, closure and dataset still own their captured version here.
+
+Snapshot methods use paired ``view_graph`` / ``copy_graph``, ``view_closure`` /
+``copy_closure``, ``view_union`` / ``copy_union`` and ``view_dataset`` /
+``copy_dataset`` names. Closure and graph union methods return the result plus
+the selected canonical IRIs. ``closure_iris(iri, recursion_depth=-1)`` returns
+membership alone, without fetching sources or materializing a graph.
+
+``view_dataset(iris=None)`` and ``copy_dataset(iris=None)`` select the whole
+captured catalog. An explicit list selects a dataset union; ``[]`` selects no
+graphs. Aliases resolve against that snapshot. Unknown IRIs raise ``ValueError``;
+cataloged empty graphs are valid contexts. Datasets retain named-graph contexts
+and have an empty default graph. The same triple in two contexts remains two
+quads; rdflib's ``len(dataset)`` counts unique triples across those contexts.
+Graph unions project away the contexts and yield/count each triple once.
+SPARQL scans, ``GRAPH`` and ``FROM`` cannot expand a dataset beyond its selection.
+
+Namespace maps merge in selection order, with explicit bindings taking
+precedence; a whole-catalog selection uses canonical IRI order. Depth zero
+selects only the closure root. Strict mode checks missing imports only when
+traversal follows them, so unresolved imports beyond the depth limit do not fail
+a query. Cyclic import explanations stop before repeating a node.
+
+The existing ``OntoEnv`` convenience methods remain available during
+consolidation:
+
 .. list-table::
    :header-rows: 1
    :widths: 33 33 34
@@ -75,8 +112,8 @@ set**: imports stripped, ontology declarations collapsed onto the root, SHACL
 prefixes consolidated, duplicates removed. The only difference is where the
 triples live and whether you can change them.
 
-Unions are the exception, and asymmetrically so. ``get_union`` is always a raw
-merge. ``copy_union`` defaults to a raw merge too, but accepts
+Snapshot union views and copies contain the same raw triple set. The older
+``OntoEnv.get_union`` is also a raw graph projection. Its ``copy_union`` accepts
 ``rewrite_sh_prefixes=True`` and ``remove_owl_imports=True`` to opt into the
 closure transforms — with ``root`` naming the ontology those transforms
 collapse onto.

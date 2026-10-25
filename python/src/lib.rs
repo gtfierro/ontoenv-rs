@@ -1571,6 +1571,8 @@ enum RdfLibStoreBackend {
         #[allow(dead_code)]
         store_path: PathBuf,
         snapshot: Arc<Snapshot>,
+        /// Immutable catalog selection. None is reserved for legacy file adapters.
+        scope: Option<Arc<Vec<String>>>,
         /// Optional closure patch (removals + patch-graph additions) applied
         /// lazily over every read path so the view presents a single flattened,
         /// de-duplicated graph matching `copy_closure`. Set only on dedicated
@@ -1584,6 +1586,37 @@ impl Default for RdfLibStoreBackend {
     fn default() -> Self {
         Self::EnvSnapshotMaterialized {
             dataset: Arc::new(OxDataset::new()),
+        }
+    }
+}
+
+impl RdfLibStoreBackend {
+    fn allows_name(&self, name: &str) -> bool {
+        match self {
+            Self::EnvSnapshotRdf5d {
+                scope: Some(names), ..
+            } => names.iter().any(|n| n == name),
+            _ => true,
+        }
+    }
+
+    fn restrict_names(&self, names: Vec<String>) -> Vec<String> {
+        let mut seen = HashSet::new();
+        names
+            .into_iter()
+            .filter(|name| self.allows_name(name) && seen.insert(name.clone()))
+            .collect()
+    }
+
+    fn named_graphs(&self, snapshot: &Snapshot) -> PyResult<Vec<NamedOrBlankNode>> {
+        match self {
+            Self::EnvSnapshotRdf5d {
+                scope: Some(names), ..
+            } => names
+                .iter()
+                .map(|name| named_or_blank_node_from_graph_name(name).map_err(anyhow_to_pyerr))
+                .collect(),
+            _ => snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr),
         }
     }
 }
@@ -1831,6 +1864,70 @@ macro_rules! apply_query_graph_selection {
     }};
 }
 
+/// Intersect a SPARQL dataset (including explicit FROM clauses) with a fixed
+/// named-graph selection. Managed datasets have no stored default graph.
+fn restrict_query_dataset(
+    dataset: &mut spareval::QueryDatasetSpecification,
+    allowed: &[NamedOrBlankNode],
+) {
+    let defaults = dataset.default_graph_graphs().map_or_else(
+        || allowed.iter().cloned().map(GraphName::from).collect(),
+        |graphs| {
+            graphs
+                .iter()
+                .filter(|graph| match graph {
+                    GraphName::NamedNode(node) => {
+                        allowed.contains(&NamedOrBlankNode::NamedNode(node.clone()))
+                    }
+                    GraphName::BlankNode(node) => {
+                        allowed.contains(&NamedOrBlankNode::BlankNode(node.clone()))
+                    }
+                    GraphName::DefaultGraph => false,
+                })
+                .cloned()
+                .collect()
+        },
+    );
+    let named = dataset.available_named_graphs().map_or_else(
+        || allowed.to_vec(),
+        |graphs| {
+            graphs
+                .iter()
+                .filter(|graph| allowed.contains(graph))
+                .cloned()
+                .collect()
+        },
+    );
+    dataset.set_default_graph(defaults);
+    dataset.set_available_named_graphs(named);
+}
+
+fn materialize_union_default(dataset: &mut OxDataset, names: &[NamedOrBlankNode]) {
+    let defaults: Vec<_> = dataset
+        .iter()
+        .filter(|quad| match quad.graph_name {
+            oxigraph::model::GraphNameRef::NamedNode(name) => {
+                names.contains(&NamedOrBlankNode::NamedNode(name.into_owned()))
+            }
+            oxigraph::model::GraphNameRef::BlankNode(name) => {
+                names.contains(&NamedOrBlankNode::BlankNode(name.into_owned()))
+            }
+            _ => false,
+        })
+        .map(|quad| {
+            Quad::new(
+                quad.subject,
+                quad.predicate,
+                quad.object,
+                GraphName::DefaultGraph,
+            )
+        })
+        .collect();
+    for quad in defaults {
+        dataset.insert(&quad);
+    }
+}
+
 #[pyclass(name = "_RdfLibStoreBackend")]
 struct PyRdfLibStoreBackend {
     backend: Arc<Mutex<RdfLibStoreBackend>>,
@@ -1964,6 +2061,7 @@ impl PyRdfLibStoreBackend {
         *backend = RdfLibStoreBackend::EnvSnapshotRdf5d {
             store_path: PathBuf::from(store_path),
             snapshot: Arc::new(snapshot),
+            scope: None,
             patch: None,
         };
         // Term ids are snapshot-specific; a new snapshot invalidates the cache.
@@ -2111,7 +2209,10 @@ impl PyRdfLibStoreBackend {
                 Ok(py_list.into_any().unbind())
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d {
-                snapshot, patch, ..
+                snapshot,
+                patch,
+                scope,
+                ..
             } => {
                 if matches!(graph_name, Some(GraphName::DefaultGraph)) {
                     return Ok(PyList::empty(py).into_any().unbind());
@@ -2156,7 +2257,13 @@ impl PyRdfLibStoreBackend {
                     let Some(name) = graph_name_key(graph_name) else {
                         return empty_iter(py);
                     };
+                    if !backend.allows_name(&name) {
+                        return empty_iter(py);
+                    }
                     streaming_store_rows(snapshot, pat, Scope::ByName(&name), patch.clone())?
+                } else if let Some(names) = scope {
+                    let gids = gids_for_names(snapshot, names);
+                    streaming_store_rows(snapshot, pat, Scope::Gids(&gids), patch.clone())?
                 } else {
                     streaming_store_rows(snapshot, pat, Scope::All, patch.clone())?
                 };
@@ -2246,6 +2353,7 @@ impl PyRdfLibStoreBackend {
                         .names_containing(pat)
                         .map_err(r5error_to_pyerr)?
                         .into_iter()
+                        .filter(|name| backend.allows_name(name))
                         .map(|graph_name| {
                             graph_name_to_python_from_str(py, &rdflib, graph_name)
                                 .map(Bound::unbind)
@@ -2254,6 +2362,7 @@ impl PyRdfLibStoreBackend {
                 } else {
                     snapshot
                         .graph_names()
+                        .filter(|name| backend.allows_name(name))
                         .map(|graph_name| {
                             graph_name_to_python_from_str(py, &rdflib, graph_name)
                                 .map(Bound::unbind)
@@ -2277,7 +2386,11 @@ impl PyRdfLibStoreBackend {
                 Some(graph_name) => dataset
                     .quads_for_pattern(None, None, None, Some(graph_name.as_ref()))
                     .count(),
-                None => dataset.iter().count(),
+                None => dataset
+                    .iter()
+                    .map(|quad| Triple::new(quad.subject, quad.predicate, quad.object))
+                    .collect::<HashSet<_>>()
+                    .len(),
             },
             RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => match graph_name {
                 Some(graph_name) => {
@@ -2286,6 +2399,9 @@ impl PyRdfLibStoreBackend {
                     {
                         0
                     } else if let Some(name) = graph_name_key(&graph_name) {
+                        if !backend.allows_name(&name) {
+                            return Ok(0);
+                        }
                         snapshot
                             .triple_count(Scope::ByName(&name))
                             .map_err(r5error_to_pyerr)?
@@ -2294,13 +2410,16 @@ impl PyRdfLibStoreBackend {
                     }
                 }
                 None => {
-                    let mut total = 0usize;
-                    for name in snapshot.graph_names() {
-                        total += snapshot
-                            .triple_count(Scope::ByName(name))
-                            .map_err(r5error_to_pyerr)?;
-                    }
-                    total
+                    let names: Vec<_> = snapshot
+                        .graph_names()
+                        .filter(|name| backend.allows_name(name))
+                        .map(str::to_owned)
+                        .collect();
+                    let gids = gids_for_names(snapshot, &names);
+                    snapshot
+                        .grouped_scan(Pattern::ANY, Scope::Gids(&gids))
+                        .map_err(r5error_to_pyerr)?
+                        .count()
                 }
             },
         })
@@ -2315,7 +2434,7 @@ impl PyRdfLibStoreBackend {
     /// view is a single flattened graph: surviving triples are collapsed
     /// under the root graph name and the patch's matching additions are
     /// injected (see [`scan_grouped`]). Raw union backends keep per-graph
-    /// contexts and do not de-duplicate across graphs.
+    /// contexts grouped under each unique triple.
     fn triples_in_graphs(
         &self,
         py: Python<'_>,
@@ -2343,6 +2462,7 @@ impl PyRdfLibStoreBackend {
             .transpose()?;
 
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         let ctors = RdflibCtors::new(py)?;
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
@@ -2485,10 +2605,8 @@ impl PyRdfLibStoreBackend {
     /// Stream every triple across a list of named graphs as an id iterator.
     /// Backs :py:meth:`ontoenv.ViewGraph.triples` for the all-unbound pattern.
     ///
-    /// For a raw union backend this is the fast path: each triple is yielded
-    /// once per graph it appears in (no cross-graph dedup, no per-row context
-    /// lists), skipping the ``HashMap`` + ``Vec<String>`` bookkeeping that
-    /// :py:meth:`triples_in_graphs` builds. For a closure backend it produces
+    /// A raw union yields each unique triple once, without context lists.
+    /// For a closure backend it produces
     /// the single flattened, de-duplicated graph via
     /// [`rdf5d::ClosureTripleIds`] (removals dropped, patch additions added).
     fn iter_triples_in_graphs(
@@ -2497,19 +2615,20 @@ impl PyRdfLibStoreBackend {
         graph_names: Vec<String>,
     ) -> PyResult<Py<PyAny>> {
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
-                let mut triples: Vec<Triple> = Vec::new();
+                let mut triples: HashSet<Triple> = HashSet::new();
                 for name in &graph_names {
                     let Ok(nn) = NamedNode::new(name) else {
                         continue;
                     };
                     let gn = GraphName::NamedNode(nn);
                     for quad in dataset.quads_for_pattern(None, None, None, Some(gn.as_ref())) {
-                        triples.push(Triple::new(quad.subject, quad.predicate, quad.object));
+                        triples.insert(Triple::new(quad.subject, quad.predicate, quad.object));
                     }
                 }
-                Ok(Py::new(py, TripleIter::new(triples))?.into_any())
+                Ok(Py::new(py, TripleIter::new(triples.into_iter().collect()))?.into_any())
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d {
                 snapshot, patch, ..
@@ -2526,22 +2645,14 @@ impl PyRdfLibStoreBackend {
                             .collect::<std::result::Result<Vec<_>, _>>()
                             .map_err(r5error_to_pyerr)?
                     }
-                    // Raw union view: every triple in each named graph, no
-                    // cross-graph dedup (matches rdflib merged-graph semantics).
+                    // Graph projection: one row per triple across contexts.
                     None => {
-                        let file = snapshot.file();
-                        let mut ids: Vec<(u64, u64, u64)> = Vec::new();
-                        for name in &graph_names {
-                            let Some(gids) = snapshot.gids_for_name(name) else {
-                                continue;
-                            };
-                            for &gid in gids {
-                                for triple_ids in file.triples_ids(gid).map_err(r5error_to_pyerr)? {
-                                    ids.push(triple_ids);
-                                }
-                            }
-                        }
-                        ids
+                        let gids = gids_for_names(snapshot, &graph_names);
+                        snapshot
+                            .grouped_scan(Pattern::ANY, Scope::Gids(&gids))
+                            .map_err(r5error_to_pyerr)?
+                            .map(|row| (row.s, row.p, row.o))
+                            .collect()
                     }
                 };
                 let remaining = ids.len();
@@ -2561,11 +2672,11 @@ impl PyRdfLibStoreBackend {
     /// :py:meth:`ontoenv.ViewGraph.__len__`.
     ///
     /// A closure backend reports the cardinality of its single flattened,
-    /// de-duplicated graph (removals dropped, patch additions added); a raw
-    /// union backend reports the stored triple count with no cross-graph
-    /// de-duplication, matching its iteration semantics.
+    /// de-duplicated graph (removals dropped, patch additions added). Raw
+    /// graph unions also count unique triples, rather than dataset quads.
     fn len_in_graphs(&self, graph_names: Vec<String>) -> PyResult<usize> {
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut seen: HashSet<Triple> = HashSet::new();
@@ -2590,11 +2701,10 @@ impl PyRdfLibStoreBackend {
                     }
                 }
                 match patch {
-                    // Raw union: stored count (no cross-graph dedup, matching
-                    // the raw iteration path).
-                    None => snapshot
-                        .triple_count(Scope::Gids(&gids))
-                        .map_err(r5error_to_pyerr),
+                    None => Ok(snapshot
+                        .grouped_scan(Pattern::ANY, Scope::Gids(&gids))
+                        .map_err(r5error_to_pyerr)?
+                        .count()),
                     // Closure view: cardinality of the single flattened,
                     // de-duplicated graph (removals dropped, additions added).
                     Some(patch) => {
@@ -2625,6 +2735,7 @@ impl PyRdfLibStoreBackend {
         let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
 
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 for name in &graph_names {
@@ -2716,10 +2827,25 @@ impl PyRdfLibStoreBackend {
         let backend = self.backend_handle();
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
-                let dataset = (**dataset).clone();
+                let mut dataset = (**dataset).clone();
                 let named_graphs = dataset_named_graphs(&dataset);
                 let mut prepared = evaluator.prepare(&parsed);
-                apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                if parsed.dataset().is_none() {
+                    apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                }
+                restrict_query_dataset(prepared.dataset_mut(), &named_graphs);
+                if parsed.dataset().is_none()
+                    && query_graph.is_some_and(|graph| {
+                        graph
+                            .extract::<String>()
+                            .is_ok_and(|name| name == "__UNION__")
+                    })
+                {
+                    materialize_union_default(&mut dataset, &named_graphs);
+                    prepared
+                        .dataset_mut()
+                        .set_default_graph(vec![GraphName::DefaultGraph]);
+                }
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -2735,14 +2861,42 @@ impl PyRdfLibStoreBackend {
                 query_results_to_python(py, results)
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d {
-                snapshot, patch, ..
+                snapshot,
+                patch,
+                scope,
+                ..
             } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
-                snapshot.rewrite_query(&mut parsed);
-                let named_graphs = snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
+                let scoped_view = scope.as_ref().map(|names| {
+                    let names: Vec<_> = names.iter().map(String::as_str).collect();
+                    rdf5d::View::from_names(snapshot, &names)
+                });
+                let default_is_union = query_graph.is_some_and(|graph| {
+                    graph
+                        .extract::<String>()
+                        .is_ok_and(|name| name == "__UNION__")
+                });
+                // A dataset-wide path cache is valid only for a union default
+                // graph. FROM and per-graph queries use the scoped evaluator.
+                if parsed.dataset().is_none() && default_is_union {
+                    if let Some(view) = &scoped_view {
+                        view.rewrite_query(&mut parsed);
+                    } else {
+                        snapshot.rewrite_query(&mut parsed);
+                    }
+                }
+                let named_graphs = backend.named_graphs(snapshot)?;
                 let mut prepared = evaluator.prepare(&parsed);
-                apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                if parsed.dataset().is_none() {
+                    apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                }
+                restrict_query_dataset(prepared.dataset_mut(), &named_graphs);
+                if parsed.dataset().is_none() && default_is_union {
+                    prepared
+                        .dataset_mut()
+                        .set_default_graph(vec![GraphName::DefaultGraph]);
+                }
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -2763,7 +2917,10 @@ impl PyRdfLibStoreBackend {
                             gids,
                         ))
                     }
-                    None => prepared.execute(snapshot.sparql_view()),
+                    None => prepared.execute(match &scoped_view {
+                        Some(view) => view.sparql_view(),
+                        None => snapshot.sparql_view(),
+                    }),
                 }
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
@@ -2852,15 +3009,19 @@ impl PyRdfLibStoreBackend {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let evaluator = QueryEvaluator::new();
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
-                let dataset = (**dataset).clone();
+                let mut dataset = (**dataset).clone();
                 let scoped = filter_named_graphs(&dataset_named_graphs(&dataset), &graph_names);
                 let mut prepared = evaluator.prepare(&parsed);
-                prepared
-                    .dataset_mut()
-                    .set_default_graph(scoped.iter().cloned().map(GraphName::from).collect());
-                prepared.dataset_mut().set_available_named_graphs(scoped);
+                restrict_query_dataset(prepared.dataset_mut(), &scoped);
+                if parsed.dataset().is_none() {
+                    materialize_union_default(&mut dataset, &scoped);
+                    prepared
+                        .dataset_mut()
+                        .set_default_graph(vec![GraphName::DefaultGraph]);
+                }
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -2880,7 +3041,11 @@ impl PyRdfLibStoreBackend {
             } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
-                snapshot.rewrite_query(&mut parsed);
+                let names: Vec<_> = graph_names.iter().map(String::as_str).collect();
+                let scoped_view = rdf5d::View::from_names(snapshot, &names);
+                if parsed.dataset().is_none() {
+                    scoped_view.rewrite_query(&mut parsed);
+                }
                 let mut prepared = evaluator.prepare(&parsed);
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
@@ -2914,11 +3079,13 @@ impl PyRdfLibStoreBackend {
                         let named_graphs =
                             snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
                         let scoped = filter_named_graphs(&named_graphs, &graph_names);
-                        prepared.dataset_mut().set_default_graph(
-                            scoped.iter().cloned().map(GraphName::from).collect(),
-                        );
-                        prepared.dataset_mut().set_available_named_graphs(scoped);
-                        prepared.execute(snapshot.sparql_view())
+                        restrict_query_dataset(prepared.dataset_mut(), &scoped);
+                        if parsed.dataset().is_none() {
+                            prepared
+                                .dataset_mut()
+                                .set_default_graph(vec![GraphName::DefaultGraph]);
+                        }
+                        prepared.execute(scoped_view.sparql_view())
                     }
                 }
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -3032,6 +3199,7 @@ impl PyRdfLibStoreBackend {
                     backend: Arc::new(Mutex::new(RdfLibStoreBackend::EnvSnapshotRdf5d {
                         store_path: store_path.clone(),
                         snapshot: snapshot.clone(),
+                        scope: Some(Arc::new(config.closure_iris.clone())),
                         patch: Some(patch),
                     })),
                     term_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -5618,8 +5786,8 @@ impl OntoEnv {
     /// ``ValueError``; use :py:meth:`copy_union` for a mutable in-memory merge.
     ///
     /// This is a **raw** merge: no closure transform is applied and triples
-    /// are not de-duplicated across the named graphs (rdflib merged-graph
-    /// semantics). For the cleaned, flattened imports closure of a single
+    /// are de-duplicated across the named graphs. For the cleaned, flattened
+    /// imports closure of a single
     /// ontology, use :py:meth:`get_closure` instead.
     ///
     /// Set ``include_closures=True`` to expand each listed graph's transitive

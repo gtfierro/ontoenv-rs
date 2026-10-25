@@ -6,8 +6,26 @@ The user approved the consolidation plan, added a dataset consistency note,
 and then explicitly requested reading this handoff and beginning implementation.
 The first Phase 1 slice is implemented on `refactor/graph-io-capabilities`:
 fallible raw Oxigraph capability, scratch-store removal, contract documentation,
-API inventory and regression coverage. Later consolidation phases are not yet
-implemented. Do not treat context reset as permission to discard the working tree.
+API inventory and regression coverage. The Phase 2 query slice now adds shared
+catalog traversal, immutable snapshot queries and scoped dataset unions. The
+backing experiment, managed-state rewrite and final API pruning remain. Do not
+treat context reset as permission to discard the working tree.
+
+## Latest workflow instruction
+
+After Phase 1 commit `6121b3a`, the user instructed: no draft PR, do everything
+on the current branch, and make one big push at the end. Continue the remaining
+approved consolidation locally on `refactor/graph-io-capabilities`; do not create
+more branches/PRs or push intermediate phases. Phase 1 was already pushed and
+draft PR #38 was created before that steering arrived; #38 is now closed. PR #36
+and its storage branch remain untouched. Local commits are suitable checkpoints.
+
+The user answered the memory question: aim for approximately 512 MB across the
+reader processes, with possible configurability later. This is a sizing target,
+not a hard allocation limit. Measure aggregate physical memory; mmap may reclaim
+file-backed pages at a latency cost, while private indexes/results still consume
+RAM. No product memory-control API has been selected. Continue snapshot-query
+work and the backing experiment; latency budgets remain open.
 
 ## Workspace and baseline
 
@@ -46,8 +64,9 @@ Read `docs/reviews/consolidation-plan-2026-10-25.md` in this worktree.
 - Dataset APIs must use the same view/copy model as graphs. Allow dataset
   results for graph unions, with explicit named-graph and duplicate semantics.
   Exact names/return-type choices should be settled in the Phase 1 proposal.
-- Memory/latency budgets remain to be agreed before selecting owned bytes
-  versus mmap. That experiment is not authorized to assume owned bytes win.
+- Target aggregate reader memory is approximately 512 MB. Latency budgets and
+  measured feasibility remain open before selecting owned bytes versus mmap.
+  That experiment is not authorized to assume owned bytes win.
 - Preserve existing flushing. Windows power-loss guarantees remain a separate
   release decision. Retaining an older file does not establish recovery.
 - No merge, release or tag has been requested.
@@ -139,5 +158,40 @@ explicit protocol boundary, even though the public owned-view contract stays.
 - Check in with the user on meaningful decisions. Do not spawn sub-agents
   unless the user or applicable instructions explicitly request them.
 
-The inventory contains proposed paired view/copy names and a scoped dataset
-union API for Phase 2; those query changes are not implemented by Phase 1.
+## Phase 2 query slice
+
+- `lib/src/catalog_queries.rs` contains the single closure traversal and importer
+  explanation logic. Snapshots cache its immutable derived index; live queries
+  use it for committed reads and derive from the candidate during batches.
+  Runtime strict overrides still apply to live queries. Namespace merging is
+  shared, with deterministic canonical ordering for whole-catalog queries.
+- `EnvironmentSnapshot` now exposes closure membership, importers/paths,
+  missing-import explanations, namespaces and dataset/graph-union copies.
+  Existing RDF5D graph/view primitives remain the Rust query-view surface; final
+  public naming cleanup belongs to Phase 5.
+- Python snapshots add `view_graph`/`copy_graph`, `view_closure`/`copy_closure`,
+  `view_union`/`copy_union`, `view_dataset`/`copy_dataset`, `closure_iris`, import
+  paths and explanations. Closures retain existing transform behavior: selected
+  canonical import terms are removed; explicit alias terms are preserved.
+- Dataset scopes resolve aliases and validate every selected graph, preserve
+  canonical contexts (including empty graphs), and distinguish all from empty.
+  Native scans, counts, contexts, GRAPH, FROM and path evaluation enforce scope.
+- Graph union iteration/count/query results now deduplicate shared triples.
+  Dataset quad iteration returns rdflib Graph contexts; dataset length counts
+  unique triples, while quad iteration retains duplicates across contexts.
+  RDF5D's synthetic union default graph now deduplicates across named graphs.
+- Strict closures check only imports actually traversed within the depth limit;
+  cyclic importer paths stop before revisiting a node. These fix previous
+  disagreements between indexed and fallback queries.
+- Local checks: 262 release Rust workspace tests/doctests passed (eight ignored);
+  101 targeted Python tests passed against the rebuilt installed wheel (34
+  rdflib/deprecation warnings). All-target/all-feature release clippy,
+  formatting/diff and Sphinx HTML passed. Logs:
+  `/tmp/ontoenv-consolidation-phase2-{workspace,python,clippy,docs}.log`.
+  Do not attribute Phase 1 or baseline CI to this code.
+
+Next: finish the bounded backing experiment using the approximately 512 MB
+aggregate reader target. Do not silently turn this into a new hard memory-limit
+API, or assume owned bytes can meet the upper-bound process count. Preserve pins
+and durability barriers until the measured backing decision is made. Then
+consolidate committed/pending state and remove redundant public/adapter paths.

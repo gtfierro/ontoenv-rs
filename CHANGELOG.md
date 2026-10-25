@@ -36,6 +36,9 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 
 ### Added
+- Immutable snapshots expose closure membership, import explanations and paired
+  graph/closure/union/dataset view and copy queries. Dataset selections preserve
+  canonical contexts, including empty graphs; `None` selects all and `[]` none.
 - Prefix bindings can be saved in the environment: `ontoenv config bind
   <prefix> <namespace>` / `ontoenv config unbind <prefix>` from the CLI, and
   `env.bind_namespace()` / `env.unbind_namespace()` /
@@ -48,6 +51,12 @@ All notable changes to this project are documented here. Releases follow [Semant
   `prefix()` work on them.
 
 ### Changed
+- Closure queries share one catalog traversal, including pending updates and
+  immutable snapshots. Strict queries do not inspect imports beyond their depth
+  limit; namespace conflicts across the whole catalog use canonical IRI order.
+- Python graph union views deduplicate shared triples consistently across scans,
+  iteration and length. Dataset quad iteration supplies rdflib graph contexts;
+  dataset length counts unique triples, matching a copied rdflib Dataset.
 - Rust `GraphIO::store()` is replaced by the fallible `oxigraph_store()`
   capability. Only memory and caller-supplied Oxigraph backends expose their
   authoritative store. Managed snapshots, legacy lazy RDF5D backends and Python

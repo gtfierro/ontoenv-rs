@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import OWL, RDF
+from rdflib import BNode, Graph, Literal, URIRef
+from rdflib.namespace import OWL, RDF, RDFS
 
 from ontoenv import EnvironmentSnapshot, OntoEnv
 
@@ -139,3 +139,148 @@ def test_cleanup_requires_writer(tmp_path: Path):
     with OntoEnv.open(tmp_path, read_only=True) as reader:
         with pytest.raises(ValueError, match="writer"):
             reader.prune()
+
+
+def test_scoped_dataset_view_copy_contexts_and_sparql(tmp_path: Path):
+    a, b, outside, empty = map(URIRef, ("urn:a", "urn:b", "urn:outside", "urn:empty"))
+    shared = (URIRef("urn:shared"), PREDICATE, Literal("shared"))
+    with OntoEnv.connect(tmp_path, offline=True) as writer:
+        for name in (a, b, outside):
+            value = Graph(identifier=name)
+            value.add((name, RDF.type, OWL.Ontology))
+            value.add(shared)
+            if name == a:
+                node = BNode()
+                value.add((a, PREDICATE, node))
+                value.add((node, PREDICATE, Literal("blank")))
+                value.add((a, RDFS.subClassOf, b))
+            if name == outside:
+                value.add((b, RDFS.subClassOf, outside))
+            writer.add(value, fetch_imports=False)
+        writer.add(Graph(), rename=str(empty), fetch_imports=False)
+        writer.add_alias("urn:alias", str(a))
+        snapshot = writer.snapshot()
+    view = snapshot.view_dataset(["urn:alias", str(b), str(a), str(empty)])
+    copy = snapshot.copy_dataset([str(a), str(b), str(empty)])
+    assert set(view.quads()) == set(copy.quads())
+    assert shared in view.graph(a) and shared in view.graph(b)
+    assert {g.identifier for g in view.graphs()} >= {a, b, empty}
+    assert outside not in {g.identifier for g in view.graphs()}
+    assert empty in {g.identifier for g in copy.graphs()}
+    assert len(view) == len(copy)
+    assert set(view.graph(outside)) == set()
+    assert list(view.query(f"SELECT ?s WHERE {{ GRAPH <{outside}> {{ ?s ?p ?o }} }}")) == []
+    assert list(view.query(f"SELECT ?s FROM <{outside}> WHERE {{ ?s ?p ?o }}")) == []
+    assert list(view.query(f"SELECT ?s FROM <{outside}> WHERE {{ ?s <{RDFS.subClassOf}>+ ?o }}")) == []
+    assert list(view.query("SELECT * WHERE { ?s ?p ?o }")) == []
+    assert list(view.query(f"SELECT * WHERE {{ ?s <{RDFS.subClassOf}>+ ?o }}")) == []
+    assert list(view.query(f"SELECT ?s FROM <{a}> WHERE {{ ?s <{RDFS.subClassOf}> <{b}> }}")) == [(a,)]
+    assert list(view.query(f"SELECT ?s WHERE {{ GRAPH <{a}> {{ ?s <{RDFS.subClassOf}>+ <{outside}> }} }}")) == []
+    rows = list(view.query(f"SELECT ?g WHERE {{ GRAPH ?g {{ <urn:shared> <{PREDICATE}> \"shared\" }} }}"))
+    assert {row.g for row in rows} == {a, b}
+    count = next(iter(view.query("SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }"))).n
+    assert int(count) == len(list(copy.quads()))
+    for dataset in (snapshot.view_dataset([]), snapshot.copy_dataset([])):
+        assert len(dataset) == 0
+        assert list(dataset.quads()) == []
+        assert list(dataset.query("SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }")) == []
+    for method in (snapshot.view_dataset, snapshot.copy_dataset):
+        with pytest.raises(ValueError, match="No graph"):
+            method([str(a), "urn:missing"])
+    with pytest.raises(ValueError, match="read-only"):
+        view.graph(a).add((a, PREDICATE, Literal("changed")))
+    copy.graph(a).add((a, PREDICATE, Literal("changed")))
+    assert (a, PREDICATE, Literal("changed")) not in view.graph(a)
+
+
+def test_snapshot_union_projection_and_closure_pairs(tmp_path: Path):
+    a, b = URIRef("urn:a"), URIRef("urn:b")
+    shared = (URIRef("urn:shared"), PREDICATE, Literal("shared"))
+    with OntoEnv.connect(tmp_path, offline=True) as writer:
+        root = Graph(identifier=a)
+        root.add((a, RDF.type, OWL.Ontology))
+        root.add((a, OWL.imports, URIRef("urn:alias")))
+        root.add(shared)
+        dependency = Graph(identifier=b)
+        dependency.add((b, RDF.type, OWL.Ontology))
+        dependency.add(shared)
+        writer.add(dependency, fetch_imports=False)
+        writer.add_alias("urn:alias", str(b))
+        writer.add(root, fetch_imports=False)
+        snapshot = writer.snapshot()
+        for remove_imports in (False, True):
+            for rewrite in (False, True):
+                options = dict(remove_owl_imports=remove_imports, rewrite_sh_prefixes=rewrite)
+                view, names = snapshot.view_closure(str(a), **options)
+                copy, copied_names = snapshot.copy_closure(str(a), **options)
+                existing, _ = writer.get_closure(str(a), **options)
+                assert names == copied_names == snapshot.closure_iris(str(a)) == [str(a), str(b)]
+                assert set(view) == set(copy) == set(existing)
+                assert len(view) == len(copy)
+        assert snapshot.get_importers("urn:alias") == [str(a)]
+        assert snapshot.get_import_paths("urn:alias") == [[str(a), str(b)]]
+        assert snapshot.explain_import("urn:alias") == {"present": True, "paths": [[str(a), str(b)]]}
+        assert snapshot.explain_import("urn:unknown") == {"present": False, "paths": []}
+        view, names = snapshot.view_union([str(a), str(b), "urn:alias"])
+        copy, copied_names = snapshot.copy_union([str(a), str(b)])
+        assert names == copied_names == [str(a), str(b)]
+        assert set(view) == set(copy) == set(root) | set(dependency)
+        assert len(list(view)) == len(view) == len(copy)
+        assert int(next(iter(view.query("SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"))).n) == len(copy)
+        assert list(view.triples(shared)) == [shared]
+        assert len(list(snapshot.view_dataset([str(a), str(b)]).quads())) == len(root) + len(dependency)
+        empty, names = snapshot.view_union([])
+        assert names == [] and len(empty) == 0 and list(empty) == []
+        assert list(empty.query("SELECT * WHERE { ?s ?p ?o }")) == []
+        assert shared not in empty
+        assert list(empty.subjects()) == []
+
+
+def test_snapshot_queries_and_escaped_results_keep_one_catalog(tmp_path: Path):
+    a, b = URIRef("urn:a"), URIRef("urn:b")
+    with OntoEnv.connect(tmp_path, offline=True) as writer:
+        writer.add(Graph(), rename=str(b), fetch_imports=False)
+        root = Graph(identifier=a)
+        root.add((a, RDF.type, OWL.Ontology))
+        root.add((a, OWL.imports, URIRef("urn:alias")))
+        writer.add_alias("urn:alias", str(b))
+        writer.add(root, fetch_imports=False)
+        writer.bind_namespace("chosen", "urn:old:")
+        old = writer.snapshot()
+        view, names = old.view_closure(str(a))
+        dataset = old.view_dataset([str(a)])
+        iterator = dataset.quads()
+        first = next(iterator)
+        replacement = Graph(identifier=a)
+        replacement.add((a, RDF.type, OWL.Ontology))
+        writer.add(replacement, overwrite=True, fetch_imports=False)
+        writer.remove_alias("urn:alias")
+        writer.bind_namespace("chosen", "urn:new:")
+        assert writer.snapshot().closure_iris(str(a)) == [str(a)]
+        assert old.closure_iris(str(a)) == [str(a), str(b)]
+        assert old.get_importers("urn:alias") == [str(a)]
+        assert old.get_namespaces()["chosen"] == "urn:old:"
+        old.close()
+    with OntoEnv.open(tmp_path) as writer:
+        writer.prune()
+        assert names == [str(a), str(b)]
+        # The existing transform removes selected canonical import IRIs;
+        # the explicit alias term is preserved.
+        assert set(view) == set(root)
+        assert {first, *iterator} == {(*triple, a) for triple in root}
+
+
+def test_temporary_union_counts_graph_projection():
+    a, b = URIRef("urn:a"), URIRef("urn:b")
+    with OntoEnv(temporary=True, offline=True) as env:
+        for name in (a, b):
+            graph = Graph(identifier=name)
+            graph.add((name, RDF.type, OWL.Ontology))
+            graph.add((URIRef("urn:shared"), PREDICATE, Literal("shared")))
+            env.add(graph, fetch_imports=False)
+        view, _ = env.get_union([str(a), str(b)])
+        assert len(list(view)) == len(view) == 3
+        assert int(next(iter(view.query("SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"))).n) == 3
+        dataset = env.get_dataset()
+        dataset.default_union = True
+        assert int(next(iter(dataset.query("SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"))).n) == 3

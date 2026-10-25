@@ -11,6 +11,7 @@
 //! `VALUES` blocks before handing the query to spareval.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::iter::{empty, once};
 
 use oxrdf::{BlankNode, Literal, NamedNode, Term};
@@ -113,10 +114,29 @@ impl<'a> QueryableDataset<'a> for SparqlView<'a> {
         };
         let snapshot = self.snapshot;
 
-        // Resolve the optional graph-name filter to a concrete name. `None`
-        // (any named graph) and `Some(None)` (default graph) both expand to the
-        // union of all logical graphs — this dataset has no separate default
-        // graph.
+        // The synthetic default graph is the triple-set projection of this
+        // scope. Named-graph scans below preserve each context separately.
+        if matches!(graph_name, Some(None)) {
+            let hits =
+                if let Some(view) = self.view {
+                    view.scan(pat)
+                } else {
+                    let mut seen = HashSet::new();
+                    Box::new(snapshot.scan(pat, Scope::All).filter(move |hit| {
+                        hit.as_ref().map_or(true, |m| seen.insert((m.s, m.p, m.o)))
+                    }))
+                };
+            return Box::new(hits.map(|hit| {
+                hit.map(|m| InternalQuad {
+                    subject: m.s,
+                    predicate: m.p,
+                    object: m.o,
+                    graph_name: None,
+                })
+            }));
+        }
+
+        // Resolve the optional named-graph filter to a concrete name.
         let name: Option<String> = match graph_name {
             None | Some(None) => None,
             Some(Some(&id)) => match snapshot.file().externalize_id(id) {

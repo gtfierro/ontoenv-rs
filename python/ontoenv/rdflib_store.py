@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from rdflib import Dataset, Graph, URIRef, plugin
+from rdflib.graph import DATASET_DEFAULT_GRAPH_ID
 from rdflib.query import Result
 from rdflib.store import NO_STORE, VALID_STORE, Store
 from rdflib.term import Identifier
@@ -98,11 +99,33 @@ def _copy_env_into_store(env: Any, store: "OntoEnvStore") -> None:
     store._backend.bind_env_snapshot(env)
 
 
-def dataset_from_snapshot(snapshot: Any) -> Dataset:
-    """Build a fixed read-only Dataset sharing a committed snapshot's mmap."""
+def dataset_from_snapshot(snapshot: Any, graph_names: list[str] | None = None) -> Dataset:
+    """Build a fixed read-only Dataset over a committed catalog selection."""
     store = OntoEnvStore()
-    store._bind_published(snapshot)
+    store._bind_published(snapshot, graph_names=graph_names)
     return Dataset(store=store)
+
+
+def _copy_graph_view(view: Any) -> Any:
+    result = Graph()
+    for triple in view:
+        result.add(triple)
+    for prefix, namespace in view.namespaces.items():
+        result.bind(prefix, namespace, replace=True)
+    return result
+
+
+def _copy_dataset_view(view: Dataset) -> Dataset:
+    result = Dataset()
+    for context in view.graphs():
+        if context.identifier == DATASET_DEFAULT_GRAPH_ID:
+            continue
+        target = result.graph(context.identifier)
+        for triple in context:
+            target.add(triple)
+    for prefix, namespace in view.namespaces():
+        result.bind(prefix, namespace, replace=True)
+    return result
 
 
 def dataset_from_env(
@@ -201,6 +224,7 @@ class OntoEnvStore(Store):
         self._namespace_to_prefix: dict[URIRef, str] = {}
         self._env_mode: Mode | None = None
         self._snapshot_owner = None
+        self._snapshot_graph_names = None
 
     @classmethod
     def from_env(cls, env: Any, mode: Mode = "auto") -> "OntoEnvStore":
@@ -221,12 +245,15 @@ class OntoEnvStore(Store):
         self._namespace_to_prefix.clear()
         self._env_mode = None
         self._snapshot_owner = None
+        self._snapshot_graph_names = None
 
-    def _bind_published(self, snapshot: Any, mode: Mode = "rdf5d") -> None:
+    def _bind_published(
+        self, snapshot: Any, mode: Mode = "rdf5d", graph_names: list[str] | None = None
+    ) -> None:
         # Prepare a new backend/cache before replacing references. In-flight
         # iterators keep their old native backend and term cache, avoiding term-ID
         # collisions across versions. The owner pins catalog/config as well.
-        backend = snapshot._backend()
+        backend = snapshot._backend(graph_names)
         if mode == "copy":
             copied = _RdfLibStoreBackend()
             copied.bind_materialized_snapshot(
@@ -235,14 +262,19 @@ class OntoEnvStore(Store):
                 for context in contexts
             )
             backend = copied
+        namespaces = (
+            snapshot.get_namespaces() if graph_names is None
+            else snapshot.get_namespaces_for_graphs(graph_names)
+        )
         prefixes = {
             prefix: URIRef(namespace)
-            for prefix, namespace in snapshot.get_namespaces().items()
+            for prefix, namespace in namespaces.items()
         }
         self.__dict__.update(
             _backend=backend,
             _env_mode=mode,
             _snapshot_owner=snapshot,
+            _snapshot_graph_names=None if graph_names is None else tuple(graph_names),
             _prefix_to_namespace=prefixes,
             _namespace_to_prefix={namespace: prefix for prefix, namespace in prefixes.items()},
         )
@@ -321,7 +353,9 @@ class OntoEnvStore(Store):
         subject, predicate, obj = triple_pattern
         rows = self._backend.triples(subject, predicate, obj, _context_identifier(context))
         for triple, contexts in rows:
-            yield triple, (ctx for ctx in contexts)
+            # rdflib's Store contract uses Graph objects here (contexts()
+            # itself accepts identifiers). Dataset.quads dereferences identifier.
+            yield triple, (Graph(store=self, identifier=ctx) for ctx in contexts)
 
     def add_graph(self, graph: Any) -> None:
         return None
@@ -340,7 +374,10 @@ class OntoEnvStore(Store):
             values = self._backend.contexts(None, None, None)
             if self._snapshot_owner is not None:
                 values = set(values) | {
-                    URIRef(name) for name in self._snapshot_owner.get_ontology_names()
+                    URIRef(name) for name in (
+                        self._snapshot_owner.get_ontology_names()
+                        if self._snapshot_graph_names is None else self._snapshot_graph_names
+                    )
                 }
         else:
             values = self._backend.contexts(*triple)
@@ -424,9 +461,8 @@ class ViewGraph:
       stripped, ontology declarations collapsed onto the root, SHACL
       ``sh:prefixes``/``sh:declare`` consolidated). Cross-graph duplicate
       triples collapse, and SPARQL sees one graph.
-    - :py:meth:`ontoenv.OntoEnv.get_union` returns a raw merge: every triple
-      of each named graph in scope, with no transform and no cross-graph
-      de-duplication (rdflib merged-graph semantics).
+    - Graph unions project the selected named graphs into one triple set,
+      deduplicating shared triples without applying closure transforms.
 
     Construct via ``env.get_closure(uri)`` or ``env.get_union(uris)`` rather
     than directly. ``env.get_graph(uri)`` still returns a plain
@@ -491,7 +527,7 @@ class ViewGraph:
         ``None`` (unbound).
         """
         subject, predicate, obj = self._unpack_pattern(subject, predicate, obj)
-        if self._scope:
+        if self._scope is not None:
             scope = list(self._scope)
             if subject is None and predicate is None and obj is None:
                 yield from self._backend.iter_triples_scoped(scope)
@@ -517,7 +553,7 @@ class ViewGraph:
 
     def __contains__(self, triple: tuple[Any, Any, Any]) -> bool:
         s, p, o = triple
-        if self._scope:
+        if self._scope is not None:
             if s is None or p is None or o is None:
                 return any(True for _ in self.triples(s, p, o))
             return self._backend.contains_in_graphs(s, p, o, list(self._scope))
@@ -526,7 +562,7 @@ class ViewGraph:
         return any(True for _ in self.triples(s, p, o))
 
     def __len__(self) -> int:
-        if self._scope:
+        if self._scope is not None:
             return self._backend.len_in_graphs(list(self._scope))
         else:
             return self._backend.len(None)
@@ -551,7 +587,7 @@ class ViewGraph:
     def __repr__(self) -> str:
         scope_info = (
             f"{len(self._scope)} graphs"
-            if self._scope
+            if self._scope is not None
             else "all graphs"
         )
         try:
@@ -568,7 +604,7 @@ class ViewGraph:
         object: Any = None,
     ) -> Generator[Any, None, None]:
         """Yield unique subjects matching the pattern."""
-        if self._scope:
+        if self._scope is not None:
             for s in self._backend.subjects_scoped(
                 list(self._scope), predicate, object
             ):
@@ -586,7 +622,7 @@ class ViewGraph:
         object: Any = None,
     ) -> Generator[Any, None, None]:
         """Yield unique predicates matching the pattern."""
-        if self._scope:
+        if self._scope is not None:
             for p in self._backend.predicates_scoped(
                 list(self._scope), subject, object
             ):
@@ -604,7 +640,7 @@ class ViewGraph:
         predicate: Any = None,
     ) -> Generator[Any, None, None]:
         """Yield unique objects matching the pattern."""
-        if self._scope:
+        if self._scope is not None:
             for o in self._backend.objects_scoped(
                 list(self._scope), subject, predicate
             ):
@@ -624,7 +660,7 @@ class ViewGraph:
         init_bindings: dict[str, Any] | None = None,
     ) -> Any:
         """Run a SPARQL query scoped to this view's graphs."""
-        if self._scope:
+        if self._scope is not None:
             return self._backend.query_scoped(
                 query_text, list(self._scope), init_bindings,
             )

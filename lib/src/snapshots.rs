@@ -7,6 +7,8 @@
 //! metadata, aliases and configuration. No database or reader recovery is needed.
 //! Owned readers pin their backing files across publication and writer restarts.
 
+use crate::api::ImportPaths;
+use crate::catalog_queries::{self, CatalogIndex};
 use crate::config::Config;
 use crate::environment::Environment;
 use crate::io::{
@@ -18,14 +20,14 @@ use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
 use oxigraph::io::RdfFormat;
-use oxigraph::model::{Graph, NamedNodeRef};
+use oxigraph::model::{Dataset, Graph, GraphNameRef, NamedNode, NamedNodeRef, QuadRef};
 use rdf5d::{Quint, Snapshot, StreamingWriter, WriterOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 const DIRECTORY: &str = ".ontoenv-snapshots";
 const SCHEMA_VERSION: u32 = 3;
@@ -104,9 +106,123 @@ pub struct EnvironmentSnapshot {
     rdf: Arc<Snapshot>,
     object_id: String,
     object_length: u64,
+    catalog_index: OnceLock<CatalogIndex>,
 }
 
 impl EnvironmentSnapshot {
+    pub(crate) fn catalog_index(&self) -> &CatalogIndex {
+        self.catalog_index
+            .get_or_init(|| CatalogIndex::new(&self.environment))
+    }
+
+    /// Resolve a dependency closure from this catalog without fetching sources.
+    /// Depth zero selects only the root; imports beyond the limit are not checked.
+    pub fn get_closure(
+        &self,
+        id: &GraphIdentifier,
+        recursion_depth: i32,
+    ) -> Result<Vec<GraphIdentifier>> {
+        self.catalog_index()
+            .closure(id, recursion_depth, self.config.strict)
+    }
+
+    /// Direct importers, resolving aliases through this generation's catalog.
+    pub fn get_importers(&self, name: &NamedNode) -> Result<Vec<GraphIdentifier>> {
+        self.catalog_index().importers(name)
+    }
+
+    /// Explain resolved or missing imports using maximal paths without repeated nodes.
+    pub fn explain_import(&self, name: &NamedNode) -> ImportPaths {
+        self.catalog_index().explain_import(name)
+    }
+
+    /// Importer paths, ordered from the most distant importer to the target.
+    pub fn get_import_paths(&self, name: &NamedNode) -> Result<Vec<Vec<GraphIdentifier>>> {
+        match self.explain_import(name) {
+            ImportPaths::Present(paths) => Ok(paths),
+            ImportPaths::Missing { .. } => bail!("Ontology not found"),
+        }
+    }
+
+    /// Merge graph namespaces in selection order; explicit bindings win.
+    pub fn get_namespaces_for_graphs(
+        &self,
+        ids: &[GraphIdentifier],
+    ) -> Result<HashMap<String, String>> {
+        let ontologies = ids
+            .iter()
+            .map(|id| {
+                self.ontologies()
+                    .get(id)
+                    .ok_or_else(|| anyhow::anyhow!("Ontology {} not found", id.name()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(catalog_queries::namespaces(
+            ontologies,
+            &self.config.namespaces,
+        ))
+    }
+
+    /// Merge namespaces in canonical IRI order, followed by explicit bindings.
+    pub fn get_all_namespaces(&self) -> HashMap<String, String> {
+        let mut ontologies: Vec<_> = self.ontologies().values().collect();
+        ontologies.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));
+        catalog_queries::namespaces(ontologies, &self.config.namespaces)
+    }
+
+    /// Merge namespaces for one graph or its entire dependency closure.
+    pub fn get_namespaces(
+        &self,
+        id: &GraphIdentifier,
+        include_closure: bool,
+    ) -> Result<HashMap<String, String>> {
+        if include_closure {
+            self.get_namespaces_for_graphs(&self.get_closure(id, -1)?)
+        } else {
+            self.get_namespaces_for_graphs(std::slice::from_ref(id))
+        }
+    }
+
+    /// Materialize a dataset union, retaining canonical named-graph contexts.
+    /// Repeated identifiers are idempotent. An empty selection yields an empty dataset.
+    pub fn copy_dataset(&self, ids: &[GraphIdentifier]) -> Result<Dataset> {
+        // Validate the whole selection before reading blocks, including empty graphs.
+        self.view(ids)?;
+        let mut dataset = Dataset::new();
+        for id in ids.iter().collect::<HashSet<_>>() {
+            let name = GraphNameRef::NamedNode(id.name());
+            if let Some(gids) = self.rdf.gids_for_name(id.name().as_str()) {
+                for &gid in gids {
+                    for triple in self.rdf.file().oxigraph_triples(gid)? {
+                        let triple = triple?;
+                        dataset.insert(QuadRef::new(
+                            &triple.subject,
+                            &triple.predicate,
+                            &triple.object,
+                            name,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(dataset)
+    }
+
+    /// Materialize the graph projection of a union, deduplicating shared triples.
+    pub fn copy_union(&self, ids: &[GraphIdentifier]) -> Result<Graph> {
+        self.view(ids)?;
+        let mut graph = Graph::new();
+        for id in ids.iter().collect::<HashSet<_>>() {
+            if let Some(gids) = self.rdf.gids_for_name(id.name().as_str()) {
+                for &gid in gids {
+                    for triple in self.rdf.file().oxigraph_triples(gid)? {
+                        graph.insert(triple?.as_ref());
+                    }
+                }
+            }
+        }
+        Ok(graph)
+    }
     /// Information about this generation, rather than the current filesystem.
     pub fn info(&self) -> &SnapshotInfo {
         &self.info
@@ -944,6 +1060,7 @@ fn snapshot_from_generation(
         rdf,
         object_id: generation.object_id,
         object_length: generation.object_length,
+        catalog_index: OnceLock::new(),
     })
 }
 

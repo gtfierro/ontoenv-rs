@@ -2,6 +2,7 @@
 //! This includes loading, saving, updating, and querying the environment.
 
 use crate::catalog;
+use crate::catalog_queries::{self, CatalogIndex};
 use crate::config::{Config, ConfigOverrides};
 use crate::consts::{IMPORTS, ONTOLOGY, TYPE};
 use crate::doctor::{
@@ -21,7 +22,6 @@ use oxigraph::model::{
     TripleRef,
 };
 use oxigraph::store::Store;
-use petgraph::visit::EdgeRef;
 use regex::Regex;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
@@ -3590,123 +3590,18 @@ impl OntoEnv {
         id: &GraphIdentifier,
         recursion_depth: i32,
     ) -> Result<Vec<GraphIdentifier>> {
-        // Walk the pre-built dependency graph via BFS. This avoids per-step
-        // import name resolution (which would otherwise fall through the alias
-        // map into a linear scan of every ontology in the environment).
-        if !self.ontologies().contains_key(id) {
-            return Err(anyhow!("Ontology {} not found", id.to_uri_string()));
-        }
-
-        let Some(&root_idx) = self.dependency_graph_index.get(id) else {
-            // No dep graph entry. With env mutations now transactional in
-            // `add_ids_to_dependency_graph`, the only way to reach this branch
-            // is the intentional `add(..., update_dependencies=false)` public
-            // API path. Fall back to the legacy name-resolution traversal so
-            // the closure is still correct, at the cost of per-step linear
-            // lookups.
-            return self.get_closure_via_name_resolution(id, recursion_depth);
-        };
-
-        let mut result: Vec<GraphIdentifier> = Vec::new();
-        result.push(id.clone());
-        let mut visited: HashSet<NodeIndex> = HashSet::with_capacity(8);
-        visited.insert(root_idx);
-        let mut queue: VecDeque<(NodeIndex, i32)> = VecDeque::new();
-        queue.push_back((root_idx, 0));
-
-        while let Some((idx, depth)) = queue.pop_front() {
-            if recursion_depth >= 0 && depth >= recursion_depth {
-                continue;
-            }
-            for edge in self
-                .dependency_graph
-                .edges_directed(idx, petgraph::Direction::Outgoing)
-            {
-                let target = edge.target();
-                if visited.insert(target) {
-                    let dep_id = &self.dependency_graph[target];
-                    result.push(dep_id.clone());
-                    queue.push_back((target, depth + 1));
-                }
-            }
-        }
-
-        // In strict mode, surface unresolved imports as an error to match prior
-        // semantics. Use `failed_resolutions` rather than re-resolving by
-        // name: the former records exactly the imports we couldn't resolve
-        // during `add_ids_to_dependency_graph` (which uses id-level lookups),
-        // so it stays consistent with the dependency-graph edges. Re-resolving
-        // via `get_ontology_by_name` would route through `ResolutionPolicy`
-        // and could disagree with the graph the BFS just walked.
-        if self.config.strict {
-            for graph_id in &result {
-                let ontology = self
-                    .ontologies()
-                    .get(graph_id)
-                    .ok_or_else(|| anyhow!("Ontology {} not found", graph_id.to_uri_string()))?;
-                for import in &ontology.imports {
-                    if self.failed_resolutions.contains(import) {
-                        return Err(anyhow!("Import not found: {}", import));
-                    }
-                }
-            }
-        }
-
-        info!("Dependency closure for {:?}: {:?}", id, result.len());
-        Ok(result)
+        self.with_catalog_index(|index| index.closure(id, recursion_depth, self.config.strict))
     }
 
-    /// Fallback closure traversal that resolves imports by name on each step
-    /// instead of walking `dependency_graph`. Used by [`get_closure`] when the
-    /// requested id isn't represented in `dependency_graph_index` (e.g. an
-    /// ontology was added without updating the dependency graph). Slower than
-    /// the indexed BFS path because it does a name lookup per import, but does
-    /// not require `dependency_graph_index` to be populated.
-    fn get_closure_via_name_resolution(
-        &self,
-        id: &GraphIdentifier,
-        recursion_depth: i32,
-    ) -> Result<Vec<GraphIdentifier>> {
-        let mut closure: HashSet<GraphIdentifier> = HashSet::new();
-        let mut order: Vec<GraphIdentifier> = Vec::new();
-        let mut stack: VecDeque<(GraphIdentifier, i32)> = VecDeque::new();
-        stack.push_back((id.clone(), 0));
-        while let Some((graph, depth)) = stack.pop_front() {
-            if !closure.insert(graph.clone()) {
-                continue;
-            }
-            order.push(graph.clone());
-
-            if recursion_depth >= 0 && depth >= recursion_depth {
-                continue;
-            }
-
-            let ontology = self
-                .ontologies()
-                .get(&graph)
-                .ok_or_else(|| anyhow!("Ontology {} not found", graph.to_uri_string()))?;
-            for import in &ontology.imports {
-                let import = match self.env.get_ontology_by_name(import.into()) {
-                    Some(imp) => imp.id().clone(),
-                    None => {
-                        if self.config.strict {
-                            return Err(anyhow!("Import not found: {}", import));
-                        }
-                        warn!("Import not found: {import}");
-                        continue;
-                    }
-                };
-                if !closure.contains(&import) {
-                    stack.push_back((import, depth + 1));
-                }
+    // Published queries reuse an immutable derived index. Pending/custom-store
+    // queries derive from the candidate catalog, never the old published head.
+    fn with_catalog_index<T>(&self, query: impl FnOnce(&CatalogIndex) -> T) -> T {
+        if self.batch_state.depth == 0 {
+            if let Some(snapshot) = self.snapshot() {
+                return query(snapshot.catalog_index());
             }
         }
-        info!(
-            "Dependency closure for {:?} (fallback): {:?}",
-            id,
-            order.len()
-        );
-        Ok(order)
+        query(&CatalogIndex::new(&self.env))
     }
 
     pub fn get_union_graph<'a, I>(
@@ -3944,10 +3839,11 @@ impl OntoEnv {
     ///
     /// This is equivalent to calling [`get_namespaces`](Self::get_namespaces)
     /// for every ontology and merging the results.  When two ontologies declare
-    /// the same prefix with different IRIs, the last one encountered wins
-    /// (iteration order is not guaranteed).
+    /// the same prefix with different IRIs, the last in canonical IRI order wins.
     pub fn get_all_namespaces(&self) -> HashMap<String, String> {
-        self.merge_namespaces(self.ontologies().values())
+        let mut ontologies: Vec<_> = self.ontologies().values().collect();
+        ontologies.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));
+        self.merge_namespaces(ontologies)
     }
 
     /// Merge the prefixes of `ontologies`, later ones winning on conflicts.
@@ -3959,15 +3855,7 @@ impl OntoEnv {
         &self,
         ontologies: impl IntoIterator<Item = &'a Ontology>,
     ) -> HashMap<String, String> {
-        let mut namespace_map = HashMap::new();
-        for ontology in ontologies {
-            namespace_map.extend(ontology.source_prefixes().clone());
-            namespace_map.extend(ontology.namespace_map().clone());
-        }
-        let bound: HashSet<&String> = self.config.namespaces.values().collect();
-        namespace_map.retain(|_, ns| !bound.contains(ns));
-        namespace_map.extend(self.config.namespaces.clone());
-        namespace_map
+        catalog_queries::namespaces(ontologies, &self.config.namespaces)
     }
 
     /// Return the user-declared prefix bindings persisted in the environment
@@ -4079,27 +3967,7 @@ impl OntoEnv {
 
     /// Returns a list of all ontologies that import the given ontology
     pub fn get_importers(&self, id: &NamedNode) -> Result<Vec<GraphIdentifier>> {
-        // Traverse the dependency graph to find incoming edges.
-        // find all nodes in the dependency_graph which have an edge to the given node
-        // and return the list of nodes
-        let mut importers: Vec<GraphIdentifier> = Vec::new();
-        let node = self
-            .env
-            .get_ontology_by_name(id.into())
-            .ok_or_else(|| anyhow!("Ontology not found"))?;
-        let index = self
-            .dependency_graph
-            .node_indices()
-            .find(|i| self.dependency_graph[*i] == *node.id())
-            .ok_or_else(|| anyhow!("Node not found"))?;
-        for edge in self
-            .dependency_graph
-            .edges_directed(index, petgraph::Direction::Incoming)
-        {
-            let importer = self.dependency_graph[edge.source()].clone();
-            importers.push(importer);
-        }
-        Ok(importers)
+        self.with_catalog_index(|index| index.importers(id))
     }
 
     /// Returns all importer paths that terminate at the given ontology.
@@ -4113,100 +3981,7 @@ impl OntoEnv {
     }
 
     pub fn explain_import(&self, id: &NamedNode) -> Result<ImportPaths> {
-        // Return either full import paths or partial paths for missing targets.
-        if let Some(target) = self.env.get_ontology_by_name(id.into()) {
-            let idx = self
-                .dependency_graph
-                .node_indices()
-                .find(|i| self.dependency_graph[*i] == *target.id())
-                .ok_or_else(|| anyhow!("Node not found"))?;
-            return Ok(ImportPaths::Present(
-                self.collect_import_paths_from_index(idx),
-            ));
-        }
-
-        let mut importers = Vec::new();
-        for ontology in self.env.ontologies().values() {
-            if ontology.imports.iter().any(|imp| imp == id) {
-                importers.push(ontology.id().clone());
-            }
-        }
-
-        if importers.is_empty() {
-            return Ok(ImportPaths::Missing {
-                importers: Vec::new(),
-            });
-        }
-
-        let mut paths: Vec<Vec<GraphIdentifier>> = Vec::new();
-        for importer in importers {
-            let maybe_idx = self
-                .dependency_graph
-                .node_indices()
-                .find(|i| self.dependency_graph[*i] == importer);
-            if let Some(idx) = maybe_idx {
-                let mut importer_paths = self.collect_import_paths_from_index(idx);
-                paths.append(&mut importer_paths);
-            } else {
-                paths.push(vec![importer.clone()]);
-            }
-        }
-
-        Ok(ImportPaths::Missing { importers: paths })
-    }
-
-    fn collect_import_paths_from_index(
-        &self,
-        target_idx: petgraph::graph::NodeIndex,
-    ) -> Vec<Vec<GraphIdentifier>> {
-        // DFS over incoming edges to find all importer chains.
-        let mut results: Vec<Vec<GraphIdentifier>> = Vec::new();
-        let mut path: Vec<GraphIdentifier> = Vec::new();
-        let mut seen: std::collections::HashSet<GraphIdentifier> = std::collections::HashSet::new();
-
-        fn dfs(
-            g: &petgraph::Graph<GraphIdentifier, (), petgraph::Directed>,
-            idx: petgraph::graph::NodeIndex,
-            path: &mut Vec<GraphIdentifier>,
-            seen: &mut std::collections::HashSet<GraphIdentifier>,
-            results: &mut Vec<Vec<GraphIdentifier>>,
-        ) {
-            let current = g[idx].clone();
-            if !seen.insert(current.clone()) {
-                // Avoid cycles in graphs with circular imports.
-                return;
-            }
-            path.push(current.clone());
-
-            let mut incoming = g
-                .neighbors_directed(idx, petgraph::Direction::Incoming)
-                .detach();
-
-            let mut has_incoming = false;
-            while let Some((_, src)) = incoming.next(g) {
-                has_incoming = true;
-                // Recurse toward importers (incoming edges).
-                dfs(g, src, path, seen, results);
-            }
-            if !has_incoming {
-                // Leaf reached; reverse to return path from root importer to target.
-                let mut p = path.clone();
-                p.reverse();
-                results.push(p);
-            }
-
-            path.pop();
-            seen.remove(&current);
-        }
-
-        dfs(
-            &self.dependency_graph,
-            target_idx,
-            &mut path,
-            &mut seen,
-            &mut results,
-        );
-        results
+        Ok(self.with_catalog_index(|index| index.explain_import(id)))
     }
 
     /// Returns the GraphViz dot representation of the dependency graph

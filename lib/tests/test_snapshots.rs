@@ -50,6 +50,154 @@ fn assert_value(snapshot: &EnvironmentSnapshot, id: &GraphIdentifier, value: &st
 }
 
 #[test]
+fn snapshot_catalog_queries_retain_aliases_closures_and_namespaces() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    let mut tx = writer.begin_update();
+    let b = tx.add_from_bytes(source("urn:b"), ttl("urn:b", "b"), Some(RdfFormat::Turtle))?;
+    tx.add_alias("urn:alias", "urn:b")?;
+    let a = tx.add_from_bytes(source("urn:a"), b"@prefix chosen: <urn:source:> . <urn:a> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:alias> .".to_vec(), Some(RdfFormat::Turtle))?;
+    tx.config_mut()
+        .namespaces
+        .insert("chosen".into(), "urn:bound:".into());
+    let old = tx.commit()?;
+    assert_eq!(old.get_closure(&a, -1)?, vec![a.clone(), b.clone()]);
+    assert_eq!(old.get_closure(&a, 0)?, vec![a.clone()]);
+    let alias = NamedNode::new("urn:alias")?;
+    assert_eq!(old.get_importers(&alias)?, vec![a.clone()]);
+    assert_eq!(
+        old.get_import_paths(&alias)?,
+        vec![vec![a.clone(), b.clone()]]
+    );
+    assert_eq!(old.get_namespaces(&a, true)?["chosen"], "urn:bound:");
+    let mut tx = writer.begin_update();
+    tx.remove_alias("urn:alias")?;
+    tx.replace_graph(&a, old.get_graph(&b)?)
+        .expect_err("different canonical IRI must be rejected");
+    tx.replace_graph(&a, Graph::new())?;
+    tx.config_mut()
+        .namespaces
+        .insert("chosen".into(), "urn:new:".into());
+    let current = tx.commit()?;
+    assert_eq!(current.get_closure(&a, -1)?, vec![a.clone()]);
+    assert_eq!(current.get_namespaces(&a, false)?["chosen"], "urn:new:");
+    assert_eq!(old.get_closure(&a, -1)?, vec![a.clone(), b.clone()]);
+    assert_eq!(old.get_import_paths(&alias)?, vec![vec![a, b]]);
+    Ok(())
+}
+
+#[test]
+fn strict_closure_checks_only_imports_within_requested_depth() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut cfg = config(dir.path());
+    cfg.strict = false;
+    let mut writer = SnapshotWriter::create(cfg.clone())?;
+    let mut tx = writer.begin_update();
+    let b = tx.add_from_bytes(source("urn:b"), b"<urn:b> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:missing> .".to_vec(), Some(RdfFormat::Turtle))?;
+    let a = tx.add_from_bytes(source("urn:a"), b"<urn:a> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:b> .".to_vec(), Some(RdfFormat::Turtle))?;
+    let permissive = tx.commit()?;
+    assert_eq!(permissive.get_closure(&a, -1)?, vec![a.clone(), b.clone()]);
+    cfg.strict = true;
+    let strict = writer.publish_config(cfg)?;
+    assert_eq!(strict.get_closure(&a, 0)?, vec![a.clone()]);
+    assert_eq!(strict.get_closure(&a, 1)?, vec![a.clone(), b.clone()]);
+    assert!(strict
+        .get_closure(&a, 2)
+        .unwrap_err()
+        .to_string()
+        .contains("urn:missing"));
+    assert!(
+        matches!(strict.explain_import(&NamedNode::new("urn:missing")?), ontoenv::api::ImportPaths::Missing { importers } if importers == vec![vec![a.clone(), b.clone()]])
+    );
+    let mut live = OntoEnv::open(dir.path().to_path_buf(), true)?;
+    assert_eq!(live.get_closure(&a, 1)?, strict.get_closure(&a, 1)?);
+    assert!(live.get_closure(&a, 2).is_err());
+    live.apply_config_overrides(&ontoenv::config::ConfigOverrides {
+        strict: Some(false),
+        ..Default::default()
+    })?;
+    assert_eq!(live.get_closure(&a, 2)?, vec![a.clone(), b]);
+    assert!(live.snapshot().unwrap().get_closure(&a, 2).is_err());
+    Ok(())
+}
+
+#[test]
+fn cyclic_import_paths_are_finite_and_keep_resolved_aliases() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    let mut tx = writer.begin_update();
+    let a = tx.add_from_bytes(source("urn:a"), b"<urn:a> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:alias-b> .".to_vec(), Some(RdfFormat::Turtle))?;
+    let b = tx.add_from_bytes(source("urn:b"), b"<urn:b> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:a> .".to_vec(), Some(RdfFormat::Turtle))?;
+    tx.add_alias("urn:alias-b", "urn:b")?;
+    let snapshot = tx.commit()?;
+    assert_eq!(snapshot.get_closure(&a, -1)?, vec![a.clone(), b.clone()]);
+    assert_eq!(
+        snapshot.get_import_paths(&NamedNode::new("urn:alias-b")?)?,
+        vec![vec![a, b]]
+    );
+    Ok(())
+}
+
+#[test]
+fn candidate_queries_include_staged_graphs_and_aliases_and_recover_after_abort() -> Result<()> {
+    use ontoenv::options::{Overwrite, RefreshStrategy};
+    let dir = tempfile::tempdir()?;
+    let mut env = OntoEnv::create(config(dir.path()), false)?;
+    let result: Result<()> = env.transaction(|env| {
+        let b = env.add_from_bytes_no_imports(source("urn:b"), ttl("urn:b", "b"), Some(RdfFormat::Turtle), Overwrite::Allow, RefreshStrategy::UseCache)?;
+        env.add_alias("urn:alias", "urn:b")?;
+        let a = env.add_from_bytes_no_imports(source("urn:a"), b"<urn:a> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:alias> .".to_vec(), Some(RdfFormat::Turtle), Overwrite::Allow, RefreshStrategy::UseCache)?;
+        assert_eq!(env.get_closure(&a, -1)?, vec![a.clone(), b]);
+        assert_eq!(env.get_importers(&NamedNode::new("urn:alias")?)?, vec![a]);
+        anyhow::bail!("abort candidate")
+    });
+    assert!(result.is_err());
+    assert!(env.ontologies().is_empty());
+    assert!(env.snapshot().unwrap().ontologies().is_empty());
+    assert!(env.get_importers(&NamedNode::new("urn:alias")?).is_err());
+    Ok(())
+}
+
+#[test]
+fn dataset_unions_keep_contexts_and_graph_projections_deduplicate() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = SnapshotWriter::create(config(dir.path()))?;
+    let mut tx = writer.begin_update();
+    let shared = "<urn:shared> <urn:p> <urn:object> .";
+    let a = tx.add_from_bytes(
+        source("urn:a"),
+        format!("<urn:a> a <http://www.w3.org/2002/07/owl#Ontology> . {shared}").into_bytes(),
+        Some(RdfFormat::Turtle),
+    )?;
+    let b = tx.add_from_bytes(
+        source("urn:b"),
+        format!("<urn:b> a <http://www.w3.org/2002/07/owl#Ontology> . {shared}").into_bytes(),
+        Some(RdfFormat::Turtle),
+    )?;
+    let empty = tx.add_from_bytes(
+        source("urn:empty"),
+        ttl("urn:empty", "empty"),
+        Some(RdfFormat::Turtle),
+    )?;
+    tx.replace_graph(&empty, Graph::new())?;
+    let snapshot = tx.commit()?;
+    let ids = [a.clone(), b, a, empty.clone()];
+    let dataset = snapshot.copy_dataset(&ids)?;
+    let graph = snapshot.copy_union(&ids)?;
+    assert_eq!(dataset.len(), 4);
+    assert_eq!(graph.len(), 3);
+    assert_eq!(snapshot.graph_view(&empty)?.triple_count()?, 0);
+    assert!(snapshot.copy_dataset(&[])?.is_empty());
+    assert!(snapshot.copy_union(&[])?.is_empty());
+    let missing = GraphIdentifier::new_with_location(
+        NamedNode::new("urn:missing")?.as_ref(),
+        source("urn:missing"),
+    );
+    assert!(snapshot.copy_dataset(&[empty, missing]).is_err());
+    Ok(())
+}
+
+#[test]
 fn readers_pin_generations_while_writer_remains_open() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut writer = SnapshotWriter::create(config(dir.path()))?;

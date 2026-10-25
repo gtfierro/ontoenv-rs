@@ -109,6 +109,36 @@ fn default_graph_is_union_of_named_graphs() -> Result<(), QueryEvaluationError> 
 }
 
 #[test]
+fn default_union_deduplicates_across_distinct_named_graphs() -> Result<(), QueryEvaluationError> {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("duplicate-contexts.r5tu");
+    let quints: Vec<_> = ["urn:a", "urn:b"]
+        .into_iter()
+        .map(|name| Quint {
+            id: name.into(),
+            s: Term::Iri("urn:s".into()),
+            p: Term::Iri("urn:p".into()),
+            o: Term::Iri("urn:o".into()),
+            gname: name.into(),
+        })
+        .collect();
+    write_file(&path, &quints).expect("write fixture");
+    let snap = Snapshot::open(&path).expect("open fixture");
+    let mut query = SparqlParser::new()
+        .parse_query("SELECT ?s WHERE { ?s ?p ?o }")
+        .expect("parse");
+    assert_eq!(solution_subjects(snap.query(&mut query)?)?, vec!["<urn:s>"]);
+    let mut query = SparqlParser::new()
+        .parse_query("SELECT ?s WHERE { GRAPH ?g { ?s ?p ?o } }")
+        .expect("parse");
+    assert_eq!(
+        solution_subjects(snap.query(&mut query)?)?,
+        vec!["<urn:s>", "<urn:s>"]
+    );
+    Ok(())
+}
+
+#[test]
 fn logical_view_dedups_triples_across_shared_name() -> Result<(), QueryEvaluationError> {
     // The same triple is written under two datasets that share one graph name,
     // so it lives in two physical gids. The logical view must surface it once.
