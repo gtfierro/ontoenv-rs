@@ -4333,7 +4333,7 @@ impl OntoEnv {
             }
             let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only);
             let explicit_adopt = EXPLICIT_ADOPT.with(Cell::get);
-            let env = if recover {
+            let mut env = if recover {
                 OntoEnvRs::recover_with_graph_io(cfg, Box::new(io))
             } else if let Some(sync) = connect_sync {
                 OntoEnvRs::connect_with_graph_io_resolved(cfg, Box::new(io), sync, read_only)

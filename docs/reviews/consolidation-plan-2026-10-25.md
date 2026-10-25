@@ -6,7 +6,8 @@ The first Phase 1 slice is implemented on `refactor/graph-io-capabilities`; see
 `api-contract-inventory-2026-10-25.md`. The Phase 2 query slice implements shared
 catalog traversal and immutable graph/closure/union/dataset queries. The backing
 comparison is recorded in `snapshot-backing-profile-2026-10-25.md`.
-Managed-state consolidation and final public API pruning remain.
+Managed-state consolidation is implemented and locally validated (265 Rust and
+101 Python tests plus a normal-API workload). Final public API pruning remains.
 
 ## Objective
 

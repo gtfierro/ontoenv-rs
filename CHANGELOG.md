@@ -51,6 +51,14 @@ All notable changes to this project are documented here. Releases follow [Semant
   `prefix()` work on them.
 
 ### Changed
+- Managed updates share one candidate containing catalog, configuration and
+  staged graph changes. Nested failures restore that candidate as a unit;
+  publication retains the outer checkpoint until success. Idle managed handles
+  read metadata directly from their selected snapshot. Obsolete dependency
+  caches and the managed metadata-only rollback layer are removed.
+- Managed publication/refresh/cleanup no longer use optional `GraphIO` hooks;
+  use `OntoEnv` or the snapshot reader/writer for those operations. Rust
+  `save_to_directory` now requires a mutable handle.
 - Closure queries share one catalog traversal, including pending updates and
   immutable snapshots. Strict queries do not inspect imports beyond their depth
   limit; namespace conflicts across the whole catalog use canonical IRI order.

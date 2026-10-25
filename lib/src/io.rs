@@ -370,36 +370,11 @@ fn r5tu_union_graph(
 }
 
 pub trait GraphIO: Send + Sync {
-    /// Reclaim unreferenced managed snapshots, preserving live reader ownership.
-    fn prune_snapshots(&mut self) -> Result<crate::snapshots::PruneReport> {
-        anyhow::bail!("Cleanup requires a managed snapshot writer")
-    }
-    /// Managed immutable environment selected by this backend, if supported.
-    fn environment_snapshot(
-        &self,
-    ) -> Option<std::sync::Arc<crate::snapshots::EnvironmentSnapshot>> {
-        None
-    }
-
-    /// Publish staged graphs and metadata together. True means persistence was
-    /// handled here rather than through the legacy independent catalog files.
-    fn publish_environment(
-        &self,
-        _env: &crate::environment::Environment,
-        _config: &crate::config::Config,
-    ) -> Result<bool> {
-        Ok(false)
-    }
-
     /// Discard the current nested batch's staged graph changes.
     fn abort_batch(&mut self) -> Result<()> {
         Ok(())
     }
 
-    /// Select the latest immutable environment, without updating source files.
-    fn refresh_environment(&mut self) -> Result<bool> {
-        anyhow::bail!("This backend does not expose immutable environment refresh")
-    }
     /// Returns true if the store is offline; if this is true, then the store
     /// will not fetch any data from the internet
     fn is_offline(&self) -> bool;

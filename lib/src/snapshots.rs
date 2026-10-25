@@ -319,6 +319,10 @@ impl SnapshotReader {
         Arc::clone(&self.current)
     }
 
+    pub(crate) fn selected(&self) -> &EnvironmentSnapshot {
+        &self.current
+    }
+
     /// Compare with committed head without changing this reader's snapshot.
     pub fn is_current(&self) -> Result<bool> {
         let head = read_head(&self.directory)?;
@@ -575,17 +579,18 @@ impl SnapshotWriter {
         Arc::clone(&self.current)
     }
 
+    pub(crate) fn selected(&self) -> &EnvironmentSnapshot {
+        &self.current
+    }
+
     /// Start a copy-on-write update: only small catalog/config values are cloned.
     /// Untouched graph contents remain in the base snapshot's mapped RDF5D file.
     /// After a publication error, commits are rejected until the writer is reopened.
     pub fn begin_update(&mut self) -> SnapshotUpdate<'_> {
-        let environment = self.current.environment.clone();
-        let config = self.current.config.clone();
+        let candidate = SnapshotCandidate::from_snapshot(&self.current);
         SnapshotUpdate {
             writer: self,
-            environment,
-            config,
-            changes: BTreeMap::new(),
+            candidate,
             validate_imports: true,
         }
     }
@@ -593,23 +598,41 @@ impl SnapshotWriter {
     /// Publish only configuration, preserving graph/catalog contents. This
     /// validates settings without reinterpreting previously bounded imports.
     pub fn publish_config(&mut self, config: Config) -> Result<Arc<EnvironmentSnapshot>> {
-        self.publish_state(self.current.environment.clone(), config, BTreeMap::new())
+        let mut candidate = SnapshotCandidate::from_snapshot(&self.current);
+        candidate.config = config;
+        self.publish_candidate(candidate)
     }
 
-    pub(crate) fn publish_state(
+    pub(crate) fn publish_candidate(
         &mut self,
-        environment: Environment,
-        config: Config,
-        changes: BTreeMap<String, Option<Arc<StagedGraph>>>,
+        candidate: SnapshotCandidate,
     ) -> Result<Arc<EnvironmentSnapshot>> {
-        let mut update = self.begin_update();
-        update.environment = environment;
-        update.config = config;
-        update.changes = changes;
-        // The normal import pipeline applies strictness and explicit depth
-        // limits before publishing. Do not re-fetch or reinterpret those limits.
-        update.validate_imports = false;
-        update.commit()
+        // The source pipeline already applied strictness and explicit depth limits.
+        SnapshotUpdate {
+            writer: self,
+            candidate,
+            validate_imports: false,
+        }
+        .commit()
+    }
+}
+
+/// The sole mutable candidate, shared by source operations and direct updates.
+/// Checkpoints clone catalog/configuration; staged graph buffers stay shared.
+#[derive(Clone)]
+pub(crate) struct SnapshotCandidate {
+    pub environment: Environment,
+    pub config: Config,
+    pub changes: BTreeMap<String, Option<Arc<StagedGraph>>>,
+}
+
+impl SnapshotCandidate {
+    pub(crate) fn from_snapshot(snapshot: &EnvironmentSnapshot) -> Self {
+        Self {
+            environment: snapshot.environment.clone(),
+            config: snapshot.config.clone(),
+            changes: BTreeMap::new(),
+        }
     }
 }
 
@@ -619,22 +642,20 @@ impl SnapshotWriter {
 /// discards its overlay, including previously successful graph ingestions.
 pub struct SnapshotUpdate<'a> {
     writer: &'a mut SnapshotWriter,
-    environment: Environment,
-    config: Config,
-    changes: BTreeMap<String, Option<Arc<StagedGraph>>>,
+    candidate: SnapshotCandidate,
     validate_imports: bool,
 }
 
 impl SnapshotUpdate<'_> {
     /// Inspect candidate metadata without exposing mutable persistence state.
     pub fn environment(&self) -> &Environment {
-        &self.environment
+        &self.candidate.environment
     }
 
     /// Edit persistent settings in the same transaction as graphs and aliases.
     /// Storage root, temporary mode and external-backend changes are rejected.
     pub fn config_mut(&mut self) -> &mut Config {
-        &mut self.config
+        &mut self.candidate.config
     }
 
     // Only metadata derived from the candidate graph can enter the catalog.
@@ -645,6 +666,7 @@ impl SnapshotUpdate<'_> {
         let id = ontology.id().clone();
         let name = id.name().as_str().to_owned();
         let old_ids: Vec<_> = self
+            .candidate
             .environment
             .ontologies()
             .keys()
@@ -653,6 +675,7 @@ impl SnapshotUpdate<'_> {
             .collect();
         // Preserve explicit aliases when replacing metadata/location for an IRI.
         let aliases: Vec<_> = self
+            .candidate
             .environment
             .aliases()
             .iter()
@@ -663,15 +686,17 @@ impl SnapshotUpdate<'_> {
             if old.name() != id.name() {
                 // A source that changes its declared IRI must not leave its old
                 // graph or source-location index behind in the new generation.
-                self.changes.insert(old.name().as_str().to_owned(), None);
+                self.candidate
+                    .changes
+                    .insert(old.name().as_str().to_owned(), None);
             }
-            self.environment.remove_ontology(&old)?;
+            self.candidate.environment.remove_ontology(&old)?;
         }
-        self.environment.add_ontology(ontology)?;
+        self.candidate.environment.add_ontology(ontology)?;
         for alias in aliases {
-            self.environment.add_alias(&alias, &name)?;
+            self.candidate.environment.add_alias(&alias, &name)?;
         }
-        self.changes.insert(name, Some(Arc::new(graph)));
+        self.candidate.changes.insert(name, Some(Arc::new(graph)));
         Ok(id)
     }
 
@@ -679,13 +704,13 @@ impl SnapshotUpdate<'_> {
     /// Empty graphs retain their identifier but have no imports or RDF metadata.
     /// A different declared ontology IRI requires removing and adding the graph.
     pub fn replace_graph(&mut self, id: &GraphIdentifier, graph: Graph) -> Result<()> {
-        if !self.environment.ontologies().contains_key(id) {
+        if !self.candidate.environment.ontologies().contains_key(id) {
             bail!("Graph {id} is not present in the candidate");
         }
         let mut ontology = Ontology::from_graph(
             &graph,
             id.location().clone(),
-            !graph.is_empty() && self.config.require_ontology_names,
+            !graph.is_empty() && self.candidate.config.require_ontology_names,
         )?;
         if graph.is_empty() {
             ontology.set_iri(id.name().into_owned());
@@ -703,8 +728,8 @@ impl SnapshotUpdate<'_> {
     /// Fetch and stage one source. Imports are validated at commit, not fetched
     /// recursively; stage their sources in the same update when strict is enabled.
     pub fn add_source(&mut self, location: OntologyLocation) -> Result<GraphIdentifier> {
-        let location = normalize_source_location(location, &self.config.root);
-        let (bytes, format) = fetch_source(&location, self.config.offline)?;
+        let location = normalize_source_location(location, &self.candidate.config.root);
+        let (bytes, format) = fetch_source(&location, self.candidate.config.offline)?;
         self.add_from_bytes(location, bytes, format)
     }
 
@@ -715,9 +740,13 @@ impl SnapshotUpdate<'_> {
         bytes: Vec<u8>,
         format: Option<RdfFormat>,
     ) -> Result<GraphIdentifier> {
-        let location = normalize_source_location(location, &self.config.root);
-        let parsed =
-            parse_ontology_source(location, bytes, format, self.config.require_ontology_names)?;
+        let location = normalize_source_location(location, &self.candidate.config.root);
+        let parsed = parse_ontology_source(
+            location,
+            bytes,
+            format,
+            self.candidate.config.require_ontology_names,
+        )?;
         let crate::io::ParsedOntology {
             ontology,
             triples,
@@ -730,10 +759,10 @@ impl SnapshotUpdate<'_> {
 
     /// Read staged contents, falling through to the mapped base for untouched graphs.
     pub fn get_graph(&self, id: &GraphIdentifier) -> Result<Graph> {
-        if !self.environment.ontologies().contains_key(id) {
+        if !self.candidate.environment.ontologies().contains_key(id) {
             bail!("Graph {id} is not present in the candidate");
         }
-        match self.changes.get(id.name().as_str()) {
+        match self.candidate.changes.get(id.name().as_str()) {
             Some(Some(graph)) => Ok(graph.to_graph()),
             Some(None) => bail!("Graph {id} is deleted in the candidate"),
             None => self.writer.current.get_graph(id),
@@ -742,21 +771,23 @@ impl SnapshotUpdate<'_> {
 
     /// Delete both graph contents and metadata. Returns whether the graph existed.
     pub fn remove(&mut self, id: &GraphIdentifier) -> Result<bool> {
-        if self.environment.remove_ontology(id)?.is_none() {
+        if self.candidate.environment.remove_ontology(id)?.is_none() {
             return Ok(false);
         }
-        self.changes.insert(id.name().as_str().to_owned(), None);
+        self.candidate
+            .changes
+            .insert(id.name().as_str().to_owned(), None);
         Ok(true)
     }
 
     /// Stage an alias without independently publishing catalog changes.
     pub fn add_alias(&mut self, alias: &str, canonical_iri: &str) -> Result<()> {
-        self.environment.add_alias(alias, canonical_iri)
+        self.candidate.environment.add_alias(alias, canonical_iri)
     }
 
     /// Remove an alias in the private candidate.
     pub fn remove_alias(&mut self, alias: &str) -> Result<()> {
-        self.environment.remove_alias(alias)?;
+        self.candidate.environment.remove_alias(alias)?;
         Ok(())
     }
 
@@ -796,17 +827,22 @@ impl SnapshotUpdate<'_> {
             .generation
             .checked_add(1)
             .context("Generation counter exhausted")?;
-        let (object_id, object_length, rdf) = if self.changes.is_empty() {
+        let (object_id, object_length, rdf) = if self.candidate.changes.is_empty() {
             (
                 base.object_id.clone(),
                 base.object_length,
                 Arc::clone(&base.rdf),
             )
         } else {
-            write_object(&self.writer.directory, Some(&base.rdf), &self.changes)?
+            write_object(
+                &self.writer.directory,
+                Some(&base.rdf),
+                &self.candidate.changes,
+            )?
         };
-        self.environment
-            .set_default_policy(&self.config.resolution_policy)?;
+        self.candidate
+            .environment
+            .set_default_policy(&self.candidate.config.resolution_policy)?;
         let generation = Generation {
             schema_version: SCHEMA_VERSION,
             info: SnapshotInfo {
@@ -818,8 +854,8 @@ impl SnapshotUpdate<'_> {
             },
             object_id,
             object_length,
-            environment: self.environment,
-            config: self.config,
+            environment: self.candidate.environment,
+            config: self.candidate.config,
         };
         // Prepare the complete in-process snapshot before the publication point.
         let snapshot = snapshot_from_generation(generation, rdf);
@@ -834,18 +870,19 @@ impl SnapshotUpdate<'_> {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.config.root != self.writer.current.config.root
-            || self.config.temporary
-            || self.config.external_graph_store.is_some()
+        if self.candidate.config.root != self.writer.current.config.root
+            || self.candidate.config.temporary
+            || self.candidate.config.external_graph_store.is_some()
         {
             bail!("An update cannot change storage root, temporary mode or graph backend");
         }
-        self.config.build_globsets()?;
-        self.config.build_ontology_regexes()?;
-        if self.config.strict && self.validate_imports {
-            for ontology in self.environment.ontologies().values() {
+        self.candidate.config.build_globsets()?;
+        self.candidate.config.build_ontology_regexes()?;
+        if self.candidate.config.strict && self.validate_imports {
+            for ontology in self.candidate.environment.ontologies().values() {
                 for import in &ontology.imports {
                     if self
+                        .candidate
                         .environment
                         .get_ontology_by_name(import.as_ref())
                         .is_none()
@@ -856,10 +893,10 @@ impl SnapshotUpdate<'_> {
             }
         }
         // Validate the policy before writing an immutable object.
-        if crate::policy::policy_from_name(&self.config.resolution_policy).is_none() {
+        if crate::policy::policy_from_name(&self.candidate.config.resolution_policy).is_none() {
             bail!(
                 "Unknown resolution policy: {}",
-                self.config.resolution_policy
+                self.candidate.config.resolution_policy
             );
         }
         Ok(())

@@ -215,6 +215,92 @@ fn failed_recursive_import_rolls_back_graphs_metadata_and_head() -> Result<()> {
 }
 
 #[test]
+fn publication_error_restores_catalog_graphs_and_preexisting_settings() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut env = OntoEnv::create(config(dir.path()), false)?;
+    add(&mut env, "urn:existing", "old")?;
+    let selected = env.snapshot().unwrap();
+    env.bind_namespace("before", "urn:before:");
+    let manifests = dir.path().join(".ontoenv-snapshots/manifests");
+    let saved = dir.path().join("saved-manifests");
+    std::fs::rename(&manifests, &saved)?;
+    std::fs::write(&manifests, b"block manifest creation")?;
+    let result = env.transaction(|env| {
+        add(env, "urn:discard", "discard")?;
+        env.bind_namespace("discard", "urn:discard:");
+        env.set_offline(false);
+        Ok(())
+    });
+    assert!(result.is_err());
+    assert_eq!(env.snapshot().unwrap().info(), selected.info());
+    assert_eq!(env.ontologies().len(), 1);
+    assert_eq!(env.io().graph_ids()?.len(), 1);
+    assert!(env.is_offline());
+    assert_eq!(env.bound_namespaces()["before"], "urn:before:");
+    assert!(!env.bound_namespaces().contains_key("discard"));
+    // A publisher error remains conservative: reopen before another mutation.
+    assert!(add(&mut env, "urn:retry", "discard").is_err());
+    std::fs::remove_file(&manifests)?;
+    std::fs::rename(&saved, &manifests)?;
+    drop(env);
+    let mut reopened = OntoEnv::open(dir.path().to_path_buf(), false)?;
+    assert_eq!(reopened.ontologies().len(), 1);
+    assert!(!reopened.bound_namespaces().contains_key("before"));
+    add(&mut reopened, "urn:retry", "ok")?;
+    Ok(())
+}
+
+#[test]
+fn reader_overrides_are_session_settings_and_refresh_does_not_stage_writes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut writer = OntoEnv::create(config(dir.path()), false)?;
+    add(&mut writer, "urn:a", "old")?;
+    let mut reader = OntoEnv::open(dir.path().to_path_buf(), true)?;
+    let old = reader.snapshot().unwrap();
+    reader.set_strict(false);
+    reader.set_offline(false);
+    reader.set_resolution_policy("latest".into())?;
+    assert!(!reader.is_strict());
+    assert!(!reader.io().is_offline());
+    assert!(reader.snapshot().unwrap().config().strict);
+    assert_eq!(old.config().resolution_policy, "default");
+    add(&mut writer, "urn:a", "new")?;
+    assert!(reader.refresh()?);
+    assert!(reader.is_strict());
+    assert!(reader.is_offline());
+    assert_eq!(reader.resolution_policy(), "default");
+    let id = old.resolve(NamedNode::new("urn:a")?.as_ref()).unwrap();
+    assert!(old
+        .get_graph(&id)?
+        .iter()
+        .any(|t| t.object.to_string() == "\"old\""));
+    Ok(())
+}
+
+#[test]
+fn unchanged_reopen_settings_do_not_create_a_pending_update() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    {
+        let mut writer = OntoEnv::create(config(dir.path()), false)?;
+        add(&mut writer, "urn:a", "value")?;
+    }
+    let mut writer = OntoEnv::connect(config(dir.path()), ConnectSync::Auto, false)?;
+    let generation = writer.snapshot().unwrap().info().generation;
+    assert!(
+        !writer.apply_config_overrides(&ontoenv::config::ConfigOverrides {
+            strict: Some(true),
+            offline: Some(true),
+            ..Default::default()
+        })?
+    );
+    writer.prune()?;
+    assert!(!writer.refresh()?);
+    writer.flush()?;
+    assert_eq!(writer.snapshot().unwrap().info().generation, generation);
+    Ok(())
+}
+
+#[test]
 fn migration_is_explicit_preserves_legacy_and_publishes_a_complete_generation() -> Result<()> {
     let dir = tempfile::tempdir()?;
     legacy_fixture(dir.path())?;

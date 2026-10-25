@@ -37,8 +37,10 @@ legacy RDF5D union paths remain intact.
 
 The `ensure_loaded` trait hook is removed: legacy implementations already handle
 loading privately in their graph operations. Managed `flush` is explicitly a
-backend no-op, including builds with the RocksDB feature; complete publication
-and flushing remain in `publish_environment`.
+backend no-op, including builds with the RocksDB feature. Complete publication
+and flushing now belong to the concrete managed candidate path; Phase 4 removes
+the optional `GraphIO::publish_environment`, snapshot, refresh and prune hooks.
+Use `OntoEnv`/snapshot handles for those lifecycle operations.
 
 ### Migrating Rust adapters
 

@@ -95,6 +95,7 @@
 extern crate derive_builder;
 
 pub mod api;
+mod backend;
 pub mod catalog;
 mod catalog_queries;
 pub mod config;

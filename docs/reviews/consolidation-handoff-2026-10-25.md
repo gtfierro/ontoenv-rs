@@ -8,8 +8,9 @@ The first Phase 1 slice is implemented on `refactor/graph-io-capabilities`:
 fallible raw Oxigraph capability, scratch-store removal, contract documentation,
 API inventory and regression coverage. The Phase 2 query slice now adds shared
 catalog traversal, immutable snapshot queries and scoped dataset unions. The
-backing experiment, managed-state rewrite and final API pruning remain. Do not
-treat context reset as permission to discard the working tree.
+backing comparison is complete and committed in `a601eca`. The managed-state
+rewrite is implemented and validated; API pruning remains. Do
+not treat context reset as permission to discard the working tree.
 
 ## Latest workflow instruction
 
@@ -20,14 +21,7 @@ more branches/PRs or push intermediate phases. Phase 1 was already pushed and
 draft PR #38 was created before that steering arrived; #38 is now closed. PR #36
 and its storage branch remain untouched. Local commits are suitable checkpoints.
 
-The user answered the memory question: aim for approximately 512 MB across the
-reader processes, with possible configurability later. This is a sizing target,
-not a hard allocation limit. Measure aggregate physical memory; mmap may reclaim
-file-backed pages at a latency cost, while private indexes/results still consume
-RAM. No product memory-control API has been selected. Continue snapshot-query
-work and the backing experiment; latency budgets remain open.
-
-LATEST STEERING: the user subsequently clarified that memory limits are not a
+The user clarified that memory limits are not a
 current priority. The 512 MB estimate was rough and must not become a gating
 requirement. Resume the original consolidation with a simple, working,
 performant implementation. Defer the separately proposed query-index memory
@@ -72,9 +66,9 @@ Read `docs/reviews/consolidation-plan-2026-10-25.md` in this worktree.
 - Dataset APIs must use the same view/copy model as graphs. Allow dataset
   results for graph unions, with explicit named-graph and duplicate semantics.
   Exact names/return-type choices should be settled in the Phase 1 proposal.
-- Target aggregate reader memory is approximately 512 MB. Latency budgets and
-  measured feasibility remain open before selecting owned bytes versus mmap.
-  That experiment is not authorized to assume owned bytes win.
+- Memory measurements are advisory. Keep the existing backing/pinning model;
+  do not chase the rough 512 MB estimate or start the separate index-memory
+  project. Prioritize a simple working implementation and ordinary performance.
 - Preserve existing flushing. Windows power-loss guarantees remain a separate
   release decision. Retaining an older file does not establish recovery.
 - No merge, release or tag has been requested.
@@ -203,3 +197,40 @@ paths. Preserve the existing backing, pins and durability barriers. Do not chase
 the advisory memory estimate or add a memory-limit API. The profile found
 whole-store query-index costs, but the user explicitly deprioritized that
 separate optimization in favor of finishing the simple working implementation.
+
+## Phase 4 working slice
+
+- Private `Backend` in `lib/src/backend.rs` distinguishes managed storage from
+  adapters. `OntoEnv` no longer owns a second environment/config copy. Managed
+  idle reads borrow the selected `EnvironmentSnapshot` directly.
+- `SnapshotCandidate` owns environment, configuration and staged graph changes.
+  Both normal source operations and `SnapshotUpdate` use it and the same writer
+  publication path. Managed nesting checkpoints this complete candidate once;
+  the outer checkpoint remains until publication succeeds.
+- `SnapshotGraphIO` no longer needs a mutex, separate graph-only checkpoints or
+  per-pending-graph metadata copies. Mutation uses ordinary exclusive Rust
+  borrowing. Session-only reader config overrides are explicitly separate.
+- Removed unused dependency graph/index caches from `OntoEnv` and its rollback
+  state. Source import loading/validation remains; read indexes derive from the
+  captured catalog. Adapter-only metadata rollback is `AdapterCheckpoint`.
+- Managed lifecycle hooks were removed from public `GraphIO`; the concrete
+  backend handles snapshot, refresh, publication and prune. `save_to_directory`
+  now takes `&mut self`; retained Rust/Python/CLI callers have been migrated.
+- New regressions cover publication failure restoring preexisting settings,
+  graphs and catalog together; reader overrides followed by refresh; and
+  unchanged configuration not creating a spurious pending update.
+- A normal ~14 MB Python workload passed counts, queries, retained views and
+  iterators, alias publication, parse rollback and retry. The tracked artifact is
+  `consolidation-state-workload-2026-10-25.json` (working tree based on `a601eca`).
+  Initial import was ~961 ms, one-source full-file publication ~1,028 ms and
+  reader refresh ~32 ms in this warm-cache diagnostic; these are not SLOs.
+- Local validation after the no-op configuration fix: 265 release Rust
+  tests/doctests passed (eight ignored), 101 targeted rebuilt-wheel Python tests
+  passed (34 rdflib/deprecation warnings), all-target/all-feature release clippy
+  and formatting/diff checks passed. Logs:
+  `/tmp/ontoenv-consolidation-state-{workspace,python,clippy}.log`.
+
+Then continue Phase 5 cleanup: remove obsolete public aliases/constructor flags,
+keep adapters and maintenance distinct, and document the primary view/copy and
+mutation workflow. Preserve useful temporary and custom-store behavior. No
+memory-limit API, backing switch or durability change is part of this work.
