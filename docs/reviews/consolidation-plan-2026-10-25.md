@@ -5,7 +5,8 @@ dataset decisions. Baseline: `ca26407`, after the owned-view work in PR #36.
 The first Phase 1 slice is implemented on `refactor/graph-io-capabilities`; see
 `api-contract-inventory-2026-10-25.md`. The Phase 2 query slice implements shared
 catalog traversal and immutable graph/closure/union/dataset queries. The backing
-experiment, managed-state consolidation and final public API pruning remain.
+comparison is recorded in `snapshot-backing-profile-2026-10-25.md`.
+Managed-state consolidation and final public API pruning remain.
 
 ## Objective
 
@@ -39,16 +40,16 @@ or a new query engine during this consolidation.
 | --- | --- | --- |
 | Public API compatibility | Allow breaking API cleanup in unreleased 0.7. Remove misleading contracts and redundant entry points; provide migration guidance instead of mandatory compatibility wrappers. | Confirmed by user. |
 | Workload envelope | Approximately 14 MB encoded is representative; approximately 100 MB is the high end, with fewer than ten simultaneous reader processes. | Confirmed by user; use nine readers for the upper-bound experiment. |
-| Aggregate reader memory | Aim for approximately 512 MB across the reader processes at the upper workload. | User-provided sizing target; not a hard allocator limit. Measure indexes, query results and retained versions as well as encoded bytes. |
-| Snapshot backing | Compare owned encoded bytes with mmap using the same codec, queries and workloads. Select one default implementation after measurement. | Experiment required. |
+| Aggregate reader memory | Record measured costs; defer memory limits and budget-driven optimization. | User clarified that the rough 512 MB estimate is advisory and must not gate consolidation or release. Prioritize a simple, working, performant implementation. |
+| Snapshot backing | Keep the existing backing and lifetime-pin approach. | Linux comparison complete: mmap materially reduces multiprocess duplication; switching to owned bytes does not simplify query-index costs. No product backing toggle or protocol change. |
 | Durability | Preserve existing flushing during refactoring. Specify process-crash behavior separately from power-loss recovery and latest-update persistence. | A release decision remains; this plan does not strengthen Windows guarantees. |
 
-The aggregate reader memory target is approximately 512 MB. Startup/query latency
-budgets remain open. Distinguish this sizing target from a configurable cache
-budget or an enforceable process limit. Mapped file pages can be reclaimed and
-faulted back in by the OS; heap allocations and retained query results still
-consume memory. A product budget setting would need a defined scope and failure
-contract, and is not part of this consolidation by default.
+The user explicitly deprioritized the earlier rough 512 MB estimate. Memory
+measurements remain diagnostics, not an acceptance ceiling or a reason to add
+a memory manager. Defer configurable limits and a separate query-index memory
+project. Continue the approved state/API simplification with ordinary performance
+checks. Keep Windows' existing owned fallback and the existing durability
+barriers; Linux measurements do not establish Windows working-set guarantees.
 
 API cleanup does not change the data-migration requirements or owned-view
 guarantees. Preserve those while changing method names, types and capabilities.
@@ -198,7 +199,8 @@ writer overhead. Cloned views of the same buffer share it. These arithmetic
 estimates are not measured RSS or total-memory predictions; the aggregate-memory
 experiment must include both the usual single-version case and retained versions.
 
-Decision rule:
+Original experiment decision rule (the later user clarification above supersedes
+budget-driven gating):
 
 - If owned bytes meet the agreed workload budgets, prefer their simpler file
   lifetime model and one platform-independent default.
@@ -299,6 +301,5 @@ point. Passing tests alone is not evidence that consolidation succeeded.
 No merge or release is implied by this plan. The first Phase 1 deliverable is
 the contract inventory and the implemented fallible `oxigraph_store()` boundary,
 using the approved 0.7 breaking-change scope. The deployment
-latency budget, measured memory feasibility and Windows durability contract remain decisions to resolve
-before backing selection and release, respectively; they do not block the
-contract inventory.
+Windows durability contract remains a release decision. The advisory memory
+estimate does not block implementation, integration or release.

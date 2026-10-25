@@ -1,0 +1,883 @@
+{
+  "revision": "f73c67b2370033e10ebc4a81f5e862db8f14d767",
+  "raw_artifact": "snapshot-backing-profile-2026-10-25.json.gz",
+  "raw_sha256": "63e7389bee59ac3b7410b98d2ce5def7d07233422fa1f485b6bd149e71354bb8",
+  "cases": [
+    {
+      "nodes": 350,
+      "readers": 1,
+      "mode": "mmap",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 53.61,
+          "range_mib": [
+            53.61,
+            53.62
+          ]
+        },
+        "queried": {
+          "mean_mib": 140.35,
+          "range_mib": [
+            140.35,
+            140.36
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 223.97,
+          "range_mib": [
+            223.97,
+            223.97
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 307.54,
+          "range_mib": [
+            307.53,
+            307.54
+          ]
+        },
+        "release": {
+          "mean_mib": 240.68,
+          "range_mib": [
+            240.67,
+            240.68
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 127.99,
+          "range_mib": [
+            127.97,
+            128.0
+          ]
+        },
+        "close": {
+          "mean_mib": 94.05,
+          "range_mib": [
+            94.04,
+            94.07
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 44.09,
+          "range_mib": [
+            44.08,
+            44.1
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.22,
+        "first_graph_query_ms": 173.54,
+        "closure_ms": 151.31,
+        "first_closure_query_ms": 20.46,
+        "path_query_ms": 17.25,
+        "open_ms": 31.29,
+        "warm_query_ms": 16.48
+      }
+    },
+    {
+      "nodes": 350,
+      "readers": 1,
+      "mode": "owned",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 52.3,
+          "range_mib": [
+            52.29,
+            52.3
+          ]
+        },
+        "queried": {
+          "mean_mib": 139.02,
+          "range_mib": [
+            139.01,
+            139.03
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 222.64,
+          "range_mib": [
+            222.63,
+            222.65
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 306.21,
+          "range_mib": [
+            306.21,
+            306.21
+          ]
+        },
+        "release": {
+          "mean_mib": 253.05,
+          "range_mib": [
+            253.05,
+            253.05
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 126.67,
+          "range_mib": [
+            126.66,
+            126.67
+          ]
+        },
+        "close": {
+          "mean_mib": 106.42,
+          "range_mib": [
+            106.41,
+            106.42
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 42.76,
+          "range_mib": [
+            42.75,
+            42.77
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.21,
+        "first_graph_query_ms": 171.94,
+        "closure_ms": 149.37,
+        "first_closure_query_ms": 20.55,
+        "path_query_ms": 17.07,
+        "open_ms": 38.83,
+        "warm_query_ms": 16.42
+      }
+    },
+    {
+      "nodes": 350,
+      "readers": 4,
+      "mode": "mmap",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 114.62,
+          "range_mib": [
+            114.61,
+            114.63
+          ]
+        },
+        "queried": {
+          "mean_mib": 455.72,
+          "range_mib": [
+            455.69,
+            455.75
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 749.1,
+          "range_mib": [
+            749.08,
+            749.13
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 1042.35,
+          "range_mib": [
+            1042.32,
+            1042.38
+          ]
+        },
+        "release": {
+          "mean_mib": 857.1,
+          "range_mib": [
+            857.07,
+            857.14
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 405.82,
+          "range_mib": [
+            405.7,
+            405.94
+          ]
+        },
+        "close": {
+          "mean_mib": 311.14,
+          "range_mib": [
+            311.03,
+            311.25
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 111.22,
+          "range_mib": [
+            111.2,
+            111.23
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.23,
+        "first_graph_query_ms": 179.11,
+        "closure_ms": 156.37,
+        "first_closure_query_ms": 20.74,
+        "path_query_ms": 17.27,
+        "open_ms": 31.43,
+        "warm_query_ms": 16.71
+      }
+    },
+    {
+      "nodes": 350,
+      "readers": 4,
+      "mode": "owned",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 154.42,
+          "range_mib": [
+            154.41,
+            154.42
+          ]
+        },
+        "queried": {
+          "mean_mib": 495.5,
+          "range_mib": [
+            495.48,
+            495.52
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 829.95,
+          "range_mib": [
+            829.93,
+            829.97
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 1164.24,
+          "range_mib": [
+            1164.22,
+            1164.26
+          ]
+        },
+        "release": {
+          "mean_mib": 951.59,
+          "range_mib": [
+            951.57,
+            951.6
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 445.46,
+          "range_mib": [
+            445.41,
+            445.5
+          ]
+        },
+        "close": {
+          "mean_mib": 364.47,
+          "range_mib": [
+            364.42,
+            364.51
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 109.9,
+          "range_mib": [
+            109.87,
+            109.94
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.26,
+        "first_graph_query_ms": 176.6,
+        "closure_ms": 154.08,
+        "first_closure_query_ms": 20.76,
+        "path_query_ms": 17.15,
+        "open_ms": 37.69,
+        "warm_query_ms": 16.66
+      }
+    },
+    {
+      "nodes": 350,
+      "readers": 9,
+      "mode": "mmap",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 215.73,
+          "range_mib": [
+            215.71,
+            215.74
+          ]
+        },
+        "queried": {
+          "mean_mib": 980.79,
+          "range_mib": [
+            980.75,
+            980.82
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 1623.77,
+          "range_mib": [
+            1623.76,
+            1623.78
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 2266.39,
+          "range_mib": [
+            2266.39,
+            2266.39
+          ]
+        },
+        "release": {
+          "mean_mib": 1883.85,
+          "range_mib": [
+            1883.85,
+            1883.85
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 868.4,
+          "range_mib": [
+            868.39,
+            868.4
+          ]
+        },
+        "close": {
+          "mean_mib": 672.49,
+          "range_mib": [
+            672.47,
+            672.5
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 222.64,
+          "range_mib": [
+            222.57,
+            222.7
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.26,
+        "first_graph_query_ms": 184.05,
+        "closure_ms": 158.47,
+        "first_closure_query_ms": 20.54,
+        "path_query_ms": 17.57,
+        "open_ms": 31.16,
+        "warm_query_ms": 16.9
+      }
+    },
+    {
+      "nodes": 350,
+      "readers": 9,
+      "mode": "owned",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 324.05,
+          "range_mib": [
+            324.05,
+            324.06
+          ]
+        },
+        "queried": {
+          "mean_mib": 1089.05,
+          "range_mib": [
+            1089.0,
+            1089.1
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 1841.53,
+          "range_mib": [
+            1841.51,
+            1841.54
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 2593.67,
+          "range_mib": [
+            2593.66,
+            2593.68
+          ]
+        },
+        "release": {
+          "mean_mib": 2115.2,
+          "range_mib": [
+            2115.19,
+            2115.21
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 976.41,
+          "range_mib": [
+            976.35,
+            976.48
+          ]
+        },
+        "close": {
+          "mean_mib": 794.2,
+          "range_mib": [
+            794.14,
+            794.26
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 221.2,
+          "range_mib": [
+            221.18,
+            221.22
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.28,
+        "first_graph_query_ms": 182.45,
+        "closure_ms": 158.28,
+        "first_closure_query_ms": 20.59,
+        "path_query_ms": 17.35,
+        "open_ms": 38.66,
+        "warm_query_ms": 16.91
+      }
+    },
+    {
+      "nodes": 3000,
+      "readers": 1,
+      "mode": "mmap",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 129.99,
+          "range_mib": [
+            128.26,
+            131.71
+          ]
+        },
+        "queried": {
+          "mean_mib": 549.25,
+          "range_mib": [
+            547.76,
+            550.75
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 1052.68,
+          "range_mib": [
+            1051.24,
+            1054.12
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 1553.9,
+          "range_mib": [
+            1553.87,
+            1553.94
+          ]
+        },
+        "release": {
+          "mean_mib": 1025.22,
+          "range_mib": [
+            1025.19,
+            1025.26
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 549.42,
+          "range_mib": [
+            549.21,
+            549.63
+          ]
+        },
+        "close": {
+          "mean_mib": 278.87,
+          "range_mib": [
+            278.66,
+            279.08
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 42.21,
+          "range_mib": [
+            42.1,
+            42.32
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.26,
+        "first_graph_query_ms": 973.69,
+        "closure_ms": 800.6,
+        "first_closure_query_ms": 31.11,
+        "path_query_ms": 17.8,
+        "open_ms": 200.51,
+        "warm_query_ms": 24.21
+      }
+    },
+    {
+      "nodes": 3000,
+      "readers": 1,
+      "mode": "owned",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 126.34,
+          "range_mib": [
+            126.33,
+            126.35
+          ]
+        },
+        "queried": {
+          "mean_mib": 546.19,
+          "range_mib": [
+            546.04,
+            546.34
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 1049.2,
+          "range_mib": [
+            1049.13,
+            1049.27
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 1552.06,
+          "range_mib": [
+            1552.03,
+            1552.09
+          ]
+        },
+        "release": {
+          "mean_mib": 1023.38,
+          "range_mib": [
+            1023.35,
+            1023.41
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 547.68,
+          "range_mib": [
+            547.64,
+            547.71
+          ]
+        },
+        "close": {
+          "mean_mib": 277.15,
+          "range_mib": [
+            277.11,
+            277.18
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 40.48,
+          "range_mib": [
+            40.45,
+            40.51
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.34,
+        "first_graph_query_ms": 973.65,
+        "closure_ms": 795.67,
+        "first_closure_query_ms": 31.19,
+        "path_query_ms": 17.82,
+        "open_ms": 249.32,
+        "warm_query_ms": 24.17
+      }
+    },
+    {
+      "nodes": 3000,
+      "readers": 4,
+      "mode": "mmap",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 189.33,
+          "range_mib": [
+            189.32,
+            189.33
+          ]
+        },
+        "queried": {
+          "mean_mib": 1861.0,
+          "range_mib": [
+            1860.78,
+            1861.22
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 3598.31,
+          "range_mib": [
+            3598.12,
+            3598.49
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 5334.21,
+          "range_mib": [
+            5333.94,
+            5334.48
+          ]
+        },
+        "release": {
+          "mean_mib": 3770.33,
+          "range_mib": [
+            3770.15,
+            3770.5
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 1866.98,
+          "range_mib": [
+            1866.64,
+            1867.32
+          ]
+        },
+        "close": {
+          "mean_mib": 1060.23,
+          "range_mib": [
+            1059.88,
+            1060.58
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 113.52,
+          "range_mib": [
+            113.51,
+            113.53
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.26,
+        "first_graph_query_ms": 1003.61,
+        "closure_ms": 822.2,
+        "first_closure_query_ms": 31.32,
+        "path_query_ms": 18.06,
+        "open_ms": 199.67,
+        "warm_query_ms": 24.2
+      }
+    },
+    {
+      "nodes": 3000,
+      "readers": 4,
+      "mode": "owned",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 462.74,
+          "range_mib": [
+            462.73,
+            462.76
+          ]
+        },
+        "queried": {
+          "mean_mib": 2135.02,
+          "range_mib": [
+            2135.01,
+            2135.03
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 4147.77,
+          "range_mib": [
+            4147.73,
+            4147.81
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 6158.47,
+          "range_mib": [
+            6158.47,
+            6158.48
+          ]
+        },
+        "release": {
+          "mean_mib": 4043.76,
+          "range_mib": [
+            4043.76,
+            4043.76
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 2139.89,
+          "range_mib": [
+            2139.85,
+            2139.92
+          ]
+        },
+        "close": {
+          "mean_mib": 1057.79,
+          "range_mib": [
+            1057.74,
+            1057.85
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 111.6,
+          "range_mib": [
+            111.56,
+            111.63
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.26,
+        "first_graph_query_ms": 1004.24,
+        "closure_ms": 810.99,
+        "first_closure_query_ms": 31.39,
+        "path_query_ms": 17.94,
+        "open_ms": 248.89,
+        "warm_query_ms": 24.23
+      }
+    },
+    {
+      "nodes": 3000,
+      "readers": 9,
+      "mode": "mmap",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 290.5,
+          "range_mib": [
+            290.49,
+            290.5
+          ]
+        },
+        "queried": {
+          "mean_mib": 4048.76,
+          "range_mib": [
+            4048.18,
+            4049.34
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 7842.85,
+          "range_mib": [
+            7842.16,
+            7843.54
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 11633.61,
+          "range_mib": [
+            11633.04,
+            11634.19
+          ]
+        },
+        "release": {
+          "mean_mib": 8344.12,
+          "range_mib": [
+            8343.54,
+            8344.7
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 4061.03,
+          "range_mib": [
+            4061.01,
+            4061.04
+          ]
+        },
+        "close": {
+          "mean_mib": 2360.04,
+          "range_mib": [
+            2359.65,
+            2360.43
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 230.86,
+          "range_mib": [
+            230.51,
+            231.2
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.29,
+        "first_graph_query_ms": 1074.2,
+        "closure_ms": 860.92,
+        "first_closure_query_ms": 31.82,
+        "path_query_ms": 18.04,
+        "open_ms": 198.96,
+        "warm_query_ms": 24.49
+      }
+    },
+    {
+      "nodes": 3000,
+      "readers": 9,
+      "mode": "owned",
+      "runs": 2,
+      "aggregate_pss": {
+        "opened": {
+          "mean_mib": 1022.87,
+          "range_mib": [
+            1022.86,
+            1022.89
+          ]
+        },
+        "queried": {
+          "mean_mib": 4780.58,
+          "range_mib": [
+            4780.48,
+            4780.69
+          ]
+        },
+        "versions-2": {
+          "mean_mib": 9308.86,
+          "range_mib": [
+            9308.55,
+            9309.16
+          ]
+        },
+        "versions-3": {
+          "mean_mib": 13834.09,
+          "range_mib": [
+            13833.5,
+            13834.68
+          ]
+        },
+        "release": {
+          "mean_mib": 9076.01,
+          "range_mib": [
+            9075.4,
+            9076.62
+          ]
+        },
+        "released_after_diagnostic_trim": {
+          "mean_mib": 4794.05,
+          "range_mib": [
+            4794.01,
+            4794.1
+          ]
+        },
+        "close": {
+          "mean_mib": 2359.32,
+          "range_mib": [
+            2359.29,
+            2359.34
+          ]
+        },
+        "closed_after_diagnostic_trim": {
+          "mean_mib": 229.39,
+          "range_mib": [
+            229.32,
+            229.46
+          ]
+        }
+      },
+      "median_ms": {
+        "graph_ms": 1.28,
+        "first_graph_query_ms": 1061.3,
+        "closure_ms": 848.85,
+        "first_closure_query_ms": 31.91,
+        "path_query_ms": 17.94,
+        "open_ms": 249.77,
+        "warm_query_ms": 27.02
+      }
+    }
+  ]
+}

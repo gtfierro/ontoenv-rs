@@ -27,6 +27,14 @@ file-backed pages at a latency cost, while private indexes/results still consume
 RAM. No product memory-control API has been selected. Continue snapshot-query
 work and the backing experiment; latency budgets remain open.
 
+LATEST STEERING: the user subsequently clarified that memory limits are not a
+current priority. The 512 MB estimate was rough and must not become a gating
+requirement. Resume the original consolidation with a simple, working,
+performant implementation. Defer the separately proposed query-index memory
+optimization and any configurable memory limits. Keep the current mmap/pin
+approach and Windows owned fallback. The Linux comparison is complete; see
+`snapshot-backing-profile-2026-10-25.md` and its raw/summary artifacts.
+
 ## Workspace and baseline
 
 - Work in `/tmp/ontoenv-transactional-snapshots`.
@@ -190,8 +198,8 @@ explicit protocol boundary, even though the public owned-view contract stays.
   `/tmp/ontoenv-consolidation-phase2-{workspace,python,clippy,docs}.log`.
   Do not attribute Phase 1 or baseline CI to this code.
 
-Next: finish the bounded backing experiment using the approximately 512 MB
-aggregate reader target. Do not silently turn this into a new hard memory-limit
-API, or assume owned bytes can meet the upper-bound process count. Preserve pins
-and durability barriers until the measured backing decision is made. Then
-consolidate committed/pending state and remove redundant public/adapter paths.
+Next: consolidate committed/pending state and remove redundant public/adapter
+paths. Preserve the existing backing, pins and durability barriers. Do not chase
+the advisory memory estimate or add a memory-limit API. The profile found
+whole-store query-index costs, but the user explicitly deprioritized that
+separate optimization in favor of finishing the simple working implementation.
