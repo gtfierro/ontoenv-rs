@@ -597,6 +597,8 @@ impl SnapshotWriter {
 
     /// Publish only configuration, preserving graph/catalog contents. This
     /// validates settings without reinterpreting previously bounded imports.
+    /// Derive edits from `self.snapshot().config().clone()` so the effective
+    /// canonical storage root is preserved, including on macOS and Windows.
     pub fn publish_config(&mut self, config: Config) -> Result<Arc<EnvironmentSnapshot>> {
         let mut candidate = SnapshotCandidate::from_snapshot(&self.current);
         candidate.config = config;

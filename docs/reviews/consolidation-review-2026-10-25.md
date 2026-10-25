@@ -70,3 +70,16 @@ results do not validate this revision. Windows directory-sync support and its
 power-loss durability contract remain a release decision. This refactor
 preserves barriers and does not strengthen that guarantee. No merge or release
 is included in this work.
+
+
+## Integration follow-up
+
+The first final push (`eea32aa`) passed Linux, Rust 1.88, Python 3.11/3.14,
+upgrade and docs. Both macOS and Windows jobs exposed the same strict-closure
+test fixture error: it reused the configuration supplied before creation had
+canonicalized the storage root. The fixture now edits the selected snapshot's
+configuration, preserving the root guard. A symlinked temporary-root reproduction
+failed before the correction and the full snapshot suite passed afterward
+(23 passed, two child-process helpers ignored). No publication/storage behavior
+changed. A small corrective push is needed despite the planned single batch;
+its complete matrix must be verified independently.

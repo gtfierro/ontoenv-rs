@@ -91,12 +91,15 @@ fn strict_closure_checks_only_imports_within_requested_depth() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut cfg = config(dir.path());
     cfg.strict = false;
-    let mut writer = SnapshotWriter::create(cfg.clone())?;
+    let mut writer = SnapshotWriter::create(cfg)?;
     let mut tx = writer.begin_update();
     let b = tx.add_from_bytes(source("urn:b"), b"<urn:b> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:missing> .".to_vec(), Some(RdfFormat::Turtle))?;
     let a = tx.add_from_bytes(source("urn:a"), b"<urn:a> a <http://www.w3.org/2002/07/owl#Ontology>; <http://www.w3.org/2002/07/owl#imports> <urn:b> .".to_vec(), Some(RdfFormat::Turtle))?;
     let permissive = tx.commit()?;
     assert_eq!(permissive.get_closure(&a, -1)?, vec![a.clone(), b.clone()]);
+    // Creation canonicalizes the storage root (including macOS temporary-path
+    // aliases and Windows extended paths). Edit the selected configuration.
+    let mut cfg = permissive.config().clone();
     cfg.strict = true;
     let strict = writer.publish_config(cfg)?;
     assert_eq!(strict.get_closure(&a, 0)?, vec![a.clone()]);

@@ -270,3 +270,16 @@ memory-limit API, backing switch or durability change is part of this work.
   No PR, merge, tag or release is authorized. Windows power-loss durability
   remains a release decision; memory limits and separate index-memory work stay
   deferred. Preserve the older untracked final-review file.
+
+
+## Final integration follow-up
+
+The planned final batch was pushed as `eea32aa`. CI passed Linux, MSRV, both
+Python versions, upgrade and docs; both macOS/Windows job variants exposed one
+test fixture using its pre-canonicalization creation config for `publish_config`.
+The strict-closure fixture now clones the effective selected config. The original
+failure reproduces under a Linux symlinked TMPDIR; afterward the full snapshot
+suite passes there (23 passed, two helpers ignored). The root-change validation
+is unchanged. A corrective commit/push follows; verify that new commit's full
+matrix rather than treating the initial partial results as final. No additional
+implementation work is planned if that matrix passes.
