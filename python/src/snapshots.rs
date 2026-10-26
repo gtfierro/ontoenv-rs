@@ -186,11 +186,15 @@ impl PyEnvironmentSnapshot {
 
     fn copy_graph(&self, py: Python<'_>, uri: &str) -> PyResult<Py<PyAny>> {
         let id = self.selected_ids(Some(vec![uri.to_owned()]))?.remove(0);
-        Ok(graph_to_rdflib(
-            py,
-            &self.snapshot()?.copy_graph(&id).map_err(anyhow_to_pyerr)?,
-        )?
-        .unbind())
+        let snapshot = self.snapshot()?;
+        let graph = graph_to_rdflib(py, &snapshot.copy_graph(&id).map_err(anyhow_to_pyerr)?)?;
+        bind_graph_namespaces(
+            &graph,
+            &snapshot.get_all_namespaces(),
+            &snapshot.config().namespaces,
+            true,
+        )?;
+        Ok(graph.unbind())
     }
 
     /// Resolve closure membership without fetching missing sources.

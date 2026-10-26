@@ -227,6 +227,10 @@ view. ``copy_*`` allocates a mutable ``rdflib`` object. See
 The 0.7 API removes ``snapshot_as_dataset(...)`` and
 ``to_rdflib_dataset(...)``; use ``get_dataset()`` / ``copy_dataset()``.
 
+Graph copies retain the namespace bindings captured with their triples. Saved
+bindings replace collisions in an explicitly supplied destination graph;
+ontology-declared prefixes preserve that destination's preferred bindings.
+
 Streaming
 ~~~~~~~~~
 

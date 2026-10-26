@@ -283,3 +283,17 @@ suite passes there (23 passed, two helpers ignored). The root-change validation
 is unchanged. A corrective commit/push follows; verify that new commit's full
 matrix rather than treating the initial partial results as final. No additional
 implementation work is planned if that matrix passes.
+
+
+## Step 1 follow-up: premerge findings fixed
+
+The user requested the remaining items one by one, starting with final review.
+That review found multi-FROM duplicate counting, graph-copy prefix loss and
+mixed-version migration guidance. The user explicitly requested fixing all
+three. They are implemented with failing-before/passing-after regressions;
+see the final section of `consolidation-review-2026-10-25.md`. Local validation:
+267 Rust tests/doctests, 171 Python tests, lint/docs and the representative API
+workload pass. Keep all work on this branch; commit/push this fix batch and check
+its exact revision's full CI. Then return to step 2, the Windows durability
+release contract. Do not create a PR or make a release decision yet. Memory
+limits remain deferred. Preserve the old untracked final-review file.

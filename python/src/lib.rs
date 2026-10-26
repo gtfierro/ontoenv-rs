@@ -839,6 +839,23 @@ fn graph_to_rdflib<'a>(py: Python<'a>, graph: &OxigraphGraph) -> PyResult<Bound<
     Ok(res)
 }
 
+/// Bind one captured namespace map while respecting a caller's existing graph.
+fn bind_graph_namespaces(
+    graph: &Bound<'_, PyAny>,
+    namespaces: &HashMap<String, String>,
+    user_bindings: &BTreeMap<String, String>,
+    fresh: bool,
+) -> PyResult<()> {
+    let kwargs = PyDict::new(graph.py());
+    for (prefix, namespace) in namespaces {
+        let preferred = fresh || user_bindings.contains_key(prefix);
+        kwargs.set_item("override", preferred)?;
+        kwargs.set_item("replace", preferred)?;
+        graph.call_method("bind", (prefix, namespace), Some(&kwargs))?;
+    }
+    Ok(())
+}
+
 fn push_python_triple<'a>(
     py: Python<'a>,
     rdflib: &Bound<'a, PyModule>,
@@ -1902,6 +1919,35 @@ fn restrict_query_dataset(
     dataset.set_available_named_graphs(named);
 }
 
+/// Named graphs contributing to the restricted SPARQL default graph.
+fn named_default_graphs(dataset: &spareval::QueryDatasetSpecification) -> Vec<NamedOrBlankNode> {
+    dataset
+        .default_graph_graphs()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|graph| match graph {
+            GraphName::NamedNode(node) => Some(NamedOrBlankNode::NamedNode(node.clone())),
+            GraphName::BlankNode(node) => Some(NamedOrBlankNode::BlankNode(node.clone())),
+            GraphName::DefaultGraph => None,
+        })
+        .collect()
+}
+
+fn query_default_view<'a>(
+    snapshot: &'a Snapshot,
+    dataset: &spareval::QueryDatasetSpecification,
+) -> rdf5d::View<'a> {
+    let defaults = named_default_graphs(dataset);
+    let names: Vec<_> = defaults
+        .iter()
+        .filter_map(|name| match name {
+            NamedOrBlankNode::NamedNode(node) => Some(node.as_str()),
+            NamedOrBlankNode::BlankNode(_) => None,
+        })
+        .collect();
+    rdf5d::View::from_names(snapshot, &names)
+}
+
 fn materialize_union_default(dataset: &mut OxDataset, names: &[NamedOrBlankNode]) {
     let defaults: Vec<_> = dataset
         .iter()
@@ -1923,6 +1969,14 @@ fn materialize_union_default(dataset: &mut OxDataset, names: &[NamedOrBlankNode]
             )
         })
         .collect();
+    let previous: Vec<_> = dataset
+        .iter()
+        .filter(|quad| matches!(quad.graph_name, oxigraph::model::GraphNameRef::DefaultGraph))
+        .map(|quad| quad.into_owned())
+        .collect();
+    for quad in previous {
+        dataset.remove(&quad);
+    }
     for quad in defaults {
         dataset.insert(&quad);
     }
@@ -2834,14 +2888,15 @@ impl PyRdfLibStoreBackend {
                     apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
                 }
                 restrict_query_dataset(prepared.dataset_mut(), &named_graphs);
-                if parsed.dataset().is_none()
-                    && query_graph.is_some_and(|graph| {
+                if parsed.dataset().is_some()
+                    || query_graph.is_some_and(|graph| {
                         graph
                             .extract::<String>()
                             .is_ok_and(|name| name == "__UNION__")
                     })
                 {
-                    materialize_union_default(&mut dataset, &named_graphs);
+                    let defaults = named_default_graphs(prepared.dataset_mut());
+                    materialize_union_default(&mut dataset, &defaults);
                     prepared
                         .dataset_mut()
                         .set_default_graph(vec![GraphName::DefaultGraph]);
@@ -2892,7 +2947,13 @@ impl PyRdfLibStoreBackend {
                     apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
                 }
                 restrict_query_dataset(prepared.dataset_mut(), &named_graphs);
-                if parsed.dataset().is_none() && default_is_union {
+                let default_view = parsed
+                    .dataset()
+                    .is_some()
+                    .then(|| query_default_view(snapshot, prepared.dataset_mut()));
+                if (default_view.is_none() && default_is_union)
+                    || (patch.is_none() && default_view.is_some())
+                {
                     prepared
                         .dataset_mut()
                         .set_default_graph(vec![GraphName::DefaultGraph]);
@@ -2917,10 +2978,18 @@ impl PyRdfLibStoreBackend {
                             gids,
                         ))
                     }
-                    None => prepared.execute(match &scoped_view {
-                        Some(view) => view.sparql_view(),
-                        None => snapshot.sparql_view(),
-                    }),
+                    None => {
+                        let mut dataset = match &scoped_view {
+                            Some(view) => view.sparql_view(),
+                            None => snapshot.sparql_view(),
+                        };
+                        if let Some(default_view) = &default_view {
+                            dataset = dataset
+                                .with_default_graph(default_view)
+                                .map_err(|error| anyhow_to_pyerr(error.into()))?;
+                        }
+                        prepared.execute(dataset)
+                    }
                 }
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
@@ -3016,12 +3085,15 @@ impl PyRdfLibStoreBackend {
                 let scoped = filter_named_graphs(&dataset_named_graphs(&dataset), &graph_names);
                 let mut prepared = evaluator.prepare(&parsed);
                 restrict_query_dataset(prepared.dataset_mut(), &scoped);
-                if parsed.dataset().is_none() {
-                    materialize_union_default(&mut dataset, &scoped);
-                    prepared
-                        .dataset_mut()
-                        .set_default_graph(vec![GraphName::DefaultGraph]);
-                }
+                let defaults = if parsed.dataset().is_none() {
+                    scoped.clone()
+                } else {
+                    named_default_graphs(prepared.dataset_mut())
+                };
+                materialize_union_default(&mut dataset, &defaults);
+                prepared
+                    .dataset_mut()
+                    .set_default_graph(vec![GraphName::DefaultGraph]);
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -3056,6 +3128,13 @@ impl PyRdfLibStoreBackend {
                         );
                     }
                 }
+                let named_graphs = snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
+                let scoped = filter_named_graphs(&named_graphs, &graph_names);
+                restrict_query_dataset(prepared.dataset_mut(), &scoped);
+                let default_view = parsed
+                    .dataset()
+                    .is_some()
+                    .then(|| query_default_view(snapshot, prepared.dataset_mut()));
                 let results = match patch {
                     // Closure view: one flattened, de-duplicated graph (the
                     // root), scoped to the closure's gids. The default graph
@@ -3076,16 +3155,16 @@ impl PyRdfLibStoreBackend {
                         ))
                     }
                     None => {
-                        let named_graphs =
-                            snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
-                        let scoped = filter_named_graphs(&named_graphs, &graph_names);
-                        restrict_query_dataset(prepared.dataset_mut(), &scoped);
-                        if parsed.dataset().is_none() {
-                            prepared
-                                .dataset_mut()
-                                .set_default_graph(vec![GraphName::DefaultGraph]);
+                        prepared
+                            .dataset_mut()
+                            .set_default_graph(vec![GraphName::DefaultGraph]);
+                        let mut dataset = scoped_view.sparql_view();
+                        if let Some(default_view) = &default_view {
+                            dataset = dataset
+                                .with_default_graph(default_view)
+                                .map_err(|error| anyhow_to_pyerr(error.into()))?;
                         }
-                        prepared.execute(scoped_view.sparql_view())
+                        prepared.execute(dataset)
                     }
                 }
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -5829,7 +5908,9 @@ impl OntoEnv {
     ///
     /// Raises ``UnresolvedImportError`` when `uri` is a currently known unresolved
     /// import. An arbitrary unknown graph IRI raises ``ValueError``; parsing and
-    /// backend failures retain their own error types.
+    /// backend failures retain their own error types. Copies retain captured
+    /// namespace bindings. Saved user bindings replace destination collisions;
+    /// ontology prefixes preserve an explicit destination's preferences.
     #[pyo3(signature = (uri, graph = None))]
     fn copy_graph(
         &self,
@@ -5841,7 +5922,7 @@ impl OntoEnv {
         let uri_string = pystring_to_string(uri)?;
         let iri = NamedNode::new(&uri_string)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let source_graph = {
+        let (source_graph, namespaces, user_bindings) = {
             let inner = self.inner.clone();
             let guard = inner.lock_detached().unwrap();
             let env = guard.as_ref().ok_or_else(|| {
@@ -5863,7 +5944,11 @@ impl OntoEnv {
                 }
             })?;
 
-            env.copy_graph(&graphid).map_err(anyhow_to_pyerr)?
+            (
+                env.copy_graph(&graphid).map_err(anyhow_to_pyerr)?,
+                env.get_all_namespaces(),
+                env.bound_namespaces().clone(),
+            )
         };
         let res = match graph {
             Some(graph) => graph.clone(),
@@ -5885,6 +5970,7 @@ impl OntoEnv {
 
             res.getattr("add")?.call1((t,))?;
         }
+        bind_graph_namespaces(&res, &namespaces, &user_bindings, graph.is_none())?;
         Ok(res.into())
     }
 

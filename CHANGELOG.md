@@ -51,6 +51,11 @@ All notable changes to this project are documented here. Releases follow [Semant
   `prefix()` work on them.
 
 ### Changed
+- Python dataset and union queries merge explicit `FROM` graphs as a triple
+  set, preserving named contexts for `FROM NAMED` / `GRAPH`. Graph copies retain
+  captured prefixes for queries and serialization, including saved bindings and
+  destination prefix preferences. Current upgrade guidance starts with the
+  dedicated 0.7 migration guide and its explicit offline storage migration.
 - Remove deprecated Python constructor flags (`create_or_use_cached`,
   `init_from_store`), dataset aliases, positional update booleans/`all=`, and the
   mutable `temporary_snapshot` helper. Immutable snapshots use paired `view_*`

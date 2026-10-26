@@ -67,7 +67,9 @@ class EnvironmentSnapshot:
     def __enter__(self) -> "EnvironmentSnapshot": ...
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
     def view_graph(self, uri: str) -> Graph: ...
-    def copy_graph(self, uri: str) -> Graph: ...
+    def copy_graph(self, uri: str) -> Graph:
+        """Mutable graph retaining the captured namespace bindings."""
+        ...
     def closure_iris(self, uri: str, recursion_depth: int = -1) -> List[str]: ...
     def view_closure(
         self, uri: str, recursion_depth: int = -1,
@@ -396,6 +398,9 @@ class OntoEnv:
 
         If *graph* is provided, triples are added to it and the same graph is
         returned. Otherwise a new in-memory graph is returned.
+        Captured namespace bindings accompany the triples. Saved user bindings
+        replace collisions; ontology prefixes preserve an explicit destination's
+        preferred bindings.
 
         With a custom ``graph_store=``: if the store implements
         ``copy_graph(iri)`` that method is called; otherwise falls back to

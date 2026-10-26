@@ -1,6 +1,13 @@
 Migrating from 0.5 to 0.6
 =========================
 
+.. note::
+
+   This page describes the historical 0.5-to-0.6 migration. For an upgrade
+   directly to the current 0.7 release, start with :doc:`migration-0.7`.
+   Automatic storage migration applies to 0.6 only; 0.7 requires explicit
+   migration after closing all legacy processes.
+
 Existing 0.5 environments migrate automatically the first time 0.6 opens them.
 The code changes below are the ones you have to make yourself.
 
@@ -176,31 +183,3 @@ Toolchain
 
 Python 3.11 or newer. Building the Rust crates from source requires Rust 1.88
 or newer, matching rdf5d's edition 2024 and the resolved dependency floor.
-
-Immutable snapshots in 0.7
---------------------------
-
-Use ``env.snapshot()`` or ``OntoEnv.read_snapshot(path)`` for an owned,
-immutable version. On these snapshot objects, ``view_graph``, ``view_closure``,
-``view_union`` and ``view_dataset`` return read-only views; matching ``copy_*``
-methods return mutable copies. The earlier snapshot ``get_graph`` and
-``get_dataset`` aliases are removed. Live ``OntoEnv.get_*`` convenience methods
-remain available.
-
-The mutable ``temporary_snapshot()`` helper is removed. Create a fresh
-``OntoEnv(temporary=True)`` and add selected graph copies when an independent
-editable environment is needed.
-
-Rust callers acquire specialized handles with ``SnapshotReader::open`` and
-``SnapshotWriter::create/open`` instead of ``OntoEnv::*_snapshot*`` wrappers.
-``EnvironmentSnapshot::view_graph`` borrows a query view; ``copy_graph`` on a
-snapshot or pending update materializes a graph. ``OntoEnv::adopt`` replaces
-``new_with_graph_io_from_existing``; ``refresh_from_store`` replaces
-``refresh_from_graph_io``. Fresh temporary environments remain available;
-``new_temporary`` as a whole-environment copy helper is removed.
-
-Rust configuration setters and namespace edits now return ``Result``. They
-publish before returning on a managed writer, or join an enclosing
-``transaction``. ``flush`` and Python ``close`` do not commit pending managed
-edits; normal operations already finish their publication. Read-only Rust
-configuration overrides remain session-local and reset on refresh.

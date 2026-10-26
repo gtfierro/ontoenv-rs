@@ -83,3 +83,36 @@ failed before the correction and the full snapshot suite passed afterward
 (23 passed, two child-process helpers ignored). No publication/storage behavior
 changed. A small corrective push is needed despite the planned single batch;
 its complete matrix must be verified independently.
+
+
+## Premerge review fixes
+
+A second review of `ca26407..28f510e` reproduced two gaps despite green CI:
+explicit multi-FROM merges counted shared triples twice, and snapshot graph
+copies lost captured prefixes. Both managed and temporary dataset/union query
+paths now deduplicate their restricted default graph while retaining named-graph
+multiplicity. RDF5D uses a borrowed scoped default view, avoiding a whole-store
+materialized copy. The default and named selections remain independent; a view
+from another snapshot is rejected.
+
+Snapshot and live graph copies capture namespace bindings with the triples.
+New copies retain those prefixes; saved bindings override destination collisions
+and ontology prefixes preserve an explicitly supplied graph's preferences.
+Regression coverage includes queries and serialization after snapshot/environment
+close and a later prefix change.
+
+`migration-0.7.rst` is the primary upgrade entry point, linked from the homepage.
+It explains explicit legacy migration, the offline reader-protocol boundary and
+one graph per canonical IRI. The historical 0.6 page now directs current upgrades
+there and keeps its automatic-migration statement explicitly historical.
+
+All three added Python regressions failed against the previous wheel and pass
+with these fixes. Final local checks pass 267 Rust tests/doctests (eight existing
+ignores), all 171 installed-wheel Python tests, all-target/all-feature release
+clippy with warnings denied, formatting/diff and strict Sphinx HTML. The normal
+~14 MB API workload also passes counts, queries, retained views/iterator, alias,
+rollback, retry and close; full-file publication was ~1,013 ms in this warm
+check. Logs: `/tmp/ontoenv-review-fixes-{rust,python-all,clippy,docs}.log` and
+`/tmp/ontoenv-review-fixes-workload.json`. These changes leave storage, retention,
+Windows durability and the deferred memory policy unchanged. Check integration
+CI at the next pushed revision before moving to the Windows release decision.

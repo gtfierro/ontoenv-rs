@@ -284,3 +284,69 @@ def test_temporary_union_counts_graph_projection():
         dataset = env.get_dataset()
         dataset.default_union = True
         assert int(next(iter(dataset.query("SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"))).n) == 3
+
+
+@pytest.mark.parametrize("temporary", [False, True])
+def test_multiple_from_merges_default_graph_without_duplicating_triples(tmp_path: Path, temporary: bool):
+    env = OntoEnv(temporary=True, offline=True) if temporary else OntoEnv.connect(tmp_path, offline=True)
+    a, b, outside = map(URIRef, ("urn:a", "urn:b", "urn:outside"))
+    shared = (URIRef("urn:shared"), PREDICATE, Literal("shared"))
+    for name, parent in ((a, b), (b, outside), (outside, URIRef("urn:other"))):
+        value = Graph(identifier=name)
+        value.add((name, RDF.type, OWL.Ontology))
+        value.add(shared)
+        value.add((name, RDFS.subClassOf, parent))
+        env.add(value, fetch_imports=False)
+    views = [env.get_dataset(), env.get_union([str(a), str(b)])[0]]
+    if not temporary:
+        snapshot = env.snapshot()
+        views += [snapshot.view_dataset([str(a), str(b)]), snapshot.view_union([str(a), str(b)])[0]]
+    copied = env.copy_dataset()
+    queries = [
+        ("FROM <urn:a> FROM <urn:b>", "?s ?p ?o", 5),
+        ("FROM <urn:a> FROM <urn:a> FROM <urn:b>", "?s ?p ?o", 5),
+        ("FROM <urn:a>", "?s ?p ?o", 3),
+        ("FROM NAMED <urn:a> FROM NAMED <urn:b>", "?s ?p ?o", 0),
+        ("FROM <urn:a> FROM <urn:b> FROM NAMED <urn:a> FROM NAMED <urn:b>",
+         "GRAPH ?g { ?s ?p ?o }", 6),
+        ("FROM <urn:a> FROM <urn:b>", "GRAPH ?g { ?s ?p ?o }", 0),
+    ]
+    for clauses, pattern, expected in queries:
+        query = f"SELECT (COUNT(*) AS ?n) {clauses} WHERE {{ {pattern} }}"
+        assert int(next(iter(copied.query(query))).n) == expected
+        for view in views:
+            assert int(next(iter(view.query(query))).n) == expected
+    path = f"SELECT ?o FROM <urn:a> FROM <urn:b> WHERE {{ <urn:a> <{RDFS.subClassOf}>+ ?o }}"
+    for view in views:
+        assert set(view.query(path)) == {(b,), (outside,)}
+    env.close()
+
+
+def test_graph_copies_keep_captured_prefixes_and_destination_preferences(tmp_path: Path):
+    source = tmp_path / "prefixes.ttl"
+    source.write_text('''@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix declared: <urn:declared:> .
+<urn:a> a owl:Ontology; declared:p "parsed"; <urn:old:p> "old" .
+''')
+    with OntoEnv.connect(tmp_path, offline=True) as writer:
+        writer.add(source, fetch_imports=False)
+        writer.bind_namespace("chosen", "urn:old:")
+        snapshot = writer.snapshot()
+        view = snapshot.view_graph("urn:a")
+        snapshot_copy = snapshot.copy_graph("urn:a")
+        live_copy = writer.copy_graph("urn:a")
+        destination = Graph()
+        destination.bind("chosen", URIRef("urn:destination:"))
+        destination.bind("declared", URIRef("urn:destination:"))
+        destination.bind("preferred", URIRef("urn:declared:"))
+        assert writer.copy_graph("urn:a", destination) is destination
+        writer.bind_namespace("chosen", "urn:new:")
+        snapshot.close()
+    for value in (view, snapshot_copy, live_copy, destination):
+        assert dict(value.namespaces())["chosen"] == URIRef("urn:old:")
+        assert list(value.query('SELECT ?o WHERE { <urn:a> chosen:p ?o }')) == [(Literal("old"),)]
+        assert "chosen:p" in value.serialize(format="turtle")
+    for value in (snapshot_copy, live_copy):
+        assert dict(value.namespaces())["declared"] == URIRef("urn:declared:")
+    assert dict(destination.namespaces())["declared"] == URIRef("urn:destination:")
+    assert destination.store.prefix(URIRef("urn:declared:")) == "preferred"

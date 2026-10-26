@@ -487,3 +487,49 @@ fn closure_predicate_not_in_index_falls_back() -> Result<(), QueryEvaluationErro
     );
     Ok(())
 }
+
+#[test]
+fn default_graph_merge_deduplicates_without_hiding_named_graphs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let path = dir.path().join("default-merge.r5tu");
+    let quints: Vec<_> = ["urn:a", "urn:b", "urn:outside"]
+        .into_iter()
+        .map(|name| Quint {
+            id: "data".into(),
+            s: Term::Iri("urn:s".into()),
+            p: Term::Iri("urn:p".into()),
+            o: Term::Iri("urn:o".into()),
+            gname: name.into(),
+        })
+        .collect();
+    write_file(&path, &quints)?;
+    let snapshot = Snapshot::open(&path)?;
+    let default = rdf5d::View::from_names(&snapshot, &["urn:a", "urn:b"]);
+    let dataset = snapshot.sparql_view().with_default_graph(&default)?;
+    let evaluator = spareval::QueryEvaluator::new();
+    let query = SparqlParser::new().parse_query("SELECT ?s WHERE { ?s <urn:p> <urn:o> }")?;
+    let mut prepared = evaluator.prepare(&query);
+    prepared
+        .dataset_mut()
+        .set_default_graph(vec![oxrdf::GraphName::DefaultGraph]);
+    assert_eq!(
+        solution_subjects(prepared.execute(dataset)?)?,
+        vec!["<urn:s>"]
+    );
+    let query = SparqlParser::new()
+        .parse_query("SELECT ?s WHERE { GRAPH <urn:outside> { ?s <urn:p> <urn:o> } }")?;
+    assert_eq!(
+        solution_subjects(evaluator.prepare(&query).execute(dataset)?)?,
+        vec!["<urn:s>"]
+    );
+    let other = Snapshot::open(&path)?;
+    let other_default = rdf5d::View::from_names(&other, &["urn:a"]);
+    assert!(
+        snapshot
+            .sparql_view()
+            .with_default_graph(&other_default)
+            .is_err()
+    );
+    Ok(())
+}

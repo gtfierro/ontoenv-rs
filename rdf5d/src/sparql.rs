@@ -32,6 +32,7 @@ use crate::view::View;
 pub struct SparqlView<'a> {
     snapshot: &'a Snapshot,
     view: Option<&'a View<'a>>,
+    default_view: Option<&'a View<'a>>,
 }
 
 impl<'a> SparqlView<'a> {
@@ -39,6 +40,7 @@ impl<'a> SparqlView<'a> {
         Self {
             snapshot,
             view: None,
+            default_view: None,
         }
     }
 
@@ -46,7 +48,20 @@ impl<'a> SparqlView<'a> {
         Self {
             snapshot: view.snapshot(),
             view: Some(view),
+            default_view: None,
         }
+    }
+
+    /// Use a deduplicated graph projection as the default graph, leaving named
+    /// graphs unchanged. Both views must borrow the same snapshot.
+    pub fn with_default_graph(mut self, view: &'a View<'a>) -> crate::reader::Result<Self> {
+        if !std::ptr::eq(self.snapshot, view.snapshot()) {
+            return Err(R5Error::Invalid(
+                "Default graph belongs to another snapshot",
+            ));
+        }
+        self.default_view = Some(view);
+        Ok(self)
     }
 
     fn names(&self) -> Vec<&'a str> {
@@ -118,7 +133,7 @@ impl<'a> QueryableDataset<'a> for SparqlView<'a> {
         // scope. Named-graph scans below preserve each context separately.
         if matches!(graph_name, Some(None)) {
             let hits =
-                if let Some(view) = self.view {
+                if let Some(view) = self.default_view.or(self.view) {
                     view.scan(pat)
                 } else {
                     let mut seen = HashSet::new();
