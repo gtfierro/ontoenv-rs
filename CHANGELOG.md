@@ -31,8 +31,11 @@ All notable changes to this project are documented here. Releases follow [Semant
   `OntoEnv.upgrade(path)` after closing every older process, including readers.
 - Publication is always built, without the former `transactional-snapshots`
   feature flag. Directory durability barriers are implemented
-  on Unix; Windows directory syncing remains unsupported. See the storage
-  validation report for tested crash scenarios and platform limits.
+  on Unix; Windows directory syncing remains unsupported. The accepted Windows
+  0.7 contract provides process-crash consistency with best-effort power-loss
+  durability: rebuilding from ontology sources may be necessary, and even a
+  complete previous version is not guaranteed after power loss. See the storage
+  contract and validation report for tested crash scenarios and platform limits.
 
 
 ### Added

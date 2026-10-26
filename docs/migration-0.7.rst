@@ -16,8 +16,7 @@ from its root:
    ontoenv migrate
 
 Or call ``OntoEnv.migrate(path)`` in Python or ``OntoEnv::migrate(path)`` in
-Rust. Migration validates the
-stored data and installs ``.ontoenv-snapshots/`` only after a complete version
+Rust. Migration validates the stored data and installs ``.ontoenv-snapshots/`` only after a complete version
 is ready. It retains the original ``.ontoenv/`` files. Do not run old and new
 releases as writers against these two independent copies.
 
@@ -34,6 +33,17 @@ See :doc:`how-to/migrate-storage` for validation, legacy recovery, rollback and
 protocol upgrade details. Temporary environments and external ``graph_store=``
 backends retain their own storage; managed migration does not convert those
 external databases.
+
+Windows deployment contract
+---------------------------
+
+Windows 0.7 supports consistent views and recovery after an abrupt process exit.
+Power-loss durability is best effort: a power failure can lose an update or leave
+an environment that requires rebuilding from ontology sources. A successful
+commit or retained previous version does not guarantee recovery of a complete
+version after power loss. Existing flushes and integrity checks remain; directory
+syncing is unsupported on Windows. See :doc:`explanation/transactional-snapshots`
+for the accepted contract.
 
 API replacements
 ----------------

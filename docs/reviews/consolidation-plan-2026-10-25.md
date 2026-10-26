@@ -44,7 +44,7 @@ or a new query engine during this consolidation.
 | Workload envelope | Approximately 14 MB encoded is representative; approximately 100 MB is the high end, with fewer than ten simultaneous reader processes. | Confirmed by user; use nine readers for the upper-bound experiment. |
 | Aggregate reader memory | Record measured costs; defer memory limits and budget-driven optimization. | User clarified that the rough 512 MB estimate is advisory and must not gate consolidation or release. Prioritize a simple, working, performant implementation. |
 | Snapshot backing | Keep the existing backing and lifetime-pin approach. | Linux comparison complete: mmap materially reduces multiprocess duplication; switching to owned bytes does not simplify query-index costs. No product backing toggle or protocol change. |
-| Durability | Preserve existing flushing during refactoring. Specify process-crash behavior separately from power-loss recovery and latest-update persistence. | A release decision remains; this plan does not strengthen Windows guarantees. |
+| Durability | Preserve existing flushing during refactoring. Specify process-crash behavior separately from power-loss recovery and latest-update persistence. | Confirmed by user: Windows 0.7 accepts process-crash consistency with best-effort power-loss durability. Power failure may require rebuilding from sources; no complete previous version is guaranteed. Existing barriers remain. |
 
 The user explicitly deprioritized the earlier rough 512 MB estimate. Memory
 measurements remain diagnostics, not an acceptance ceiling or a reason to add
@@ -303,7 +303,8 @@ point. Passing tests alone is not evidence that consolidation succeeded.
 No merge or release is implied by this plan. The first Phase 1 deliverable is
 the contract inventory and the implemented fallible `oxigraph_store()` boundary,
 using the approved 0.7 breaking-change scope. The deployment
-Windows durability contract remains a release decision. The advisory memory
+Windows durability contract is accepted and documented: process-crash consistency,
+best-effort power-loss durability, with a possible rebuild from sources. The advisory memory
 estimate does not block implementation, integration or release.
 
 
@@ -316,4 +317,5 @@ remain; no memory-limit manager or index-memory project was added. Dataset
 rebinding remains an explicit rdflib integration operation with retained-iterator
 coverage. Configuration setters share normal publication/rollback, removing the
 old flush/close commit boundary. The final remote matrix must be checked at the
-pushed revision; the Windows power-loss contract remains a release decision.
+pushed revision. The user accepted the current Windows power-loss limit; its
+written contract now explicitly permits a rebuild from ontology sources.

@@ -70,8 +70,12 @@ versions plus one full candidate during graph-changing writes. A long-lived view
 can retain a full old store until released; deletion retries can require more space.
 See [the snapshot guide](../explanation/transactional-snapshots.md) for memory,
 write-cost and durability measurements. Unix directory syncing is implemented;
-Windows directory syncing remains unsupported. The release candidate does not
-claim power-loss durability on untested filesystems or platforms.
+Windows directory syncing remains unsupported. The accepted Windows 0.7 contract
+provides process-crash consistency with best-effort power-loss durability. A
+power failure can lose an update or require rebuilding from ontology sources;
+retaining a previous version does not guarantee its recovery. See the snapshot
+guide for the full contract. Power-loss claims on other platforms remain limited
+to the tested filesystems and barriers described in the validation report.
 
 ## Upgrade earlier 0.7 development stores
 

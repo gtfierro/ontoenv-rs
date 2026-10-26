@@ -297,3 +297,18 @@ workload pass. Keep all work on this branch; commit/push this fix batch and chec
 its exact revision's full CI. Then return to step 2, the Windows durability
 release contract. Do not create a PR or make a release decision yet. Memory
 limits remain deferred. Preserve the old untracked final-review file.
+
+
+## Step 2 accepted
+
+All three review findings are fixed in `5693226`; all 11 CI jobs passed at that
+exact code revision (run 40261001497). The user then explicitly selected
+"Accept and document the current limit" for Windows. The release contract is
+process-crash consistency with best-effort power-loss durability: a power failure
+may require rebuilding from sources, and retaining the previous version does
+not guarantee complete-version recovery. Documentation now records this in the
+README, changelog, migration/storage guides, snapshot guide and validation report.
+No storage implementation or flushing behavior changes. Finish strict docs
+validation and publish this documentation checkpoint on the same branch. The
+next step is the final PR; no draft PR, merge, tag or release has been made.
+Memory limits remain deferred; preserve the old untracked final-review file.

@@ -121,6 +121,12 @@ and successful publication; `ontoenv prune` / `env.prune()` retries it explicitl
 Earlier builds of this unreleased branch (reader protocol 2) require an
 [offline upgrade](docs/how-to/migrate-storage.md) before cleanup is enabled.
 
+On Windows, 0.7 supports coherent publication, retained views and recovery after
+an abrupt process exit. Power-loss durability is best effort: a power failure
+may require rebuilding the environment from ontology sources. A successful
+commit or retained previous version does not guarantee a complete recoverable
+version after power loss. See the [storage contract](docs/explanation/transactional-snapshots.md).
+
 Caller-provided stores retain their own consistency and transaction guarantees.
 Their `.ontoenv/` catalogs and interrupted-mutation recovery remain supported;
 managed storage migration does not convert external databases.

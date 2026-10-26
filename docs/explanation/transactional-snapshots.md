@@ -230,6 +230,27 @@ and is currently a no-op elsewhere. External mutation/truncation of an
 immutable mapped object violates the storage contract; checksums do not make
 such mutation safe.
 
+## Windows 0.7 release contract
+
+The accepted Windows contract covers coherent publication and owned read views
+under normal operation and abrupt process exit. After a writer process exits,
+readers select a complete published version; retained views keep their captured
+version. A publication I/O error still requires closing and reopening the writer
+to reconcile its selection before retrying.
+
+Power-loss durability is **best effort**. A host crash or power failure can lose
+a successful update or leave the environment unable to open. Neither a returned
+commit nor retention of the previous version guarantees that even one complete
+version will be recoverable after power loss. Rebuilding the environment from
+ontology sources may be necessary; invalid selected state fails explicitly
+rather than exposing a mixture of versions.
+
+Existing file flushes and integrity checks remain enabled. Directory syncing is
+unsupported on Windows, and 0.7 does not add automatic history fallback or claim
+Unix-equivalent power-loss durability. This limit is accepted for the local,
+infrequently written dependency-graph workload; it does not weaken the owned-view
+or cooperating-process consistency contract.
+
 ## Measure before adding more complexity
 
 ```sh

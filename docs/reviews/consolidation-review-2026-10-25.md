@@ -66,10 +66,9 @@ the general evaluator handle the others.
   retained mmap/pin choice; they impose no memory ceiling.
 
 Integration CI must be checked at the final pushed commit; prior branch/baseline
-results do not validate this revision. Windows directory-sync support and its
-power-loss durability contract remain a release decision. This refactor
-preserves barriers and does not strengthen that guarantee. No merge or release
-is included in this work.
+results do not validate a later revision. The Windows decision is now recorded
+below: process-crash consistency with best-effort power-loss durability. Existing
+barriers are preserved. No merge or release is included in this work.
 
 
 ## Integration follow-up
@@ -116,3 +115,20 @@ check. Logs: `/tmp/ontoenv-review-fixes-{rust,python-all,clippy,docs}.log` and
 `/tmp/ontoenv-review-fixes-workload.json`. These changes leave storage, retention,
 Windows durability and the deferred memory policy unchanged. Check integration
 CI at the next pushed revision before moving to the Windows release decision.
+
+
+## Step 2: Windows release decision
+
+The user explicitly accepted and requested documentation of the current limit.
+Windows 0.7 supports coherent publication, owned views and process-crash
+recovery. Power-loss durability is best effort; a successful commit or retained
+previous version does not guarantee recovery of even one complete version after
+a power failure. Rebuilding from ontology sources may be necessary. Existing
+flushes and validation remain; no new recovery fallback or stronger directory
+barrier is introduced. README, release notes, upgrade/storage guides and the
+validation report state this contract.
+
+The code-fix revision `5693226` passed all 11 integration jobs, including the
+full Linux/macOS/Windows builds, snapshot suites, Python 3.11/3.14, Rust 1.88,
+upgrade and docs: https://github.com/gtfierro/ontoenv-rs/actions/runs/40261001497.
+This follow-up changes documentation only; validate it with the strict docs build.

@@ -19,6 +19,17 @@ replacement. No sleeps or permission-error suppression were added to publication
 All cooperating writers still require the stable writer lock. The tests do not
 authorize concurrent external replacement or truncation of mapped graph files.
 
+## Accepted Windows release scope
+
+Decision recorded October 25, 2026: Windows 0.7 ships coherent publication,
+owned read views and process-crash recovery with **best-effort power-loss
+durability**. A power failure may require rebuilding the environment from
+ontology sources. A successful commit or retention of a previous version does
+not guarantee that a complete version remains recoverable after power loss.
+Existing flushing is preserved; directory syncing remains unsupported on Windows.
+The process-exit CI coverage and the Linux guest results below do not strengthen
+this Windows contract. See [the snapshot guide](transactional-snapshots.md).
+
 ## Guest crash durability
 
 The disposable QEMU harness completed a nine-case pilot followed by **27 cases
@@ -99,6 +110,11 @@ The source, commands, process reports and hashes are retained in
 `lib/examples/snapshot_workload.rs` and `lib/tests/support/snapshot_workload.py`.
 
 ## Proposed gates before normal API integration
+
+These are historical engineering targets from before integration. Current
+memory measurements are advisory, not release limits. The accepted Windows
+contract above supersedes any stronger implication from these proposed gates;
+the power-loss campaign applies only to its tested Linux configuration.
 
 Correctness gates are strict: no mixed versions, no failed cooperating publications
 under the tested concurrent-reader workload, retained views stay unchanged, and
