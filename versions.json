@@ -1,0 +1,20 @@
+{
+  "default": "versions/v0.6.4/",
+  "versions": [
+    {
+      "label": "0.7.0-rc.1 (prerelease)",
+      "path": "versions/v0.7.0-rc.1/",
+      "kind": "prerelease"
+    },
+    {
+      "label": "0.6.4 (stable)",
+      "path": "versions/v0.6.4/",
+      "kind": "stable"
+    },
+    {
+      "label": "Development (main)",
+      "path": "dev/",
+      "kind": "development"
+    }
+  ]
+}

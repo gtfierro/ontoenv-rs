@@ -1,0 +1,691 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Atomic publication belongs to OntoEnv" href="environment-publication.html"><link rel="prev" title="Performance" href="performance.html">
+
+    <!-- Generated with Sphinx 7.4.7 and Furo 2025.09.25 -->
+        <title>OntoEnv publication and snapshots - OntoEnv Documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=e49ed175" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">OntoEnv Documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  
+  <span class="sidebar-brand-text">OntoEnv Documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul class="current">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/index.html">Tutorials</a><input aria-label="Toggle navigation of Tutorials" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/first-environment.html">Your first environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/python.html">OntoEnv from Python</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../how-to/index.html">How-to guides</a><input aria-label="Toggle navigation of How-to guides" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/choose-what-gets-loaded.html">Choose what gets loaded</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/work-offline.html">Work offline and control caching</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/rename-and-alias.html">Rename and alias ontologies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-in-a-service.html">Use OntoEnv in a long-running service</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/query-with-sparql.html">Query with SPARQL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/use-a-custom-graph-store.html">Use your own graph storage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/migrate-storage.html">Migrate to the 0.7 storage backend</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/recover-an-environment.html">Recover an interrupted environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/diagnose-imports.html">Diagnose import problems</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../reference/index.html">Reference</a><input aria-label="Toggle navigation of Reference" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../reference/cli.html">CLI reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/python.html">Python API reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/configuration.html">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/rdflib-store.html">ViewGraph and OntoEnvStore</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/graph-store.html">Graph store protocol</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/api.html">Generated API</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Explanation</a><input aria-label="Toggle navigation of Explanation" checked="" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="concepts.html">Concepts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="views-and-copies.html">Views and copies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="namespaces.html">Namespaces and prefix precedence</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lifecycle.html">Opening an environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="staying-in-sync.html">Staying in sync</a></li>
+<li class="toctree-l2"><a class="reference internal" href="performance.html">Performance</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">OntoEnv publication and snapshots</a></li>
+<li class="toctree-l2"><a class="reference internal" href="environment-publication.html">Atomic publication belongs to OntoEnv</a></li>
+<li class="toctree-l2"><a class="reference internal" href="publication-validation.html">Publication validation and acceptance gates</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Project</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../migration-0.7.html">Upgrading to 0.7</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../migration-0.6.html">Migrating from 0.5 to 0.6</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development.html">Building from source</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://docs.rs/ontoenv">Rust API (docs.rs)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../changelog.html">Changelog</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../_sources/explanation/transactional-snapshots.md.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="ontoenv-publication-and-snapshots">
+<h1>OntoEnv publication and snapshots<a class="headerlink" href="#ontoenv-publication-and-snapshots" title="Link to this heading">¶</a></h1>
+<p>Starting with 0.7.0-rc.1, immutable publication is the default storage backend
+for new managed persistent environments in Rust, Python and the CLI. It is
+always compiled, without a feature flag. Temporary environments and caller-provided graph stores retain their
+existing behavior and their backend’s transaction guarantees.</p>
+<p>Publication coordinates an OntoEnv catalog, configuration and immutable RDF5D
+artifact. RDF5D remains the file builder and query engine. OntoEnv implements
+writer exclusion, commit and refresh with immutable JSON manifests and an atomic
+<code class="docutils literal notranslate"><span class="pre">CURRENT</span></code> file, without a database dependency. See <a class="reference internal" href="environment-publication.html"><span class="std std-doc">the design review</span></a>
+and <a class="reference internal" href="publication-validation.html"><span class="std std-doc">validation report</span></a> for the protocol and measured limits.</p>
+<p>Existing <code class="docutils literal notranslate"><span class="pre">.ontoenv/</span></code> environments require <a class="reference internal" href="../how-to/migrate-storage.html"><span class="std std-doc">explicit migration</span></a>.
+Migration copies the stored RDF and metadata, retains the original files, and
+publishes the new directory only after validation. Earlier redb-based prototype
+environments are rejected without automatic conversion.</p>
+<section id="try-it">
+<h2>Try it<a class="headerlink" href="#try-it" title="Link to this heading">¶</a></h2>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ontoenv<span class="w"> </span>--example<span class="w"> </span>transactional_snapshots
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>ontoenv<span class="w"> </span>--lib<span class="w"> </span>--test<span class="w"> </span>test_snapshots<span class="w"> </span>--test<span class="w"> </span>test_concurrency
+</pre></div>
+</div>
+<p>The example keeps a writer open, opens a reader, publishes new graph content and
+an alias, then refreshes the reader. A retained old query view still reads the
+old generation.</p>
+<div class="highlight-rust notranslate"><div class="highlight"><pre><span></span><span class="k">use</span><span class="w"> </span><span class="n">ontoenv</span><span class="p">::{</span><span class="n">SnapshotReader</span><span class="p">,</span><span class="w"> </span><span class="n">SnapshotWriter</span><span class="p">};</span>
+
+<span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">writer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SnapshotWriter</span><span class="p">::</span><span class="n">create</span><span class="p">(</span><span class="n">config</span><span class="p">)</span><span class="o">?</span><span class="p">;</span>
+<span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">update</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">writer</span><span class="p">.</span><span class="n">begin_update</span><span class="p">();</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">update</span><span class="p">.</span><span class="n">add_from_bytes</span><span class="p">(</span><span class="n">location</span><span class="p">,</span><span class="w"> </span><span class="n">bytes</span><span class="p">,</span><span class="w"> </span><span class="n">format</span><span class="p">)</span><span class="o">?</span><span class="p">;</span>
+<span class="n">update</span><span class="p">.</span><span class="n">add_alias</span><span class="p">(</span><span class="s">&quot;urn:alias&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">id</span><span class="p">.</span><span class="n">name</span><span class="p">().</span><span class="n">as_str</span><span class="p">())</span><span class="o">?</span><span class="p">;</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">committed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">update</span><span class="p">.</span><span class="n">commit</span><span class="p">()</span><span class="o">?</span><span class="p">;</span>
+
+<span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">reader</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SnapshotReader</span><span class="p">::</span><span class="n">open</span><span class="p">(</span><span class="n">root</span><span class="p">)</span><span class="o">?</span><span class="p">;</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">old</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">reader</span><span class="p">.</span><span class="n">snapshot</span><span class="p">();</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">old_view</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">old</span><span class="p">.</span><span class="n">view_graph</span><span class="p">(</span><span class="o">&amp;</span><span class="n">id</span><span class="p">)</span><span class="o">?</span><span class="p">;</span>
+<span class="c1">// Further writer commits do not change `old` or reader.snapshot().</span>
+<span class="n">reader</span><span class="p">.</span><span class="n">refresh</span><span class="p">()</span><span class="o">?</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>These explicit entry points return <code class="docutils literal notranslate"><span class="pre">SnapshotWriter</span></code> and <code class="docutils literal notranslate"><span class="pre">SnapshotReader</span></code>.
+<code class="docutils literal notranslate"><span class="pre">SnapshotWriter::open(root)</span></code> opens an existing writer. Normal
+<code class="docutils literal notranslate"><span class="pre">OntoEnv::connect/create/open</span></code> also use this backend, with the existing source
+and import pipeline. Their successful graph and configuration mutations publish before returning.
+<code class="docutils literal notranslate"><span class="pre">env.snapshot()</span></code> captures the selected committed version; <code class="docutils literal notranslate"><span class="pre">env.refresh()</span></code>
+advances a managed read handle without reading sources. Rust callers can group
+operations with <code class="docutils literal notranslate"><span class="pre">env.transaction(|env|</span> <span class="pre">{</span> <span class="pre">...;</span> <span class="pre">Ok(())</span> <span class="pre">})</span></code>; nested errors and
+unwinding restore staged graphs, catalog, configuration and runtime settings.</p>
+<p>Python uses the same lifecycle:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">ontoenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">OntoEnv</span>
+
+<span class="n">writer</span> <span class="o">=</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;./env&quot;</span><span class="p">,</span> <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">writer</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;./ontology.ttl&quot;</span><span class="p">)</span>
+<span class="n">reader</span> <span class="o">=</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;./env&quot;</span><span class="p">,</span> <span class="n">read_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">old</span> <span class="o">=</span> <span class="n">reader</span><span class="o">.</span><span class="n">snapshot</span><span class="p">()</span>
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">old</span><span class="o">.</span><span class="n">view_dataset</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">old</span><span class="o">.</span><span class="n">info</span><span class="p">)</span>  <span class="c1"># environment ID, generation, parent, committed_at, opened_at</span>
+<span class="n">writer</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+<span class="n">reader</span><span class="o">.</span><span class="n">refresh</span><span class="p">()</span>  <span class="c1"># select a complete newer version, if one exists</span>
+<span class="c1"># old, dataset and previously returned graph/closure views keep their version.</span>
+<span class="n">reader</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">writer</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">EnvironmentSnapshot</span></code> provides <code class="docutils literal notranslate"><span class="pre">get_ontology_names()</span></code>, <code class="docutils literal notranslate"><span class="pre">get_ontologies()</span></code>,
+paired <code class="docutils literal notranslate"><span class="pre">view_*</span></code>/<code class="docutils literal notranslate"><span class="pre">copy_*</span></code> queries, namespace access, a copied <code class="docutils literal notranslate"><span class="pre">config</span></code> dictionary
+and <code class="docutils literal notranslate"><span class="pre">info</span></code>. These handles remain usable after the environment closes.
+<code class="docutils literal notranslate"><span class="pre">OntoEnv.read_snapshot(path)</span></code> opens one owned version without retaining a live
+environment. A Python snapshot supports <code class="docutils literal notranslate"><span class="pre">close()</span></code>, <code class="docutils literal notranslate"><span class="pre">closed</span></code>, and <code class="docutils literal notranslate"><span class="pre">with</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">OntoEnv</span><span class="o">.</span><span class="n">read_snapshot</span><span class="p">(</span><span class="s2">&quot;./ontology-env&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">version</span><span class="p">:</span>
+    <span class="n">graph</span> <span class="o">=</span> <span class="n">version</span><span class="o">.</span><span class="n">view_graph</span><span class="p">(</span><span class="s2">&quot;urn:example:ontology&quot;</span><span class="p">)</span>
+<span class="c1"># The version handle is closed. The escaped graph still owns its backing.</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">graph</span><span class="p">))</span>
+<span class="k">del</span> <span class="n">graph</span>  <span class="c1"># Releases this view&#39;s ownership; later cleanup can reclaim its file.</span>
+</pre></div>
+</div>
+<p>Closing releases only that handle. There is no read transaction to commit or
+roll back. Rust uses ordinary ownership: dropping the last <code class="docutils literal notranslate"><span class="pre">Arc</span></code>/owned iterator
+releases its backing pin.</p>
+<p><code class="docutils literal notranslate"><span class="pre">get_graph</span></code>, <code class="docutils literal notranslate"><span class="pre">get_dataset</span></code>, <code class="docutils literal notranslate"><span class="pre">get_closure</span></code> and <code class="docutils literal notranslate"><span class="pre">get_union</span></code> views pin their backing
+version. Fetch another view to see an update, or explicitly call
+<code class="docutils literal notranslate"><span class="pre">env.refresh_dataset(dataset)</span></code> to rebind that dataset to the handle’s selected
+version. Existing iterators finish on their original backing and term cache.
+Reader refresh and dataset rebind are separate operations; <code class="docutils literal notranslate"><span class="pre">flush</span></code> does not
+advance readers or mutate already returned managed views.</p>
+<p>Each managed version contains one graph per canonical IRI and one registration
+per source. A replacement updates that registration and preserves its explicit
+aliases. Multiple source versions of one IRI must be assigned distinct graph
+IRIs; duplicate legacy registrations are rejected during migration.</p>
+<p>Readers expose catalog listings, aliases, configuration, graph copies, generation
+information and the existing RDF5D <code class="docutils literal notranslate"><span class="pre">Snapshot</span></code>/<code class="docutils literal notranslate"><span class="pre">View</span></code> engine. They have no mutation
+or save methods. <code class="docutils literal notranslate"><span class="pre">committed_at</span></code> records the time while preparing publication;
+generation numbers, not timestamps, order commits. <code class="docutils literal notranslate"><span class="pre">opened_at</span></code> records this
+process’s snapshot creation time.</p>
+</section>
+<section id="snapshot-and-index-ownership">
+<h2>Snapshot and index ownership<a class="headerlink" href="#snapshot-and-index-ownership" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">reader.snapshot()</span></code> clones an <code class="docutils literal notranslate"><span class="pre">Arc</span></code> to the reader’s selected environment version;
+it does not reopen the file. Calls to <code class="docutils literal notranslate"><span class="pre">snapshot.rdf()</span></code> clone the same RDF5D <code class="docutils literal notranslate"><span class="pre">Arc</span></code>,
+so they share that object’s lazy whole-store indexes. Independently opened
+readers and separate processes own their own heap indexes; there is no global
+snapshot registry.</p>
+<p>An ordinary graph-changing refresh replaces the reader’s owning <code class="docutils literal notranslate"><span class="pre">Arc</span></code>. If no
+caller retains the old snapshot, view or iterator, its mapping and indexes become
+reclaimable. A retained environment snapshot keeps its metadata and graph backing;
+an owned RDF5D grouped iterator keeps only the RDF backing/indexes it needs. These
+lifetimes are covered with weak-reference tests. Allocator behavior still controls
+when freed heap pages leave RSS.</p>
+<p>Metadata-only refresh installs new catalog/configuration values while reusing
+the same immutable RDF5D mapping and whole-store indexes. Old retained metadata
+does not change. Refresh with an unchanged generation leaves the existing
+environment snapshot itself untouched.</p>
+<p><code class="docutils literal notranslate"><span class="pre">snapshot.view_graph(&amp;id)</span></code> and <code class="docutils literal notranslate"><span class="pre">snapshot.view(&amp;ids)</span></code> return borrowed scoped
+<code class="docutils literal notranslate"><span class="pre">rdf5d::View</span></code>s. Their lifetime is tied to the selected environment snapshot, and
+they validate graph identifiers against that catalog. Keep a view across queries
+to reuse its scoped indexes. Those scoped indexes are independent of whole-store
+indexes so scoped transitive closures cannot follow unrelated graphs.</p>
+<p>The paired ownership diagnostic at ~19.5 MiB with four active reader processes
+measured aggregate PSS of approximately 204 MiB before refresh and 204 MiB after
+refresh when old handles were released. Keeping both indexed versions raised it
+from approximately 204 MiB to 392 MiB. This is a diagnostic result, not a memory
+guarantee; raw reports are in <code class="docutils literal notranslate"><span class="pre">docs/reviews/snapshot-ownership-2026-10-23.json</span></code>.
+Releasing the last owner also releases its cross-process file pin. A subsequent
+cleanup pass can reclaim the backing on disk once it is outside retained head
+history.</p>
+</section>
+<section id="commit-protocol-and-copy-on-write">
+<h2>Commit protocol and copy-on-write<a class="headerlink" href="#commit-protocol-and-copy-on-write" title="Link to this heading">¶</a></h2>
+<p>An update clones small catalog/configuration values and holds a graph overlay
+of replacements and deletions. Untouched content remains in the immutable,
+mmap-backed base. It does not clone the entire decoded store at transaction start.</p>
+<p>Parsed replacements are staged as shared, deduplicated triple buffers, without
+building OxRDF graph indexes. The serializer iterates those buffers directly.
+Explicit staged graph reads materialize an independent graph on demand; repeated
+reads can therefore repeat that work. Callers that supply an existing graph keep
+that representation. Nested checkpoints share either form through <code class="docutils literal notranslate"><span class="pre">Arc</span></code>.</p>
+<p>On a graph-changing commit, it streams unchanged graphs and replacements into a
+new complete RDF5D file. Complete files preserve the existing shared term
+dictionary and cross-graph query engine. Empty replacements override old graph
+data explicitly; empty graph existence is represented in the catalog.</p>
+<p>The candidate file is synced and validated before writing and syncing an immutable
+manifest with its reference, metadata, aliases, configuration and next generation.
+A synced temporary pointer atomically replaces <code class="docutils literal notranslate"><span class="pre">CURRENT</span></code>; OntoEnv then syncs its
+parent directory and installs the already-prepared committed snapshot. A metadata-only update
+reuses the same mapped file and performs no RDF5D rewrite.</p>
+<p>Dropping or aborting an explicit <code class="docutils literal notranslate"><span class="pre">SnapshotUpdate</span></code> publishes nothing. Its strict
+commits reject unresolved imports across the complete candidate; <code class="docutils literal notranslate"><span class="pre">add_source</span></code>
+and <code class="docutils literal notranslate"><span class="pre">add_from_bytes</span></code> stage one ontology each, so stage their dependencies too.
+The normal <code class="docutils literal notranslate"><span class="pre">OntoEnv</span></code> API retains recursive imports, configured filters, strict
+and non-strict behavior and explicit import depth limits. That pipeline validates
+its candidate before publication. “Add with rename” publishes once, including
+both ingestion and renaming.</p>
+<p>The sole writer holds a stable <code class="docutils literal notranslate"><span class="pre">.ontoenv-snapshots.lock</span></code> outside the data directory.
+Readers briefly share the <code class="docutils literal notranslate"><span class="pre">READERS</span></code> acquisition gate while reading <code class="docutils literal notranslate"><span class="pre">CURRENT</span></code>,
+validating its checksum-verified manifest, and pinning/opening the graph backing.
+They then release the gate and retain a shared OS lock on that object’s <code class="docutils literal notranslate"><span class="pre">.pin</span></code>
+file. They hold no writer lock or database
+connection. Initialization is prepared in a private directory and renamed
+into place only after generation zero is complete. Recreation and reset publish
+a replacement catalog; they retain old mapped files and the stable lock.
+Close the active writer before recreation. Normal new-environment creation
+installs an empty generation before any requested source scan; a failed initial
+scan leaves an openable empty environment.</p>
+</section>
+<section id="retention-and-recovery-limits">
+<h2>Retention and recovery limits<a class="headerlink" href="#retention-and-recovery-limits" title="Link to this heading">¶</a></h2>
+<p>Cleanup retains the <strong>current and exact previous published manifest</strong>, their RDF
+objects, and any older object owned by a live snapshot, view or iterator in any
+process. Metadata-only publications can share the same object. The previous
+manifest is recorded in <code class="docutils literal notranslate"><span class="pre">CURRENT</span></code>; abandoned publication attempts are never
+mistaken for published history.</p>
+<p>The writer tries cleanup at startup and after successful publication. Use
+<code class="docutils literal notranslate"><span class="pre">ontoenv</span> <span class="pre">prune</span></code>, <code class="docutils literal notranslate"><span class="pre">env.prune()</span></code> or Rust <code class="docutils literal notranslate"><span class="pre">SnapshotWriter::prune()</span></code> to retry sooner.
+There is no background reaper: releasing the last view makes a file eligible;
+the next pass removes it. A reader process exit releases its OS pins, including
+after a crash. A live sleeping reader never loses its backing to a timeout.</p>
+<p>Cleanup briefly takes the exclusive acquisition gate and nonblocking exclusive
+object pins. It skips busy objects, renames eligible object directories into
+<code class="docutils literal notranslate"><span class="pre">trash/</span></code>, then releases the gate before deleting them. Interrupted/failed
+deletions remain there for later retry. Cleanup errors are reported by explicit
+prune and logged by automatic passes; they do not turn a successful publication
+into a failed commit. Current/previous manifests and active pins are never
+deleted. Do not manually delete or move files in a running store.</p>
+<p>Reader protocol 3 introduces this ownership contract. Protocol-2 stores from
+earlier unreleased builds require the explicit
+<a class="reference internal" href="../how-to/migrate-storage.html"><span class="std std-doc">offline upgrade</span></a>; all older readers must be closed
+first because their files are unpinned. Legacy <code class="docutils literal notranslate"><span class="pre">.ontoenv/</span></code> migration remains a
+separate operation.</p>
+<p>A process exit before <code class="docutils literal notranslate"><span class="pre">CURRENT</span></code> replacement leaves the previous generation selected;
+it may leave unreferenced files. An exit after replacement selects the complete
+new generation. A publication I/O error may have an uncertain durable outcome:
+close/reopen the writer and inspect the committed generation before retrying.
+Further commits on that writer are rejected; its last confirmed snapshot may
+lag durable head. A known failure before attempting publication permits retry.
+Fresh readers open after an abrupt writer exit without a recovery writer. They
+select only <code class="docutils literal notranslate"><span class="pre">CURRENT</span></code>, never an unreferenced manifest with a higher version.
+Malformed pointers, missing manifests and checksum failures produce errors;
+failed refresh preserves the old snapshot.</p>
+<p>Publication interruption and repeated multi-reader open/refresh tests pass
+locally on Linux, with dedicated Linux/macOS/Windows CI. These process-exit tests
+do not establish power-loss durability. Directory syncing is implemented on Unix
+and is currently a no-op elsewhere. External mutation/truncation of an
+immutable mapped object violates the storage contract; checksums do not make
+such mutation safe.</p>
+</section>
+<section id="windows-0-7-release-contract">
+<h2>Windows 0.7 release contract<a class="headerlink" href="#windows-0-7-release-contract" title="Link to this heading">¶</a></h2>
+<p>The accepted Windows contract covers coherent publication and owned read views
+under normal operation and abrupt process exit. After a writer process exits,
+readers select a complete published version; retained views keep their captured
+version. A publication I/O error still requires closing and reopening the writer
+to reconcile its selection before retrying.</p>
+<p>Power-loss durability is <strong>best effort</strong>. A host crash or power failure can lose
+a successful update or leave the environment unable to open. Neither a returned
+commit nor retention of the previous version guarantees that even one complete
+version will be recoverable after power loss. Rebuilding the environment from
+ontology sources may be necessary; invalid selected state fails explicitly
+rather than exposing a mixture of versions.</p>
+<p>Existing file flushes and integrity checks remain enabled. Directory syncing is
+unsupported on Windows, and 0.7 does not add automatic history fallback or claim
+Unix-equivalent power-loss durability. This limit is accepted for the local,
+infrequently written dependency-graph workload; it does not weaken the owned-view
+or cooperating-process consistency contract.</p>
+</section>
+<section id="measure-before-adding-more-complexity">
+<h2>Measure before adding more complexity<a class="headerlink" href="#measure-before-adding-more-complexity" title="Link to this heading">¶</a></h2>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>cargo<span class="w"> </span>run<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>ontoenv<span class="w"> </span>--example<span class="w"> </span>snapshot_profile<span class="w"> </span>--<span class="w"> </span><span class="m">100</span><span class="w"> </span><span class="m">500</span>
+</pre></div>
+</div>
+<p>This diagnostic profile reports encoded size, serialization/publication time,
+direct mmap versus owned-byte open time, manifest-plus-mmap open time,
+one-graph update/full-file commit time and reader refresh time. Opens are repeated
+against a warm page cache; this is not a cold-cache or statistically rigorous
+benchmark. Existing strict CRC validation remains enabled, which can touch the
+entire encoded file even with mmap. Triple decoding and query indexes remain
+lazy.</p>
+<p>Three sequential release-mode runs per backend on October 23, 2026, with 100
+graphs and 50,100 triples produced approximately 13.91 MiB RDF5D stores. They
+used rustc 1.99.1 on x86_64 Linux. The ranges span three runs, not confidence
+intervals. Raw output, commands and source hashes are retained in
+<code class="docutils literal notranslate"><span class="pre">docs/reviews/snapshot-profile-2026-10-23.txt</span></code> (earlier redb baseline) and
+<code class="docutils literal notranslate"><span class="pre">docs/reviews/snapshot-profile-files-2026-10-23.txt</span></code> (current file publisher).
+These are sequential diagnostics, not randomized controlled comparisons.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Operation</p></th>
+<th class="head"><p>Earlier redb</p></th>
+<th class="head"><p>Current files</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Initial source generation, parsing and staging</p></td>
+<td><p>129–133 ms</p></td>
+<td><p>121–130 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>Initial serialization/publication (after source parsing)</p></td>
+<td><p>166–182 ms</p></td>
+<td><p>183–190 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>Warm direct RDF5D mmap open</p></td>
+<td><p>11.8–12.7 ms</p></td>
+<td><p>12.2–12.9 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>Warm direct RDF5D owned-byte open</p></td>
+<td><p>12.7–13.4 ms</p></td>
+<td><p>12.8–13.2 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>Warm manifest plus RDF5D mmap open</p></td>
+<td><p>12.1–21.5 ms</p></td>
+<td><p>13.7–17.7 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>One-graph source generation, parsing and staging</p></td>
+<td><p>1.0–2.2 ms</p></td>
+<td><p>2.2 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>One graph changed, complete-file serialization/publication</p></td>
+<td><p>179–211 ms</p></td>
+<td><p>222–227 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>Metadata-only publication, retaining the same RDF5D mapping</p></td>
+<td><p>10.7–11.7 ms</p></td>
+<td><p>22.8–23.9 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>Reader refresh after graph publication</p></td>
+<td><p>12.6–13.0 ms</p></td>
+<td><p>17.9–18.5 ms</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>These are one machine’s diagnostic results, not performance guarantees. They
+show that full-file publication takes about 0.2 seconds at the requested scale.
+The file publisher pays for two file syncs plus directory barriers; metadata-only
+publication was about twice as slow as the redb baseline. Keep those barriers
+until a stronger durability analysis justifies changing them. This experiment
+simplifies coordination and removes reader recovery; it is not a demonstrated
+write-speed improvement. Manifest-plus-mmap open times vary, so do not treat the
+difference from direct mmap as a stable backend overhead measurement.</p>
+<p>After the initial graph publication, a one-graph replacement and a metadata-only
+publication, three RDF5D objects remained: the empty initial store and two complete
+populated stores, totaling about 27.81 MiB. Metadata publication added no RDF5D
+object. Four retained JSON manifests totaled approximately 108.8 KiB, plus a
+137-byte CURRENT file, versus a 680 KiB manifest database in the baseline.
+These are logical file lengths, excluding filesystem allocation overhead.
+Retention grows by approximately one full store per graph-changing commit,
+including when only one graph changes, plus one manifest per commit.</p>
+<p>Process high-water RSS was approximately 164–168 MiB (baseline: 166–172 MiB).
+This includes synthetic
+source generation, parsing/staging, serialization and retained mappings; it is
+not isolated reader memory or a measurement of many reader processes. Cold
+reads, realistic queries, index-building memory and writer allocation attribution
+still need measurement before choosing on-disk graph-level COW.</p>
+<p>A later normal-API diagnostic used 100 graphs, 334,059 named-graph quads and a
+13.8 MiB encoded store. Compact parsed staging reduced native initial-import peak
+RSS from 534–544 MiB to 223–225 MiB, and Python from 570–572 MiB to 257–260 MiB.
+The complete Python workload, including retained views and repeated updates,
+still peaked at approximately 431–450 MiB. These are different measurement scopes,
+not supported memory ceilings. Three alternating baseline/optimized runs also
+observed slower first closure construction (median 70 to 88 ms), which is tracked
+separately. Commands, allocation profiles and limitations are recorded in
+<code class="docutils literal notranslate"><span class="pre">docs/reviews/compact-staging-2026-10-23.md</span></code> and its raw reports.</p>
+<p>The release candidate integrates recursive source updates, dependency views,
+CLI/Python entry points, explicit legacy migration and reader-safe cleanup.
+Long-lived views retain entire old RDF files; graph changes still rewrite the
+complete store. Per-graph on-disk COW is a later option if measurements show complete
+generation writes dominate; it also requires coordinating term dictionaries and
+blank-node identity across graph files.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="environment-publication.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Atomic publication belongs to OntoEnv</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="performance.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Performance</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">OntoEnv publication and snapshots</a><ul>
+<li><a class="reference internal" href="#try-it">Try it</a></li>
+<li><a class="reference internal" href="#snapshot-and-index-ownership">Snapshot and index ownership</a></li>
+<li><a class="reference internal" href="#commit-protocol-and-copy-on-write">Commit protocol and copy-on-write</a></li>
+<li><a class="reference internal" href="#retention-and-recovery-limits">Retention and recovery limits</a></li>
+<li><a class="reference internal" href="#windows-0-7-release-contract">Windows 0.7 release contract</a></li>
+<li><a class="reference internal" href="#measure-before-adding-more-complexity">Measure before adding more complexity</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=6c0297da"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/expand-nav.js?v=c9702942"></script>
+    
+
+<!-- ontoenv-versions:start --><link rel="stylesheet" href="../../../_static/version-switcher.css"><script defer src="../../../_static/version-switcher.js"></script><!-- ontoenv-versions:end -->
+</body>
+</html>

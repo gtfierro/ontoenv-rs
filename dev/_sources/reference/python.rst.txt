@@ -1,0 +1,396 @@
+Python API reference
+====================
+
+.. code-block:: bash
+
+   pip install ontoenv    # Python 3.11+
+
+The package exposes the Rust core through `PyO3 <https://pyo3.rs>`_ bindings,
+with native `rdflib <https://rdflib.readthedocs.io>`_ interop. Pre-built
+wheels are published on PyPI; no Rust toolchain is required.
+
+This page groups the public API by purpose and documents behavior not
+represented in a signature: source access, mutation, persistence, and errors.
+:doc:`api` contains generated signatures and docstrings.
+
+Managed snapshots in 0.7
+------------------------
+
+New managed persistent environments use immutable publication. Existing
+``.ontoenv/`` data requires :doc:`../how-to/migrate-storage`.
+``OntoEnv.migrate(path)`` copies the stored data and returns a writable handle;
+legacy files remain available for rollback. Custom stores and temporary
+connections retain their own storage semantics.
+
+``env.snapshot()`` returns an ``EnvironmentSnapshot`` independent of the live
+handle. It exposes ``info`` (environment ID, generation, parent generation,
+commit and open timestamps), a copied ``config`` dictionary,
+``get_ontology_names()``, ``get_ontologies()``, ``get_namespaces()``,
+``get_bound_namespaces()`` and ``resolve_alias(iri)``. It also exposes paired
+``view_graph`` / ``copy_graph``, ``view_closure`` / ``copy_closure``,
+``view_union`` / ``copy_union`` and ``view_dataset`` / ``copy_dataset`` queries.
+Closure/union graph results return ``(result, canonical_iris)``. Dataset methods
+accept an optional IRI list: ``None`` selects all, ``[]`` selects none. Dataset
+unions preserve named-graph contexts, while graph unions deduplicate triples.
+``closure_iris``, ``get_importers`` and ``get_import_paths`` query only this
+catalog. No refresh or write methods exist on this handle. See
+:doc:`../explanation/views-and-copies` for scope and counting rules.
+
+``OntoEnv.read_snapshot(path)`` opens one owned version directly. Use it as a
+context manager or call ``snapshot.close()`` to release that handle promptly.
+``snapshot.closed`` reports its state; operations on a closed handle raise
+``ValueError``. Closing is idempotent. Graphs, datasets and iterators obtained
+inside the scope retain independent ownership and remain usable after it exits.
+There is no read transaction to commit or roll back.
+
+``env.prune()`` retries cleanup on a writable managed connection and returns
+counts plus deferred errors. Cleanup also runs at writer startup and after
+successful publication, retaining current/previous versions and live views
+across processes. ``OntoEnv.upgrade(path)`` enables this protocol for earlier
+0.7 development stores; close every older process first. See
+:doc:`../how-to/migrate-storage`.
+
+``env.refresh()`` advances a managed reader to the latest complete version,
+returning whether it changed. A writer already selects its last commit.
+Previously returned graph, closure, union and dataset views retain their version,
+even after flush, refresh or close. Request another view to see the new selection,
+or call ``env.refresh_dataset(dataset)`` to rebind that dataset explicitly.
+Outstanding iterators keep their original backing. Successful managed mutations
+publish before returning; ``flush`` does not refresh readers.
+
+Opening an environment
+----------------------
+
+Use ``connect`` when both an existing and a missing environment are valid:
+
+.. code-block:: python
+
+   from ontoenv import OntoEnv
+
+   env = OntoEnv.connect("./ontology-env")
+
+The path is required; use ``"."`` for the current directory. A context manager
+is optional. Keep ``env`` in application state, reuse its ``get_graph``,
+``get_closure``, ``get_union`` and ``get_dataset`` methods, and call ``close()``
+at shutdown. Capture ``env.snapshot()`` for several reads that must agree.
+
+A writable managed handle holds the sole writer lock until close. Independent
+read-only handles can stay open during writes; ``reader.refresh()`` advances
+their selection without changing previously returned views. See
+:doc:`../how-to/use-in-a-service` for complete examples.
+
+With the default store, it creates an empty environment on the first run and
+reopens the saved catalog on later runs. It does not scan ontology files or
+fetch URLs; call ``update`` when source content should be refreshed.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 42 58
+
+   * - Call
+     - Behavior
+   * - ``OntoEnv.connect(path, *, graph_store=None, sync="auto", read_only=False, **options)``
+     - Create if missing; reopen if present.
+   * - ``OntoEnv.create(path, *, graph_store=None, **options)``
+     - Create a new environment; fails if one exists unless
+       ``overwrite=True``.
+   * - ``OntoEnv.open(path, *, graph_store=None, read_only=False, **options)``
+     - Open an existing environment; fails if missing. Never synchronizes.
+   * - ``OntoEnv.adopt(path, graph_store, *, overwrite=False, **options)``
+     - Index an already-populated custom store for the first time.
+   * - ``OntoEnv.recover(path, *, graph_store=None, **options)``
+     - Rebuild the catalog after ``CatalogRecoveryError``.
+   * - ``OntoEnv(temporary=True, **options)``
+     - In-memory environment; nothing is persisted.
+
+.. rubric:: Storage and source access
+
+``connect`` may reconcile graphs changed directly in a custom store, according
+to ``sync``. It never refreshes configured files or URLs. ``open`` reads the
+saved catalog without reconciling the store. ``adopt`` and ``recover`` scan
+graphs already present in the attached store, but do not follow remote
+imports. ``create`` writes a new empty catalog. A temporary environment writes
+nothing to disk.
+
+``sync`` accepts ``"auto"`` (default), ``"full"``, or ``"catalog"`` — see
+:doc:`../explanation/staying-in-sync`.
+
+.. rubric:: Configuration persistence
+
+``**options`` accepts any key from :doc:`configuration`. On reopen, an omitted
+option preserves its saved value; an explicit value — including ``False``,
+``"default"``, and ``[]`` — overrides it. Writable connections persist
+overrides; read-only ones keep them session-local.
+
+For the design tradeoffs between these entry points, see
+:doc:`../explanation/lifecycle`.
+
+.. rubric:: Direct constructor
+
+.. code-block:: python
+
+   OntoEnv(path=None, recreate=False, read_only=False, temporary=False,
+           search_directories=None, includes=None, excludes=None,
+           include_ontologies=None, exclude_ontologies=None,
+           strict=None, offline=None, require_ontology_names=None,
+           use_cached_ontologies=None, resolution_policy=None,
+           remote_cache_ttl_secs=None, graph_store=None, root=".")
+
+Supported and used internally, but the named methods above express intent more
+clearly. For managed storage, ``recreate=True`` publishes replacement state
+while retained views keep their old version.
+
+The 0.7 API removes ``create_or_use_cached`` and ``init_from_store``. Use
+``OntoEnv.connect(path)`` and ``OntoEnv.adopt(path, graph_store)`` respectively.
+
+Closing
+~~~~~~~
+
+- ``env.close()`` — release resources.
+- ``env.flush()`` — flush the adapter; managed writes already publish before returning.
+- ``with OntoEnv.connect(...) as env:`` — calls ``close()`` on exit.
+
+Adding ontologies
+-----------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 54
+
+   * - Method
+     - Returns / notes
+   * - ``add(location, overwrite=False, fetch_imports=True, force=False, rename=None)``
+     - The ontology's IRI. *location* is a path, URL, or ``rdflib.Graph``.
+   * - ``add_no_imports(location, overwrite=False, force=False, rename=None)``
+     - As ``add`` but never follows ``owl:imports``.
+   * - ``rename_graph_iri(uri, new_iri)``
+     - The new IRI. Rewrites the stored graph and rebuilds the import graph.
+
+``rename=`` rewrites every occurrence of the declared IRI in the stored graph,
+except ``owl:versionIRI`` values. See :doc:`../how-to/rename-and-alias`.
+
+Refreshing
+----------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 54
+
+   * - Method
+     - Reconciles
+   * - ``update(location=None, *, force=False)``
+     - Ontology **sources** — files and URLs — following their imports.
+       Without *location*, all configured sources.
+   * - ``refresh_from_store(graphs=None, full=False)``
+     - Graphs changed **directly in a custom store**. Returns a
+       ``SyncReport`` with ``added``, ``changed``, ``removed``.
+
+``graphs=`` is an exact set of backend graph IDs and is never expanded.
+``full=True`` cannot be combined with it.
+
+The 0.7 API removes ``update(all=True)`` and positional booleans; use
+``update(force=True)``.
+
+Reading graphs
+--------------
+
+Every read comes in two forms. ``get_*`` returns a store-backed, read-only
+view. ``copy_*`` allocates a mutable ``rdflib`` object. See
+:doc:`../explanation/views-and-copies` for the cost and ownership model.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 22 44
+
+   * - Method
+     - Result
+     - Behavior and errors
+   * - ``get_graph(uri)``
+     - ``ViewGraph``
+     - Store-backed and read-only. Mutation raises ``ValueError``.
+   * - ``copy_graph(uri, graph=None)``
+     - ``rdflib.Graph``
+     - Allocates a mutable copy. Raises ``UnresolvedImportError`` for a known
+       unresolved import and ``ValueError`` for an unknown IRI.
+   * - ``get_closure(uri, recursion_depth=-1, remove_owl_imports=True, rewrite_sh_prefixes=True)``
+     - ``(ViewGraph, closure_names)``
+     - Flattened, de-duplicated view over the ontology and its transitive
+       imports.
+   * - ``copy_closure(uri, graph=None, rewrite_sh_prefixes=True, remove_owl_imports=True, recursion_depth=-1)``
+     - ``(Graph, closure_iris)``
+     - Materializes the same triple set as a mutable graph.
+   * - ``get_union(uris, include_closures=False, recursion_depth=-1)``
+     - ``(ViewGraph, graph_iris)``
+     - Raw graph projection of the listed graphs; shared triples occur once.
+   * - ``copy_union(uris, root, graph=None, include_closures=False, rewrite_sh_prefixes=False, remove_owl_imports=False, recursion_depth=-1)``
+     - ``(Graph, graph_iris)``
+     - Raw and mutable by default. Transform flags opt into declaration and
+       prefix cleanup, using *root* as the root ontology.
+   * - ``get_dataset()``
+     - ``rdflib.Dataset``
+     - Read-only view of the whole environment.
+   * - ``copy_dataset(dataset=None)``
+     - ``rdflib.Dataset``
+     - Allocates a mutable copy.
+   * - ``refresh_dataset(dataset)``
+     - ``None``
+     - Re-snapshots the environment into an existing store-backed dataset.
+
+The 0.7 API removes ``snapshot_as_dataset(...)`` and
+``to_rdflib_dataset(...)``; use ``get_dataset()`` / ``copy_dataset()``.
+
+Graph copies retain the namespace bindings captured with their triples. Saved
+bindings replace collisions in an explicitly supplied destination graph;
+ontology-declared prefixes preserve that destination's preferred bindings.
+
+Streaming
+~~~~~~~~~
+
+- ``iter_triples(uri)`` — ``(s, p, o)`` rdflib terms for one graph.
+- ``iter_closure_triples(uri, recursion_depth=-1)`` — the same across a
+  closure. **Not** de-duplicated across named graphs.
+
+Merging into a caller's graph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- ``import_graph(destination_graph, uri, recursion_depth=-1)`` — merge the
+  closure of *uri* into *destination_graph* in place.
+- ``import_dependencies(graph, recursion_depth=-1, fetch_missing=False)`` —
+  resolve *graph*'s own ``owl:imports`` and merge them into it. Returns the
+  merged IRIs.
+- ``get_dependencies(graph, graph_name=None, recursion_depth=-1, fetch_missing=False)`` —
+  ``(Graph, closure_iris)``; same resolution without modifying the caller's
+  graph. *graph_name* overrides the IRI used for ``sh:prefixes`` rewriting.
+
+With ``fetch_missing=True``, strict mode aborts on an unavailable import while
+non-strict mode records and skips it. A completed best-effort call leaves no
+recovery marker.
+
+Inspecting
+----------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 54
+
+   * - Method
+     - Returns
+   * - ``get_ontology_names()``
+     - Every ontology IRI in the environment.
+   * - ``get_ontology(uri)``
+     - An ``Ontology`` metadata object.
+   * - ``get_importers(uri)``
+     - IRIs that *directly* import *uri*.
+   * - ``list_closure(uri, recursion_depth=-1)``
+     - Closure IRIs. *uri* may be a string IRI or an ``rdflib.Graph`` not yet
+       in the environment.
+   * - ``missing_imports(uri=None)``
+     - Unresolvable ``owl:imports`` targets. ``None`` covers the whole
+       environment; a string IRI walks that ontology's closure; a ``Graph``
+       checks its direct imports.
+   * - ``get_namespaces(ontology=None, include_closure=False)``
+     - Prefix → namespace mapping, including saved bindings.
+   * - ``bind_namespace(prefix, namespace)`` / ``unbind_namespace(prefix)``
+     - Save or remove a prefix binding in the selected version’s configuration.
+   * - ``get_bound_namespaces()``
+     - The saved prefix bindings.
+   * - ``store_path()``
+     - Filesystem path of the graph store, if any.
+   * - ``dump(includes=None)``
+     - Print the environment state to stdout.
+
+``Ontology`` exposes ``id``, ``name``, ``imports``, ``location``,
+``last_updated``, ``version_properties``, and ``namespace_map``.
+
+For namespace precedence, saved bindings, and local rdflib edits, see
+:doc:`../explanation/namespaces`.
+
+Aliases
+-------
+
+- ``add_alias(alias_iri, canonical_iri)`` — an alias may only point at a
+  canonical IRI, never another alias.
+- ``remove_alias(alias_iri)``
+- ``resolve_alias(alias_iri)`` → canonical IRI or ``None``
+- ``get_aliases_for(canonical_iri)`` → list of aliases
+- ``is_canonical_iri(iri)`` → ``bool``
+
+Aliases resolve transparently in ``get_graph``, ``get_closure``, ``uri in
+env``, and ``env[uri]``.
+
+Runtime configuration
+---------------------
+
+Each setting has a getter and a setter. These change an open, writable
+environment and persist the change.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Getter
+     - Setter
+   * - ``is_offline()``
+     - ``set_offline(bool)``
+   * - ``is_strict()``
+     - ``set_strict(bool)``
+   * - ``requires_ontology_names()``
+     - ``set_require_ontology_names(bool)``
+   * - ``remote_cache_ttl_secs()``
+     - ``set_remote_cache_ttl_secs(int)``
+   * - ``uses_cached_ontologies()``
+     - ``set_use_cached_ontologies(bool)``
+   * - ``resolution_policy()``
+     - ``set_resolution_policy("default" | "latest" | "version")``
+
+Reconfiguration never triggers an implicit scan. Runtime modes apply
+immediately; changed discovery paths and filters apply on the next
+``update()``.
+
+Container protocols
+-------------------
+
+.. code-block:: python
+
+   len(env)              # number of ontologies
+   uri in env            # True if uri resolves — canonical name, alias, or source URL
+   env[uri]              # shorthand for env.get_graph(uri)
+   for name in env: ...  # iterate ontology IRIs
+
+   with OntoEnv.connect("./env") as env:
+       ...
+
+``bool(env)`` is always ``True``; use ``env is None`` to test for absence.
+
+Exceptions
+----------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Exception
+     - Raised when
+   * - ``UnresolvedImportError`` (``LookupError``)
+     - A *known* unresolved ``owl:imports`` target is passed to
+       ``copy_graph``. Covers direct and indirect imports declared by
+       catalogued ontologies, and targets attempted while fetching
+       dependencies for a transient graph.
+   * - ``CatalogRecoveryError`` (``RuntimeError``)
+     - Startup found an interrupted-mutation marker. See
+       :doc:`../how-to/recover-an-environment`.
+   * - ``ExternalStoreChangedError`` (``RuntimeError``)
+     - A custom store changed in a way OntoEnv will not reconcile on its own —
+       it reports drift it cannot localize to specific graphs, its identity
+       does not match the saved catalog, or it changed during a scan. Retry
+       with ``sync="full"`` or ``refresh_from_store(full=True)``.
+   * - ``StoreCapabilityError`` (``RuntimeError``)
+     - An operation needs an optional store method the object does not
+       implement.
+   * - ``ValueError``
+     - Mutating a read-only view, or looking up an IRI that was never
+       declared or attempted.
+
+An unknown IRI stays a plain ``ValueError`` precisely so that catching
+``UnresolvedImportError`` for expected missing imports does not also swallow
+genuine lookup mistakes.
