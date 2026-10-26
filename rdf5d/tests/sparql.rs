@@ -109,6 +109,36 @@ fn default_graph_is_union_of_named_graphs() -> Result<(), QueryEvaluationError> 
 }
 
 #[test]
+fn default_union_deduplicates_across_distinct_named_graphs() -> Result<(), QueryEvaluationError> {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("duplicate-contexts.r5tu");
+    let quints: Vec<_> = ["urn:a", "urn:b"]
+        .into_iter()
+        .map(|name| Quint {
+            id: name.into(),
+            s: Term::Iri("urn:s".into()),
+            p: Term::Iri("urn:p".into()),
+            o: Term::Iri("urn:o".into()),
+            gname: name.into(),
+        })
+        .collect();
+    write_file(&path, &quints).expect("write fixture");
+    let snap = Snapshot::open(&path).expect("open fixture");
+    let mut query = SparqlParser::new()
+        .parse_query("SELECT ?s WHERE { ?s ?p ?o }")
+        .expect("parse");
+    assert_eq!(solution_subjects(snap.query(&mut query)?)?, vec!["<urn:s>"]);
+    let mut query = SparqlParser::new()
+        .parse_query("SELECT ?s WHERE { GRAPH ?g { ?s ?p ?o } }")
+        .expect("parse");
+    assert_eq!(
+        solution_subjects(snap.query(&mut query)?)?,
+        vec!["<urn:s>", "<urn:s>"]
+    );
+    Ok(())
+}
+
+#[test]
 fn logical_view_dedups_triples_across_shared_name() -> Result<(), QueryEvaluationError> {
     // The same triple is written under two datasets that share one graph name,
     // so it lives in two physical gids. The logical view must surface it once.
@@ -432,6 +462,15 @@ fn closure_predicate_not_in_index_falls_back() -> Result<(), QueryEvaluationErro
             o: Term::Iri("http://example.org/Z".into()),
             gname: "http://example.org/graph/onto".into(),
         },
+        // An indexed predicate enables the closure optimizer, which must still
+        // leave unrelated predicates to the general path evaluator.
+        Quint {
+            id: "data".into(),
+            s: Term::Iri("http://example.org/ClassA".into()),
+            p: Term::Iri("http://www.w3.org/2000/01/rdf-schema#subClassOf".into()),
+            o: Term::Iri("http://example.org/ClassB".into()),
+            gname: "http://example.org/graph/onto".into(),
+        },
     ];
     write_file(&path, &quints).expect("custom predicate fixture");
     let snap = Snapshot::open(&path).expect("open fixture");
@@ -445,6 +484,52 @@ fn closure_predicate_not_in_index_falls_back() -> Result<(), QueryEvaluationErro
     assert_eq!(
         objects,
         vec!["<http://example.org/Y>", "<http://example.org/Z>"]
+    );
+    Ok(())
+}
+
+#[test]
+fn default_graph_merge_deduplicates_without_hiding_named_graphs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let path = dir.path().join("default-merge.r5tu");
+    let quints: Vec<_> = ["urn:a", "urn:b", "urn:outside"]
+        .into_iter()
+        .map(|name| Quint {
+            id: "data".into(),
+            s: Term::Iri("urn:s".into()),
+            p: Term::Iri("urn:p".into()),
+            o: Term::Iri("urn:o".into()),
+            gname: name.into(),
+        })
+        .collect();
+    write_file(&path, &quints)?;
+    let snapshot = Snapshot::open(&path)?;
+    let default = rdf5d::View::from_names(&snapshot, &["urn:a", "urn:b"]);
+    let dataset = snapshot.sparql_view().with_default_graph(&default)?;
+    let evaluator = spareval::QueryEvaluator::new();
+    let query = SparqlParser::new().parse_query("SELECT ?s WHERE { ?s <urn:p> <urn:o> }")?;
+    let mut prepared = evaluator.prepare(&query);
+    prepared
+        .dataset_mut()
+        .set_default_graph(vec![oxrdf::GraphName::DefaultGraph]);
+    assert_eq!(
+        solution_subjects(prepared.execute(dataset)?)?,
+        vec!["<urn:s>"]
+    );
+    let query = SparqlParser::new()
+        .parse_query("SELECT ?s WHERE { GRAPH <urn:outside> { ?s <urn:p> <urn:o> } }")?;
+    assert_eq!(
+        solution_subjects(evaluator.prepare(&query).execute(dataset)?)?,
+        vec!["<urn:s>"]
+    );
+    let other = Snapshot::open(&path)?;
+    let other_default = rdf5d::View::from_names(&other, &["urn:a"]);
+    assert!(
+        snapshot
+            .sparql_view()
+            .with_default_graph(&other_default)
+            .is_err()
     );
     Ok(())
 }

@@ -1,7 +1,7 @@
 Configuration
 =============
 
-Settings live in ``.ontoenv/config.json`` and are re-applied by every command
+Settings are captured in the selected immutable manifest and are re-applied by every command
 and every reopen. They can be set at init time, changed with ``ontoenv
 config``, passed to a Python lifecycle method, or changed at runtime with a
 ``set_*`` method.
@@ -100,9 +100,13 @@ Settings
    Includes act as a whitelist; excludes run last.
 
 ``resolution_policy``
-   Which definition wins when several files declare the same ontology IRI.
+   Which registration wins when the catalog can hold several definitions of
+   the same ontology IRI (temporary/external catalogs).
    ``"default"`` prefers the first registered, ``"latest"`` the most recently
-   updated, ``"version"`` the highest version property.
+   updated, ``"version"`` the highest version property. Managed storage keeps
+   one registration per canonical IRI; ingestion's explicit preserve/replace
+   choice determines its source. This setting does not rank competing managed
+   source files. See :doc:`../explanation/concepts`.
 
 ``use_cached_ontologies``
    When enabled, discovery is skipped at init time; the environment fills only

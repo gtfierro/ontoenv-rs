@@ -1,5 +1,8 @@
 /target
 .ontoenv
+.ontoenv-snapshots/
+.ontoenv-snapshots.lock
+.ontoenv-snapshots-init-*/
 .demo-env/
 docs/_build/
 docs/_doctrees/

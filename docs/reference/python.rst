@@ -13,6 +13,51 @@ This page groups the public API by purpose and documents behavior not
 represented in a signature: source access, mutation, persistence, and errors.
 :doc:`api` contains generated signatures and docstrings.
 
+Managed snapshots in 0.7
+------------------------
+
+New managed persistent environments use immutable publication. Existing
+``.ontoenv/`` data requires :doc:`../how-to/migrate-storage`.
+``OntoEnv.migrate(path)`` copies the stored data and returns a writable handle;
+legacy files remain available for rollback. Custom stores and temporary
+connections retain their own storage semantics.
+
+``env.snapshot()`` returns an ``EnvironmentSnapshot`` independent of the live
+handle. It exposes ``info`` (environment ID, generation, parent generation,
+commit and open timestamps), a copied ``config`` dictionary,
+``get_ontology_names()``, ``get_ontologies()``, ``get_namespaces()``,
+``get_bound_namespaces()`` and ``resolve_alias(iri)``. It also exposes paired
+``view_graph`` / ``copy_graph``, ``view_closure`` / ``copy_closure``,
+``view_union`` / ``copy_union`` and ``view_dataset`` / ``copy_dataset`` queries.
+Closure/union graph results return ``(result, canonical_iris)``. Dataset methods
+accept an optional IRI list: ``None`` selects all, ``[]`` selects none. Dataset
+unions preserve named-graph contexts, while graph unions deduplicate triples.
+``closure_iris``, ``get_importers`` and ``get_import_paths`` query only this
+catalog. No refresh or write methods exist on this handle. See
+:doc:`../explanation/views-and-copies` for scope and counting rules.
+
+``OntoEnv.read_snapshot(path)`` opens one owned version directly. Use it as a
+context manager or call ``snapshot.close()`` to release that handle promptly.
+``snapshot.closed`` reports its state; operations on a closed handle raise
+``ValueError``. Closing is idempotent. Graphs, datasets and iterators obtained
+inside the scope retain independent ownership and remain usable after it exits.
+There is no read transaction to commit or roll back.
+
+``env.prune()`` retries cleanup on a writable managed connection and returns
+counts plus deferred errors. Cleanup also runs at writer startup and after
+successful publication, retaining current/previous versions and live views
+across processes. ``OntoEnv.upgrade(path)`` enables this protocol for earlier
+0.7 development stores; close every older process first. See
+:doc:`../how-to/migrate-storage`.
+
+``env.refresh()`` advances a managed reader to the latest complete version,
+returning whether it changed. A writer already selects its last commit.
+Previously returned graph, closure, union and dataset views retain their version,
+even after flush, refresh or close. Request another view to see the new selection,
+or call ``env.refresh_dataset(dataset)`` to rebind that dataset explicitly.
+Outstanding iterators keep their original backing. Successful managed mutations
+publish before returning; ``flush`` does not refresh readers.
+
 Opening an environment
 ----------------------
 
@@ -20,7 +65,19 @@ Use ``connect`` when both an existing and a missing environment are valid:
 
 .. code-block:: python
 
+   from ontoenv import OntoEnv
+
    env = OntoEnv.connect("./ontology-env")
+
+The path is required; use ``"."`` for the current directory. A context manager
+is optional. Keep ``env`` in application state, reuse its ``get_graph``,
+``get_closure``, ``get_union`` and ``get_dataset`` methods, and call ``close()``
+at shutdown. Capture ``env.snapshot()`` for several reads that must agree.
+
+A writable managed handle holds the sole writer lock until close. Independent
+read-only handles can stay open during writes; ``reader.refresh()`` advances
+their selection without changing previously returned views. See
+:doc:`../how-to/use-in-a-service` for complete examples.
 
 With the default store, it creates an empty environment on the first run and
 reopens the saved catalog on later runs. It does not scan ontology files or
@@ -80,21 +137,17 @@ For the design tradeoffs between these entry points, see
            remote_cache_ttl_secs=None, graph_store=None, root=".")
 
 Supported and used internally, but the named methods above express intent more
-clearly. Note that ``recreate=True`` **deletes and rebuilds** the target
-``.ontoenv`` directory — it is not a reconnect.
+clearly. For managed storage, ``recreate=True`` publishes replacement state
+while retained views keep their old version.
 
-.. deprecated:: 0.6
-   ``create_or_use_cached=True`` emits ``DeprecationWarning``; use
-   ``OntoEnv.connect(path)``. Removal planned for 0.7.
-
-.. deprecated:: 0.6
-   ``init_from_store=True``; use ``OntoEnv.adopt(path, graph_store)``.
+The 0.7 API removes ``create_or_use_cached`` and ``init_from_store``. Use
+``OntoEnv.connect(path)`` and ``OntoEnv.adopt(path, graph_store)`` respectively.
 
 Closing
 ~~~~~~~
 
 - ``env.close()`` — release resources.
-- ``env.flush()`` — write pending changes to storage.
+- ``env.flush()`` — flush the adapter; managed writes already publish before returning.
 - ``with OntoEnv.connect(...) as env:`` — calls ``close()`` on exit.
 
 Adding ontologies
@@ -135,8 +188,8 @@ Refreshing
 ``graphs=`` is an exact set of backend graph IDs and is never expanded.
 ``full=True`` cannot be combined with it.
 
-.. deprecated:: 0.6
-   ``update(all=True)``; use ``update(force=True)``.
+The 0.7 API removes ``update(all=True)`` and positional booleans; use
+``update(force=True)``.
 
 Reading graphs
 --------------
@@ -168,8 +221,7 @@ view. ``copy_*`` allocates a mutable ``rdflib`` object. See
      - Materializes the same triple set as a mutable graph.
    * - ``get_union(uris, include_closures=False, recursion_depth=-1)``
      - ``(ViewGraph, graph_iris)``
-     - **Raw** merge of the listed graphs; no transform or cross-graph
-       de-duplication.
+     - Raw graph projection of the listed graphs; shared triples occur once.
    * - ``copy_union(uris, root, graph=None, include_closures=False, rewrite_sh_prefixes=False, remove_owl_imports=False, recursion_depth=-1)``
      - ``(Graph, graph_iris)``
      - Raw and mutable by default. Transform flags opt into declaration and
@@ -184,9 +236,12 @@ view. ``copy_*`` allocates a mutable ``rdflib`` object. See
      - ``None``
      - Re-snapshots the environment into an existing store-backed dataset.
 
-.. deprecated:: 0.6
-   ``snapshot_as_dataset(...)`` and ``to_rdflib_dataset(...)``; use
-   ``get_dataset()`` / ``copy_dataset()``.
+The 0.7 API removes ``snapshot_as_dataset(...)`` and
+``to_rdflib_dataset(...)``; use ``get_dataset()`` / ``copy_dataset()``.
+
+Graph copies retain the namespace bindings captured with their triples. Saved
+bindings replace collisions in an explicitly supplied destination graph;
+ontology-declared prefixes preserve that destination's preferred bindings.
 
 Streaming
 ~~~~~~~~~
@@ -236,7 +291,7 @@ Inspecting
    * - ``get_namespaces(ontology=None, include_closure=False)``
      - Prefix → namespace mapping, including saved bindings.
    * - ``bind_namespace(prefix, namespace)`` / ``unbind_namespace(prefix)``
-     - Save or remove a prefix binding in ``.ontoenv/ontoenv.json``.
+     - Save or remove a prefix binding in the selected version’s configuration.
    * - ``get_bound_namespaces()``
      - The saved prefix bindings.
    * - ``store_path()``

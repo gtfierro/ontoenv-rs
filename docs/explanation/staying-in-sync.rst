@@ -3,6 +3,20 @@ Staying in sync
 
 .. _refreshing-ontology-sources:
 
+Managed reader refresh
+----------------------
+
+With the 0.7 managed backend, ``env.refresh()`` selects the latest complete
+publication. It reads no ontology sources and does not wait for a live writer.
+Until refresh, the reader retains its original catalog, configuration and RDF.
+Old returned snapshots and query views keep their original versions after a
+refresh. A failed refresh preserves the previous selection. See
+:doc:`transactional-snapshots` and :doc:`../how-to/migrate-storage`.
+
+Source updates and custom stores
+--------------------------------
+
+
 OntoEnv has a saved view of the world, and the world moves. Files get edited,
 remote ontologies get republished, and — if you supplied your own graph store —
 something else may write into that store directly.

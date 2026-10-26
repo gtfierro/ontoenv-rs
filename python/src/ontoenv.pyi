@@ -1,8 +1,7 @@
 from pathlib import Path
-from typing import Iterator, Optional, List, Union, Tuple, Dict, Literal
+from typing import Any, Iterator, Optional, List, Union, Tuple, Dict, Literal
 from rdflib import Graph, Dataset
 from rdflib.query import Result
-from rdflib.store import Store
 
 # Exposed module metadata
 version: str
@@ -56,6 +55,50 @@ class SyncReport:
     unchanged: List[str]
     still_pending: List[str]
 
+class EnvironmentSnapshot:
+    """Owned immutable version. Closing releases this handle; views retain theirs."""
+    @property
+    def info(self) -> Dict[str, Any]: ...
+    @property
+    def config(self) -> Dict[str, Any]: ...
+    @property
+    def closed(self) -> bool: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> "EnvironmentSnapshot": ...
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
+    def view_graph(self, uri: str) -> Graph: ...
+    def copy_graph(self, uri: str) -> Graph:
+        """Mutable graph retaining the captured namespace bindings."""
+        ...
+    def closure_iris(self, uri: str, recursion_depth: int = -1) -> List[str]: ...
+    def view_closure(
+        self, uri: str, recursion_depth: int = -1,
+        remove_owl_imports: bool = True, rewrite_sh_prefixes: bool = True,
+    ) -> Tuple["ViewGraph", List[str]]: ...
+    def copy_closure(
+        self, uri: str, recursion_depth: int = -1,
+        remove_owl_imports: bool = True, rewrite_sh_prefixes: bool = True,
+    ) -> Tuple[Graph, List[str]]: ...
+    def view_union(self, uris: List[str]) -> Tuple["ViewGraph", List[str]]: ...
+    def copy_union(self, uris: List[str]) -> Tuple[Graph, List[str]]: ...
+    def view_dataset(self, uris: Optional[List[str]] = None) -> Dataset:
+        """Fixed named-graph selection. None selects all; [] selects none."""
+        ...
+    def copy_dataset(self, uris: Optional[List[str]] = None) -> Dataset:
+        """Mutable dataset retaining selected contexts, including empty graphs."""
+        ...
+    def get_ontology_names(self) -> List[str]: ...
+    def get_ontologies(self) -> List[Ontology]: ...
+    def get_namespaces(self) -> Dict[str, str]: ...
+    def get_namespaces_for_graphs(self, uris: List[str]) -> Dict[str, str]: ...
+    def get_bound_namespaces(self) -> Dict[str, str]: ...
+    def resolve_alias(self, name: str) -> Optional[str]: ...
+    def get_importers(self, uri: str) -> List[str]: ...
+    def get_import_paths(self, uri: str) -> List[List[str]]: ...
+    def explain_import(self, uri: str) -> Dict[str, Any]:
+        """Return present plus paths; missing paths end at their importers."""
+        ...
+
 class OntoEnv:
     """Ontology environment for managing ontologies and graphs.
 
@@ -64,9 +107,23 @@ class OntoEnv:
     :meth:`create`, :meth:`open`, :meth:`adopt`, and :meth:`recover` methods
     express stricter lifecycle requirements.
 
-    ``recreate=True`` on the direct constructor deletes and rebuilds the
-    target ``.ontoenv`` directory. It is not equivalent to :meth:`connect`.
+    ``recreate=True`` on the direct constructor publishes replacement state
+    for managed storage, preserving old views. It is not equivalent to
+    :meth:`connect`.
     """
+
+    @staticmethod
+    def read_snapshot(path: Union[str, Path]) -> EnvironmentSnapshot:
+        """Open one owned version without retaining a live environment."""
+    @staticmethod
+    def migrate(path: Union[str, Path]) -> "OntoEnv": ...
+    @staticmethod
+    def upgrade(path: Union[str, Path]) -> "OntoEnv":
+        """Offline protocol-2 upgrade; close every older process first."""
+    def snapshot(self) -> EnvironmentSnapshot: ...
+    def refresh(self) -> bool: ...
+    def prune(self) -> Dict[str, Any]:
+        """Retry cleanup, preserving current/previous versions and owned views."""
 
     @classmethod
     def connect(
@@ -138,7 +195,6 @@ class OntoEnv:
         self,
         path: Optional[Union[str, Path]] = None,
         recreate: bool = False,
-        create_or_use_cached: bool = False,
         read_only: bool = False,
         search_directories: Optional[List[str]] = None,
         require_ontology_names: Optional[bool] = None,
@@ -154,7 +210,6 @@ class OntoEnv:
         temporary: bool = False,
         remote_cache_ttl_secs: Optional[int] = None,
         graph_store: Optional[object] = None,
-        init_from_store: bool = False,
     ) -> None:
         """Create or open an ontology environment.
 
@@ -162,14 +217,12 @@ class OntoEnv:
         storage to the provided object (which must implement ``add_graph``,
         ``get_graph``, ``remove_graph``, and ``graph_ids``).
 
-        ``init_from_store`` is deprecated. Use ``OntoEnv.adopt(path,
-        graph_store)`` for a persistent pre-populated store. For a
-        catalog-free temporary store, construct it normally and call
+        Use ``OntoEnv.adopt(path, graph_store)`` for a persistent pre-populated
+        store. For a catalog-free temporary store, call
         ``refresh_from_store(full=True)`` explicitly.
 
-        PSO/POS/SPO/OSP posting-list indexes are built in memory when a
-        persistent ``.r5tu`` snapshot is first bound. The transitive-closure
-        table for supported property paths is built lazily on first use.
+        Posting-list indexes and the transitive-closure table for supported
+        property paths are built lazily as snapshot queries need them.
 
         For an existing persistent environment, ``None`` preserves persisted
         configuration. Explicit values—including ``False``, ``"default"``,
@@ -177,28 +230,19 @@ class OntoEnv:
         read-only opens keep them session-local. Overrides do not trigger an
         implicit source scan or graph re-ingestion.
 
-        ``create_or_use_cached=True`` is deprecated and emits
-        ``DeprecationWarning``. Use :meth:`OntoEnv.connect` instead. The
-        compatibility option is planned for removal in 0.7.
-
-        ``temporary=True`` always creates an empty in-memory environment. Use
-        :meth:`temporary_snapshot` to make an isolated in-memory copy of an
-        existing environment.
+        ``temporary=True`` creates an empty in-memory environment. Use
+        ``snapshot()`` for fixed read-only access, or ``copy_graph()`` and
+        ``copy_dataset()`` for independently mutable data.
         """
         ...
 
     def __repr__(self) -> str: ...
-
-    def temporary_snapshot(self) -> "OntoEnv":
-        """Return an isolated in-memory copy of this environment and its graphs."""
-        ...
 
     def update(
         self,
         location: Optional[Union[str, Path, Graph]] = None,
         *,
         force: bool = False,
-        all: Optional[bool] = None,
     ) -> None:
         """Refresh ontology source files or URLs and follow their imports.
 
@@ -210,8 +254,6 @@ class OntoEnv:
         graph automatically. Pass ``force=True`` to reread it even when its
         cached copy appears current. In both forms, transitive ``owl:imports``
         are followed.
-
-        ``all=`` is a deprecated compatibility alias for ``force=``.
         """
         ...
 
@@ -356,6 +398,9 @@ class OntoEnv:
 
         If *graph* is provided, triples are added to it and the same graph is
         returned. Otherwise a new in-memory graph is returned.
+        Captured namespace bindings accompany the triples. Saved user bindings
+        replace collisions; ontology prefixes preserve an explicit destination's
+        preferred bindings.
 
         With a custom ``graph_store=``: if the store implements
         ``copy_graph(iri)`` that method is called; otherwise falls back to
@@ -486,8 +531,8 @@ class OntoEnv:
         Mutation raises ``ValueError``; use :py:meth:`copy_union` for a
         mutable in-memory merge.
 
-        This is a **raw** merge: no closure transform is applied and triples
-        are not de-duplicated across the named graphs. For the cleaned,
+        This is a **raw** graph projection: no closure transform is applied;
+        shared triples occur once. For the cleaned,
         flattened imports closure of a single ontology use
         :py:meth:`get_closure` instead.
 
@@ -640,33 +685,11 @@ class OntoEnv:
         """
         ...
 
-    def snapshot_as_dataset(
-        self,
-        backend: str = "auto",
-        store: Optional[Store] = None,
-    ) -> Dataset:
-        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-
-        Emits ``DeprecationWarning``. ``backend="copy"`` without *store*
-        returns :meth:`copy_dataset`; otherwise this returns a read-only
-        Dataset view using the requested backend.
-        """
-        ...
-
     def refresh_dataset(self, dataset: Dataset) -> None:
         """Re-snapshot ``self`` into an existing ``OntoEnvStore``-backed Dataset.
 
         Raises ``TypeError`` if ``dataset.store`` is not an
         :class:`ontoenv.OntoEnvStore`.
-        """
-        ...
-
-    def to_rdflib_dataset(self, mode: str = "auto") -> Dataset:
-        """Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-
-        Emits ``DeprecationWarning``. ``mode="copy"`` returns
-        :meth:`copy_dataset`; otherwise this returns a read-only Dataset view
-        using the requested mode.
         """
         ...
 
@@ -700,8 +723,12 @@ class OntoEnv:
 
     def store_path(self) -> Optional[str]: ...
 
-    def flush(self) -> None: ...
-    def close(self) -> None: ...
+    def flush(self) -> None:
+        """Flush the adapter; managed writes already publish before returning."""
+        ...
+    def close(self) -> None:
+        """Release the handle. Previously returned managed views remain usable."""
+        ...
 
     # ------------------------------------------------------------------ #
     # Pythonic sugar                                                       #

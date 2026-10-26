@@ -80,6 +80,16 @@ Ontologies fetched from a URL often declare a different (usually versioned) onto
 
 ## CLI
 
+New managed environments use [immutable publication](docs/explanation/transactional-snapshots.md)
+by default in 0.7.0-rc.1: one writer, nonblocking readers, mmap-backed RDF5D
+files and explicit reader refresh. A selected manifest bundles graphs, catalog,
+aliases and configuration. Publication lives in OntoEnv; RDF5D remains the file
+builder and query engine. No Cargo feature or database is required.
+
+Existing environments require `ontoenv migrate` or `OntoEnv.migrate(path)`;
+see [the migration guide](docs/how-to/migrate-storage.md). Original files are
+retained for rollback.
+
 ### Installation
 
 - `cargo install --locked ontoenv-cli` — from crates.io
@@ -91,24 +101,35 @@ Ontologies fetched from a URL often declare a different (usually versioned) onto
 
 | Path | Purpose |
 |---|---|
-| `.ontoenv/` | Environment directory |
-| `.ontoenv/store.r5tu` | RDF5D persistent store |
-| `.ontoenv/catalog.r5tu` | Authoritative, versioned environment metadata catalog |
-| `.ontoenv/catalog.pending` | Marker for a graph/catalog mutation in progress or interrupted mutation; successful operations, including failed mutations that make no backend changes, remove it |
-| `.ontoenv/store.lock` | File lock (single writer, shared readers) |
+| `.ontoenv-snapshots/` | Managed environment directory |
+| `.ontoenv-snapshots/CURRENT` | Atomic selection of one complete version |
+| `.ontoenv-snapshots/manifests/` | Immutable catalog, configuration and object references |
+| `.ontoenv-snapshots/objects/*/store.r5tu` | Immutable mmap-backed graph artifacts |
+| `.ontoenv-snapshots/objects/*/.pin` | Shared reader pin held for the backing's lifetime |
+| `.ontoenv-snapshots/READERS` | Brief selection/pinning gate shared by readers |
+| `.ontoenv-snapshots/trash/` | Retired objects awaiting deletion or retry |
+| `.ontoenv-snapshots.lock` | Stable exclusive writer lock; readers do not acquire it |
 
-Warm opens read only `ontoenv.json`, `catalog.r5tu`, and O(1) backend state when
-available. They do not materialize ontology graphs. Legacy `environment.json`
-metadata is migrated automatically when its graph IDs match the backend;
-legacy JSON files are retained but ignored after migration.
+Readers select one version until `env.refresh()` or reopen. Previously returned
+snapshot, graph, closure and dataset views retain their version. Successful
+managed mutations publish before returning; `flush()` does not refresh readers.
+Malformed selected state fails explicitly; opens do not scan history or silently
+fall back. Graph-changing commits write a complete new RDF5D file; metadata-only
+commits share the old one. Cleanup keeps the current and previous published
+versions plus files owned by live views in any process. It runs on writer open
+and successful publication; `ontoenv prune` / `env.prune()` retries it explicitly.
+Earlier builds of this unreleased branch (reader protocol 2) require an
+[offline upgrade](docs/how-to/migrate-storage.md) before cleanup is enabled.
 
-If a command reports that an external process is mutating the environment,
-another writer currently holds `.ontoenv/store.lock`; wait for it to finish and
-retry. If a command instead reports `CatalogRecoveryError` for
-`catalog.pending`, no active writer owns the marker: run `ontoenv recover` from
-the environment or a child directory. It rebuilds the catalog from the
-persistent graph store and removes the marker only after the replacement
-catalog is published successfully.
+On Windows, 0.7 supports coherent publication, retained views and recovery after
+an abrupt process exit. Power-loss durability is best effort: a power failure
+may require rebuilding the environment from ontology sources. A successful
+commit or retained previous version does not guarantee a complete recoverable
+version after power loss. See the [storage contract](docs/explanation/transactional-snapshots.md).
+
+Caller-provided stores retain their own consistency and transaction guarantees.
+Their `.ontoenv/` catalogs and interrupted-mutation recovery remain supported;
+managed storage migration does not convert external databases.
 
 Set `ONTOENV_DIR` to override the environment location. Logging is controlled via `ONTOENV_LOG` or `RUST_LOG`.
 
@@ -118,7 +139,7 @@ Ontology sources are fetched and parsed on up to 8 worker threads while an envir
 
 #### `init`
 
-Initialize an `ontoenv` workspace. Must be run once per environment; all other commands auto-discover the nearest `.ontoenv/` by walking up from the current directory.
+Initialize an `ontoenv` workspace. Must be run once per environment; all other commands auto-discover the nearest `.ontoenv-snapshots/` by walking up from the current directory.
 
 ```
 Usage: ontoenv init [OPTIONS] [LOCATION]...
@@ -254,11 +275,37 @@ from ontoenv import OntoEnv
 # initialize graph storage plus an empty ontology index.
 # Later runs: reuse that index without rereading every RDF triple.
 env = OntoEnv.connect("./my-env")
-env.add("./ontologies/site.ttl")
+iri = env.add("./ontologies/site.ttl")
 
-# Keep the object in application state and close it during shutdown.
-application_state.ontoenv = env
-application_state.ontoenv.close()
+# Keep env in application state and reuse it until shutdown.
+```
+
+`connect` is a class method with a required path; `OntoEnv.connect(".")` uses
+the current directory. The handle can live for the whole program. Continue using
+`env.get_graph`, `get_closure`, `get_union` and `get_dataset` directly, and close
+the handle at shutdown. Managed writes publish before return.
+
+For several reads that must agree, capture one version from the live handle:
+
+```python
+with env.snapshot() as snapshot:
+    graph = snapshot.view_graph(iri)
+    closure, members = snapshot.view_closure(iri)
+    dataset = snapshot.view_dataset(members)
+    editable = snapshot.copy_graph(iri)
+
+# Escaped views keep their version after this scope or env.close().
+```
+
+One writable managed handle holds the writer lock. Read-only workers can remain
+open alongside it and call `reader.refresh()` to select a new publication;
+existing views keep their old version. See the
+[service guide](docs/how-to/use-in-a-service.rst) for startup, refresh and shutdown.
+
+```python
+# In the application's shutdown hook:
+env.close()
+# graph, closure and dataset remain usable on their captured version.
 ```
 
 When reopening, omitted configuration options preserve their saved values.
@@ -292,7 +339,6 @@ imports.
 OntoEnv(
     path=None,
     recreate=False,
-    create_or_use_cached=False,  # deprecated; use OntoEnv.connect(path)
     read_only=False,
     search_directories=None,   # pass ["."] to scan immediately; None skips discovery
     require_ontology_names=None,
@@ -305,21 +351,18 @@ OntoEnv(
     excludes=None,
     include_ontologies=None,   # regex filters on ontology IRIs; excludes run after includes
     exclude_ontologies=None,
-    temporary=False,           # in-memory only, no .ontoenv/
+    temporary=False,           # in-memory only, no persistent environment directory
     remote_cache_ttl_secs=None,  # max age before re-fetching a remote ontology (default: 86400)
 )
 ```
 
 **Environment modes:**
-- `temporary=True` — in-memory only, no `.ontoenv/`
+- `temporary=True` — in-memory only, no persistent environment directory
 - `OntoEnv.connect(path, sync="auto")` — persistent connection and graph-store synchronization; call `update()` separately for source files and URLs
 - `OntoEnv.create(path)` — create a persistent empty environment
 - `OntoEnv.open(path, read_only=False)` — require and load an existing catalog
 - `OntoEnv.adopt(path, graph_store)` — scan an existing store and create its catalog
 - `recreate=True` — explicitly create (or overwrite) at `path`
-- `create_or_use_cached=True` — deprecated compatibility alias for
-  `OntoEnv.connect(path)`; retained for the 0.6.x line and planned for removal
-  in 0.7
 - Default — walk up from `path` (or `root`) to find an existing `.ontoenv/`; raise `FileNotFoundError` if not found
 
 ### Dependency Resolution Methods
@@ -379,7 +422,7 @@ rewritten onto it. Returns `(deps_graph, list[str])`.
 | `missing_imports(uri=None) -> list[str]` | List unresolvable `owl:imports` IRIs (see below) |
 | `get_dataset() -> rdflib.Dataset` | Read-only Dataset view of the env |
 | `copy_dataset(dataset=None) -> rdflib.Dataset` | Mutable in-memory copy of the env |
-| `store_path() -> str \| None` | Path to `.ontoenv/`, or `None` for temporary environments |
+| `store_path() -> str \| None` | Path to `.ontoenv-snapshots/`, or `None` for temporary environments |
 | `close()` | Persist (if applicable) and release resources |
 | `len(env)` | Number of ontologies in the environment |
 | `uri in env` | True if `uri` resolves to a known ontology |
@@ -481,15 +524,17 @@ fs::remove_dir_all(&test_dir)?;
 | `OntoEnv::connect_with_overrides(config, sync, read_only, overrides)` | Connect with explicit `ConfigOverrides` |
 | `OntoEnv::connect_with_graph_io_and_overrides(config, io, sync, read_only, overrides)` | Apply the same rules to a custom graph backend |
 | `OntoEnv::open_or_init_with_overrides(config, read_only, overrides)` | Open-or-create with explicit reopen overrides |
-| `find_ontoenv_root()` / `find_ontoenv_root_from(path)` | Locate the nearest `.ontoenv/` by walking up |
+| `find_ontoenv_root()` / `find_ontoenv_root_from(path)` | Locate the nearest `.ontoenv-snapshots/` by walking up |
 | `env.update_all(all)` | Refresh discovered ontologies |
 | `env.add(location, Overwrite, RefreshStrategy)` | Add by file/URL |
 | `env.add_no_imports(location, Overwrite, RefreshStrategy)` | Add without import traversal |
 | `env.add_from_bytes(location, bytes, format, Overwrite, RefreshStrategy)` | Add from in-memory RDF bytes |
-| `env.get_graph(id)` | Retrieve a single ontology |
+| `env.get_graph(id)` / `env.copy_graph(id)` | Materialize an owned Rust graph; editing it does not change the environment |
+| `snapshot.view_graph(id)` | Borrow a scoped read-only query view from an acquired managed `EnvironmentSnapshot` |
+| `env.io().oxigraph_store()` | Fallible advanced access to an authoritative Oxigraph store, available only for memory/caller-supplied Oxigraph backends |
 | `env.get_union_graph(ids)` | Merge multiple ontology graphs |
 | `env.get_closure(id, recursion_depth)` | Compute transitive imports closure |
-| `env.save_to_directory()` / `env.flush()` | Persist to `.ontoenv/store.r5tu` |
+| `env.save_to_directory()` / `env.flush()` | Publish managed configuration; graph mutations already publish atomically |
 
 ### Option Enums
 

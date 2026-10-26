@@ -23,7 +23,7 @@ use std::{
     collections::HashMap,
     fmt, fs,
     path::Path,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use crate::header::{
@@ -174,6 +174,8 @@ pub struct R5tuFile {
     /// etc.). These receive stable ids `>= term_dict.n_terms` that never
     /// collide with a scanned id.
     term_overflow: Mutex<TermOverflow>,
+    // Keep external backing owners until after the mapping and caches drop.
+    lifetime_guards: Vec<Arc<dyn std::fmt::Debug + Send + Sync>>,
 }
 
 /// In-memory extension dictionary for terms not present on disk. See
@@ -187,6 +189,16 @@ struct TermOverflow {
 }
 
 impl R5tuFile {
+    /// Retain an external owner for the complete lifetime of this file backing.
+    ///
+    /// Snapshots and iterators retaining this file also retain the owner. This
+    /// can keep an immutable artifact pinned against an external collector.
+    /// Guards are additive; adding one never releases an existing owner.
+    pub fn with_lifetime_guard(mut self, guard: Arc<dyn std::fmt::Debug + Send + Sync>) -> Self {
+        self.lifetime_guards.push(guard);
+        self
+    }
+
     #[inline]
     fn bytes(&self) -> &[u8] {
         self.backing.as_bytes()
@@ -563,6 +575,7 @@ impl R5tuFile {
             triple_blocks: sections.triple_blocks,
             term_index: OnceLock::new(),
             term_overflow: Mutex::new(TermOverflow::default()),
+            lifetime_guards: Vec::new(),
         })
     }
 }
@@ -2406,6 +2419,7 @@ mod tests {
         };
 
         let file = R5tuFile {
+            lifetime_guards: Vec::new(),
             backing: Backing::Owned(Vec::new()),
             header: Header {
                 magic: *b"R5TU",
@@ -2688,6 +2702,7 @@ mod tests {
     #[test]
     fn gdir_row_supports_compact_row_size_32() {
         let file = R5tuFile {
+            lifetime_guards: Vec::new(),
             backing: Backing::Owned({
                 let mut bytes = vec![0u8; 16];
                 bytes.extend_from_slice(&1u64.to_le_bytes());

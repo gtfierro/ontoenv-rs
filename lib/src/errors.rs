@@ -52,6 +52,7 @@ impl fmt::Display for CatalogRecoveryError {
 impl std::error::Error for CatalogRecoveryError {}
 
 #[derive(Debug)]
+/// The selected backend cannot provide a requested storage operation.
 pub struct StoreCapabilityError {
     pub message: String,
 }

@@ -34,9 +34,19 @@ tempfile = "3.10.1"
 fs2 = "0.4"
 url = "2.5"
 blake3.workspace = true
+rand.workspace = true
 
 [features]
 rocksdb = ["oxigraph/rocksdb"]
+
+[[example]]
+name = "transactional_snapshots"
+
+[[example]]
+name = "snapshot_profile"
+
+[[example]]
+name = "snapshot_workload"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]

@@ -36,6 +36,12 @@ How-to guides
    Route graph reads and writes through your own storage instead of
    OntoEnv's, and keep the two in sync.
 
+.. rubric:: Storage upgrades
+
+:doc:`migrate-storage`
+   Explicitly copy a legacy environment to the 0.7 backend while retaining
+   the original files, and understand reader refresh and retention.
+
 .. rubric:: When something is wrong
 
 :doc:`recover-an-environment`
@@ -55,5 +61,6 @@ How-to guides
    use-in-a-service
    query-with-sparql
    use-a-custom-graph-store
+   migrate-storage
    recover-an-environment
    diagnose-imports

@@ -105,7 +105,9 @@ The same environment is available through the CLI, Python bindings with
 Upgrading
 ---------
 
-Coming from 0.5? :doc:`migration-0.6` lists the API changes you need to make.
+Upgrading an existing environment? Start with :doc:`migration-0.7` for the
+required storage migration and API replacements. The historical
+:doc:`migration-0.6` explains the earlier view/copy transition.
 The full release history is in the :doc:`changelog`.
 
 .. toctree::
@@ -121,6 +123,7 @@ The full release history is in the :doc:`changelog`.
    :hidden:
    :caption: Project
 
+   migration-0.7
    migration-0.6
    development
    Rust API (docs.rs) <https://docs.rs/ontoenv>

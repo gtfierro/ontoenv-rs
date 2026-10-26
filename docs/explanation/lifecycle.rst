@@ -8,7 +8,12 @@ Use ``connect`` when either state is valid
 
 .. code-block:: python
 
+   from ontoenv import OntoEnv
+
    env = OntoEnv.connect("./ontology-env")
+
+``connect`` is a class method with a required path; ``OntoEnv.connect(".")``
+uses the current directory. The returned handle can live for the whole program.
 
 ``connect`` creates the environment if it is missing and reopens it if it
 exists. Use a different entry point when one of those states should be an
@@ -96,15 +101,19 @@ environment is genuinely empty until ``update()`` or ``add()`` runs.
 ``recreate=True`` is not a reconnect
 ------------------------------------
 
-The direct constructor accepts ``recreate=True``, and it is destructive:
+The direct constructor accepts ``recreate=True`` to replace the selected state:
 
 .. code-block:: python
 
    env = OntoEnv(path=".demo-env", recreate=True, search_directories=["./brick"])
 
-Each call deletes ``.demo-env/.ontoenv/``, creates fresh storage, and
-immediately scans ``./brick``. The saved catalog and all cached graphs are
-gone. (The surrounding directory and your source files are untouched.)
+With managed storage, each call stages an empty replacement catalog and any
+requested source scan, then publishes that replacement. Old readers retain
+their versions. Cleanup in ``.demo-env/.ontoenv-snapshots/`` retains current and
+previous publications plus all files pinned by live views. Eligible files are
+reclaimed on writer startup, successful publication or ``env.prune()``.
+Close the active writer before recreating.
+Source files are untouched.
 
 That is occasionally what you want, but it is not "open my environment". The
 non-destructive equivalent is:
@@ -122,7 +131,7 @@ And when you do mean the destructive version, the named form says so out loud:
 
 One more constructor behavior worth knowing: ``OntoEnv(path="./project")``
 without ``recreate`` searches ``./project`` *and its parents* for an existing
-``.ontoenv`` directory, opens what it finds, and raises ``FileNotFoundError``
+managed environment directory, opens what it finds, and raises ``FileNotFoundError``
 otherwise. Convenient interactively; too implicit for application code, where
 ``connect`` or ``open`` name the path and the intent.
 
@@ -157,25 +166,53 @@ Changing configuration never triggers a scan. Runtime modes such as ``offline``
 and ``strict`` take effect immediately; changed discovery paths and filters
 apply on the next ``update()``.
 
+Managed graph and configuration edits publish before their methods return.
+``flush()`` flushes adapters and ``close()`` releases the handle; neither adds a
+managed commit boundary. Rust callers can group edits with ``transaction``.
+Existing views keep their captured version after close.
+
 How long should the object live?
 --------------------------------
 
-The ``with`` statement controls exactly one thing: when ``close()`` is called.
-It changes nothing about what OntoEnv saves or how it behaves.
-
-For a script, that automatic cleanup is convenient. For a server, it is the
-wrong shape entirely — connect once at startup, keep the object in application
-state, close it at shutdown. See :doc:`../how-to/use-in-a-service`.
-
-Deprecated: ``create_or_use_cached``
-------------------------------------
+Keep the returned object in application state and reuse it:
 
 .. code-block:: python
 
-   env = OntoEnv("./env", create_or_use_cached=True)   # deprecated
-   env = OntoEnv.connect("./env")                      # equivalent, supported
+   env = OntoEnv.connect("./ontology-env")
+   try:
+       # Startup has already loaded this ontology.
+       view, members = env.get_closure("https://example.org/site")
+       # Continue serving requests or running jobs with env.
+   finally:
+       env.close()  # Shutdown
 
-``create_or_use_cached=True`` had the same create-or-reopen intent but no
-vocabulary for the other lifecycle states, and no way to say anything about
-synchronization. It emits ``DeprecationWarning`` throughout 0.6.x and is
-planned for removal in 0.7.
+Context managers provide the same cleanup for a shorter scope. Neither form
+adds a managed commit boundary: writes publish before returning. Returned views
+keep their captured version after ``close``.
+
+A writable managed handle owns the single writer lock until close. Read-only
+workers can remain open alongside it:
+
+.. code-block:: python
+
+   reader = OntoEnv.open("./ontology-env", read_only=True)
+   try:
+       old = reader.snapshot()
+       reader.refresh()  # Select another process's latest publication.
+       current = reader.snapshot()
+       # old and its returned views keep the original version.
+   finally:
+       reader.close()
+
+Use live ``env.get_*`` graph reads for individual results. For several reads
+that must agree, capture ``env.snapshot()`` and use its ``view_*`` / ``copy_*``
+methods. Reader ``refresh`` selects saved state; writer ``update`` reads sources.
+See :doc:`../how-to/use-in-a-service` for framework and multi-process patterns.
+
+Removed constructor flags
+-------------------------
+
+The 0.7 API removes ``create_or_use_cached`` and ``init_from_store``.
+Use ``OntoEnv.connect(path)`` to create or reopen an environment, and
+``OntoEnv.adopt(path, store)`` to catalog an existing external store.
+For temporary stores, call ``refresh_from_store(full=True)`` explicitly.

@@ -4,14 +4,49 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
-## [Unreleased]
+## [0.7.0-rc.1] — 2026-10-23
+
+### Storage and compatibility
+- Immutable publication is the default for new managed persistent environments
+  in Rust, Python and the CLI. One writer stages changes privately and publishes
+  graphs, catalog, aliases and configuration together. Readers hold a consistent
+  mmap-backed version without blocking the writer, until explicit refresh.
+- Python `env.snapshot()` returns an independent `EnvironmentSnapshot` with
+  generation/timestamps, catalog, configuration and graph/dataset access.
+  Managed graph, closure and dataset views keep their version across updates,
+  flush and close. Re-fetch a view or explicitly rebind a dataset to advance it.
+- `OntoEnv.read_snapshot(path)` opens an owned version directly. Snapshot scopes
+  support `with`, `close()` and `closed`; escaped views and iterators retain
+  independent backing ownership after the scope exits.
+- Rust `env.transaction(...)` groups normal operations into one publication,
+  with nested rollback and unwind handling. Add-with-rename publishes once.
+- Existing managed `.ontoenv/` data requires explicit `ontoenv migrate` or
+  `OntoEnv.migrate(path)`. Migration requires closed legacy handles, validates
+  the source and retains its files. External stores keep their existing APIs.
+- Reader-safe cleanup runs at writer startup and after successful publication;
+  `ontoenv prune` / `env.prune()` retries it explicitly. Current and previous
+  publications plus objects pinned by live views in any process are retained.
+  Graph changes still write a complete RDF5D file. One graph per IRI/source is
+  enforced. Earlier unreleased protocol-2 stores require `ontoenv upgrade` /
+  `OntoEnv.upgrade(path)` after closing every older process, including readers.
+- Publication is always built, without the former `transactional-snapshots`
+  feature flag. Directory durability barriers are implemented
+  on Unix; Windows directory syncing remains unsupported. The accepted Windows
+  0.7 contract provides process-crash consistency with best-effort power-loss
+  durability: rebuilding from ontology sources may be necessary, and even a
+  complete previous version is not guaranteed after power loss. See the storage
+  contract and validation report for tested crash scenarios and platform limits.
+
 
 ### Added
+- Immutable snapshots expose closure membership, import explanations and paired
+  graph/closure/union/dataset view and copy queries. Dataset selections preserve
+  canonical contexts, including empty graphs; `None` selects all and `[]` none.
 - Prefix bindings can be saved in the environment: `ontoenv config bind
   <prefix> <namespace>` / `ontoenv config unbind <prefix>` from the CLI, and
   `env.bind_namespace()` / `env.unbind_namespace()` /
   `env.get_bound_namespaces()` from Python. They are stored under
-  `namespaces` in `.ontoenv/ontoenv.json` and take precedence over
+  the selected version's configuration and take precedence over
   ontology-declared prefixes in `ontoenv namespaces`, `get_namespaces()`,
   and the rdflib datasets.
 - `get_closure()` and `get_union()` views now carry the prefixes of the graphs
@@ -19,6 +54,44 @@ All notable changes to this project are documented here. Releases follow [Semant
   `prefix()` work on them.
 
 ### Changed
+- Python dataset and union queries merge explicit `FROM` graphs as a triple
+  set, preserving named contexts for `FROM NAMED` / `GRAPH`. Graph copies retain
+  captured prefixes for queries and serialization, including saved bindings and
+  destination prefix preferences. Current upgrade guidance starts with the
+  dedicated 0.7 migration guide and its explicit offline storage migration.
+- Remove deprecated Python constructor flags (`create_or_use_cached`,
+  `init_from_store`), dataset aliases, positional update booleans/`all=`, and the
+  mutable `temporary_snapshot` helper. Immutable snapshots use paired `view_*`
+  and `copy_*` methods. Live `OntoEnv.get_*` convenience reads remain supported.
+- Rust snapshots use `view_graph` and `copy_graph`; acquire specialized handles
+  directly with `SnapshotReader::open` / `SnapshotWriter::create/open`.
+  Remove duplicate acquisition/adoption/refresh wrappers and the whole-environment
+  `new_temporary` copy helper. See the migration guide for replacements.
+- Rust configuration setters and namespace edits return `Result` and publish
+  before returning, or with an enclosing managed transaction. Failed publication
+  restores configuration and runtime flags. Managed flush/close release or flush
+  resources without becoming additional commit boundaries.
+- Managed updates share one candidate containing catalog, configuration and
+  staged graph changes. Nested failures restore that candidate as a unit;
+  publication retains the outer checkpoint until success. Idle managed handles
+  read metadata directly from their selected snapshot. Obsolete dependency
+  caches and the managed metadata-only rollback layer are removed.
+- Managed publication/refresh/cleanup no longer use optional `GraphIO` hooks;
+  use `OntoEnv` or the snapshot reader/writer for those operations. Rust
+  `save_to_directory` now requires a mutable handle.
+- Closure queries share one catalog traversal, including pending updates and
+  immutable snapshots. Strict queries do not inspect imports beyond their depth
+  limit; namespace conflicts across the whole catalog use canonical IRI order.
+- Python graph union views deduplicate shared triples consistently across scans,
+  iteration and length. Dataset quad iteration supplies rdflib graph contexts;
+  dataset length counts unique triples, matching a copied rdflib Dataset.
+- Rust `GraphIO::store()` is replaced by the fallible `oxigraph_store()`
+  capability. Only memory and caller-supplied Oxigraph backends expose their
+  authoritative store. Managed snapshots, legacy lazy RDF5D backends and Python
+  adapters return `StoreCapabilityError`; use graph operations or snapshots
+  for portable reads. The managed/Python scratch stores and the obsolete
+  `ensure_loaded` trait hook are removed. Adapter implementations using raw
+  Oxigraph defaults must opt into the capability explicitly.
 - Parser-level `@prefix`/`PREFIX` declarations are now recorded in the catalog
   when a source is parsed, so namespace lookups no longer re-read (or re-fetch)
   every source file. Ontologies in existing catalogs report only their SHACL

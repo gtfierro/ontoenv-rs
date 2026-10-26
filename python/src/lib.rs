@@ -1,3 +1,4 @@
+mod snapshots;
 use anyhow::{anyhow, Error, Result};
 use ontoenv::api::{
     find_ontoenv_root_from, ConnectSync, OntoEnv as OntoEnvRs, ResolveTarget, SyncMode, SyncReport,
@@ -23,7 +24,6 @@ use oxigraph::model::{
     BlankNode, Graph as OxigraphGraph, GraphName, Literal, NamedNode, NamedNodeRef,
     NamedOrBlankNode, NamedOrBlankNodeRef, Quad, Term, TermRef, Triple, TripleRef,
 };
-use oxigraph::store::Store;
 use oxrdf::{Dataset as OxDataset, Variable as OxVariable};
 #[cfg(not(feature = "cli"))]
 use pyo3::exceptions::PyRuntimeError;
@@ -358,11 +358,19 @@ fn add_resolved_to_env(
     let preferred_name = resolved.preferred_name;
     let location = resolved.location;
 
-    let graph_id = match location {
-        OntologyLocation::InMemory { .. } => {
-            let bytes = rdflib_graph_to_turtle_bytes(py_location)?;
+    let bytes = if matches!(location, OntologyLocation::InMemory { .. }) {
+        Some(rdflib_graph_to_turtle_bytes(py_location)?)
+    } else {
+        None
+    };
+    let rename = rename
+        .map(NamedNode::new)
+        .transpose()
+        .map_err(|e| anyhow_to_pyerr(e.into()))?;
+    let operation = move |env: &mut OntoEnvRs| -> Result<GraphIdentifier> {
+        let id = if let Some(bytes) = bytes {
             if fetch_imports {
-                env.add_from_bytes(location, bytes, Some(RdfFormat::Turtle), overwrite, refresh)
+                env.add_from_bytes(location, bytes, Some(RdfFormat::Turtle), overwrite, refresh)?
             } else {
                 env.add_from_bytes_no_imports(
                     location,
@@ -370,28 +378,25 @@ fn add_resolved_to_env(
                     Some(RdfFormat::Turtle),
                     overwrite,
                     refresh,
-                )
+                )?
             }
+        } else if fetch_imports {
+            env.add(location, overwrite, refresh)?
+        } else {
+            env.add_no_imports(location, overwrite, refresh)?
+        };
+        if let Some(rename) = rename {
+            env.rename_graph_iri(&id, rename)
+        } else {
+            Ok(id)
         }
-        _ => {
-            if fetch_imports {
-                env.add(location, overwrite, refresh)
-            } else {
-                env.add_no_imports(location, overwrite, refresh)
-            }
-        }
+    };
+    let graph_id = if env.snapshot().is_some() {
+        env.transaction(operation)
+    } else {
+        operation(env)
     }
     .map_err(anyhow_to_pyerr)?;
-
-    // Apply rename if requested.
-    let graph_id = if let Some(new_iri_str) = rename {
-        let new_iri = NamedNode::new(new_iri_str)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        env.rename_graph_iri(&graph_id, new_iri)
-            .map_err(anyhow_to_pyerr)?
-    } else {
-        graph_id
-    };
 
     let actual_name = graph_id.to_uri_string();
     if let Some(pref) = preferred_name {
@@ -834,6 +839,23 @@ fn graph_to_rdflib<'a>(py: Python<'a>, graph: &OxigraphGraph) -> PyResult<Bound<
     Ok(res)
 }
 
+/// Bind one captured namespace map while respecting a caller's existing graph.
+fn bind_graph_namespaces(
+    graph: &Bound<'_, PyAny>,
+    namespaces: &HashMap<String, String>,
+    user_bindings: &BTreeMap<String, String>,
+    fresh: bool,
+) -> PyResult<()> {
+    let kwargs = PyDict::new(graph.py());
+    for (prefix, namespace) in namespaces {
+        let preferred = fresh || user_bindings.contains_key(prefix);
+        kwargs.set_item("override", preferred)?;
+        kwargs.set_item("replace", preferred)?;
+        graph.call_method("bind", (prefix, namespace), Some(&kwargs))?;
+    }
+    Ok(())
+}
+
 fn push_python_triple<'a>(
     py: Python<'a>,
     rdflib: &Bound<'a, PyModule>,
@@ -934,19 +956,17 @@ struct PythonGraphIO {
     strict: bool,
     require_ontology_names: bool,
     read_only: bool,
-    scratch: Store,
 }
 
 impl PythonGraphIO {
-    fn new(store: Py<PyAny>, offline: bool, strict: bool, read_only: bool) -> Result<Self> {
-        Ok(Self {
+    fn new(store: Py<PyAny>, offline: bool, strict: bool, read_only: bool) -> Self {
+        Self {
             store: Mutex::new(store),
             offline,
             strict,
             require_ontology_names: false,
             read_only,
-            scratch: Store::new().map_err(|e| anyhow!(e.to_string()))?,
-        })
+        }
     }
 
     fn with_store<F, T>(&self, f: F) -> Result<T>
@@ -1032,10 +1052,6 @@ impl GraphIO for PythonGraphIO {
 
     fn store_location(&self) -> Option<&Path> {
         None
-    }
-
-    fn store(&self) -> &Store {
-        &self.scratch
     }
 
     fn store_state(&self) -> Result<Option<BackendState>> {
@@ -1155,9 +1171,8 @@ impl GraphIO for PythonGraphIO {
     /// Write a pre-built graph into the Python store under `id`, replacing any
     /// existing graph at that name.
     ///
-    /// The base `GraphIO` default writes into `self.store()`, which for a custom
-    /// `graph_store=` backend is only the empty scratch oxigraph store the
-    /// Python store never reads from. Route it through `add_graph(..., overwrite=True)`
+    /// Python stores do not expose the raw Oxigraph capability used by the
+    /// `GraphIO` default. Route this through `add_graph(..., overwrite=True)`
     /// so the rename machinery (`OntoEnv::rename_graph_iri`) actually persists to
     /// the backing store.
     fn add_named_graph(&mut self, id: GraphIdentifier, graph: OxigraphGraph) -> Result<()> {
@@ -1208,10 +1223,9 @@ impl GraphIO for PythonGraphIO {
         })
     }
 
-    /// Best-effort union assembled from `copy_graph` rather than the default
-    /// `store()`-streaming impl. A custom `graph_store=` keeps its data in
-    /// Python and exposes only an empty scratch oxigraph store, so the default
-    /// would silently union nothing. Routing through `copy_graph` (which
+    /// Best-effort union assembled from `copy_graph`. A custom `graph_store=`
+    /// keeps its data in Python and has no raw Oxigraph capability. Routing
+    /// through `copy_graph` (which
     /// dispatches to the Python store's `copy_graph` when available, else
     /// `get_graph`) gives `copy_closure`/`copy_union` correct results,
     /// including the prefix/imports/declaration transforms that run on the
@@ -1574,6 +1588,8 @@ enum RdfLibStoreBackend {
         #[allow(dead_code)]
         store_path: PathBuf,
         snapshot: Arc<Snapshot>,
+        /// Immutable catalog selection. None is reserved for legacy file adapters.
+        scope: Option<Arc<Vec<String>>>,
         /// Optional closure patch (removals + patch-graph additions) applied
         /// lazily over every read path so the view presents a single flattened,
         /// de-duplicated graph matching `copy_closure`. Set only on dedicated
@@ -1591,13 +1607,42 @@ impl Default for RdfLibStoreBackend {
     }
 }
 
+impl RdfLibStoreBackend {
+    fn allows_name(&self, name: &str) -> bool {
+        match self {
+            Self::EnvSnapshotRdf5d {
+                scope: Some(names), ..
+            } => names.iter().any(|n| n == name),
+            _ => true,
+        }
+    }
+
+    fn restrict_names(&self, names: Vec<String>) -> Vec<String> {
+        let mut seen = HashSet::new();
+        names
+            .into_iter()
+            .filter(|name| self.allows_name(name) && seen.insert(name.clone()))
+            .collect()
+    }
+
+    fn named_graphs(&self, snapshot: &Snapshot) -> PyResult<Vec<NamedOrBlankNode>> {
+        match self {
+            Self::EnvSnapshotRdf5d {
+                scope: Some(names), ..
+            } => names
+                .iter()
+                .map(|name| named_or_blank_node_from_graph_name(name).map_err(anyhow_to_pyerr))
+                .collect(),
+            _ => snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr),
+        }
+    }
+}
+
 /// Pull every triple in the named graph identified by `id` into `out`.
 ///
 /// Routes through `env.get_graph(id)` (which dispatches to the IO backend's
-/// `get_graph`) rather than reading `env.io().store()` directly. Custom
-/// `graph_store=` backends keep their data in Python and expose an *empty*
-/// scratch oxigraph store, so reading the store directly would silently
-/// return nothing for them. The backend `get_graph` path is the one that
+/// `get_graph`). Custom `graph_store=` backends keep their data in Python
+/// and do not expose a raw Oxigraph store. The backend `get_graph` path
 /// works for every backend, matching `copy_graph`/`get_closure`.
 fn collect_graph_triples_into(
     env: &OntoEnvRs,
@@ -1836,6 +1881,107 @@ macro_rules! apply_query_graph_selection {
     }};
 }
 
+/// Intersect a SPARQL dataset (including explicit FROM clauses) with a fixed
+/// named-graph selection. Managed datasets have no stored default graph.
+fn restrict_query_dataset(
+    dataset: &mut spareval::QueryDatasetSpecification,
+    allowed: &[NamedOrBlankNode],
+) {
+    let defaults = dataset.default_graph_graphs().map_or_else(
+        || allowed.iter().cloned().map(GraphName::from).collect(),
+        |graphs| {
+            graphs
+                .iter()
+                .filter(|graph| match graph {
+                    GraphName::NamedNode(node) => {
+                        allowed.contains(&NamedOrBlankNode::NamedNode(node.clone()))
+                    }
+                    GraphName::BlankNode(node) => {
+                        allowed.contains(&NamedOrBlankNode::BlankNode(node.clone()))
+                    }
+                    GraphName::DefaultGraph => false,
+                })
+                .cloned()
+                .collect()
+        },
+    );
+    let named = dataset.available_named_graphs().map_or_else(
+        || allowed.to_vec(),
+        |graphs| {
+            graphs
+                .iter()
+                .filter(|graph| allowed.contains(graph))
+                .cloned()
+                .collect()
+        },
+    );
+    dataset.set_default_graph(defaults);
+    dataset.set_available_named_graphs(named);
+}
+
+/// Named graphs contributing to the restricted SPARQL default graph.
+fn named_default_graphs(dataset: &spareval::QueryDatasetSpecification) -> Vec<NamedOrBlankNode> {
+    dataset
+        .default_graph_graphs()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|graph| match graph {
+            GraphName::NamedNode(node) => Some(NamedOrBlankNode::NamedNode(node.clone())),
+            GraphName::BlankNode(node) => Some(NamedOrBlankNode::BlankNode(node.clone())),
+            GraphName::DefaultGraph => None,
+        })
+        .collect()
+}
+
+fn query_default_view<'a>(
+    snapshot: &'a Snapshot,
+    dataset: &spareval::QueryDatasetSpecification,
+) -> rdf5d::View<'a> {
+    let defaults = named_default_graphs(dataset);
+    let names: Vec<_> = defaults
+        .iter()
+        .filter_map(|name| match name {
+            NamedOrBlankNode::NamedNode(node) => Some(node.as_str()),
+            NamedOrBlankNode::BlankNode(_) => None,
+        })
+        .collect();
+    rdf5d::View::from_names(snapshot, &names)
+}
+
+fn materialize_union_default(dataset: &mut OxDataset, names: &[NamedOrBlankNode]) {
+    let defaults: Vec<_> = dataset
+        .iter()
+        .filter(|quad| match quad.graph_name {
+            oxigraph::model::GraphNameRef::NamedNode(name) => {
+                names.contains(&NamedOrBlankNode::NamedNode(name.into_owned()))
+            }
+            oxigraph::model::GraphNameRef::BlankNode(name) => {
+                names.contains(&NamedOrBlankNode::BlankNode(name.into_owned()))
+            }
+            _ => false,
+        })
+        .map(|quad| {
+            Quad::new(
+                quad.subject,
+                quad.predicate,
+                quad.object,
+                GraphName::DefaultGraph,
+            )
+        })
+        .collect();
+    let previous: Vec<_> = dataset
+        .iter()
+        .filter(|quad| matches!(quad.graph_name, oxigraph::model::GraphNameRef::DefaultGraph))
+        .map(|quad| quad.into_owned())
+        .collect();
+    for quad in previous {
+        dataset.remove(&quad);
+    }
+    for quad in defaults {
+        dataset.insert(&quad);
+    }
+}
+
 #[pyclass(name = "_RdfLibStoreBackend")]
 struct PyRdfLibStoreBackend {
     backend: Arc<Mutex<RdfLibStoreBackend>>,
@@ -1969,6 +2115,7 @@ impl PyRdfLibStoreBackend {
         *backend = RdfLibStoreBackend::EnvSnapshotRdf5d {
             store_path: PathBuf::from(store_path),
             snapshot: Arc::new(snapshot),
+            scope: None,
             patch: None,
         };
         // Term ids are snapshot-specific; a new snapshot invalidates the cache.
@@ -2116,7 +2263,10 @@ impl PyRdfLibStoreBackend {
                 Ok(py_list.into_any().unbind())
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d {
-                snapshot, patch, ..
+                snapshot,
+                patch,
+                scope,
+                ..
             } => {
                 if matches!(graph_name, Some(GraphName::DefaultGraph)) {
                     return Ok(PyList::empty(py).into_any().unbind());
@@ -2161,7 +2311,13 @@ impl PyRdfLibStoreBackend {
                     let Some(name) = graph_name_key(graph_name) else {
                         return empty_iter(py);
                     };
+                    if !backend.allows_name(&name) {
+                        return empty_iter(py);
+                    }
                     streaming_store_rows(snapshot, pat, Scope::ByName(&name), patch.clone())?
+                } else if let Some(names) = scope {
+                    let gids = gids_for_names(snapshot, names);
+                    streaming_store_rows(snapshot, pat, Scope::Gids(&gids), patch.clone())?
                 } else {
                     streaming_store_rows(snapshot, pat, Scope::All, patch.clone())?
                 };
@@ -2251,6 +2407,7 @@ impl PyRdfLibStoreBackend {
                         .names_containing(pat)
                         .map_err(r5error_to_pyerr)?
                         .into_iter()
+                        .filter(|name| backend.allows_name(name))
                         .map(|graph_name| {
                             graph_name_to_python_from_str(py, &rdflib, graph_name)
                                 .map(Bound::unbind)
@@ -2259,6 +2416,7 @@ impl PyRdfLibStoreBackend {
                 } else {
                     snapshot
                         .graph_names()
+                        .filter(|name| backend.allows_name(name))
                         .map(|graph_name| {
                             graph_name_to_python_from_str(py, &rdflib, graph_name)
                                 .map(Bound::unbind)
@@ -2282,7 +2440,11 @@ impl PyRdfLibStoreBackend {
                 Some(graph_name) => dataset
                     .quads_for_pattern(None, None, None, Some(graph_name.as_ref()))
                     .count(),
-                None => dataset.iter().count(),
+                None => dataset
+                    .iter()
+                    .map(|quad| Triple::new(quad.subject, quad.predicate, quad.object))
+                    .collect::<HashSet<_>>()
+                    .len(),
             },
             RdfLibStoreBackend::EnvSnapshotRdf5d { snapshot, .. } => match graph_name {
                 Some(graph_name) => {
@@ -2291,6 +2453,9 @@ impl PyRdfLibStoreBackend {
                     {
                         0
                     } else if let Some(name) = graph_name_key(&graph_name) {
+                        if !backend.allows_name(&name) {
+                            return Ok(0);
+                        }
                         snapshot
                             .triple_count(Scope::ByName(&name))
                             .map_err(r5error_to_pyerr)?
@@ -2299,13 +2464,16 @@ impl PyRdfLibStoreBackend {
                     }
                 }
                 None => {
-                    let mut total = 0usize;
-                    for name in snapshot.graph_names() {
-                        total += snapshot
-                            .triple_count(Scope::ByName(name))
-                            .map_err(r5error_to_pyerr)?;
-                    }
-                    total
+                    let names: Vec<_> = snapshot
+                        .graph_names()
+                        .filter(|name| backend.allows_name(name))
+                        .map(str::to_owned)
+                        .collect();
+                    let gids = gids_for_names(snapshot, &names);
+                    snapshot
+                        .grouped_scan(Pattern::ANY, Scope::Gids(&gids))
+                        .map_err(r5error_to_pyerr)?
+                        .count()
                 }
             },
         })
@@ -2320,7 +2488,7 @@ impl PyRdfLibStoreBackend {
     /// view is a single flattened graph: surviving triples are collapsed
     /// under the root graph name and the patch's matching additions are
     /// injected (see [`scan_grouped`]). Raw union backends keep per-graph
-    /// contexts and do not de-duplicate across graphs.
+    /// contexts grouped under each unique triple.
     fn triples_in_graphs(
         &self,
         py: Python<'_>,
@@ -2348,6 +2516,7 @@ impl PyRdfLibStoreBackend {
             .transpose()?;
 
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         let ctors = RdflibCtors::new(py)?;
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
@@ -2490,10 +2659,8 @@ impl PyRdfLibStoreBackend {
     /// Stream every triple across a list of named graphs as an id iterator.
     /// Backs :py:meth:`ontoenv.ViewGraph.triples` for the all-unbound pattern.
     ///
-    /// For a raw union backend this is the fast path: each triple is yielded
-    /// once per graph it appears in (no cross-graph dedup, no per-row context
-    /// lists), skipping the ``HashMap`` + ``Vec<String>`` bookkeeping that
-    /// :py:meth:`triples_in_graphs` builds. For a closure backend it produces
+    /// A raw union yields each unique triple once, without context lists.
+    /// For a closure backend it produces
     /// the single flattened, de-duplicated graph via
     /// [`rdf5d::ClosureTripleIds`] (removals dropped, patch additions added).
     fn iter_triples_in_graphs(
@@ -2502,19 +2669,20 @@ impl PyRdfLibStoreBackend {
         graph_names: Vec<String>,
     ) -> PyResult<Py<PyAny>> {
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
-                let mut triples: Vec<Triple> = Vec::new();
+                let mut triples: HashSet<Triple> = HashSet::new();
                 for name in &graph_names {
                     let Ok(nn) = NamedNode::new(name) else {
                         continue;
                     };
                     let gn = GraphName::NamedNode(nn);
                     for quad in dataset.quads_for_pattern(None, None, None, Some(gn.as_ref())) {
-                        triples.push(Triple::new(quad.subject, quad.predicate, quad.object));
+                        triples.insert(Triple::new(quad.subject, quad.predicate, quad.object));
                     }
                 }
-                Ok(Py::new(py, TripleIter::new(triples))?.into_any())
+                Ok(Py::new(py, TripleIter::new(triples.into_iter().collect()))?.into_any())
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d {
                 snapshot, patch, ..
@@ -2531,22 +2699,14 @@ impl PyRdfLibStoreBackend {
                             .collect::<std::result::Result<Vec<_>, _>>()
                             .map_err(r5error_to_pyerr)?
                     }
-                    // Raw union view: every triple in each named graph, no
-                    // cross-graph dedup (matches rdflib merged-graph semantics).
+                    // Graph projection: one row per triple across contexts.
                     None => {
-                        let file = snapshot.file();
-                        let mut ids: Vec<(u64, u64, u64)> = Vec::new();
-                        for name in &graph_names {
-                            let Some(gids) = snapshot.gids_for_name(name) else {
-                                continue;
-                            };
-                            for &gid in gids {
-                                for triple_ids in file.triples_ids(gid).map_err(r5error_to_pyerr)? {
-                                    ids.push(triple_ids);
-                                }
-                            }
-                        }
-                        ids
+                        let gids = gids_for_names(snapshot, &graph_names);
+                        snapshot
+                            .grouped_scan(Pattern::ANY, Scope::Gids(&gids))
+                            .map_err(r5error_to_pyerr)?
+                            .map(|row| (row.s, row.p, row.o))
+                            .collect()
                     }
                 };
                 let remaining = ids.len();
@@ -2566,11 +2726,11 @@ impl PyRdfLibStoreBackend {
     /// :py:meth:`ontoenv.ViewGraph.__len__`.
     ///
     /// A closure backend reports the cardinality of its single flattened,
-    /// de-duplicated graph (removals dropped, patch additions added); a raw
-    /// union backend reports the stored triple count with no cross-graph
-    /// de-duplication, matching its iteration semantics.
+    /// de-duplicated graph (removals dropped, patch additions added). Raw
+    /// graph unions also count unique triples, rather than dataset quads.
     fn len_in_graphs(&self, graph_names: Vec<String>) -> PyResult<usize> {
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 let mut seen: HashSet<Triple> = HashSet::new();
@@ -2595,11 +2755,10 @@ impl PyRdfLibStoreBackend {
                     }
                 }
                 match patch {
-                    // Raw union: stored count (no cross-graph dedup, matching
-                    // the raw iteration path).
-                    None => snapshot
-                        .triple_count(Scope::Gids(&gids))
-                        .map_err(r5error_to_pyerr),
+                    None => Ok(snapshot
+                        .grouped_scan(Pattern::ANY, Scope::Gids(&gids))
+                        .map_err(r5error_to_pyerr)?
+                        .count()),
                     // Closure view: cardinality of the single flattened,
                     // de-duplicated graph (removals dropped, additions added).
                     Some(patch) => {
@@ -2630,6 +2789,7 @@ impl PyRdfLibStoreBackend {
         let object = term_from_python(object).map_err(anyhow_to_pyerr)?;
 
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
                 for name in &graph_names {
@@ -2721,10 +2881,26 @@ impl PyRdfLibStoreBackend {
         let backend = self.backend_handle();
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
-                let dataset = (**dataset).clone();
+                let mut dataset = (**dataset).clone();
                 let named_graphs = dataset_named_graphs(&dataset);
                 let mut prepared = evaluator.prepare(&parsed);
-                apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                if parsed.dataset().is_none() {
+                    apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                }
+                restrict_query_dataset(prepared.dataset_mut(), &named_graphs);
+                if parsed.dataset().is_some()
+                    || query_graph.is_some_and(|graph| {
+                        graph
+                            .extract::<String>()
+                            .is_ok_and(|name| name == "__UNION__")
+                    })
+                {
+                    let defaults = named_default_graphs(prepared.dataset_mut());
+                    materialize_union_default(&mut dataset, &defaults);
+                    prepared
+                        .dataset_mut()
+                        .set_default_graph(vec![GraphName::DefaultGraph]);
+                }
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -2740,14 +2916,48 @@ impl PyRdfLibStoreBackend {
                 query_results_to_python(py, results)
             }
             RdfLibStoreBackend::EnvSnapshotRdf5d {
-                snapshot, patch, ..
+                snapshot,
+                patch,
+                scope,
+                ..
             } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
-                snapshot.rewrite_query(&mut parsed);
-                let named_graphs = snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
+                let scoped_view = scope.as_ref().map(|names| {
+                    let names: Vec<_> = names.iter().map(String::as_str).collect();
+                    rdf5d::View::from_names(snapshot, &names)
+                });
+                let default_is_union = query_graph.is_some_and(|graph| {
+                    graph
+                        .extract::<String>()
+                        .is_ok_and(|name| name == "__UNION__")
+                });
+                // A dataset-wide path cache is valid only for a union default
+                // graph. FROM and per-graph queries use the scoped evaluator.
+                if parsed.dataset().is_none() && default_is_union {
+                    if let Some(view) = &scoped_view {
+                        view.rewrite_query(&mut parsed);
+                    } else {
+                        snapshot.rewrite_query(&mut parsed);
+                    }
+                }
+                let named_graphs = backend.named_graphs(snapshot)?;
                 let mut prepared = evaluator.prepare(&parsed);
-                apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                if parsed.dataset().is_none() {
+                    apply_query_graph_selection!(&mut prepared, query_graph, &named_graphs);
+                }
+                restrict_query_dataset(prepared.dataset_mut(), &named_graphs);
+                let default_view = parsed
+                    .dataset()
+                    .is_some()
+                    .then(|| query_default_view(snapshot, prepared.dataset_mut()));
+                if (default_view.is_none() && default_is_union)
+                    || (patch.is_none() && default_view.is_some())
+                {
+                    prepared
+                        .dataset_mut()
+                        .set_default_graph(vec![GraphName::DefaultGraph]);
+                }
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -2768,7 +2978,18 @@ impl PyRdfLibStoreBackend {
                             gids,
                         ))
                     }
-                    None => prepared.execute(snapshot.sparql_view()),
+                    None => {
+                        let mut dataset = match &scoped_view {
+                            Some(view) => view.sparql_view(),
+                            None => snapshot.sparql_view(),
+                        };
+                        if let Some(default_view) = &default_view {
+                            dataset = dataset
+                                .with_default_graph(default_view)
+                                .map_err(|error| anyhow_to_pyerr(error.into()))?;
+                        }
+                        prepared.execute(dataset)
+                    }
                 }
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
                 query_results_to_python(py, results)
@@ -2857,15 +3078,22 @@ impl PyRdfLibStoreBackend {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let evaluator = QueryEvaluator::new();
         let backend = self.backend_handle();
+        let graph_names = backend.restrict_names(graph_names);
         match &backend {
             RdfLibStoreBackend::EnvSnapshotMaterialized { dataset } => {
-                let dataset = (**dataset).clone();
+                let mut dataset = (**dataset).clone();
                 let scoped = filter_named_graphs(&dataset_named_graphs(&dataset), &graph_names);
                 let mut prepared = evaluator.prepare(&parsed);
+                restrict_query_dataset(prepared.dataset_mut(), &scoped);
+                let defaults = if parsed.dataset().is_none() {
+                    scoped.clone()
+                } else {
+                    named_default_graphs(prepared.dataset_mut())
+                };
+                materialize_union_default(&mut dataset, &defaults);
                 prepared
                     .dataset_mut()
-                    .set_default_graph(scoped.iter().cloned().map(GraphName::from).collect());
-                prepared.dataset_mut().set_available_named_graphs(scoped);
+                    .set_default_graph(vec![GraphName::DefaultGraph]);
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
                         prepared = prepared.substitute_variable(
@@ -2885,7 +3113,11 @@ impl PyRdfLibStoreBackend {
             } => {
                 // Rewrite property-path closures the snapshot knows about into
                 // materialized VALUES blocks before handing the query to spareval.
-                snapshot.rewrite_query(&mut parsed);
+                let names: Vec<_> = graph_names.iter().map(String::as_str).collect();
+                let scoped_view = rdf5d::View::from_names(snapshot, &names);
+                if parsed.dataset().is_none() {
+                    scoped_view.rewrite_query(&mut parsed);
+                }
                 let mut prepared = evaluator.prepare(&parsed);
                 if let Some(init_bindings) = init_bindings {
                     for (variable, term) in init_bindings {
@@ -2896,6 +3128,13 @@ impl PyRdfLibStoreBackend {
                         );
                     }
                 }
+                let named_graphs = snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
+                let scoped = filter_named_graphs(&named_graphs, &graph_names);
+                restrict_query_dataset(prepared.dataset_mut(), &scoped);
+                let default_view = parsed
+                    .dataset()
+                    .is_some()
+                    .then(|| query_default_view(snapshot, prepared.dataset_mut()));
                 let results = match patch {
                     // Closure view: one flattened, de-duplicated graph (the
                     // root), scoped to the closure's gids. The default graph
@@ -2916,14 +3155,16 @@ impl PyRdfLibStoreBackend {
                         ))
                     }
                     None => {
-                        let named_graphs =
-                            snapshot_named_graphs(snapshot).map_err(anyhow_to_pyerr)?;
-                        let scoped = filter_named_graphs(&named_graphs, &graph_names);
-                        prepared.dataset_mut().set_default_graph(
-                            scoped.iter().cloned().map(GraphName::from).collect(),
-                        );
-                        prepared.dataset_mut().set_available_named_graphs(scoped);
-                        prepared.execute(snapshot.sparql_view())
+                        prepared
+                            .dataset_mut()
+                            .set_default_graph(vec![GraphName::DefaultGraph]);
+                        let mut dataset = scoped_view.sparql_view();
+                        if let Some(default_view) = &default_view {
+                            dataset = dataset
+                                .with_default_graph(default_view)
+                                .map_err(|error| anyhow_to_pyerr(error.into()))?;
+                        }
+                        prepared.execute(dataset)
                     }
                 }
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -3037,6 +3278,7 @@ impl PyRdfLibStoreBackend {
                     backend: Arc::new(Mutex::new(RdfLibStoreBackend::EnvSnapshotRdf5d {
                         store_path: store_path.clone(),
                         snapshot: snapshot.clone(),
+                        scope: Some(Arc::new(config.closure_iris.clone())),
                         patch: Some(patch),
                     })),
                     term_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -3111,6 +3353,7 @@ fn build_view_graph(
 struct DatasetCache {
     generation: u64,
     cached: Option<(u64, Py<PyAny>)>,
+    managed_cached: Option<(String, u64, Py<PyAny>)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -3532,6 +3775,9 @@ impl OntoEnv {
     }
 
     fn build_cached_view_dataset(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if self._published_snapshot()?.is_some() {
+            return self.build_dataset(py, "auto", None);
+        }
         let Some(store_path) = self.current_snapshot_store_path()? else {
             return self.build_dataset(py, "auto", None);
         };
@@ -3550,7 +3796,7 @@ impl OntoEnv {
     /// Apply `f` to the user-declared namespace bindings and persist them.
     fn update_bound_namespaces<F>(&self, f: F) -> PyResult<bool>
     where
-        F: FnOnce(&mut OntoEnvRs) -> bool,
+        F: FnOnce(&mut OntoEnvRs) -> anyhow::Result<bool>,
     {
         if self.read_only {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -3564,9 +3810,10 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        let changed = f(env);
+        let changed = f(env).map_err(anyhow_to_pyerr)?;
+        drop(guard);
         if changed {
-            env.save_to_directory().map_err(anyhow_to_pyerr)?;
+            self.bump_generation();
         }
         Ok(changed)
     }
@@ -3576,6 +3823,7 @@ impl OntoEnv {
     fn bump_generation(&self) {
         let mut cache = self.cache.lock_detached().unwrap();
         cache.generation = cache.generation.wrapping_add(1);
+        cache.managed_cached = None;
     }
 
     fn cached_view_dataset_exists(&self) -> bool {
@@ -3604,6 +3852,10 @@ impl OntoEnv {
     /// cached Dataset updates those existing views without requiring callers
     /// to fetch them again.
     fn refresh_cached_view_dataset(&self, py: Python<'_>) -> PyResult<()> {
+        if self._published_snapshot()?.is_some() {
+            self.cache.lock_detached().unwrap().cached = None;
+            return Ok(());
+        }
         let (target_generation, dataset) = {
             let cache = self.cache.lock_detached().unwrap();
             let Some((_, dataset)) = &cache.cached else {
@@ -3708,6 +3960,93 @@ impl OntoEnv {
 
 #[pymethods]
 impl OntoEnv {
+    /// Open an independently owned read snapshot without retaining an OntoEnv.
+    #[staticmethod]
+    fn read_snapshot(py: Python<'_>, path: PathBuf) -> PyResult<snapshots::PyEnvironmentSnapshot> {
+        py.detach(move || {
+            ontoenv::snapshots::SnapshotReader::open(path).map(|reader| reader.snapshot())
+        })
+        .map(snapshots::PyEnvironmentSnapshot::new)
+        .map_err(anyhow_to_pyerr)
+    }
+
+    /// Offline protocol-2 upgrade. Close every older process before calling.
+    #[staticmethod]
+    fn upgrade(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        let env = py
+            .detach(move || OntoEnvRs::upgrade(path))
+            .map_err(anyhow_to_pyerr)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Some(env))),
+            cache: Arc::new(Mutex::new(DatasetCache::default())),
+            read_only: false,
+        })
+    }
+
+    /// Retry garbage collection without invalidating live views.
+    fn prune(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        let report = py
+            .detach(move || {
+                inner
+                    .lock_detached()
+                    .unwrap()
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("OntoEnv is closed"))?
+                    .prune()
+            })
+            .map_err(anyhow_to_pyerr)?;
+        let json = serde_json::to_string(&report).map_err(|e| anyhow_to_pyerr(e.into()))?;
+        Ok(py.import("json")?.call_method1("loads", (json,))?.unbind())
+    }
+
+    /// Copy a closed legacy environment into the new backend, retaining its files.
+    #[staticmethod]
+    fn migrate(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        let env = py
+            .detach(move || OntoEnvRs::migrate(path))
+            .map_err(anyhow_to_pyerr)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Some(env))),
+            cache: Arc::new(Mutex::new(DatasetCache::default())),
+            read_only: false,
+        })
+    }
+
+    /// Capture the selected committed version independently of this handle.
+    fn snapshot(&self) -> PyResult<snapshots::PyEnvironmentSnapshot> {
+        self._published_snapshot()?.ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("Snapshots require managed persistent storage")
+        })
+    }
+
+    fn _published_snapshot(&self) -> PyResult<Option<snapshots::PyEnvironmentSnapshot>> {
+        let guard = self.inner.lock_detached().unwrap();
+        let env = guard
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("OntoEnv is closed"))?;
+        Ok(env.snapshot().map(snapshots::PyEnvironmentSnapshot::new))
+    }
+
+    /// Select the latest publication without updating files or changing old views.
+    fn refresh(&self, py: Python<'_>) -> PyResult<bool> {
+        let inner = self.inner.clone();
+        let changed = py
+            .detach(move || {
+                let mut guard = inner.lock_detached().unwrap();
+                guard
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("OntoEnv is closed"))?
+                    .refresh()
+            })
+            .map_err(anyhow_to_pyerr)?;
+        if changed {
+            self.bump_generation();
+            self.cache.lock_detached().unwrap().cached = None;
+        }
+        Ok(changed)
+    }
+
     #[classmethod]
     /// Connect to a persistent environment.
     ///
@@ -3787,12 +4126,17 @@ impl OntoEnv {
             .transpose()?
             .unwrap_or(false);
         kwargs.del_item("overwrite").ok();
-        let root = if path.file_name() == Some(OsStr::new(".ontoenv")) {
+        let root = if path
+            .file_name()
+            .is_some_and(|name| name == ".ontoenv" || name == ".ontoenv-snapshots")
+        {
             path.parent().unwrap_or(Path::new(".")).to_path_buf()
         } else {
             path.clone()
         };
-        if root.join(".ontoenv").exists() && !(recreate || overwrite) {
+        if (root.join(".ontoenv").exists() || root.join(".ontoenv-snapshots").exists())
+            && !(recreate || overwrite)
+        {
             return Err(PyErr::new::<pyo3::exceptions::PyFileExistsError, _>(
                 format!(
                     "OntoEnv already exists at {}",
@@ -3905,7 +4249,6 @@ impl OntoEnv {
         }
         kwargs.set_item("path", path)?;
         kwargs.set_item("graph_store", graph_store)?;
-        kwargs.set_item("init_from_store", true)?;
         EXPLICIT_ADOPT.with(|flag| flag.set(true));
         let result = cls.call((), Some(&kwargs));
         EXPLICIT_ADOPT.with(|flag| flag.set(false));
@@ -3915,13 +4258,12 @@ impl OntoEnv {
     }
 
     #[new]
-    #[pyo3(signature = (path=None, recreate=false, create_or_use_cached=false, read_only=false, search_directories=None, require_ontology_names=None, strict=None, offline=None, use_cached_ontologies=None, resolution_policy=None, root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None, init_from_store=false))]
+    #[pyo3(signature = (path=None, recreate=false, read_only=false, search_directories=None, require_ontology_names=None, strict=None, offline=None, use_cached_ontologies=None, resolution_policy=None, root=".".to_owned(), includes=None, excludes=None, include_ontologies=None, exclude_ontologies=None, temporary=false, remote_cache_ttl_secs=None, graph_store=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
         path: Option<PathBuf>,
         recreate: bool,
-        create_or_use_cached: bool,
         read_only: bool,
         search_directories: Option<Vec<String>>,
         require_ontology_names: Option<bool>,
@@ -3937,21 +4279,10 @@ impl OntoEnv {
         temporary: bool,
         remote_cache_ttl_secs: Option<u64>,
         graph_store: Option<Py<PyAny>>,
-        init_from_store: bool,
     ) -> PyResult<Self> {
         if temporary && recreate {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "temporary and recreate cannot be combined; a temporary environment is always new",
-            ));
-        }
-        if temporary && create_or_use_cached {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "temporary and create_or_use_cached cannot be combined; use OntoEnv(temporary=True) for an empty environment or temporary_snapshot() for a copy",
-            ));
-        }
-        if recreate && create_or_use_cached {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "recreate and create_or_use_cached cannot be combined",
             ));
         }
         if recreate && read_only {
@@ -3959,32 +4290,11 @@ impl OntoEnv {
                 "recreate requires a writable environment",
             ));
         }
-        if init_from_store && graph_store.is_none() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "init_from_store requires graph_store",
-            ));
-        }
-        if init_from_store && !EXPLICIT_ADOPT.with(Cell::get) {
-            PyErr::warn(
-                _py,
-                &_py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                c"init_from_store is deprecated; use OntoEnv.adopt(...) for first-time adoption",
-                1,
-            )?;
-        }
-        if create_or_use_cached {
-            PyErr::warn(
-                _py,
-                &_py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                c"create_or_use_cached=True is deprecated and will be removed in 0.7; use OntoEnv.connect(path) instead",
-                1,
-            )?;
-        }
         let mut root_path = path.clone().unwrap_or_else(|| PathBuf::from(root));
         // If the provided path points to a '.ontoenv' directory, treat its parent as the root
         if root_path
             .file_name()
-            .map(|n| n == OsStr::new(".ontoenv"))
+            .map(|n| n == OsStr::new(".ontoenv") || n == OsStr::new(".ontoenv-snapshots"))
             .unwrap_or(false)
         {
             if let Some(parent) = root_path.parent() {
@@ -3995,7 +4305,6 @@ impl OntoEnv {
         // Strict Git-like behavior:
         // - temporary=True: create a temporary (in-memory) env
         // - recreate=True: create (or overwrite) an env at root_path
-        // - create_or_use_cached=True: deprecated compatibility alias for connect
         // - otherwise: discover upward; if not found, error
 
         let overrides = ConfigOverrides {
@@ -4050,9 +4359,9 @@ impl OntoEnv {
         let recover = RECOVER.with(Cell::get);
 
         if let Some(store) = graph_store {
-            if recreate || create_or_use_cached {
+            if recreate {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "graph_store cannot be combined with recreate or the deprecated create_or_use_cached option",
+                    "graph_store cannot be combined with recreate",
                 ));
             }
             let desc = graph_store_description(_py, store.bind(_py))?;
@@ -4067,17 +4376,16 @@ impl OntoEnv {
                 cfg = OntoEnvRs::connect_config(cfg).map_err(anyhow_to_pyerr)?;
                 config_changed = cfg.apply_overrides(&overrides).map_err(anyhow_to_pyerr)?;
             }
-            let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only)
-                .map_err(anyhow_to_pyerr)?;
+            let io = PythonGraphIO::new(store, cfg.offline, cfg.strict, read_only);
             let explicit_adopt = EXPLICIT_ADOPT.with(Cell::get);
-            let env = if recover {
+            let mut env = if recover {
                 OntoEnvRs::recover_with_graph_io(cfg, Box::new(io))
             } else if let Some(sync) = connect_sync {
                 OntoEnvRs::connect_with_graph_io_resolved(cfg, Box::new(io), sync, read_only)
             } else if !cfg.temporary && catalog_exists && !explicit_adopt {
                 OntoEnvRs::open_with_graph_io(cfg, Box::new(io), read_only)
-            } else if init_from_store {
-                OntoEnvRs::new_with_graph_io_from_existing(cfg, Box::new(io))
+            } else if explicit_adopt {
+                OntoEnvRs::adopt(cfg, Box::new(io))
             } else {
                 OntoEnvRs::new_with_graph_io(cfg, Box::new(io))
             }
@@ -4107,9 +4415,6 @@ impl OntoEnv {
             OntoEnvRs::init(cfg, false).map_err(anyhow_to_pyerr)?
         } else if recreate {
             OntoEnvRs::init(cfg, true).map_err(anyhow_to_pyerr)?
-        } else if create_or_use_cached {
-            OntoEnvRs::open_or_init_with_overrides(cfg, read_only, overrides.clone())
-                .map_err(anyhow_to_pyerr)?
         } else {
             let load_root = if let Some(found_root) =
                 find_ontoenv_root_from(root_for_lookup.as_path())
@@ -4130,12 +4435,8 @@ impl OntoEnv {
             };
             let mut env =
                 OntoEnvRs::load_from_directory(load_root, read_only).map_err(anyhow_to_pyerr)?;
-            let config_changed = env
-                .apply_config_overrides(&overrides)
+            env.apply_config_overrides(&overrides)
                 .map_err(anyhow_to_pyerr)?;
-            if !read_only && config_changed {
-                env.save_to_directory().map_err(anyhow_to_pyerr)?;
-            }
             env
         };
 
@@ -4148,66 +4449,17 @@ impl OntoEnv {
         })
     }
 
-    /// Return an isolated in-memory copy of this environment.
-    ///
-    /// The catalog metadata and every graph are copied at the time of this
-    /// call. Changes to either environment afterwards are independent, and
-    /// the returned environment never writes a ``.ontoenv`` directory.
-    fn temporary_snapshot(&self) -> PyResult<Self> {
-        let inner = self.inner.clone();
-        let guard = inner.lock_detached().unwrap();
-        let env = guard
-            .as_ref()
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("OntoEnv is closed"))?;
-        let snapshot = env.new_temporary().map_err(anyhow_to_pyerr)?;
-        drop(guard);
-        Ok(OntoEnv {
-            inner: Arc::new(Mutex::new(Some(snapshot))),
-            cache: Arc::new(Mutex::new(DatasetCache::default())),
-            read_only: false,
-        })
-    }
-
     /// Refresh known ontology sources, or one explicit source and its imports.
     ///
     /// A provided source replaces its existing stored graph automatically.
-    /// `force=true` bypasses timestamp and cache-age checks. `all` is retained
-    /// as a deprecated compatibility alias for `force`.
-    #[pyo3(signature = (location=None, *, force=false, all=None))]
-    fn update(
-        &self,
-        py: Python<'_>,
-        location: Option<&Bound<'_, PyAny>>,
-        force: bool,
-        all: Option<bool>,
-    ) -> PyResult<()> {
-        let mut location = location;
-        let mut legacy_all = all;
-        if let Some(value) = location {
-            if value.is_instance_of::<PyBool>() {
-                if legacy_all.is_some() {
-                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                        "update() received the deprecated all flag twice",
-                    ));
-                }
-                legacy_all = Some(value.extract::<bool>()?);
-                location = None;
-            }
-        }
-        if legacy_all.is_some() {
-            PyErr::warn(
-                py,
-                &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                c"update(all=...) is deprecated; use update(force=...)",
-                1,
-            )?;
-        }
-        if location.is_some() && legacy_all.is_some() {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "update() cannot combine a location with the deprecated all flag",
+    /// `force=true` bypasses timestamp and cache-age checks.
+    #[pyo3(signature = (location=None, *, force=false))]
+    fn update(&self, location: Option<&Bound<'_, PyAny>>, force: bool) -> PyResult<()> {
+        if location.is_some_and(|value| value.is_instance_of::<PyBool>()) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "update() expects a source; use force=True to refetch",
             ));
         }
-        let force = force || legacy_all.unwrap_or(false);
         let resolved = location.map(ontology_location_from_py).transpose()?;
         let inner = self.inner.clone();
         let mut guard = inner.lock_detached().unwrap();
@@ -5317,6 +5569,42 @@ impl OntoEnv {
     /// :py:meth:`copy_graph` for a mutable in-memory copy.
     fn get_graph(&self, py: Python, uri: &Bound<'_, PyString>) -> PyResult<Py<PyAny>> {
         let uri_string = pystring_to_string(uri)?;
+        if let Some(snapshot) = self._published_snapshot()? {
+            let name = NamedNode::new(&uri_string).map_err(|e| anyhow_to_pyerr(e.into()))?;
+            let id = snapshot.snapshot()?.resolve(name.as_ref()).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("No graph with URI: {uri_string}"))
+            })?;
+            let info = snapshot.snapshot()?.info();
+            let cached = {
+                let cache = self.cache.lock_detached().unwrap();
+                cache
+                    .managed_cached
+                    .as_ref()
+                    .filter(|(environment, generation, _)| {
+                        environment == &info.environment_id && *generation == info.generation
+                    })
+                    .map(|(_, _, dataset)| dataset.clone_ref(py))
+            };
+            let dataset = if let Some(dataset) = cached {
+                dataset
+            } else {
+                let dataset = snapshot.view_dataset(py, None)?;
+                self.cache.lock_detached().unwrap().managed_cached = Some((
+                    info.environment_id.clone(),
+                    info.generation,
+                    dataset.clone_ref(py),
+                ));
+                dataset
+            };
+            let identifier = py
+                .import("rdflib")?
+                .getattr("URIRef")?
+                .call1((id.name().as_str(),))?;
+            return Ok(dataset
+                .bind(py)
+                .call_method1("graph", (identifier,))?
+                .unbind());
+        }
         // Resolve up front so an unknown URI raises ValueError rather than
         // silently returning an empty Dataset.graph(URIRef(uri)) view. The
         // dataset is keyed by canonical GraphIdentifier; use the resolved id
@@ -5377,7 +5665,7 @@ impl OntoEnv {
         remove_owl_imports: bool,
         rewrite_sh_prefixes: bool,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let (requested_root, root_id, closure, names, namespaces, has_rdf5d_snapshot) = {
+        let (requested_root, root_id, closure, names, namespaces, has_rdf5d_snapshot, published) = {
             let iri = NamedNode::new(uri)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let inner = self.inner.clone();
@@ -5402,14 +5690,27 @@ impl OntoEnv {
             let namespaces = env
                 .get_namespaces_for_graphs(&closure)
                 .map_err(anyhow_to_pyerr)?;
-            let has_rdf5d_snapshot = env.store_path().is_some_and(|path| {
-                path.file_name().is_some_and(|name| name == "store.r5tu") && path.is_file()
-            });
-            (iri, graphid, closure, names, namespaces, has_rdf5d_snapshot)
+            let has_rdf5d_snapshot = env.snapshot().is_some()
+                || env.store_path().is_some_and(|path| {
+                    path.file_name().is_some_and(|name| name == "store.r5tu") && path.is_file()
+                });
+            (
+                iri,
+                graphid,
+                closure,
+                names,
+                namespaces,
+                has_rdf5d_snapshot,
+                env.snapshot(),
+            )
         };
 
         if has_rdf5d_snapshot {
-            let dataset = self.cached_view_dataset(py)?;
+            let dataset = if let Some(inner) = published {
+                snapshots::PyEnvironmentSnapshot::new(inner).view_dataset(py, None)?
+            } else {
+                self.cached_view_dataset(py)?
+            };
             let config = ClosureViewConfig {
                 root_iri: requested_root.as_str().to_string(),
                 closure_iris: names.clone(),
@@ -5474,8 +5775,8 @@ impl OntoEnv {
     /// ``ValueError``; use :py:meth:`copy_union` for a mutable in-memory merge.
     ///
     /// This is a **raw** merge: no closure transform is applied and triples
-    /// are not de-duplicated across the named graphs (rdflib merged-graph
-    /// semantics). For the cleaned, flattened imports closure of a single
+    /// are de-duplicated across the named graphs. For the cleaned, flattened
+    /// imports closure of a single
     /// ontology, use :py:meth:`get_closure` instead.
     ///
     /// Set ``include_closures=True`` to expand each listed graph's transitive
@@ -5489,7 +5790,7 @@ impl OntoEnv {
         include_closures: bool,
         recursion_depth: i32,
     ) -> PyResult<(Py<PyAny>, Vec<String>)> {
-        let (names, namespaces) = {
+        let (names, namespaces, published) = {
             let graph_iris: Vec<NamedNode> = uris
                 .iter()
                 .map(|uri| {
@@ -5532,10 +5833,14 @@ impl OntoEnv {
                 .get_namespaces_for_graphs(&ids)
                 .map_err(anyhow_to_pyerr)?;
             let names: Vec<String> = ids.iter().map(GraphIdentifier::to_uri_string).collect();
-            (names, namespaces)
+            (names, namespaces, env.snapshot())
         };
 
-        let dataset = self.cached_view_dataset(py)?;
+        let dataset = if let Some(inner) = published {
+            snapshots::PyEnvironmentSnapshot::new(inner).view_dataset(py, None)?
+        } else {
+            self.cached_view_dataset(py)?
+        };
         let view = build_view_graph(py, &dataset, &names, None, namespaces)?;
         Ok((view, names))
     }
@@ -5603,7 +5908,9 @@ impl OntoEnv {
     ///
     /// Raises ``UnresolvedImportError`` when `uri` is a currently known unresolved
     /// import. An arbitrary unknown graph IRI raises ``ValueError``; parsing and
-    /// backend failures retain their own error types.
+    /// backend failures retain their own error types. Copies retain captured
+    /// namespace bindings. Saved user bindings replace destination collisions;
+    /// ontology prefixes preserve an explicit destination's preferences.
     #[pyo3(signature = (uri, graph = None))]
     fn copy_graph(
         &self,
@@ -5615,7 +5922,7 @@ impl OntoEnv {
         let uri_string = pystring_to_string(uri)?;
         let iri = NamedNode::new(&uri_string)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let source_graph = {
+        let (source_graph, namespaces, user_bindings) = {
             let inner = self.inner.clone();
             let guard = inner.lock_detached().unwrap();
             let env = guard.as_ref().ok_or_else(|| {
@@ -5637,7 +5944,11 @@ impl OntoEnv {
                 }
             })?;
 
-            env.copy_graph(&graphid).map_err(anyhow_to_pyerr)?
+            (
+                env.copy_graph(&graphid).map_err(anyhow_to_pyerr)?,
+                env.get_all_namespaces(),
+                env.bound_namespaces().clone(),
+            )
         };
         let res = match graph {
             Some(graph) => graph.clone(),
@@ -5659,6 +5970,7 @@ impl OntoEnv {
 
             res.getattr("add")?.call1((t,))?;
         }
+        bind_graph_namespaces(&res, &namespaces, &user_bindings, graph.is_none())?;
         Ok(res.into())
     }
 
@@ -5707,7 +6019,7 @@ impl OntoEnv {
 
     /// Persistently bind ``prefix`` to ``namespace`` for this environment.
     ///
-    /// The binding is saved in ``.ontoenv/ontoenv.json`` and is included by
+    /// The binding is saved in the selected configuration and is included by
     /// :meth:`get_namespaces` (taking precedence over ontology-declared
     /// prefixes) and therefore by every Dataset returned from
     /// :meth:`get_dataset` / :meth:`copy_dataset`, including after reopening
@@ -5715,8 +6027,8 @@ impl OntoEnv {
     /// rebinding it under a new prefix replaces the old one.
     fn bind_namespace(&mut self, prefix: &str, namespace: &str) -> PyResult<()> {
         self.update_bound_namespaces(|env| {
-            env.bind_namespace(prefix, namespace);
-            true
+            env.bind_namespace(prefix, namespace)?;
+            Ok(true)
         })
         .map(|_| ())
     }
@@ -5794,32 +6106,6 @@ impl OntoEnv {
         Ok(dataset.unbind())
     }
 
-    /// Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-    #[pyo3(signature = (backend = "auto", store = None))]
-    fn snapshot_as_dataset(
-        &self,
-        py: Python,
-        backend: &str,
-        store: Option<Py<PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let warnings = py.import("warnings")?;
-        warnings.call_method1(
-            "warn",
-            (
-                "OntoEnv.snapshot_as_dataset() is deprecated; use \
-                 OntoEnv.get_dataset() for a read-only view or \
-                 OntoEnv.copy_dataset() for a mutable copy",
-                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                2u32,
-            ),
-        )?;
-        if backend == "copy" && store.is_none() {
-            self.copy_dataset(py, None)
-        } else {
-            self.build_dataset(py, backend, store)
-        }
-    }
-
     /// Refresh an existing read-only Dataset view from the current env.
     fn refresh_dataset(&self, py: Python<'_>, dataset: Py<PyAny>) -> PyResult<()> {
         let rdflib_store = py.import("ontoenv.rdflib_store")?;
@@ -5834,27 +6120,6 @@ impl OntoEnv {
         )?;
         refresh.call1((dataset, env_obj))?;
         Ok(())
-    }
-
-    /// Deprecated alias for :meth:`get_dataset` / :meth:`copy_dataset`.
-    #[pyo3(signature = (mode = "auto"))]
-    fn to_rdflib_dataset(&self, py: Python, mode: &str) -> PyResult<Py<PyAny>> {
-        let warnings = py.import("warnings")?;
-        warnings.call_method1(
-            "warn",
-            (
-                "OntoEnv.to_rdflib_dataset() is deprecated; use \
-                 OntoEnv.get_dataset() for a read-only view or \
-                 OntoEnv.copy_dataset() for a mutable copy",
-                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                2u32,
-            ),
-        )?;
-        if mode == "copy" {
-            self.copy_dataset(py, None)
-        } else {
-            self.build_dataset(py, mode, None)
-        }
     }
 
     // Config accessors
@@ -5883,8 +6148,7 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_offline(offline);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env.set_offline(offline).map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -5915,8 +6179,7 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_strict(strict);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env.set_strict(strict).map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -5947,8 +6210,9 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_require_ontology_names(require);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env
+            .set_require_ontology_names(require)
+            .map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -5978,8 +6242,9 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_remote_cache_ttl_secs(ttl_secs);
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env
+            .set_remote_cache_ttl_secs(ttl_secs)
+            .map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6009,8 +6274,9 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_use_cached_ontologies(CacheMode::from(enabled));
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env
+            .set_use_cached_ontologies(CacheMode::from(enabled))
+            .map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6041,8 +6307,7 @@ impl OntoEnv {
                 "OntoEnv is closed",
             ));
         };
-        env.set_resolution_policy(policy).map_err(anyhow_to_pyerr)?;
-        let result = env.save_to_directory().map_err(anyhow_to_pyerr);
+        let result = env.set_resolution_policy(policy).map_err(anyhow_to_pyerr);
         drop(guard);
         self.bump_generation();
         result
@@ -6052,6 +6317,16 @@ impl OntoEnv {
         let inner = self.inner.clone();
         let guard = inner.lock_detached().unwrap();
         if let Some(env) = guard.as_ref() {
+            if let Some(snapshot) = env.snapshot() {
+                return Ok(Some(
+                    snapshot
+                        .config()
+                        .root
+                        .join(".ontoenv-snapshots")
+                        .to_string_lossy()
+                        .into_owned(),
+                ));
+            }
             match env.store_path() {
                 Some(path) => {
                     let dir = path.parent().unwrap_or(path);
@@ -6072,22 +6347,23 @@ impl OntoEnv {
         py.detach(|| {
             let inner = self.inner.clone();
             let mut guard = inner.lock_detached().unwrap();
-            if let Some(env) = guard.as_mut() {
-                if !self.read_only {
-                    env.save_to_directory().map_err(anyhow_to_pyerr)?;
-                }
-                env.flush().map_err(anyhow_to_pyerr)?;
-            }
-            *guard = None;
-            // Release any cached Dataset so its store doesn't outlive the env.
-            self.cache.lock_detached().unwrap().cached = None;
-            Ok(())
+            // Always release the connection, including when publication had an
+            // uncertain outcome. Reopening must be possible after close errors.
+            let result = if let Some(mut env) = guard.take() {
+                env.flush().map_err(anyhow_to_pyerr)
+            } else {
+                Ok(())
+            };
+            drop(guard);
+            let mut cache = self.cache.lock_detached().unwrap();
+            cache.cached = None;
+            cache.managed_cached = None;
+            result
         })
     }
 
-    /// Flush pending changes and rebind cached Graph views to the new
-    /// snapshot. Graphs returned by prior `get_graph` calls share the cached
-    /// Dataset's store, so they observe post-flush state without re-fetching.
+    /// Flush the storage adapter. Managed mutations and configuration edits
+    /// publish before returning; existing views retain their version.
     pub fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         let track_cached_snapshot = self.cached_view_dataset_exists();
         let cached_dataset_is_stale = self.cached_view_dataset_is_stale();
@@ -6205,6 +6481,7 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = env_logger::try_init();
 
     m.add_class::<OntoEnv>()?;
+    m.add_class::<snapshots::PyEnvironmentSnapshot>()?;
     m.add_class::<PySyncReport>()?;
     m.add_class::<PyOntology>()?;
     m.add_class::<PyRdfLibStoreBackend>()?;

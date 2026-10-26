@@ -11,6 +11,7 @@
 //! `VALUES` blocks before handing the query to spareval.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::iter::{empty, once};
 
 use oxrdf::{BlankNode, Literal, NamedNode, Term};
@@ -22,7 +23,7 @@ use spargebra::algebra::{GraphPattern, PropertyPathExpression};
 use spargebra::term::{GroundTerm, TermPattern, Variable};
 
 use crate::reader::{DecodedTerm, R5Error};
-use crate::snapshot::{Pattern, Scope, Snapshot};
+use crate::snapshot::{CLOSURE_PREDICATE_IRIS, Pattern, Scope, Snapshot};
 use crate::view::View;
 
 /// A read-only SPARQL dataset view over a [`Snapshot`], using logical (by-name)
@@ -31,6 +32,7 @@ use crate::view::View;
 pub struct SparqlView<'a> {
     snapshot: &'a Snapshot,
     view: Option<&'a View<'a>>,
+    default_view: Option<&'a View<'a>>,
 }
 
 impl<'a> SparqlView<'a> {
@@ -38,6 +40,7 @@ impl<'a> SparqlView<'a> {
         Self {
             snapshot,
             view: None,
+            default_view: None,
         }
     }
 
@@ -45,7 +48,20 @@ impl<'a> SparqlView<'a> {
         Self {
             snapshot: view.snapshot(),
             view: Some(view),
+            default_view: None,
         }
+    }
+
+    /// Use a deduplicated graph projection as the default graph, leaving named
+    /// graphs unchanged. Both views must borrow the same snapshot.
+    pub fn with_default_graph(mut self, view: &'a View<'a>) -> crate::reader::Result<Self> {
+        if !std::ptr::eq(self.snapshot, view.snapshot()) {
+            return Err(R5Error::Invalid(
+                "Default graph belongs to another snapshot",
+            ));
+        }
+        self.default_view = Some(view);
+        Ok(self)
     }
 
     fn names(&self) -> Vec<&'a str> {
@@ -113,10 +129,29 @@ impl<'a> QueryableDataset<'a> for SparqlView<'a> {
         };
         let snapshot = self.snapshot;
 
-        // Resolve the optional graph-name filter to a concrete name. `None`
-        // (any named graph) and `Some(None)` (default graph) both expand to the
-        // union of all logical graphs — this dataset has no separate default
-        // graph.
+        // The synthetic default graph is the triple-set projection of this
+        // scope. Named-graph scans below preserve each context separately.
+        if matches!(graph_name, Some(None)) {
+            let hits =
+                if let Some(view) = self.default_view.or(self.view) {
+                    view.scan(pat)
+                } else {
+                    let mut seen = HashSet::new();
+                    Box::new(snapshot.scan(pat, Scope::All).filter(move |hit| {
+                        hit.as_ref().map_or(true, |m| seen.insert((m.s, m.p, m.o)))
+                    }))
+                };
+            return Box::new(hits.map(|hit| {
+                hit.map(|m| InternalQuad {
+                    subject: m.s,
+                    predicate: m.p,
+                    object: m.o,
+                    graph_name: None,
+                })
+            }));
+        }
+
+        // Resolve the optional named-graph filter to a concrete name.
         let name: Option<String> = match graph_name {
             None | Some(None) => None,
             Some(Some(&id)) => match snapshot.file().externalize_id(id) {
@@ -430,6 +465,12 @@ impl<'a> PClosRewriter<'a> {
             },
             _ => return None,
         };
+        // A snapshot may have closures for other predicates. Only substitute
+        // paths actually covered by that index; general predicates must still
+        // be evaluated against the underlying triples.
+        if !CLOSURE_PREDICATE_IRIS.contains(&named.as_str()) {
+            return None;
+        }
         let p_id = self.predicate_id(named.as_str())?;
 
         // After reversal, the "forward" lookup direction corresponds to the

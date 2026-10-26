@@ -1,0 +1,56 @@
+OntoEnv immutable-manifest publication diagnostic, 2026-10-23
+Backend: schema 2 immutable JSON manifests and atomically replaced CURRENT; no redb.
+Platform: Linux-7.0.11-76070011-generic-x86_64-with-glibc2.39
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+Release build; warm opens averaged over ten operations; three sequential fresh-process runs after build and test processes finished.
+Command: /usr/bin/time -f "process peak RSS: %M KiB" /tmp/ontoenv-snapshot-review-target/release/examples/snapshot_profile 100 500
+Fixture: 100 graphs, 500 generated triples per graph plus ontology declarations.
+Peak RSS covers fixture generation, parsing, serialization, retained mmaps and opens in one process; not isolated reader memory.
+Comparison baseline: snapshot-profile-2026-10-23.txt (redb, commit 74d8a30).
+
+lib/examples/snapshot_profile.rs SHA256: b36b2004f6be67b73612a10ec604ed374411802a2a9c904f34fe1dbe3aeee607
+lib/src/snapshots.rs SHA256: 86b9a85ea23e92cb2ab9a6a71e28f9455171bc1a517971547f88ac08773a4800
+
+Run 1
+100 graphs, 50100 triples, 13.91 MiB RDF5D
+initial source generation/parse/staging: 128.472563ms
+serialization/first commit: 184.958287ms
+warm direct RDF5D mmap open: 12.921433ms
+warm direct RDF5D owned open: 12.762681ms
+warm manifest + RDF5D mmap open: 13.720566ms
+one-graph source generation/parse/staging: 2.153643ms
+one-graph change / complete-file commit: 224.184109ms
+metadata-only commit (same RDF5D mapping): 23.143318ms
+retained objects: 3; total RDF5D bytes: 29161339; manifest bytes: 111419; CURRENT bytes: 137
+reader refresh: 18.484386ms; retained generation: 1
+process peak RSS: 171500 KiB
+
+
+Run 2
+100 graphs, 50100 triples, 13.91 MiB RDF5D
+initial source generation/parse/staging: 129.544533ms
+serialization/first commit: 182.916762ms
+warm direct RDF5D mmap open: 12.688072ms
+warm direct RDF5D owned open: 12.850935ms
+warm manifest + RDF5D mmap open: 14.389415ms
+one-graph source generation/parse/staging: 2.153482ms
+one-graph change / complete-file commit: 221.717806ms
+metadata-only commit (same RDF5D mapping): 22.802539ms
+retained objects: 3; total RDF5D bytes: 29161526; manifest bytes: 111419; CURRENT bytes: 137
+reader refresh: 17.870591ms; retained generation: 1
+process peak RSS: 168348 KiB
+
+
+Run 3
+100 graphs, 50100 triples, 13.91 MiB RDF5D
+initial source generation/parse/staging: 120.63318ms
+serialization/first commit: 190.207594ms
+warm direct RDF5D mmap open: 12.179976ms
+warm direct RDF5D owned open: 13.215975ms
+warm manifest + RDF5D mmap open: 17.71785ms
+one-graph source generation/parse/staging: 2.222461ms
+one-graph change / complete-file commit: 226.561165ms
+metadata-only commit (same RDF5D mapping): 23.949863ms
+retained objects: 3; total RDF5D bytes: 29161813; manifest bytes: 111410; CURRENT bytes: 137
+reader refresh: 18.300422ms; retained generation: 1
+process peak RSS: 171432 KiB

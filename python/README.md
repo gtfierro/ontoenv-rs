@@ -79,75 +79,83 @@ env.close()
 
 ## Using a persistent environment
 
-For persistent use, OntoEnv saves your settings plus a small index of ontology
-names, imports, aliases, locations, namespaces, and hashes. This lets later
-connections answer dependency questions without rereading every RDF triple.
+`OntoEnv.connect(path)` creates an empty managed environment if missing and
+reopens the saved catalog if present. It is a class method with a required
+path; `OntoEnv.connect(".")` uses the current directory. Source loading is
+explicit: use `add` or `update` when files or URLs should be read.
 
-Use `connect` for normal application code:
+Keep the handle for the lifetime of the program. Context managers are optional:
 
 ```python
+from ontoenv import OntoEnv
+
 env = OntoEnv.connect("./ontology-env")
-site = env.add("./ontologies/site.ttl")
+try:
+    site = env.add("./ontologies/site.ttl")
+    graph = env.get_graph(site)
+    closure, members = env.get_closure(site)
+
+    # Capture one version when several reads must agree.
+    with env.snapshot() as snapshot:
+        graph = snapshot.view_graph(site)
+        closure, members = snapshot.view_closure(site)
+        dataset = snapshot.view_dataset(members)  # Preserves named contexts.
+        editable = snapshot.copy_graph(site)
+
+    # Keep using env in your application, and these results after the scope.
+finally:
+    env.close()  # Call this from the application's shutdown hook.
+
+# Escaped views remain usable after env.close().
+print(len(closure))
 ```
 
-On the first run, this creates the environment directory, saves its settings,
-and initializes graph storage. On later runs, the same call loads the saved
-ontology index. There is no need to check whether the environment exists
-before connecting.
+Live `env.get_graph`, `get_closure`, `get_union` and `get_dataset` calls remain
+supported. Each result captures the handle's selected version. Snapshot methods
+use paired `view_*` / `copy_*` names. Edits to a copy affect that independent
+object. The scope releases ownership only; there is no read transaction to
+commit. Managed writes publish before returning rather than at shutdown.
 
-Saved settings are retained when their options are omitted. To deliberately
-change a setting, pass an explicit value:
+One writable managed handle holds the writer lock until close. Independent
+read-only workers can stay open while that updater publishes or restarts:
 
 ```python
-env = OntoEnv.connect(
-    "./ontology-env",
-    strict=True,
-    offline=True,
-    resolution_policy="latest",
-)
-env.close()
-env = OntoEnv.connect(
-    "./ontology-env",
-    strict=False,
-    offline=False,
-    resolution_policy="default",
-    search_directories=[],  # an empty list explicitly clears saved paths
-)
+reader = OntoEnv.open("./ontology-env", read_only=True)
+try:
+    old = reader.snapshot()
+    # After the updater process publishes a change:
+    reader.refresh()  # Select saved state without fetching sources.
+    current = reader.snapshot()
+finally:
+    reader.close()
+
+# old and current, and their views, keep their selected versions.
 ```
 
-This rule also covers ``require_ontology_names``, ``use_cached_ontologies``,
-``remote_cache_ttl_secs``, and all include/exclude settings. A read-only
-connection applies explicit overrides only for that session. Reconfiguration
-does not re-ingest the graph store; changed discovery paths and filters are
-used by the next explicit ``update()``.
+Use `reader.refresh()` at a request boundary or on a timer. Request a new view
+after refresh to read the new selection. The [service guide](../docs/how-to/use-in-a-service.rst)
+includes a framework lifespan example and the updater/reader process pattern.
+External stores retain their backend's concurrency and recovery guarantees.
 
-The older ``OntoEnv(..., create_or_use_cached=True)`` spelling is deprecated.
-It remains as a warning-emitting compatibility shim for 0.6.x and is planned
-for removal in 0.7; use ``OntoEnv.connect(path)``.
-
-The context manager is optional. For a long-lived service, connect once during
-startup and keep the object in application state:
+When reopening, omitted settings retain their saved values. Explicit values,
+including `False`, `"default"` and `[]`, override them:
 
 ```python
-env = OntoEnv.connect("/srv/ontology-env")
-application_state.ontoenv = env
+with OntoEnv.connect("./ontology-env", strict=True, offline=True) as env:
+    print(env.get_ontology_names())
 
-# Reuse application_state.ontoenv in request handlers, then close it from the
-# web framework's shutdown hook.
-application_state.ontoenv.close()
-```
-
-For a short script, `with` performs the same cleanup automatically:
-
-```python
-with OntoEnv.connect("/srv/ontology-env") as env:
+with OntoEnv.connect(
+    "./ontology-env", strict=False, offline=False,
+    resolution_policy="default", search_directories=[],
+) as env:
     print(env.get_ontology_names())
 ```
 
-For a multi-process server, each read-only worker may open its own
-`OntoEnv.connect(path, read_only=True)`. A persistent environment permits one
-writer, so do not create an independent writable environment in every worker;
-route mutations through one writer and serialize them at the application level.
+This also covers name validation, cache/TTL settings, and include/exclude
+filters. Writable opens persist overrides; read-only opens apply them only for
+that session. Reconfiguration does not re-ingest sources. Discovery changes take
+effect on the next `update()`. The old `create_or_use_cached` flag is removed in
+0.7; use `OntoEnv.connect(path)`.
 
 For custom stores, ``sync="auto"`` reconnects quickly and reads only graphs the
 store can identify as changed. If the store cannot identify those graphs,
@@ -276,7 +284,7 @@ through ``env`` remain synchronized automatically, while out-of-band edits
 require ``sync="full"``.
 
 Temporary environments save no persistent ontology index. To scan a
-pre-populated temporary store without the deprecated `init_from_store` flag:
+pre-populated temporary store without the removed `init_from_store` flag:
 
 ```python
 env = OntoEnv(graph_store=store, temporary=True)

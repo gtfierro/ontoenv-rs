@@ -27,7 +27,7 @@ and that something is what OntoEnv is.
 An environment is a name-to-location index
 ------------------------------------------
 
-An environment is a directory — ``.ontoenv/`` by default — holding two things:
+An environment is a directory — ``.ontoenv-snapshots/`` for managed storage — holding two things:
 
 **The graphs themselves**, in a compact binary format (rdf5d) that can be
 memory-mapped and read without parsing RDF text.
@@ -100,8 +100,15 @@ transparently everywhere an IRI is accepted.
 Resolution policy
 -----------------
 
-When two files declare the same ontology IRI, something has to choose. The
-resolution policy decides:
+Managed storage keeps one registration per canonical IRI. When an explicit add
+encounters an IRI already in the catalog, its overwrite option controls whether
+the existing registration is preserved or replaced. Replacement changes the
+source/contents together and preserves explicit aliases. It does not retain
+multiple source versions for later policy selection.
+
+The ``resolution_policy`` setting selects among multiple registrations only
+where the catalog/backend can represent them, such as temporary or external
+store catalogs:
 
 ``default``
    Prefer the first-registered definition.
@@ -112,8 +119,11 @@ resolution policy decides:
 ``version``
    Prefer the highest ``owl:versionIRI`` / version property.
 
-``ontoenv doctor`` reports duplicate IRIs so you can decide whether the
-duplication is intentional at all.
+These policies do not rank competing source files during managed ingestion or
+override an explicit preserve/replace choice. For reproducible managed builds,
+choose the intended source explicitly; distinct versions that must coexist need
+distinct graph IRIs. Do not depend on directory traversal order to select one.
+``ontoenv doctor`` can report duplicate registrations in catalogs that allow them.
 
 Strict mode
 -----------
@@ -128,19 +138,19 @@ CI, where silently incomplete output is worse than a failure.
 Persistent and temporary environments
 -------------------------------------
 
-A persistent environment writes to ``.ontoenv/`` and reopens quickly because
+A persistent environment writes immutable versions under ``.ontoenv-snapshots/`` and reopens quickly because
 of its saved catalog. A temporary one (``--temporary`` /
 ``OntoEnv(temporary=True)``) keeps graphs and catalog in memory, leaves
 nothing behind, and starts from scratch every time. The API is otherwise
 identical.
 
-To experiment with an existing environment without changing it, create an
-explicit snapshot instead: ``env.temporary_snapshot()`` in Python (or
-``env.new_temporary()`` in Rust). A snapshot copies the current catalog and
-graph content into a separate in-memory environment; later changes are
-independent in both directions. A ``root`` supplied to
-``OntoEnv(temporary=True)`` is only a configuration base for source paths; it
-does not select or load a saved environment.
+Use ``env.snapshot()`` for fixed read-only access to an existing managed
+version. Its graph and dataset views retain that version after the environment
+closes or another writer publishes. Use ``copy_graph()`` or ``copy_dataset()``
+for mutable data; changes to these copies do not change the environment. To
+manage a separate in-memory collection, create ``OntoEnv(temporary=True)`` and
+add the desired graph copies. A temporary environment's ``root`` is only a
+configuration base for source paths; it does not load saved state.
 
 Persistent environments allow one writer at a time. Any number of readers can
 open the same environment read-only.

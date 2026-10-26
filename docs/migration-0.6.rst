@@ -1,6 +1,13 @@
 Migrating from 0.5 to 0.6
 =========================
 
+.. note::
+
+   This page describes the historical 0.5-to-0.6 migration. For an upgrade
+   directly to the current 0.7 release, start with :doc:`migration-0.7`.
+   Automatic storage migration applies to 0.6 only; 0.7 requires explicit
+   migration after closing all legacy processes.
+
 Existing 0.5 environments migrate automatically the first time 0.6 opens them.
 The code changes below are the ones you have to make yourself.
 
@@ -26,19 +33,19 @@ At a glance
      - breaking
    * - ``OntoEnv(..., create_or_use_cached=True)``
      - ``OntoEnv.connect(path)``
-     - deprecated
+     - removed in 0.7
    * - ``OntoEnv(..., init_from_store=True)``
      - ``OntoEnv.adopt(path, store)``
-     - deprecated
+     - removed in 0.7
    * - ``env.update(all=True)``
      - ``env.update(force=True)``
-     - deprecated
+     - removed in 0.7
    * - ``env.snapshot_as_dataset(...)``
      - ``env.get_dataset()`` / ``env.copy_dataset()``
-     - deprecated
+     - removed in 0.7
    * - ``env.to_rdflib_dataset(...)``
      - ``env.get_dataset()`` / ``env.copy_dataset()``
-     - deprecated
+     - removed in 0.7
    * - ``refresh_dataset_from_env(dataset, env)``
      - ``env.refresh_dataset(dataset)``
      - moved
@@ -94,8 +101,8 @@ Replace ``init_from_store=True`` with ``OntoEnv.adopt(path, store)``. Use
 ``env.refresh_from_store(full=True)`` only when an already-open environment
 must deliberately rescan its whole backend.
 
-``create_or_use_cached=True`` now emits ``DeprecationWarning``. The shim
-remains through 0.6.x; removal is planned for 0.7.
+The deprecated constructor flags and dataset-conversion aliases are removed
+in 0.7. The replacements above are the supported entry points.
 
 Background: :doc:`explanation/lifecycle`.
 
@@ -104,7 +111,7 @@ Refreshing
 
 ``env.update()`` refreshes ontology files and URLs. It now takes an optional
 source to update just that one, and ``force=True`` replaces the deprecated
-``all=True``.
+``all=True`` (removed in 0.7).
 
 ``env.refresh_from_store()`` reconciles graphs changed directly in a custom
 backend. The two are deliberately separate — see

@@ -1,7 +1,52 @@
 Views and copies
 ================
 
-Every read method on ``OntoEnv`` comes in two flavours:
+The Python graph and dataset query APIs distinguish read-only views from
+mutable copies. A long-lived handle from ``OntoEnv.connect(path)`` can keep
+using ``env.get_graph``, ``get_closure``, ``get_union`` and ``get_dataset``
+directly; each result captures the handle's selected version.
+
+For several queries that must agree, capture one snapshot from that handle.
+Its graph, closure and dataset results use the same catalog, aliases,
+configuration and RDF:
+
+.. code-block:: python
+
+   # env is the handle kept in application state.
+   with env.snapshot() as snapshot:
+       graph = snapshot.view_graph(iri)
+       closure, names = snapshot.view_closure(iri)
+       dataset = snapshot.view_dataset(names)
+       editable = snapshot.copy_dataset(names)
+
+   # graph, closure and dataset still own their captured version here.
+
+Snapshot methods use paired ``view_graph`` / ``copy_graph``, ``view_closure`` /
+``copy_closure``, ``view_union`` / ``copy_union`` and ``view_dataset`` /
+``copy_dataset`` names. Closure and graph union methods return the result plus
+the selected canonical IRIs. ``closure_iris(iri, recursion_depth=-1)`` returns
+membership alone, without fetching sources or materializing a graph.
+
+``view_dataset(iris=None)`` and ``copy_dataset(iris=None)`` select the whole
+captured catalog. An explicit list selects a dataset union; ``[]`` selects no
+graphs. Aliases resolve against that snapshot. Unknown IRIs raise ``ValueError``;
+cataloged empty graphs are valid contexts. Datasets retain named-graph contexts
+and have an empty default graph. The same triple in two contexts remains two
+quads; rdflib's ``len(dataset)`` counts unique triples across those contexts.
+Graph unions project away the contexts and yield/count each triple once.
+SPARQL scans, ``GRAPH`` and ``FROM`` cannot expand a dataset beyond its selection.
+
+Namespace maps merge in selection order, with explicit bindings taking
+precedence; a whole-catalog selection uses canonical IRI order. Depth zero
+selects only the closure root. Strict mode checks missing imports only when
+traversal follows them, so unresolved imports beyond the depth limit do not fail
+a query. Cyclic import explanations stop before repeating a node.
+
+``OntoEnv.read_snapshot(path)`` also opens an owned version directly when a
+live handle is unnecessary. Snapshot scopes release ownership only; escaped
+views and iterators remain usable. There is no read transaction to commit.
+
+The live ``OntoEnv`` convenience reads remain supported:
 
 .. list-table::
    :header-rows: 1
@@ -22,6 +67,13 @@ Every read method on ``OntoEnv`` comes in two flavours:
    * - ``get_dataset()``
      - ``copy_dataset()``
      - the whole environment
+
+Rust currently uses different return types: ``OntoEnv::get_graph`` and
+``copy_graph`` both materialize an owned ``oxigraph::model::Graph``. Editing that
+value does not change the environment. A managed
+``EnvironmentSnapshot::view_graph`` or ``view`` borrows a query view without
+materializing the graph. The Python names in the table describe their Python
+return values, not a Rust mutability guarantee.
 
 Why the split exists
 --------------------
@@ -67,8 +119,8 @@ set**: imports stripped, ontology declarations collapsed onto the root, SHACL
 prefixes consolidated, duplicates removed. The only difference is where the
 triples live and whether you can change them.
 
-Unions are the exception, and asymmetrically so. ``get_union`` is always a raw
-merge. ``copy_union`` defaults to a raw merge too, but accepts
+Snapshot union views and copies contain the same raw triple set. The older
+``OntoEnv.get_union`` is also a raw graph projection. Its ``copy_union`` accepts
 ``rewrite_sh_prefixes=True`` and ``remove_owl_imports=True`` to opt into the
 closure transforms — with ``root`` naming the ontology those transforms
 collapse onto.
@@ -77,8 +129,8 @@ Choosing
 --------
 
 **Use a view when** you are querying, counting, iterating, or serializing;
-when the graph is large; when you are in a request handler; or when you want a
-compile-time guarantee that this code path cannot modify the environment.
+when the graph is large; or when you are in a request handler and need fixed,
+read-only graph contents. Python rejects writes to the returned view at runtime.
 
 **Use a copy when** you need to add or remove triples, or when you need an
 ``rdflib.Graph`` API a view does not implement.

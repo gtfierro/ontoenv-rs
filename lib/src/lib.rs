@@ -2,7 +2,9 @@
 //!
 //! It recursively discovers and resolves `owl:imports` statements, and provides an API for querying the dependency graph and retrieving a unified "imports closure" of an ontology.
 //!
-//! The environment is backed by an `Oxigraph` store.
+//! Managed environments use immutable RDF5D snapshots. Temporary and external
+//! backends provide their own graph operations; an authoritative raw Oxigraph
+//! store is an optional capability rather than a requirement for every backend.
 //!
 //! # Usage
 //!
@@ -93,7 +95,9 @@
 extern crate derive_builder;
 
 pub mod api;
+mod backend;
 pub mod catalog;
+mod catalog_queries;
 pub mod config;
 pub mod consts;
 pub mod doctor;
@@ -105,6 +109,9 @@ pub mod ontology;
 pub mod options;
 pub mod policy;
 pub mod progress;
+mod snapshot_io;
+pub mod snapshots;
+mod staged_graph;
 #[macro_use]
 pub mod util;
 pub mod transform;

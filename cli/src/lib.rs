@@ -2,7 +2,7 @@ use anyhow::{Error, Result};
 use clap::{Parser, Subcommand};
 use log::info;
 use ontoenv::api::{OntoEnv, ResolveTarget};
-use ontoenv::config::Config;
+use ontoenv::config::{Config, ConfigOverrides};
 use ontoenv::ontology::{GraphIdentifier, OntologyLocation};
 use ontoenv::options::{Overwrite, RefreshStrategy};
 use ontoenv::util::write_dataset_to_file;
@@ -160,6 +160,16 @@ enum Commands {
     },
     /// Prints the version of the ontoenv binary
     Version,
+    /// Migrate a closed legacy managed environment, preserving its files
+    Migrate,
+    /// Offline upgrade: close all older processes before enabling reader-safe cleanup
+    Upgrade,
+    /// Retry cleanup, retaining current/previous versions and all live views
+    Prune {
+        /// Output JSON instead of text
+        #[clap(long, action, default_value = "false")]
+        json: bool,
+    },
     /// Prints the status of the ontology environment
     Status {
         /// Output JSON instead of text
@@ -287,7 +297,7 @@ enum Commands {
     },
     /// Rebuild the catalog after an interrupted mutation
     Recover,
-    /// Reset the ontology environment by removing the .ontoenv directory
+    /// Reset the ontology environment to an empty catalog
     Reset {
         #[clap(long, short, action = clap::ArgAction::SetTrue, default_value = "false")]
         force: bool,
@@ -317,6 +327,9 @@ impl std::fmt::Display for Commands {
         let name = match self {
             Commands::Init { .. } => "Init",
             Commands::Version => "Version",
+            Commands::Migrate => "Migrate",
+            Commands::Upgrade => "Upgrade",
+            Commands::Prune { .. } => "Prune",
             Commands::Status { .. } => "Status",
             Commands::Update { .. } => "Update",
             Commands::Closure { .. } => "Closure",
@@ -337,29 +350,54 @@ impl std::fmt::Display for Commands {
     }
 }
 
-fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<()> {
+fn handle_config_command(
+    config_cmd: ConfigCommands,
+    temporary: bool,
+    root: Option<&std::path::Path>,
+) -> Result<()> {
     if temporary {
         return Err(anyhow::anyhow!("Cannot manage config in temporary mode."));
     }
-    let root = ontoenv::api::find_ontoenv_root()
+    let root = root
         .ok_or_else(|| anyhow::anyhow!("Not in an ontoenv. Use `ontoenv init` to create one."))?;
     let config_path = root.join(".ontoenv").join("ontoenv.json");
-    if !config_path.exists() {
+    let managed = root.join(".ontoenv-snapshots").exists();
+    if !config_path.exists() && !managed {
         return Err(anyhow::anyhow!(
             "No ontoenv.json found. Use `ontoenv init`."
         ));
     }
 
+    // Acquire the writer before reading configuration for a read-modify-write.
+    // A manifest read before this lock could overwrite a newer setting.
+    let mut writer = if managed
+        && !matches!(
+            config_cmd,
+            ConfigCommands::List | ConfigCommands::Get { .. }
+        ) {
+        Some(ontoenv::snapshots::SnapshotWriter::open(root)?)
+    } else {
+        None
+    };
+    let config_str = if let Some(writer) = &writer {
+        serde_json::to_string(writer.snapshot().config())?
+    } else if managed {
+        serde_json::to_string(
+            ontoenv::snapshots::SnapshotReader::open(root)?
+                .snapshot()
+                .config(),
+        )?
+    } else {
+        std::fs::read_to_string(&config_path)?
+    };
     match config_cmd {
         ConfigCommands::List => {
-            let config_str = std::fs::read_to_string(&config_path)?;
             let config_json: serde_json::Value = serde_json::from_str(&config_str)?;
             let pretty_json = serde_json::to_string_pretty(&config_json)?;
             println!("{}", pretty_json);
             return Ok(());
         }
         ConfigCommands::Get { ref key } => {
-            let config_str = std::fs::read_to_string(&config_path)?;
             let config_json: serde_json::Value = serde_json::from_str(&config_str)?;
             let object = config_json
                 .as_object()
@@ -388,7 +426,6 @@ fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<
     }
 
     // Modifying commands continue here.
-    let config_str = std::fs::read_to_string(&config_path)?;
     let mut config_json: serde_json::Value = serde_json::from_str(&config_str)?;
 
     let object = config_json
@@ -524,7 +561,14 @@ fn handle_config_command(config_cmd: ConfigCommands, temporary: bool) -> Result<
     }
 
     let new_config_str = serde_json::to_string_pretty(&config_json)?;
-    std::fs::write(config_path, new_config_str)?;
+    if managed {
+        writer
+            .as_mut()
+            .expect("managed config writer")
+            .publish_config(serde_json::from_str(&new_config_str)?)?;
+    } else {
+        std::fs::write(config_path, new_config_str)?;
+    }
 
     Ok(())
 }
@@ -573,7 +617,11 @@ fn execute(cmd: Cli) -> Result<()> {
 
     // Locations only apply to `init`; other commands ignore positional LOCATIONS
     if let Commands::Init { locations, .. } = &cmd.command {
-        builder = builder.locations(locations.clone());
+        builder = builder.locations(if locations.is_empty() {
+            vec![cwd.clone()]
+        } else {
+            locations.clone()
+        });
     }
     // only set includes if they are provided on the command line, otherwise use builder defaults
     if !cmd.includes.is_empty() {
@@ -600,14 +648,31 @@ fn execute(cmd: Cli) -> Result<()> {
 
     let detailed_human_output = cmd.verbose || cmd.debug;
 
+    // Discover environment root: ONTOENV_DIR takes precedence, else walk parents
+    let env_dir_var = std::env::var("ONTOENV_DIR").ok().map(PathBuf::from);
+    let discovered_root = if let Some(dir) = env_dir_var.clone() {
+        // If ONTOENV_DIR points to the .ontoenv directory, take its parent as root
+        if dir
+            .file_name()
+            .map(|n| n == ".ontoenv" || n == ".ontoenv-snapshots")
+            .unwrap_or(false)
+        {
+            dir.parent().map(|p| p.to_path_buf())
+        } else {
+            Some(dir)
+        }
+    } else {
+        ontoenv::api::find_ontoenv_root()
+    };
     if let Commands::Reset { force } = &cmd.command {
-        if let Some(root) = ontoenv::api::find_ontoenv_root() {
-            let path = root.join(".ontoenv");
-            println!("Removing .ontoenv directory at {}...", path.display());
+        if let Some(root) = discovered_root.as_ref() {
+            println!("Resetting environment at {}...", root.display());
             if !*force {
                 // check delete? [y/N]
                 let mut input = String::new();
-                println!("Are you sure you want to delete the .ontoenv directory? [y/N] ");
+                println!(
+                    "Are you sure you want to reset this environment to an empty catalog? [y/N] "
+                );
                 std::io::stdin()
                     .read_line(&mut input)
                     .expect("Failed to read line");
@@ -617,31 +682,51 @@ fn execute(cmd: Cli) -> Result<()> {
                     return Ok(());
                 }
             }
-            OntoEnv::reset()?;
-            println!(".ontoenv directory removed.");
+            OntoEnv::reset_at(root)?;
+            println!("Environment reset.");
         } else {
-            println!("No .ontoenv directory found. Nothing to do.");
+            println!("No environment found. Nothing to do.");
         }
         return Ok(());
     }
 
-    // Discover environment root: ONTOENV_DIR takes precedence, else walk parents
-    let env_dir_var = std::env::var("ONTOENV_DIR").ok().map(PathBuf::from);
-    let discovered_root = if let Some(dir) = env_dir_var.clone() {
-        // If ONTOENV_DIR points to the .ontoenv directory, take its parent as root
-        if dir.file_name().map(|n| n == ".ontoenv").unwrap_or(false) {
-            dir.parent().map(|p| p.to_path_buf())
-        } else {
-            Some(dir)
-        }
-    } else {
-        ontoenv::api::find_ontoenv_root()
-    };
+    let command_root = discovered_root.clone();
     let ontoenv_exists = discovered_root
         .as_ref()
-        .map(|root| root.join(".ontoenv").join("ontoenv.json").exists())
+        .map(|root| {
+            root.join(".ontoenv").join("ontoenv.json").exists()
+                || root.join(".ontoenv-snapshots").exists()
+        })
         .unwrap_or(false);
     info!("OntoEnv exists: {ontoenv_exists}");
+
+    if matches!(cmd.command, Commands::Upgrade) {
+        if cmd.temporary {
+            return Err(anyhow::anyhow!("Upgrade requires persistent storage"));
+        }
+        let root =
+            discovered_root.ok_or_else(|| anyhow::anyhow!("No snapshot environment found"))?;
+        let upgraded = OntoEnv::upgrade(&root)?;
+        println!(
+            "Upgraded {} ontologies; reader-safe cleanup enabled.",
+            upgraded.ontologies().len()
+        );
+        return Ok(());
+    }
+
+    if matches!(cmd.command, Commands::Migrate) {
+        if cmd.temporary {
+            return Err(anyhow::anyhow!("Migration requires persistent storage"));
+        }
+        let root = discovered_root.ok_or_else(|| anyhow::anyhow!("No legacy environment found"))?;
+        let migrated = OntoEnv::migrate(&root)?;
+        println!(
+            "Migrated {} ontologies to {}; legacy files retained.",
+            migrated.ontologies().len(),
+            root.join(".ontoenv-snapshots").display()
+        );
+        return Ok(());
+    }
 
     // Recovery must run before the normal environment-open path below: that
     // path deliberately rejects catalog.pending with CatalogRecoveryError.
@@ -673,7 +758,7 @@ fn execute(cmd: Cli) -> Result<()> {
         let records = recovered.ontologies().len();
         println!(
             "Recovered catalog at {} with {} ontology {}.",
-            root.join(".ontoenv").display(),
+            recovered.store_path().unwrap_or(&root).display(),
             records,
             plural(records, "record", "records")
         );
@@ -684,9 +769,12 @@ fn execute(cmd: Cli) -> Result<()> {
     // - if temporary is true, create a new env object each time
     // - if temporary is false, load the env from the .ontoenv directory if it exists
     // Determine if this command needs write access to the store
-    let needs_rw = matches!(cmd.command, Commands::Add { .. } | Commands::Update { .. });
+    let needs_rw = matches!(
+        cmd.command,
+        Commands::Add { .. } | Commands::Update { .. } | Commands::Prune { .. }
+    );
 
-    let env: Option<OntoEnv> = if cmd.temporary {
+    let mut env: Option<OntoEnv> = if cmd.temporary {
         // Create a new OntoEnv object in temporary mode
         let e = OntoEnv::init(config.clone(), false)?;
         Some(e)
@@ -712,7 +800,9 @@ fn execute(cmd: Cli) -> Result<()> {
             }
 
             let root = current_dir()?;
-            if root.join(".ontoenv").exists() && !overwrite {
+            if (root.join(".ontoenv").exists() || root.join(".ontoenv-snapshots").exists())
+                && !overwrite
+            {
                 println!(
                     "An ontology environment already exists in: {}",
                     root.display()
@@ -723,37 +813,14 @@ fn execute(cmd: Cli) -> Result<()> {
                 // e.g. `ontoenv init --offline` makes the offline flag sticky without
                 // requiring a full --overwrite re-init.
                 let mut env = OntoEnv::load_from_directory(root, false)?;
-                let mut config_changed = false;
-                if let Some(offline) = cmd.offline {
-                    if offline != env.is_offline() {
-                        env.set_offline(offline);
-                        config_changed = true;
-                    }
-                }
-                if let Some(strict) = cmd.strict {
-                    if strict != env.is_strict() {
-                        env.set_strict(strict);
-                        config_changed = true;
-                    }
-                }
-                if let Some(require) = cmd.require_ontology_names {
-                    if require != env.requires_ontology_names() {
-                        env.set_require_ontology_names(require);
-                        config_changed = true;
-                    }
-                }
-                if let Some(policy) = cmd.policy {
-                    if policy != env.resolution_policy() {
-                        env.set_resolution_policy(policy)?;
-                        config_changed = true;
-                    }
-                }
-                if let Some(ttl) = cmd.remote_cache_ttl_secs {
-                    env.set_remote_cache_ttl_secs(ttl);
-                    config_changed = true;
-                }
-                if config_changed {
-                    env.save_to_directory()?;
+                if env.apply_config_overrides(&ConfigOverrides {
+                    offline: cmd.offline,
+                    strict: cmd.strict,
+                    require_ontology_names: cmd.require_ontology_names,
+                    resolution_policy: cmd.policy,
+                    remote_cache_ttl_secs: cmd.remote_cache_ttl_secs,
+                    ..Default::default()
+                })? {
                     println!("Configuration updated.");
                 }
 
@@ -973,15 +1040,27 @@ fn execute(cmd: Cli) -> Result<()> {
                 OntologyLocation::File(PathBuf::from(location))
             };
             let mut env = require_ontoenv(env)?;
-            let id = if no_imports {
-                env.add_no_imports(location, Overwrite::Allow, RefreshStrategy::UseCache)?
+            if let Some(rename) = rename {
+                let rename = NamedNode::new(rename)?;
+                if no_imports {
+                    env.add_no_imports_with_rename(
+                        location,
+                        Overwrite::Allow,
+                        RefreshStrategy::UseCache,
+                        rename,
+                    )?;
+                } else {
+                    env.add_with_rename(
+                        location,
+                        Overwrite::Allow,
+                        RefreshStrategy::UseCache,
+                        rename,
+                    )?;
+                }
+            } else if no_imports {
+                env.add_no_imports(location, Overwrite::Allow, RefreshStrategy::UseCache)?;
             } else {
-                env.add(location, Overwrite::Allow, RefreshStrategy::UseCache)?
-            };
-            if let Some(new_iri_str) = rename {
-                let new_iri = NamedNode::new(&new_iri_str)
-                    .map_err(|e| anyhow::anyhow!("Invalid rename IRI: {}", e))?;
-                env.rename_graph_iri(&id, new_iri)?;
+                env.add(location, Overwrite::Allow, RefreshStrategy::UseCache)?;
             }
         }
         Commands::List { list_cmd, json } => {
@@ -1115,6 +1194,28 @@ fn execute(cmd: Cli) -> Result<()> {
                 }
             }
         }
+        Commands::Migrate => unreachable!("migration handled before open"),
+        Commands::Upgrade => unreachable!("upgrade handled before open"),
+        Commands::Prune { json } => {
+            let report = env
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Cleanup requires an environment"))?
+                .prune()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Removed {} objects and {} manifests; {} pinned, {} pending.",
+                    report.removed_objects,
+                    report.removed_manifests,
+                    report.pinned_objects,
+                    report.pending_objects
+                );
+                for error in report.errors {
+                    eprintln!("Cleanup deferred: {error}");
+                }
+            }
+        }
         Commands::Recover => {
             // This command is handled before the environment is opened.
         }
@@ -1151,7 +1252,7 @@ fn execute(cmd: Cli) -> Result<()> {
             }
         }
         Commands::Config(config_cmd) => {
-            handle_config_command(config_cmd, cmd.temporary)?;
+            handle_config_command(config_cmd, cmd.temporary, command_root.as_deref())?;
         }
         Commands::Reset { .. } => {
             // This command is handled before the environment is loaded.

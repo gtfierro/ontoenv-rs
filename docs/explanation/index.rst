@@ -32,6 +32,18 @@ Explanation
    Benchmarks against in-memory rdflib and Oxigraph, plus the indexing that
    explains the results.
 
+:doc:`transactional-snapshots`
+   Default managed storage with immutable mmap-backed generations, concurrent
+   readers, staged updates, and explicit snapshot refresh.
+
+:doc:`environment-publication`
+   Why atomic publication belongs to OntoEnv, the RDF5D boundary, and the
+   immutable-manifest publication protocol.
+
+:doc:`publication-validation`
+   Platform results, guest crash/reboot tests, multi-process workloads and
+   provisional acceptance budgets for the publisher.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -42,3 +54,6 @@ Explanation
    lifecycle
    staying-in-sync
    performance
+   transactional-snapshots
+   environment-publication
+   publication-validation

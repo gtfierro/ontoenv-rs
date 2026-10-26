@@ -70,8 +70,8 @@ class TestPythonGraphStore(unittest.TestCase):
             g = env.get_graph(iri)
             self.assertEqual(len(g), len(store.graphs[iri]))
 
-    def test_init_from_store_loads_existing_graphs(self) -> None:
-        """OntoEnv(init_from_store=True) reconstructs its state from graphs already in the store."""
+    def test_full_refresh_loads_existing_graphs(self) -> None:
+        """Explicit full refresh reconstructs the catalog from existing graphs."""
         from rdflib import Graph as RdflibGraph, URIRef
         from rdflib.namespace import OWL, RDF
 
@@ -83,17 +83,14 @@ class TestPythonGraphStore(unittest.TestCase):
         g.add((URIRef(iri), URIRef("http://example.com/p"), URIRef("http://example.com/o")))
         store.add_graph(iri, g)
 
-        # Creating OntoEnv with init_from_store=True should pick up the pre-existing graph.
-        with self.assertWarnsRegex(DeprecationWarning, "init_from_store is deprecated"):
-            env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        env = temporary_env_from_store(store)
         names = env.get_ontology_names()
         self.assertIn(iri, names, f"expected {iri} in {names}")
 
-    def test_init_from_store_empty_store(self) -> None:
-        """OntoEnv(init_from_store=True) on an empty store starts with zero ontologies."""
+    def test_full_refresh_empty_store(self) -> None:
+        """Explicit full refresh of an empty store leaves the catalog empty."""
         store = DictGraphStore()
-        with self.assertWarnsRegex(DeprecationWarning, "init_from_store is deprecated"):
-            env = OntoEnv(graph_store=store, temporary=True, init_from_store=True)
+        env = temporary_env_from_store(store)
         self.assertEqual(env.get_ontology_names(), [])
 
     def test_refresh_from_store_reflects_external_changes(self) -> None:

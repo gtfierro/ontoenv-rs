@@ -6,7 +6,7 @@ CLI reference
    cargo install --locked ontoenv-cli    # with a Rust toolchain
    pip install ontoenv                   # or as part of the Python package
 
-Every command locates the nearest ``.ontoenv/`` directory by walking up from
+Every command locates the nearest managed environment directory by walking up from
 the current working directory. Set ``ONTOENV_DIR`` to override that.
 
 Global flags
@@ -39,7 +39,7 @@ Accepted by every subcommand.
    * - ``--remote-cache-ttl-secs <SECS>``
      - Max age of a cached remote ontology before re-fetch. Default 86400.
    * - ``-t``, ``--temporary``
-     - Keep everything in memory; write no ``.ontoenv/``.
+     - Keep everything in memory; write no environment directory.
    * - ``-p``, ``--policy <POLICY>``
      - Resolution policy when several files declare the same ontology IRI:
        ``default``, ``latest``, or ``version``.
@@ -61,12 +61,13 @@ Creating and updating
 
 .. rubric:: ``ontoenv init [LOCATION]...``
 
-Create the environment under ``.ontoenv/``. Directory arguments are scanned
+Create the managed environment under ``.ontoenv-snapshots/``. Directory arguments are scanned
 immediately; with none, the current directory is used.
 
 ``--overwrite``
-   Delete the existing ``.ontoenv/`` directory, then create and populate a new
-   one. Source files outside ``.ontoenv/`` are not deleted.
+   Publish a replacement catalog and requested source scan. Existing views
+   retain their versions. Cleanup keeps current/previous publications and
+   backing objects owned by live views.
 
 Each line below is an independent example:
 
@@ -76,7 +77,29 @@ Each line below is an independent example:
    $ ontoenv init ./ontologies --overwrite
    $ ontoenv init . --includes '*.ttl' --exclude-ontology 'experimental'
 
+.. rubric:: ``ontoenv migrate``
+
+Explicitly copy a closed legacy managed environment into the new format.
+Stored graphs, metadata, aliases and configuration are validated before the
+new directory is installed. Original files are retained. See
+:doc:`../how-to/migrate-storage`.
+
+.. rubric:: ``ontoenv upgrade``
+
+Enable reader-safe cleanup for protocol-2 stores from earlier 0.7 development
+builds. Close every older process, including all read-only views, first. The
+offline upgrade validates the selected version and keeps its RDF file. See
+:doc:`../how-to/migrate-storage` for the protocol boundary and retry behavior.
+
+.. rubric:: ``ontoenv prune [--json]``
+
+Retry cleanup using the sole writer. Retains current/previous publications and
+all backing files pinned by live views in any process. Reports removed, pinned
+and pending counts plus deferred errors. Writer startup and successful commits
+also attempt cleanup; no background thread is required.
+
 .. rubric:: ``ontoenv add <LOCATION>``
+
 
 Register one ontology from a file path or URL, following ``owl:imports`` by
 default.
@@ -294,6 +317,8 @@ Each line below is an independent example:
    $ ontoenv config bind ex http://example.org/ns#
 
 ``add``/``remove`` handle ``locations``, ``includes``, and ``excludes``. The
-ontology-IRI regex lists must be edited in ``.ontoenv/config.json`` directly.
+ontology-IRI regex lists can be changed through the Python lifecycle overrides
+``include_ontologies=`` and ``exclude_ontologies=``. Do not edit immutable
+manifests directly.
 
 See :doc:`configuration` for every key and its default.
