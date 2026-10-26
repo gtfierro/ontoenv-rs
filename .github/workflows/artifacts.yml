@@ -50,10 +50,13 @@ jobs:
           path: target/aarch64-unknown-linux-gnu/release/ontoenv
       - run: mv target/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_x86_64_linux_gnu
         if: github.event_name == 'release'
+      - run: mv target/aarch64-unknown-linux-gnu/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_aarch64_linux_gnu
+        if: github.event_name == 'release'
       - uses: softprops/action-gh-release@v1
         with:
           files: |
             ontoenv_${{ github.event.release.tag_name }}_x86_64_linux_gnu
+            ontoenv_${{ github.event.release.tag_name }}_aarch64_linux_gnu
         if: github.event_name == 'release'
   binary_mac:
     runs-on: macos-latest
@@ -67,21 +70,21 @@ jobs:
           submodules: true
       - uses: ./.github/actions/setup-rust
         with:
-          target: aarch64-apple-darwin
+          target: x86_64-apple-darwin aarch64-apple-darwin
           version: stable
-      - run: cargo build --release
+      - run: cargo build --release --target x86_64-apple-darwin
         working-directory: ./cli
       - run: cargo build --release --target aarch64-apple-darwin
         working-directory: ./cli
       - uses: actions/upload-artifact@v6
         with:
           name: ontoenv_x86_64_apple_${{ github.run_attempt }}
-          path: target/release/ontoenv
+          path: target/x86_64-apple-darwin/release/ontoenv
       - uses: actions/upload-artifact@v6
         with:
           name: ontoenv_aarch64_apple_${{ github.run_attempt }}
           path: target/aarch64-apple-darwin/release/ontoenv
-      - run: mv target/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_x86_64_apple
+      - run: mv target/x86_64-apple-darwin/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_x86_64_apple
         if: github.event_name == 'release'
       - run: mv target/aarch64-apple-darwin/release/ontoenv ontoenv_${{ github.event.release.tag_name }}_aarch64_apple
         if: github.event_name == 'release'
