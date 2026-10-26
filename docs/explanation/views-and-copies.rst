@@ -2,14 +2,18 @@ Views and copies
 ================
 
 The Python graph and dataset query APIs distinguish read-only views from
-mutable copies:
+mutable copies. A long-lived handle from ``OntoEnv.connect(path)`` can keep
+using ``env.get_graph``, ``get_closure``, ``get_union`` and ``get_dataset``
+directly; each result captures the handle's selected version.
 
-For several queries that must agree, capture one snapshot first. Its graph,
-closure and dataset results use the same catalog, aliases, configuration and RDF:
+For several queries that must agree, capture one snapshot from that handle.
+Its graph, closure and dataset results use the same catalog, aliases,
+configuration and RDF:
 
 .. code-block:: python
 
-   with OntoEnv.read_snapshot(path) as snapshot:
+   # env is the handle kept in application state.
+   with env.snapshot() as snapshot:
        graph = snapshot.view_graph(iri)
        closure, names = snapshot.view_closure(iri)
        dataset = snapshot.view_dataset(names)
@@ -38,8 +42,11 @@ selects only the closure root. Strict mode checks missing imports only when
 traversal follows them, so unresolved imports beyond the depth limit do not fail
 a query. Cyclic import explanations stop before repeating a node.
 
-The existing ``OntoEnv`` convenience methods remain available during
-consolidation:
+``OntoEnv.read_snapshot(path)`` also opens an owned version directly when a
+live handle is unnecessary. Snapshot scopes release ownership only; escaped
+views and iterators remain usable. There is no read transaction to commit.
+
+The live ``OntoEnv`` convenience reads remain supported:
 
 .. list-table::
    :header-rows: 1

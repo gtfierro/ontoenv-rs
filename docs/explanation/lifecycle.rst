@@ -8,7 +8,12 @@ Use ``connect`` when either state is valid
 
 .. code-block:: python
 
+   from ontoenv import OntoEnv
+
    env = OntoEnv.connect("./ontology-env")
+
+``connect`` is a class method with a required path; ``OntoEnv.connect(".")``
+uses the current directory. The returned handle can live for the whole program.
 
 ``connect`` creates the environment if it is missing and reopens it if it
 exists. Use a different entry point when one of those states should be an
@@ -169,12 +174,40 @@ Existing views keep their captured version after close.
 How long should the object live?
 --------------------------------
 
-The ``with`` statement controls exactly one thing: when ``close()`` is called.
-It changes nothing about what OntoEnv saves or how it behaves.
+Keep the returned object in application state and reuse it:
 
-For a script, that automatic cleanup is convenient. For a server, it is the
-wrong shape entirely — connect once at startup, keep the object in application
-state, close it at shutdown. See :doc:`../how-to/use-in-a-service`.
+.. code-block:: python
+
+   env = OntoEnv.connect("./ontology-env")
+   try:
+       # Startup has already loaded this ontology.
+       view, members = env.get_closure("https://example.org/site")
+       # Continue serving requests or running jobs with env.
+   finally:
+       env.close()  # Shutdown
+
+Context managers provide the same cleanup for a shorter scope. Neither form
+adds a managed commit boundary: writes publish before returning. Returned views
+keep their captured version after ``close``.
+
+A writable managed handle owns the single writer lock until close. Read-only
+workers can remain open alongside it:
+
+.. code-block:: python
+
+   reader = OntoEnv.open("./ontology-env", read_only=True)
+   try:
+       old = reader.snapshot()
+       reader.refresh()  # Select another process's latest publication.
+       current = reader.snapshot()
+       # old and its returned views keep the original version.
+   finally:
+       reader.close()
+
+Use live ``env.get_*`` graph reads for individual results. For several reads
+that must agree, capture ``env.snapshot()`` and use its ``view_*`` / ``copy_*``
+methods. Reader ``refresh`` selects saved state; writer ``update`` reads sources.
+See :doc:`../how-to/use-in-a-service` for framework and multi-process patterns.
 
 Removed constructor flags
 -------------------------

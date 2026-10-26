@@ -109,6 +109,10 @@ your program does not re-read every file on disk.
 On a later run, ``connect`` reopens the saved environment. ``update`` checks
 the sources and does no parsing if nothing has changed.
 
+The path argument is required; ``OntoEnv.connect(".")`` uses the current
+directory. Keep the handle for as long as the program needs it, then close it
+at shutdown. Context managers are optional, and writes publish before return.
+
 Read a single graph
 -------------------
 
@@ -131,9 +135,9 @@ storage. It does not copy the graph. Adding or removing triples raises
           Literal("A room")))
 
 This read-only-by-default, copy-on-request split runs through the whole API:
-every ``get_*`` method returns a view, and every ``copy_*`` method materializes
-a mutable ``rdflib`` object. :doc:`../explanation/views-and-copies` covers when
-to use each one.
+graph, closure, union and dataset reads return views, and their matching
+``copy_*`` methods materialize mutable ``rdflib`` objects.
+:doc:`../explanation/views-and-copies` covers when to use each one.
 
 Resolve the imports closure
 ---------------------------
@@ -187,6 +191,28 @@ OntoEnv's storage rather than in rdflib's Python engine:
 The query sees classes from *both* files, because the closure merged them.
 The query is scoped to the resolved closure, so it sees classes from both
 source files without application code traversing the import graph.
+
+Keep related reads on one version
+---------------------------------
+
+The live methods above remain supported for a long-lived ``env``. When several
+reads must agree, capture one snapshot from it:
+
+.. code-block:: python
+
+   with env.snapshot() as snapshot:
+       graph = snapshot.view_graph("https://example.org/site")
+       closure, members = snapshot.view_closure("https://example.org/site")
+       dataset = snapshot.view_dataset(members)
+       editable = snapshot.copy_graph("https://example.org/site")
+
+   # These results still own their captured version after the scope exits.
+   print(len(graph), len(closure))
+
+``dataset`` retains the named graphs in ``members``; ``closure`` is flattened.
+Editing ``editable`` changes that independent copy. The scope releases its
+snapshot handle, without a read commit or rollback. Later updates, reader
+refresh or environment close leave the returned views on their original version.
 
 Add an ontology from the web
 ----------------------------

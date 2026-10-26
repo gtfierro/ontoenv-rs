@@ -65,7 +65,19 @@ Use ``connect`` when both an existing and a missing environment are valid:
 
 .. code-block:: python
 
+   from ontoenv import OntoEnv
+
    env = OntoEnv.connect("./ontology-env")
+
+The path is required; use ``"."`` for the current directory. A context manager
+is optional. Keep ``env`` in application state, reuse its ``get_graph``,
+``get_closure``, ``get_union`` and ``get_dataset`` methods, and call ``close()``
+at shutdown. Capture ``env.snapshot()`` for several reads that must agree.
+
+A writable managed handle holds the sole writer lock until close. Independent
+read-only handles can stay open during writes; ``reader.refresh()`` advances
+their selection without changing previously returned views. See
+:doc:`../how-to/use-in-a-service` for complete examples.
 
 With the default store, it creates an empty environment on the first run and
 reopens the saved catalog on later runs. It does not scan ontology files or

@@ -312,3 +312,19 @@ No storage implementation or flushing behavior changes. Finish strict docs
 validation and publish this documentation checkpoint on the same branch. The
 next step is the final PR; no draft PR, merge, tag or release has been made.
 Memory limits remain deferred; preserve the old untracked final-review file.
+
+
+## Long-lived API documentation follow-up
+
+Final combined PR #39 is open against main from `refactor/graph-io-capabilities`:
+https://github.com/gtfierro/ontoenv-rs/pull/39. It has not been merged. The user
+asked to document the ordinary long-lived `env = OntoEnv.connect(path)` usage.
+README, Python README, tutorial, reference, lifecycle, view/copy and service
+pages now show the required path, optional contexts, direct live reads, snapshots
+for related reads, escaped results and independent reader refresh. The service
+guide's old exclusive reader-versus-writer and startup-recovery advice is fixed
+for managed 0.7 storage; external-store guarantees remain distinct. No runtime
+API changed. Strict Sphinx HTML passed, all 53 Python code blocks parsed, and
+the persistent examples plus updater/reader refresh, restart and escaped-view
+behavior were smoke-tested offline. Publish this docs checkpoint to the existing
+branch/PR; do not create another PR or merge/release as part of this docs request.

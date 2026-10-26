@@ -275,11 +275,37 @@ from ontoenv import OntoEnv
 # initialize graph storage plus an empty ontology index.
 # Later runs: reuse that index without rereading every RDF triple.
 env = OntoEnv.connect("./my-env")
-env.add("./ontologies/site.ttl")
+iri = env.add("./ontologies/site.ttl")
 
-# Keep the object in application state and close it during shutdown.
-application_state.ontoenv = env
-application_state.ontoenv.close()
+# Keep env in application state and reuse it until shutdown.
+```
+
+`connect` is a class method with a required path; `OntoEnv.connect(".")` uses
+the current directory. The handle can live for the whole program. Continue using
+`env.get_graph`, `get_closure`, `get_union` and `get_dataset` directly, and close
+the handle at shutdown. Managed writes publish before return.
+
+For several reads that must agree, capture one version from the live handle:
+
+```python
+with env.snapshot() as snapshot:
+    graph = snapshot.view_graph(iri)
+    closure, members = snapshot.view_closure(iri)
+    dataset = snapshot.view_dataset(members)
+    editable = snapshot.copy_graph(iri)
+
+# Escaped views keep their version after this scope or env.close().
+```
+
+One writable managed handle holds the writer lock. Read-only workers can remain
+open alongside it and call `reader.refresh()` to select a new publication;
+existing views keep their old version. See the
+[service guide](docs/how-to/use-in-a-service.rst) for startup, refresh and shutdown.
+
+```python
+# In the application's shutdown hook:
+env.close()
+# graph, closure and dataset remain usable on their captured version.
 ```
 
 When reopening, omitted configuration options preserve their saved values.
