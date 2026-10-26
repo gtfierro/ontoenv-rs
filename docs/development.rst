@@ -136,3 +136,23 @@ The four sections use the same plain language for different ends:
 ``explanation/``
    Name the design question, the constraints, the choice OntoEnv makes, and
    the consequences of that choice. Be direct about costs and limitations.
+
+Publishing documentation versions
+---------------------------------
+
+The documentation site keeps each release at ``/versions/<tag>/`` and the
+current main branch at ``/dev/``. The site root shows the newest stable release
+once stable documentation has been published. Publishing a prerelease or
+updating development docs preserves existing release versions and the stable
+root. The sidebar selector identifies prerelease and development documentation
+and links to every published version.
+
+To publish or rebuild documentation for an existing release, run the
+``Deploy docs to Pages`` workflow on ``main`` with ``version_tag`` set to the
+release tag, for example ``v0.7.0-rc.1``. The workflow checks out that tag for
+the documentation and Python bindings while using the current deployment
+tools. Leave ``version_tag`` empty to publish development documentation.
+
+The workflow stores the complete site on ``gh-pages`` so subsequent builds
+can preserve earlier versions. GitHub Pages uses the uploaded site artifact;
+do not change Pages to build directly from a source branch.

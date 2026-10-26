@@ -8,12 +8,8 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      simulate_prerelease:
-        description: "Stage docs into versions/<tag>/ as if a pre-release had been published, without publishing anything"
-        type: boolean
-        default: false
-      simulate_tag:
-        description: "Tag name to stage under when simulate_prerelease is enabled (e.g. v0.6.1a1)"
+      version_tag:
+        description: "Release tag to build and archive (empty builds development docs)"
         type: string
         default: ""
 
@@ -35,6 +31,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Checkout documentation source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.version_tag || github.ref }}
+          path: _docs_source
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -60,25 +62,25 @@ jobs:
           version: "latest"
 
       - name: Sync docs environment
-        working-directory: docs
+        working-directory: _docs_source/docs
         env:
           UV_SYSTEM_RESOLVE: "0"
         run: uv sync --project .
 
       - name: Install ontoenv into docs venv
-        working-directory: docs
+        working-directory: _docs_source/docs
         env:
           UV_SYSTEM_RESOLVE: "0"
         run: uv pip install --project . -e ../python
 
       - name: Build Sphinx HTML
-        working-directory: docs
+        working-directory: _docs_source/docs
         env:
           UV_SYSTEM_RESOLVE: "0"
         run: uv run --project . sphinx-build -M html . _build
 
       - name: Build llms.txt
-        working-directory: docs
+        working-directory: _docs_source/docs
         env:
           UV_SYSTEM_RESOLVE: "0"
         run: |
@@ -88,51 +90,22 @@ jobs:
 
       - name: Stage Pages site
         env:
-          IS_PRERELEASE: ${{ (github.event_name == 'release' && github.event.release.prerelease) || inputs.simulate_prerelease }}
-          RELEASE_TAG: ${{ (github.event_name == 'release' && github.event.release.tag_name) || inputs.simulate_tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.version_tag }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          site_dir="$GITHUB_WORKSPACE/docs/_build/pages"
           history_dir="$RUNNER_TEMP/pages-history"
           repo_host="${GITHUB_SERVER_URL#https://}"
           repo_url="https://x-access-token:${GITHUB_TOKEN}@${repo_host}/${GITHUB_REPOSITORY}.git"
-          rm -rf "$site_dir" "$history_dir"
-          mkdir -p "$site_dir"
-
           if git ls-remote --exit-code --heads "$repo_url" gh-pages >/dev/null 2>&1; then
             git clone --depth 1 --branch gh-pages "$repo_url" "$history_dir"
-            rsync -a --exclude='.git' "$history_dir/" "$site_dir/"
           fi
-
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
-            if [[ -z "$RELEASE_TAG" ]]; then
-              echo "Pre-release docs require a tag name (release.tag_name, or the simulate_tag input)" >&2
-              exit 1
-            fi
-            # RELEASE_TAG becomes a directory name that is passed to rm -rf, and
-            # can come from a free-text workflow_dispatch input. Keep it to a
-            # single harmless path segment.
-            if [[ ! "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-              echo "Refusing to stage docs under unsafe tag name: ${RELEASE_TAG}" >&2
-              exit 1
-            fi
-            version_dir="$site_dir/versions/$RELEASE_TAG"
-            rm -rf "$version_dir"
-            mkdir -p "$version_dir"
-            rsync -a --delete docs/_build/html/ "$version_dir/"
-            if [[ ! -f "$site_dir/index.html" ]]; then
-              rsync -a --delete --exclude='versions/' docs/_build/html/ "$site_dir/"
-            fi
-          else
-            rsync -a --delete \
-              --exclude='versions/' \
-              --exclude='.git/' \
-              docs/_build/html/ "$site_dir/"
-          fi
-
-          touch "$site_dir/.nojekyll"
+          python .github/scripts/stage_pages.py \
+            --html _docs_source/docs/_build/html \
+            --history "$history_dir" \
+            --output docs/_build/pages \
+            --tag "$RELEASE_TAG"
 
       - name: Persist Pages history
         env:
@@ -166,14 +139,13 @@ jobs:
       - name: Report docs URL
         id: docs-url
         env:
-          IS_PRERELEASE: ${{ (github.event_name == 'release' && github.event.release.prerelease) || inputs.simulate_prerelease }}
-          RELEASE_TAG: ${{ (github.event_name == 'release' && github.event.release.tag_name) || inputs.simulate_tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.version_tag }}
         run: |
           page_url="${{ steps.deployment.outputs.page_url }}"
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
+          if [[ -n "$RELEASE_TAG" ]]; then
             docs_url="${page_url%/}/versions/$RELEASE_TAG/"
           else
-            docs_url="$page_url"
+            docs_url="${page_url%/}/dev/"
           fi
           echo "url=$docs_url" >> "$GITHUB_OUTPUT"
           echo "::notice title=Docs URL::$docs_url"
