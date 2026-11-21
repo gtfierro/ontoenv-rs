@@ -437,9 +437,99 @@ def test_views_carry_env_namespaces(tmp_path: Path, temporary: bool) -> None:
         assert "@prefix dep: <urn:dep#>" in turtle
         assert "@prefix rt: <urn:root#>" in turtle
 
+        pairs = dict(closure.namespaces())
+        assert pairs["dep"] == URIRef("urn:dep#")
+        with pytest.warns(DeprecationWarning):
+            assert closure.namespaces["dep"] == "urn:dep#"  # legacy dict access
+
         union, _ = env.get_union(["urn:dep"])
         assert union.namespace("dep") == "urn:dep#"
         assert union.namespace("rt") is None
     finally:
         env.close()
 
+
+
+@pytest.mark.parametrize("temporary", [False, True])
+@pytest.mark.parametrize("kind", ["closure", "union"])
+def test_views_are_real_rdflib_graphs(tmp_path: Path, temporary: bool, kind: str) -> None:
+    from rdflib import Namespace
+    from rdflib.paths import OneOrMore
+
+    src = tmp_path / "src"
+    src.mkdir()
+    root, dep = _write_import_pair(src)
+    if temporary:
+        env = OntoEnv(temporary=True, offline=True)
+    else:
+        env = OntoEnv(path=tmp_path / "env", recreate=True, offline=True)
+    try:
+        env.add(str(dep))
+        env.add(str(root))
+        env.flush()
+        if kind == "closure":
+            view, _ = env.get_closure("urn:root")
+        else:
+            view, _ = env.get_union(["urn:dep"])
+        dep_ns = Namespace("urn:dep#")
+
+        assert isinstance(view, Graph)
+        assert dict(view.namespaces())["dep"] == URIRef("urn:dep#")
+        assert view.value(dep_ns.x, dep_ns.p) == dep_ns.y
+        assert list(view.subject_objects(dep_ns.p)) == [(dep_ns.x, dep_ns.y)]
+        assert list(view.triples((dep_ns.x, dep_ns.p / dep_ns.q, None))) == []
+        assert list(view.triples((dep_ns.x, dep_ns.p | dep_ns.q, None)))
+        assert list(view.triples((dep_ns.x, dep_ns.p * OneOrMore, None)))
+        assert view.qname(dep_ns.x) == "dep:x"
+
+        # operators round-trip through rdflib
+        assert len(Graph() + view) == len(view)
+        assert len(view + Graph()) == len(view)
+
+        # prefixes bound on the view apply to queries; initNs/initBindings work
+        rows = list(view.query("SELECT ?o WHERE { dep:x dep:p ?o }"))
+        assert rows == [(dep_ns.y,)]
+        rows = list(
+            view.query(
+                "SELECT ?s ?o WHERE { ?s ex:p ?o }",
+                initNs={"ex": "urn:dep#"},
+                initBindings={"s": dep_ns.x},
+            )
+        )
+        assert rows == [(dep_ns.x, dep_ns.y)]
+
+        # serialize returns self when given a destination
+        assert view.serialize(destination=str(tmp_path / "out.ttl")) is view
+
+        # read-only
+        with pytest.raises(ValueError):
+            view.add((dep_ns.x, dep_ns.p, dep_ns.y))
+        with pytest.raises(ValueError):
+            view.remove((None, None, None))
+    finally:
+        env.close()
+
+
+def test_view_works_as_pyshacl_data_graph(tmp_path: Path) -> None:
+    pyshacl = pytest.importorskip("pyshacl")
+    shapes = tmp_path / "shapes.ttl"
+    shapes.write_text(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        "@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
+        "@prefix dep: <urn:dep#> .\n"
+        "<urn:dep> a owl:Ontology .\n"
+        "dep:x dep:p dep:y .\n"
+        "dep:S a sh:NodeShape ; sh:targetNode dep:x ;\n"
+        "  sh:property [ sh:path dep:p ; sh:minCount 1 ] .\n"
+    )
+    env = OntoEnv(path=tmp_path / "env", recreate=True, offline=True)
+    try:
+        env.add(str(shapes))
+        env.flush()
+        view, _ = env.get_closure("urn:dep")
+        # pySHACL writes system triples into its *shapes* graph, so shapes
+        # must be a mutable copy; the read-only view works as the data graph.
+        conforms, _, _ = pyshacl.validate(view, shacl_graph=env.copy_graph("urn:dep"))
+        assert conforms
+    finally:
+        env.close()

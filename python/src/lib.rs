@@ -5635,8 +5635,8 @@ impl OntoEnv {
     /// closure of *uri*, plus the list of ontology IRIs that contribute to
     /// the view (root first, in BFS order).
     ///
-    /// The returned object is a :py:class:`ontoenv.ViewGraph` — a lightweight,
-    /// non-``rdflib.Graph`` view that delegates triple-pattern lookups to the
+    /// The returned object is a :py:class:`ontoenv.ViewGraph` — a read-only
+    /// ``rdflib.Graph`` that delegates triple-pattern lookups to the
     /// Rust backend scoped to the closure's named graphs, so it behaves like
     /// a merged graph. Persistent rdf5d environments apply the transform
     /// without materializing triples; temporary and custom-store environments
@@ -5768,8 +5768,8 @@ impl OntoEnv {
     /// ontology graphs, plus the list of ontology IRIs that contribute to
     /// the view (in the order they were resolved).
     ///
-    /// The returned object is a :py:class:`ontoenv.ViewGraph` — a lightweight,
-    /// non-``rdflib.Graph`` view that delegates triple-pattern lookups to the
+    /// The returned object is a :py:class:`ontoenv.ViewGraph` — a read-only
+    /// ``rdflib.Graph`` that delegates triple-pattern lookups to the
     /// Rust backend scoped to the listed named graphs, so it behaves like a
     /// merged graph without materializing one. Mutation raises
     /// ``ValueError``; use :py:meth:`copy_union` for a mutable in-memory merge.

@@ -38,6 +38,13 @@ All notable changes to this project are documented here. Releases follow [Semant
   contract and validation report for tested crash scenarios and platform limits.
 
 
+### Changed
+- `ViewGraph` (from `get_closure()` / `get_union()`) is now a real
+  `rdflib.Graph` backed by a read-only store, so `isinstance`, `namespaces()`,
+  `value()`, property paths, `+`, `qname`, `query(initNs=, initBindings=)`
+  and passing it to pySHACL as the data graph work. `serialize(destination)`
+  returns the view. The legacy `query(init_bindings=)` keyword still works.
+
 ### Added
 - Immutable snapshots expose closure membership, import explanations and paired
   graph/closure/union/dataset view and copy queries. Dataset selections preserve
