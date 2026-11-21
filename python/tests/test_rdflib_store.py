@@ -362,6 +362,11 @@ def test_views_carry_env_namespaces(tmp_path: Path, temporary: bool) -> None:
         assert "@prefix dep: <urn:dep#>" in turtle
         assert "@prefix rt: <urn:root#>" in turtle
 
+        pairs = dict(closure.namespaces())
+        assert pairs["dep"] == URIRef("urn:dep#")
+        with pytest.warns(DeprecationWarning):
+            assert closure.namespaces["dep"] == "urn:dep#"  # legacy dict access
+
         union, _ = env.get_union(["urn:dep"])
         assert union.namespace("dep") == "urn:dep#"
         assert union.namespace("rt") is None

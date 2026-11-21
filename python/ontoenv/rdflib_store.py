@@ -20,7 +20,8 @@ falls back to ``copy`` otherwise.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable, Mapping
+import warnings
+from collections.abc import Generator, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -359,6 +360,60 @@ except Exception:
     pass
 
 
+def _warn_dict_namespaces() -> None:
+    warnings.warn(
+        "Dict-style access to ViewGraph.namespaces is deprecated; call "
+        "ViewGraph.namespaces() to iterate (prefix, URIRef) pairs, or use "
+        "ViewGraph.namespace(prefix) to look up a single prefix.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+class _CallableNamespaces(dict):
+    """A ``dict`` of prefix bindings that can also be called like
+    :meth:`rdflib.Graph.namespaces`, yielding ``(prefix, URIRef)`` pairs.
+
+    Dict-style access is deprecated and emits a ``DeprecationWarning``.
+    """
+
+    def __call__(self) -> Iterator[tuple[str, URIRef]]:
+        for prefix, namespace in dict.items(self):
+            yield prefix, URIRef(namespace)
+
+    def __getitem__(self, key):
+        _warn_dict_namespaces()
+        return super().__getitem__(key)
+
+    def __iter__(self):
+        _warn_dict_namespaces()
+        return super().__iter__()
+
+    def __contains__(self, key):
+        _warn_dict_namespaces()
+        return super().__contains__(key)
+
+    def __len__(self):
+        _warn_dict_namespaces()
+        return super().__len__()
+
+    def get(self, *args):
+        _warn_dict_namespaces()
+        return super().get(*args)
+
+    def keys(self):
+        _warn_dict_namespaces()
+        return super().keys()
+
+    def values(self):
+        _warn_dict_namespaces()
+        return super().values()
+
+    def items(self):
+        _warn_dict_namespaces()
+        return super().items()
+
+
 class ViewGraph:
     """Read-only, zero-copy view over a set of the snapshot's named graphs.
 
@@ -585,9 +640,14 @@ class ViewGraph:
     # -- Namespaces --
 
     @property
-    def namespaces(self) -> dict[str, str]:
-        """``{prefix: namespace}`` bindings."""
-        return dict(self._namespaces)
+    def namespaces(self) -> "_CallableNamespaces":
+        """``{prefix: namespace}`` bindings.
+
+        Behaves as a ``dict`` (legacy) and is also callable, so
+        ``view.namespaces()`` yields ``(prefix, URIRef)`` pairs like
+        :meth:`rdflib.Graph.namespaces`. Dict-style access is deprecated.
+        """
+        return _CallableNamespaces(self._namespaces)
 
     def bind(self, prefix: str, namespace: str, override: bool = True) -> None:
         """Bind a prefix to a namespace."""
