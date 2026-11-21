@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ---
 
+## [0.7.0-rc.2] — 2026-11-21
+
+### Changed
+- `ViewGraph` (from `get_closure()` / `get_union()`) is now a real
+  `rdflib.Graph` backed by a read-only store, so `isinstance`, `namespaces()`,
+  `value()`, property paths, `+`, `qname`, `query(initNs=, initBindings=)`
+  and passing it to pySHACL as the data graph work. `serialize(destination)`
+  returns the view. The legacy `query(init_bindings=)` keyword still works.
+
 ## [0.7.0-rc.1] — 2026-10-23
 
 ### Storage and compatibility
@@ -37,13 +46,6 @@ All notable changes to this project are documented here. Releases follow [Semant
   complete previous version is not guaranteed after power loss. See the storage
   contract and validation report for tested crash scenarios and platform limits.
 
-
-### Changed
-- `ViewGraph` (from `get_closure()` / `get_union()`) is now a real
-  `rdflib.Graph` backed by a read-only store, so `isinstance`, `namespaces()`,
-  `value()`, property paths, `+`, `qname`, `query(initNs=, initBindings=)`
-  and passing it to pySHACL as the data graph work. `serialize(destination)`
-  returns the view. The legacy `query(init_bindings=)` keyword still works.
 
 ### Added
 - Immutable snapshots expose closure membership, import explanations and paired
