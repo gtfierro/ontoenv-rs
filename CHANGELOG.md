@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Releases follow [Semant
 
 ## [Unreleased]
 
+### Changed
+- `ViewGraph` (from `get_closure()` / `get_union()`) is now a real
+  `rdflib.Graph` backed by a read-only store, so `isinstance`, `namespaces()`,
+  `value()`, property paths, `+`, `qname`, `query(initNs=, initBindings=)`
+  and passing it to pySHACL as the data graph work. `serialize(destination)`
+  returns the view. The legacy `query(init_bindings=)` keyword still works.
+
 ### Added
 - Prefix bindings can be saved in the environment: `ontoenv config bind
   <prefix> <namespace>` / `ontoenv config unbind <prefix>` from the CLI, and

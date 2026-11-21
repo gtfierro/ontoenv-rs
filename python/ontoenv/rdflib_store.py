@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from rdflib import Dataset, Graph, URIRef, plugin
+from rdflib.paths import Path as RdflibPath
 from rdflib.query import Result
 from rdflib.store import NO_STORE, VALID_STORE, Store
 from rdflib.term import Identifier
@@ -158,7 +159,39 @@ def refresh_dataset_from_env(dataset: Dataset, env: Any) -> None:
     _bind_dataset_namespaces(dataset, env)
 
 
-class OntoEnvStore(Store):
+class _PrefixTable:
+    """Prefix <-> namespace bookkeeping shared by the read-only stores."""
+
+    def _init_prefixes(self) -> None:
+        self._prefix_to_namespace: dict[str, URIRef] = {}
+        self._namespace_to_prefix: dict[URIRef, str] = {}
+
+    def bind(self, prefix: str, namespace: URIRef, override: bool = True) -> None:
+        namespace = URIRef(namespace)
+        bound_namespace = self._prefix_to_namespace.get(prefix)
+        bound_prefix = self._namespace_to_prefix.get(namespace)
+        if override:
+            if bound_prefix is not None:
+                self._prefix_to_namespace.pop(bound_prefix, None)
+            if bound_namespace is not None:
+                self._namespace_to_prefix.pop(bound_namespace, None)
+            self._prefix_to_namespace[prefix] = namespace
+            self._namespace_to_prefix[namespace] = prefix
+        else:
+            self._prefix_to_namespace.setdefault(prefix, namespace)
+            self._namespace_to_prefix.setdefault(namespace, prefix)
+
+    def namespace(self, prefix: str) -> URIRef | None:
+        return self._prefix_to_namespace.get(prefix)
+
+    def prefix(self, namespace: URIRef) -> str | None:
+        return self._namespace_to_prefix.get(URIRef(namespace))
+
+    def namespaces(self) -> Iterator[tuple[str, URIRef]]:
+        return iter(list(self._prefix_to_namespace.items()))
+
+
+class OntoEnvStore(_PrefixTable, Store):
     """A read-only rdflib ``Store`` backed by an OntoEnv snapshot.
 
     SPARQL queries are executed by the Rust backend rather than rdflib's
@@ -185,8 +218,7 @@ class OntoEnvStore(Store):
         self.formula_aware = False
         self.transaction_aware = False
         self._backend = _RdfLibStoreBackend()
-        self._prefix_to_namespace: dict[str, URIRef] = {}
-        self._namespace_to_prefix: dict[URIRef, str] = {}
+        self._init_prefixes()
         self._env_mode: Mode | None = None
 
     @classmethod
@@ -299,29 +331,6 @@ class OntoEnvStore(Store):
             values = self._backend.contexts(*triple)
         yield from values
 
-    def bind(self, prefix: str, namespace: URIRef, override: bool = True) -> None:
-        bound_namespace = self._prefix_to_namespace.get(prefix)
-        bound_prefix = self._namespace_to_prefix.get(namespace)
-        if override:
-            if bound_prefix is not None:
-                self._prefix_to_namespace.pop(bound_prefix, None)
-            if bound_namespace is not None:
-                self._namespace_to_prefix.pop(bound_namespace, None)
-            self._prefix_to_namespace[prefix] = namespace
-            self._namespace_to_prefix[namespace] = prefix
-        else:
-            self._prefix_to_namespace.setdefault(prefix, namespace)
-            self._namespace_to_prefix.setdefault(namespace, prefix)
-
-    def namespace(self, prefix: str) -> URIRef | None:
-        return self._prefix_to_namespace.get(prefix)
-
-    def prefix(self, namespace: URIRef) -> str | None:
-        return self._namespace_to_prefix.get(namespace)
-
-    def namespaces(self) -> Iterable[tuple[str, URIRef]]:
-        return self._prefix_to_namespace.items()
-
     def query(
         self,
         query: Any,
@@ -414,13 +423,124 @@ class _CallableNamespaces(dict):
         return super().items()
 
 
-class ViewGraph:
-    """Read-only, zero-copy view over a set of the snapshot's named graphs.
+class _ViewStore(_PrefixTable, Store):
+    """Read-only rdflib ``Store`` over a scope of named graphs in a backend.
 
-    Unlike :class:`rdflib.Graph`, this class does *not* inherit from
-    ``rdflib.Graph``. It delegates triple lookups, ``__len__``, ``__contains__``
-    and SPARQL directly to the Rust backend, reading straight from the rdf5d
-    mmap snapshot without materializing a copy.
+    Backs :class:`ViewGraph`. Triple lookups, ``len`` and SPARQL are delegated
+    to the Rust backend, scoped to ``scope`` (or every graph if ``None``). If
+    the backend carries a closure patch the scope presents as one flattened,
+    de-duplicated graph.
+    """
+
+    # Context-aware so that consumers that wrap a graph's store in a Dataset
+    # (e.g. pySHACL) accept it; every context is ignored and reads always see
+    # the whole scope.
+    context_aware = True
+    graph_aware = True
+    formula_aware = False
+    transaction_aware = False
+
+    def __init__(self, backend: Any, scope: tuple[str, ...] | None = None):
+        super().__init__()
+        self._backend = backend
+        self._scope = scope
+        self._init_prefixes()
+
+    def open(self, configuration: str | None, create: bool = False) -> int:
+        return VALID_STORE
+
+    def close(self, commit_pending_transaction: bool = False) -> None:
+        return None
+
+    # -- read-only contract --
+
+    def add(self, triple: Any, context: Any, quoted: bool = False) -> None:
+        raise ValueError(
+            "ViewGraph is a read-only view; use copy_closure/copy_union for a mutable graph"
+        )
+
+    def addN(self, quads: Iterable[Any]) -> None:  # noqa: N802
+        raise ValueError("ViewGraph is a read-only view")
+
+    def remove(self, triple: Any, context: Any = None) -> None:
+        raise ValueError(
+            "ViewGraph is a read-only view; use copy_closure/copy_union for a mutable graph"
+        )
+
+    def add_graph(self, graph: Any) -> None:
+        return None
+
+    def remove_graph(self, graph: Any) -> None:
+        raise ValueError("ViewGraph is a read-only view")
+
+    def contexts(self, triple: Any = None) -> Generator[Any, None, None]:
+        for name in self._scope or ():
+            yield Graph(store=self, identifier=URIRef(name))
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise ValueError("ViewGraph is a read-only view; SPARQL Update is not supported")
+
+    # -- reads --
+
+    def triples(
+        self,
+        triple_pattern: tuple[Any, Any, Any],
+        context: Any = None,
+    ) -> Generator[tuple[tuple[Any, Any, Any], Iterator[Any]], None, None]:
+        subject, predicate, obj = triple_pattern
+        unbound = subject is None and predicate is None and obj is None
+        if self._scope:
+            scope = list(self._scope)
+            if unbound:
+                for triple in self._backend.iter_triples_scoped(scope):
+                    yield triple, iter(())
+            else:
+                for triple, _contexts in self._backend.triples_scoped(
+                    scope, subject, predicate, obj
+                ):
+                    yield triple, iter(())
+        else:
+            for triple, _contexts in self._backend.triples(subject, predicate, obj, None):
+                yield triple, iter(())
+
+    def __len__(self, context: Any = None) -> int:
+        if self._scope:
+            return self._backend.len_in_graphs(list(self._scope))
+        return self._backend.len(None)
+
+    def contains(self, triple: tuple[Any, Any, Any]) -> bool:
+        s, p, o = triple
+        if self._scope and s is not None and p is not None and o is not None:
+            return self._backend.contains_in_graphs(s, p, o, list(self._scope))
+        return any(True for _ in self.triples((s, p, o)))
+
+    def query(
+        self,
+        query: Any,
+        initNs: Mapping[str, Any] | None,
+        initBindings: Mapping[str, Identifier] | None,
+        queryGraph: Any = None,
+        **kwargs: Any,
+    ) -> Result:
+        query_text = _inject_prefixes(str(query), initNs)
+        bindings = dict(initBindings) if initBindings else None
+        if self._scope:
+            return self._backend.query_scoped(query_text, list(self._scope), bindings)
+        return self._backend.query(query_text, bindings, None)
+
+
+class ViewGraph(Graph):
+    """Read-only :class:`rdflib.Graph` over a set of the snapshot's named graphs.
+
+    A genuine ``rdflib.Graph`` (``isinstance(view, rdflib.Graph)`` is true)
+    backed by a read-only store that delegates triple lookups, ``len`` and
+    SPARQL to the Rust backend, reading straight from the rdf5d mmap snapshot
+    without materializing a copy. Every rdflib convenience (``value``,
+    ``subject_objects``, property paths, ``qname``, ``+``/``-`` operators,
+    ``namespaces()``, ``serialize``, ``query(initNs=..., initBindings=...)``)
+    is inherited, and the view can be passed wherever rdflib/pySHACL expect a
+    graph. Mutation (``add``/``remove``/``+=``) raises ``ValueError``;
+    ``bind`` only changes the view's own prefix table.
 
     Two flavours, distinguished by how the backend is configured:
 
@@ -429,21 +549,17 @@ class ViewGraph:
       de-duplicated graph** with the same triple set as
       :py:meth:`ontoenv.OntoEnv.copy_closure` (resolved ``owl:imports``
       stripped, ontology declarations collapsed onto the root, SHACL
-      ``sh:prefixes``/``sh:declare`` consolidated). Cross-graph duplicate
-      triples collapse, and SPARQL sees one graph.
+      ``sh:prefixes``/``sh:declare`` consolidated).
     - :py:meth:`ontoenv.OntoEnv.get_union` returns a raw merge: every triple
       of each named graph in scope, with no transform and no cross-graph
-      de-duplication (rdflib merged-graph semantics).
+      de-duplication.
 
     Construct via ``env.get_closure(uri)`` or ``env.get_union(uris)`` rather
-    than directly. ``env.get_graph(uri)`` still returns a plain
-    :class:`rdflib.Graph`.
+    than directly.
 
     Args:
         backend: A :class:`ontoenv._native._RdfLibStoreBackend` instance
-            bound to an env snapshot. For a closure view this is a dedicated
-            backend sharing the same mmap snapshot with a closure patch
-            attached; for a union view it is the shared (raw) backend.
+            bound to an env snapshot.
         scope: Tuple of graph IRIs to scope against, or ``None`` for
             all graphs in the backend.
         namespaces: Optional dict of ``{prefix: namespace}`` bindings.
@@ -453,239 +569,107 @@ class ViewGraph:
         self,
         backend: Any,
         scope: tuple[str, ...] | None = None,
-        namespaces: dict[str, str] | None = None,
+        namespaces: Mapping[str, str] | None = None,
     ):
+        store = _ViewStore(backend, scope)
+        super().__init__(store=store, bind_namespaces="none")
         self._backend = backend
-        self._scope = scope  # None = all graphs
-        self._namespaces = dict(namespaces) if namespaces else {}
-        self._namespaces_rev: dict[str, str] = {}
-        for p, ns in self._namespaces.items():
-            self._namespaces_rev[ns] = p
+        self._scope = scope
+        for prefix, namespace in (namespaces or {}).items():
+            store.bind(prefix, URIRef(namespace), override=True)
 
-    # -- Core iteration --
+    # -- triple pattern access --
 
-    @staticmethod
-    def _unpack_pattern(
-        subject: Any, predicate: Any, obj: Any
-    ) -> tuple[Any, Any, Any]:
-        """Accept either rdflib's ``triples((s, p, o))`` single-tuple
-        convention or the three-arg ``triples(s, p, o)`` form.
-
-        rdflib terms (URIRef/Literal/BNode/Variable) are never tuples, so a
-        tuple/list of length 3 passed as the first positional arg is
-        unambiguously the single-tuple convention.
-        """
-        if (
-            isinstance(subject, (tuple, list))
-            and len(subject) == 3
-            and predicate is None
-            and obj is None
-        ):
-            s, p, o = subject
-            return s, p, o
-        return subject, predicate, obj
-
-    def triples(
+    def triples(  # type: ignore[override]
         self,
-        subject: Any = None,
+        triple: Any = None,
         predicate: Any = None,
         obj: Any = None,
     ) -> Generator[tuple[Any, Any, Any], None, None]:
         """Iterate ``(s, p, o)`` triples matching the pattern.
 
-        Accepts both the rdflib convention ``triples((s, p, o))`` (a single
-        3-tuple) and the three-arg form ``triples(s, p, o)``. Any term may be
-        ``None`` (unbound).
+        Accepts rdflib's ``triples((s, p, o))`` (predicate may be a property
+        path) and the legacy three-argument form ``triples(s, p, o)``.
         """
-        subject, predicate, obj = self._unpack_pattern(subject, predicate, obj)
+        if isinstance(triple, (tuple, list)) and len(triple) == 3 and predicate is None and obj is None:
+            return super().triples(tuple(triple))
+        return super().triples((triple, predicate, obj))
+
+    def __contains__(self, triple: Any) -> bool:
+        return self.store.contains(triple)
+
+    # -- fast scoped accessors (fall back to rdflib for paths) --
+
+    def subjects(self, predicate: Any = None, object: Any = None, unique: bool = False):  # type: ignore[override]
+        if self._scope and not isinstance(predicate, RdflibPath) and not isinstance(object, (list, tuple)):
+            return iter(self._backend.subjects_scoped(list(self._scope), predicate, object))
+        return super().subjects(predicate, object, unique)
+
+    def predicates(self, subject: Any = None, object: Any = None, unique: bool = False):  # type: ignore[override]
         if self._scope:
-            scope = list(self._scope)
-            if subject is None and predicate is None and obj is None:
-                yield from self._backend.iter_triples_scoped(scope)
-            else:
-                for triple, _contexts in self._backend.triples_scoped(
-                    scope, subject, predicate, obj
-                ):
-                    yield triple
-        else:
-            if subject is None and predicate is None and obj is None:
-                for triple, _contexts in self._backend.triples(
-                    None, None, None, None
-                ):
-                    yield triple
-            else:
-                for triple, _contexts in self._backend.triples(
-                    subject, predicate, obj, None
-                ):
-                    yield triple
+            return iter(self._backend.predicates_scoped(list(self._scope), subject, object))
+        return super().predicates(subject, object, unique)
 
-    def __iter__(self) -> Generator[tuple[Any, Any, Any], None, None]:
-        return self.triples()
+    def objects(self, subject: Any = None, predicate: Any = None, unique: bool = False):  # type: ignore[override]
+        if self._scope and not isinstance(predicate, RdflibPath) and not isinstance(subject, (list, tuple)):
+            return iter(self._backend.objects_scoped(list(self._scope), subject, predicate))
+        return super().objects(subject, predicate, unique)
 
-    def __contains__(self, triple: tuple[Any, Any, Any]) -> bool:
-        s, p, o = triple
-        if self._scope:
-            if s is None or p is None or o is None:
-                return any(True for _ in self.triples(s, p, o))
-            return self._backend.contains_in_graphs(s, p, o, list(self._scope))
-        if s is None or p is None or o is None:
-            return any(True for _ in self.triples(s, p, o))
-        return any(True for _ in self.triples(s, p, o))
+    # -- query --
 
-    def __len__(self) -> int:
-        if self._scope:
-            return self._backend.len_in_graphs(list(self._scope))
-        else:
-            return self._backend.len(None)
+    def query(  # type: ignore[override]
+        self,
+        query_object: Any,
+        processor: str = "sparql",
+        result: str = "sparql",
+        initNs: Mapping[str, Any] | None = None,  # noqa: N803
+        initBindings: Mapping[str, Identifier] | None = None,  # noqa: N803
+        use_store_provided: bool = True,
+        **kwargs: Any,
+    ) -> Result:
+        """Run a SPARQL query scoped to this view's graphs.
 
-    def __bool__(self) -> bool:
-        return len(self) > 0
+        Same signature as :meth:`rdflib.Graph.query`; the view's prefix
+        bindings are applied unless overridden by ``initNs``. The legacy
+        ``init_bindings=`` keyword is still accepted.
+        """
+        legacy = kwargs.pop("init_bindings", None)
+        if legacy is not None:
+            initBindings = legacy
+        return super().query(
+            query_object,
+            processor=processor,
+            result=result,
+            initNs=initNs,
+            initBindings=initBindings,
+            use_store_provided=use_store_provided,
+            **kwargs,
+        )
 
-    # -- Read-only contract --
+    # -- namespaces --
 
-    def add(self, triple: tuple[Any, Any, Any]) -> None:
-        """ViewGraph is read-only; mutate the :class:`ontoenv.OntoEnv` instead."""
-        raise ValueError("ViewGraph is a read-only view; use copy_closure/copy_union for a mutable graph")
+    @property
+    def namespaces(self) -> "_CallableNamespaces":  # type: ignore[override]
+        """Prefix bindings; callable like :meth:`rdflib.Graph.namespaces`
+        (yields ``(prefix, URIRef)`` pairs). Dict-style access is deprecated.
+        """
+        return _CallableNamespaces({p: str(n) for p, n in self.store.namespaces()})
 
-    def addN(self, quads: Iterable[tuple[Any, Any, Any, Any]]) -> None:  # noqa: N802
-        """ViewGraph is read-only; mutate the :class:`ontoenv.OntoEnv` instead."""
-        raise ValueError("ViewGraph is a read-only view")
+    def namespace(self, prefix: str) -> str | None:
+        """Resolve a prefix to a namespace IRI (as a plain ``str``)."""
+        ns = self.store.namespace(prefix)
+        return None if ns is None else str(ns)
 
-    def remove(self, triple: tuple[Any, Any, Any]) -> None:
-        """ViewGraph is read-only; mutate the :class:`ontoenv.OntoEnv` instead."""
-        raise ValueError("ViewGraph is a read-only view; use copy_closure/copy_union for a mutable graph")
+    def prefix(self, namespace: str) -> str | None:
+        """Resolve a namespace IRI to a prefix."""
+        return self.store.prefix(URIRef(namespace))
 
     def __repr__(self) -> str:
-        scope_info = (
-            f"{len(self._scope)} graphs"
-            if self._scope
-            else "all graphs"
-        )
+        scope_info = f"{len(self._scope)} graphs" if self._scope else "all graphs"
         try:
             n = len(self)
         except Exception:
             n = -1
         return f"<ViewGraph: {scope_info}, {n} triples>"
 
-    # -- SPO accessors (Rust-native when scoped) --
-
-    def subjects(
-        self,
-        predicate: Any = None,
-        object: Any = None,
-    ) -> Generator[Any, None, None]:
-        """Yield unique subjects matching the pattern."""
-        if self._scope:
-            for s in self._backend.subjects_scoped(
-                list(self._scope), predicate, object
-            ):
-                yield s
-        else:
-            seen: set = set()
-            for s, _, _ in self.triples(None, predicate, object):
-                if s not in seen:
-                    seen.add(s)
-                    yield s
-
-    def predicates(
-        self,
-        subject: Any = None,
-        object: Any = None,
-    ) -> Generator[Any, None, None]:
-        """Yield unique predicates matching the pattern."""
-        if self._scope:
-            for p in self._backend.predicates_scoped(
-                list(self._scope), subject, object
-            ):
-                yield p
-        else:
-            seen = set()
-            for _, p, _ in self.triples(subject, None, object):
-                if p not in seen:
-                    seen.add(p)
-                    yield p
-
-    def objects(
-        self,
-        subject: Any = None,
-        predicate: Any = None,
-    ) -> Generator[Any, None, None]:
-        """Yield unique objects matching the pattern."""
-        if self._scope:
-            for o in self._backend.objects_scoped(
-                list(self._scope), subject, predicate
-            ):
-                yield o
-        else:
-            seen = set()
-            for _, _, o in self.triples(subject, predicate, None):
-                if o not in seen:
-                    seen.add(o)
-                    yield o
-
-    # -- Query --
-
-    def query(
-        self,
-        query_text: str,
-        init_bindings: dict[str, Any] | None = None,
-    ) -> Any:
-        """Run a SPARQL query scoped to this view's graphs."""
-        if self._scope:
-            return self._backend.query_scoped(
-                query_text, list(self._scope), init_bindings,
-            )
-        return self._backend.query(query_text, init_bindings, None)
-
-    # -- Namespaces --
-
-    @property
-    def namespaces(self) -> "_CallableNamespaces":
-        """``{prefix: namespace}`` bindings.
-
-        Behaves as a ``dict`` (legacy) and is also callable, so
-        ``view.namespaces()`` yields ``(prefix, URIRef)`` pairs like
-        :meth:`rdflib.Graph.namespaces`. Dict-style access is deprecated.
-        """
-        return _CallableNamespaces(self._namespaces)
-
-    def bind(self, prefix: str, namespace: str, override: bool = True) -> None:
-        """Bind a prefix to a namespace."""
-        existing_ns = self._namespaces.get(prefix)
-        existing_prefix = self._namespaces_rev.get(namespace)
-        if override:
-            if existing_prefix is not None:
-                del self._namespaces[existing_prefix]
-            if existing_ns is not None:
-                self._namespaces_rev.pop(existing_ns, None)
-            self._namespaces[prefix] = namespace
-            self._namespaces_rev[namespace] = prefix
-        else:
-            self._namespaces.setdefault(prefix, namespace)
-            self._namespaces_rev.setdefault(namespace, prefix)
-
-    def namespace(self, prefix: str) -> str | None:
-        """Resolve a prefix to a namespace IRI."""
-        return self._namespaces.get(prefix)
-
-    def prefix(self, namespace: str) -> str | None:
-        """Resolve a namespace IRI to a prefix."""
-        return self._namespaces_rev.get(namespace)
-
-    # -- Serialization --
-
-    def serialize(
-        self,
-        destination: Any | None = None,
-        format: str = "turtle",
-        **kwargs: Any,
-    ) -> "bytes | str":
-        """Serialize triples in this view, matching rdflib's Graph.serialize signature."""
-        from rdflib import Graph
-        g = Graph()
-        for s, p, o in self:
-            g.add((s, p, o))
-        for prefix, namespace in self._namespaces.items():
-            g.bind(prefix, namespace, replace=True)
-        return g.serialize(destination=destination, format=format, **kwargs)
-
+    __str__ = __repr__

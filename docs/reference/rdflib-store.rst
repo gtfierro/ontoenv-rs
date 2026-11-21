@@ -19,39 +19,25 @@ For task-oriented guidance see :doc:`../how-to/query-with-sparql`.
 -------------
 
 Returned by ``env.get_closure(uri)`` and ``env.get_union(uris)``. A
-lightweight read-only view over a fixed set of named graphs in the snapshot.
+read-only view over a fixed set of named graphs in the snapshot.
 
-It deliberately does **not** subclass ``rdflib.Graph``. Triple-pattern
-lookups, ``len``, ``in``, and ``query()`` are delegated to the Rust backend
-scoped to the view's graphs.
+``ViewGraph`` **is** an ``rdflib.Graph`` (``isinstance(view, rdflib.Graph)``),
+backed by a read-only store that delegates triple-pattern lookups, ``len``
+and SPARQL to the Rust backend scoped to the view's graphs. Everything rdflib
+provides on a graph works: ``value()``, ``subject_objects()``, property
+paths in ``triples()``, ``qname()``, ``namespaces()``, ``+`` with another
+graph, ``serialize()`` (returns ``self`` when given a destination), and
+``query(q, initNs=..., initBindings=...)``. The view's prefix bindings apply
+to queries. It can be passed to libraries that expect a graph, e.g. as the
+data graph of ``pyshacl.validate``.
 
-.. rubric:: Supported
+.. rubric:: Read-only
 
-.. list-table::
-   :header-rows: 1
-   :widths: 46 54
-
-   * - Member
-     - Notes
-   * - ``triples(subject=None, predicate=None, obj=None)``
-     - Returns an iterator of ``(s, p, o)``.
-   * - ``__iter__``, ``__contains__``, ``__len__``, ``__bool__``, ``__repr__``
-     - Iteration is de-duplicated across the view's graphs.
-   * - ``subjects(...)``, ``predicates(...)``, ``objects(...)``
-     - Pattern-restricted and de-duplicated.
-   * - ``query(query, init_bindings=None)``
-     - SPARQL scoped to the view's graphs.
-   * - ``bind(prefix, namespace, override=True)``
-     - Namespace binding.
-   * - ``namespace(prefix)``, ``prefix(namespace)``, ``namespaces()``
-     - Namespace lookup.
-   * - ``serialize(format="turtle")``
-     - Returns a string.
-
-.. rubric:: Not supported
-
-``add``, ``addN``, and ``remove`` raise ``ValueError``. Use
-``copy_closure`` or ``copy_union`` for a mutable merge.
+``add``, ``addN``, ``remove`` and ``+=`` raise ``ValueError``. Use
+``copy_closure`` or ``copy_union`` for a mutable merge. Libraries that write
+to a graph they are given (pySHACL does this to its *shapes* graph) need a
+mutable copy for that argument. ``bind()`` only edits the view's own prefix
+table.
 
 .. rubric:: Backing storage
 
@@ -68,8 +54,8 @@ normalize the closure into a private in-memory read snapshot instead.
    list(view.subjects(predicate=RDF.type, object=OWL.Ontology))
    view.query("SELECT ?s WHERE { ?s a owl:Ontology }")
 
-Note that ``env.get_graph(uri)`` returns a read-only ``rdflib.Graph``, not a
-``ViewGraph``.
+``env.get_graph(uri)`` returns a read-only ``rdflib.Graph`` over a single
+named graph; unlike ``get_closure`` it applies no closure transform.
 
 ``OntoEnvStore``
 ----------------
