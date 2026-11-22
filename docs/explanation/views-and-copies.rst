@@ -97,19 +97,19 @@ What a view is
 ``get_graph`` returns an ``rdflib.Graph`` backed by OntoEnv's storage.
 Mutating it raises ``ValueError``.
 
-``get_closure`` and ``get_union`` return an :class:`ontoenv.ViewGraph`, which
-deliberately does **not** subclass ``rdflib.Graph``. It implements the parts
-of the interface that make sense read-only:
+``get_closure`` and ``get_union`` return an :class:`ontoenv.ViewGraph`, a
+read-only ``rdflib.Graph`` (``isinstance(view, rdflib.Graph)`` is true) whose
+store delegates triple lookups, ``len`` and SPARQL to the Rust backend, scoped
+to the view's graphs. Everything rdflib offers on a graph works on it:
+``value()``, ``subject_objects()``, property paths, ``qname()``,
+``namespaces()``, ``+`` with another graph, ``serialize()``, and
+``query(..., initNs=..., initBindings=...)`` with the view's prefixes applied.
+It can be passed to libraries that expect a graph, for example as the data
+graph of ``pyshacl.validate``.
 
-- ``triples(...)``, ``subjects``/``predicates``/``objects``, iteration
-- ``len()``, ``in``, ``bool()``
-- ``query(...)`` — SPARQL scoped to the view's graphs
-- ``bind`` / ``namespace`` / ``prefix`` / ``namespaces``
-- ``serialize(format=...)``
-
-``add``, ``addN``, and ``remove`` raise ``ValueError``. If a library you are
-calling requires a real ``rdflib.Graph``, use ``copy_closure`` — that is
-exactly the case copies are for.
+``add``, ``addN``, ``remove`` and ``+=`` raise ``ValueError``. If a library you
+are calling writes to the graph it is given (pySHACL does this to its *shapes*
+graph), use ``copy_closure`` — that is exactly the case copies are for.
 
 Same content either way
 -----------------------

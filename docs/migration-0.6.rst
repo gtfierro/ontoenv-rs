@@ -67,9 +67,11 @@ that mutates the returned graph must switch to the matching copy method:
    closure, names = env.copy_closure(iri)
    closure.add(...)
 
-``get_closure`` and ``get_union`` return an :class:`ontoenv.ViewGraph`, which
-does **not** subclass ``rdflib.Graph``. If you pass the result to something
-that requires a real ``rdflib.Graph``, use ``copy_closure``.
+``get_closure`` and ``get_union`` return an :class:`ontoenv.ViewGraph`. In
+0.6 this was a lookalike that did not subclass ``rdflib.Graph``; from 0.7.0-rc.2
+it is a read-only ``rdflib.Graph``, so ``isinstance`` checks, ``namespaces()``,
+property paths and libraries such as pySHACL (as the data graph) work on it.
+If a library writes to the graph you give it, use ``copy_closure``.
 
 The same distinction applies at dataset scope: ``get_dataset`` for a view,
 ``copy_dataset`` for a mutable copy.
