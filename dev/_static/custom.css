@@ -1,0 +1,194 @@
+/* OntoEnv documentation styles */
+
+/* ─────────────────────────────────────────────────────────
+   Hero (landing page only)
+   ───────────────────────────────────────────────────────── */
+.oe-hero {
+  text-align: center;
+  padding: 2.5rem 1rem 2rem;
+  border-bottom: 1px solid var(--color-background-border);
+  margin-bottom: 2.5rem;
+}
+
+.oe-hero h1 {
+  font-size: 2.6rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  letter-spacing: -0.5px;
+}
+
+.oe-hero .tagline {
+  font-size: 1.2rem;
+  color: var(--color-foreground-secondary);
+  max-width: 600px;
+  margin: 0 auto 1.5rem;
+  line-height: 1.6;
+}
+
+.oe-badges {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 1.8rem;
+}
+
+.oe-badges a img {
+  height: 22px;
+  vertical-align: middle;
+}
+
+.oe-install {
+  display: inline-block;
+  background: var(--color-code-background);
+  border: 1px solid var(--color-background-border);
+  border-radius: 6px;
+  padding: 0.4rem 1rem;
+  font-family: var(--font-stack--monospace);
+  font-size: 0.95rem;
+  color: var(--color-foreground-primary);
+}
+
+/* ─────────────────────────────────────────────────────────
+   Doorway cards (landing page)
+   ───────────────────────────────────────────────────────── */
+.oe-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.oe-card {
+  display: block;
+  padding: 1.25rem 1.35rem;
+  border: 1px solid var(--color-background-border);
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+  text-decoration: none !important;
+  color: inherit !important;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.oe-card:hover {
+  border-color: var(--color-brand-primary);
+  transform: translateY(-2px);
+}
+
+.oe-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--color-brand-content);
+}
+
+.oe-card p {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--color-foreground-secondary);
+}
+
+.oe-card-cta {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-brand-primary);
+}
+
+/* ─────────────────────────────────────────────────────────
+   Section intros and callouts
+   ───────────────────────────────────────────────────────── */
+.oe-section-intro {
+  font-size: 1.02rem;
+  line-height: 1.65;
+  color: var(--color-foreground-secondary);
+  border-left: 3px solid var(--color-brand-primary);
+  padding: 0.15rem 0 0.15rem 1rem;
+  margin: 0 0 1.75rem;
+}
+
+/* "The minimum you need to know" — followed by a code block */
+.oe-minimum {
+  margin: 1.5rem 0 0;
+  padding: 0.9rem 1.1rem 0.1rem;
+  border: 1px solid var(--color-background-border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: var(--color-background-secondary);
+}
+
+.oe-minimum h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-brand-primary);
+}
+
+.oe-minimum p {
+  margin: 0 0 0.75rem;
+  font-size: 0.92rem;
+  color: var(--color-foreground-secondary);
+}
+
+.oe-minimum + .highlight-console,
+.oe-minimum + .highlight-python,
+.oe-minimum + div[class^="highlight"] {
+  margin-top: 0;
+}
+
+.oe-tip {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.9rem 1.1rem;
+  margin: 1.25rem 0;
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-background-border);
+}
+
+.oe-tip p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.oe-tip-icon {
+  font-size: 1.1rem;
+  line-height: 1.4;
+}
+
+.oe-protocol-box {
+  padding: 1rem 1.25rem;
+  margin: 1.25rem 0;
+  border-radius: 8px;
+  border: 1px solid var(--color-background-border);
+  background: var(--color-background-secondary);
+}
+
+.oe-protocol-box h3 {
+  margin: 0.5rem 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-brand-primary);
+}
+
+.oe-protocol-box h3:first-child {
+  margin-top: 0;
+}
+
+.oe-protocol-box ul {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+/* Keep wide reference tables from overflowing the page */
+table.docutils {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
